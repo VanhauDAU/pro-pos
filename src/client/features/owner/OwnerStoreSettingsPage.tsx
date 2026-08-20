@@ -18,6 +18,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
+import { VIETNAM_PHONE_REGEX } from '@contracts/store';
 
 import { ApiError, apiRequest } from '@client/lib/api';
 
@@ -66,6 +67,12 @@ interface StoreFormValues {
   wardCode: number;
 }
 
+function normalizePhone(value: string | null | undefined) {
+  const digits = (value ?? '').replace(/\D/g, '');
+  if (digits.startsWith('84') && digits.length === 11) return `0${digits.slice(2)}`;
+  return digits.slice(0, 11);
+}
+
 async function locationRequest<T>(path: string): Promise<T> {
   const response = await fetch(`${LOCATION_API}${path}`);
   if (!response.ok) throw new Error('LOCATION_REQUEST_FAILED');
@@ -106,7 +113,7 @@ export function OwnerStoreSettingsPage() {
     setProvinceCode(data.provinceCode ?? undefined);
     form.setFieldsValue({
       name: data.name,
-      phone: data.phone ?? '',
+      phone: normalizePhone(data.phone),
       currency: data.currency || 'VND',
       address: data.address ?? '',
       ...(data.provinceCode === null ? {} : { provinceCode: data.provinceCode }),
@@ -205,8 +212,26 @@ export function OwnerStoreSettingsPage() {
             </Form.Item>
             <Row gutter={16}>
               <Col xs={24} md={12}>
-                <Form.Item label="Số điện thoại cửa hàng" name="phone">
-                  <Input placeholder="Nhập số điện thoại" maxLength={32} />
+                <Form.Item
+                  label="Số điện thoại cửa hàng"
+                  name="phone"
+                  normalize={normalizePhone}
+                  rules={[
+                    {
+                      validator: async (_, value?: string) => {
+                        const phone = normalizePhone(value);
+                        if (!phone || VIETNAM_PHONE_REGEX.test(phone)) return;
+                        throw new Error('Nhập số di động 10 số hoặc số bàn Việt Nam 10–11 số.');
+                      },
+                    },
+                  ]}
+                >
+                  <Input
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    placeholder="Nhập số điện thoại"
+                    maxLength={11}
+                  />
                 </Form.Item>
               </Col>
               <Col xs={24} md={12}>

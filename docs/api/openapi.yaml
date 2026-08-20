@@ -106,7 +106,14 @@ paths:
               required: [name, address, businessDayCutoffMinutes]
               properties:
                 name: { type: string, minLength: 1, maxLength: 160 }
-                phone: { type: string, nullable: true }
+                phone:
+                  {
+                    type: string,
+                    nullable: true,
+                    maxLength: 11,
+                    pattern: '^(?:02\\d{8,9}|0[35789]\\d{8})$',
+                    description: 'Số di động Việt Nam 10 số hoặc số bàn 10–11 số.',
+                  }
                 address: { type: string, minLength: 1, maxLength: 500 }
                 provinceCode: { type: integer, minimum: 1, nullable: true }
                 provinceName: { type: string, nullable: true }

@@ -613,7 +613,7 @@ export function OwnerPortalPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const screens = Grid.useBreakpoint();
-  const isDesktop = Boolean(screens.lg);
+  const isDesktop = Boolean(screens.xl);
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [openKeys, setOpenKeys] = useState<string[]>(() => {

@@ -525,6 +525,7 @@ body {
 .owner-sidebar {
   width: 272px;
   min-height: 100vh;
+  height: 100vh;
   display: flex;
   flex-direction: column;
   flex: 0 0 272px;
@@ -536,6 +537,8 @@ body {
     width 240ms cubic-bezier(0.2, 0.9, 0.3, 1),
     flex-basis 240ms cubic-bezier(0.2, 0.9, 0.3, 1);
   z-index: 10;
+  position: sticky;
+  top: 0;
 }
 
 .owner-sidebar--collapsed {
@@ -607,8 +610,12 @@ body {
   transform: scale(1.05);
 }
 
+.owner-sidebar--collapsed .owner-sidebar__logo-wrap {
+  display: none;
+}
+
 .owner-sidebar--collapsed .owner-sidebar__collapse-btn {
-  display: none !important;
+  display: inline-flex !important;
 }
 
 /* Nav Body Container with smooth custom scrollbar */
@@ -1453,10 +1460,31 @@ body {
 }
 
 .owner-mobile-drawer .ant-drawer-body {
-  background: #142337;
+  background: #0e1b2c;
 }
 
-@media (max-width: 960px) {
+.owner-mobile-drawer .owner-sidebar {
+  width: 100%;
+  min-height: 100%;
+  height: 100%;
+  flex-basis: auto;
+  position: static;
+  box-shadow: none;
+}
+
+@media (max-width: 1199px) {
+  .owner-header {
+    padding-inline: 20px;
+  }
+
+  .owner-header__utility {
+    display: none;
+  }
+
+  .owner-content {
+    padding: 28px 24px 48px;
+  }
+
   .owner-metric-grid,
   .owner-stat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1470,10 +1498,15 @@ body {
   .owner-settings-group:first-child .owner-settings-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .owner-module-placeholder__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 767px) {
   .owner-header {
+    height: 58px;
     padding: 0 12px;
   }
 
@@ -1491,7 +1524,8 @@ body {
   }
 
   .owner-content {
-    padding: 22px 14px 42px;
+    min-height: calc(100vh - 58px);
+    padding: 20px 14px 38px;
   }
 
   .owner-page-heading {
@@ -1520,6 +1554,7 @@ body {
   }
 
   .owner-bar-chart {
+    min-height: 230px;
     grid-template-columns: 58px minmax(0, 1fr);
     gap: 8px;
   }
@@ -1536,5 +1571,13 @@ body {
 
   .owner-bar-chart__bar {
     width: 75%;
+  }
+
+  .owner-settings-group {
+    padding: 17px 12px 18px;
+  }
+
+  .owner-settings-tile {
+    padding-inline: 10px;
   }
 }

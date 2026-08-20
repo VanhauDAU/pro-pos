@@ -22,7 +22,7 @@ export default defineConfig({
     cloudflare(),
     VitePWA({
       registerType: 'prompt',
-      includeAssets: ['favicon.svg'],
+      includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
       manifest: {
         name: 'Pro POS',
         short_name: 'Pro POS',
@@ -33,14 +33,14 @@ export default defineConfig({
         start_url: '/',
         icons: [
           {
-            src: '/pwa-192x192.svg',
+            src: '/pwa-192x192.png',
             sizes: '192x192',
-            type: 'image/svg+xml',
+            type: 'image/png',
           },
           {
-            src: '/pwa-512x512.svg',
+            src: '/pwa-512x512.png',
             sizes: '512x512',
-            type: 'image/svg+xml',
+            type: 'image/png',
           },
         ],
       },

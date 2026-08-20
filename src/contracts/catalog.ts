@@ -84,7 +84,7 @@ export const pricingConfigSchema = z.object({
 
 export const createServiceTableSchema = z.object({
   areaId: z.uuid(),
-  timeProductId: z.uuid(),
+  timeProductId: z.uuid().optional().nullable(),
   name: z.string().trim().min(1).max(120),
   sortOrder: z.number().int().min(0).default(0),
 });

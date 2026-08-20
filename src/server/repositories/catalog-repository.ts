@@ -183,7 +183,7 @@ export class CatalogRepository {
 
   updateNamed(input: {
     storeId: string;
-    table: 'categories' | 'units';
+    table: 'areas' | 'categories' | 'units';
     id: string;
     name: string;
     now: number;
@@ -197,7 +197,7 @@ export class CatalogRepository {
       .run();
   }
 
-  findNamed(storeId: string, table: 'categories' | 'units', id: string) {
+  findNamed(storeId: string, table: 'areas' | 'categories' | 'units', id: string) {
     return this.db
       .prepare(`SELECT id, name FROM ${table} WHERE id = ? AND store_id = ? LIMIT 1`)
       .bind(id, storeId)

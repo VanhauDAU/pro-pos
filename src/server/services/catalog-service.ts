@@ -142,7 +142,7 @@ export class CatalogService {
 
   async updateNamed(
     storeId: string,
-    table: 'categories' | 'units',
+    table: 'areas' | 'categories' | 'units',
     id: string,
     name: string,
     auditContext?: AuditContext,
@@ -157,8 +157,8 @@ export class CatalogService {
       await new AuditRepository(this.env.DB).record({
         storeId,
         context: auditContext,
-        action: `${table === 'categories' ? 'CATEGORY' : 'UNIT'}_UPDATED`,
-        entityType: table === 'categories' ? 'CATEGORY' : 'UNIT',
+        action: `${table === 'categories' ? 'CATEGORY' : table === 'areas' ? 'AREA' : 'UNIT'}_UPDATED`,
+        entityType: table === 'categories' ? 'CATEGORY' : table === 'areas' ? 'AREA' : 'UNIT',
         entityId: id,
         before,
         after: { name: name.trim() },
@@ -693,16 +693,34 @@ export class CatalogService {
   async createTable(input: {
     storeId: string;
     areaId: string;
-    timeProductId: string;
+    timeProductId?: string | null | undefined;
     name: string;
-    sortOrder: number;
-    auditContext?: AuditContext;
+    sortOrder?: number | undefined;
+    auditContext?: AuditContext | undefined;
   }) {
     const id = crypto.randomUUID();
+    const now = Date.now();
+    const sortOrder = input.sortOrder ?? 0;
+    const timeProductId = input.timeProductId || `area-layout-product:${input.storeId}`;
+
+    if (timeProductId === `area-layout-product:${input.storeId}`) {
+      await this.env.DB.prepare(
+        `INSERT OR IGNORE INTO products (
+          id, store_id, name, product_type, status, is_system, created_at, updated_at
+        ) VALUES (?, ?, 'Cấu hình bàn/phòng', 'TIME', 'ACTIVE', 1, ?, ?)`,
+      )
+        .bind(timeProductId, input.storeId, now, now)
+        .run();
+    }
+
     const result = await this.repository.createServiceTable({
       id,
-      ...input,
-      now: Date.now(),
+      storeId: input.storeId,
+      areaId: input.areaId,
+      timeProductId,
+      name: input.name.trim(),
+      sortOrder,
+      now,
     });
     if ((result.meta.changes ?? 0) !== 1) {
       throw new AppError(
@@ -721,14 +739,14 @@ export class CatalogService {
         before: null,
         after: {
           areaId: input.areaId,
-          timeProductId: input.timeProductId,
+          timeProductId,
           name: input.name.trim(),
           status: 'AVAILABLE',
         },
-        now: Date.now(),
+        now,
       });
     }
-    return { id };
+    return { id, name: input.name.trim() };
   }
 
   listTables(storeId: string) {

@@ -151,6 +151,20 @@ ownerCatalogRoutes.get(
     ),
 );
 
+ownerCatalogRoutes.put('/areas/:areaId', requirePermission('table.manage'), async (c) => {
+  const body = await parseJson(c.req.raw, namedResourceSchema);
+  return success(
+    c,
+    await new CatalogService(c.env).updateNamed(
+      c.get('actor').storeId!,
+      'areas',
+      c.req.param('areaId'),
+      body.name,
+      auditContext(c),
+    ),
+  );
+});
+
 ownerCatalogRoutes.get('/area-layouts', requirePermission('table.manage'), async (c) =>
   success(c, await new CatalogService(c.env).listAreaLayouts(c.get('actor').storeId!)),
 );
@@ -285,7 +299,7 @@ ownerCatalogRoutes.post('/tables', requirePermission('table.manage'), async (c) 
     await new CatalogService(c.env).createTable({
       storeId: c.get('actor').storeId!,
       areaId: body.areaId,
-      timeProductId: body.timeProductId,
+      timeProductId: body.timeProductId ?? null,
       name: body.name,
       sortOrder: body.sortOrder,
       auditContext: {

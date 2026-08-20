@@ -1,6 +1,6 @@
 # Kế hoạch tổng thể, trạng thái và checklist phần mềm
 
-Cập nhật: 2026-08-21. Baseline đánh giá: nhánh `feat/PRO-016-table-pricing-assignment`, đối chiếu trực tiếp code,
+Cập nhật: 2026-08-21. Baseline đánh giá: nhánh `feat/PRO-017-product-filters`, đối chiếu trực tiếp code,
 migrations, OpenAPI, test và runbook trong repository.
 
 Tài liệu này là nguồn theo dõi cấp dự án cho ba câu hỏi:
@@ -80,7 +80,7 @@ Trạng thái production tại lần kiểm tra 2026-08-20:
 | Access bridge            | `COMPLETE`    | Worker riêng, one-time code, replay protection, D1 chung, Access                                                      | Theo dõi Access logs và đồng bộ exact-email policy                      |
 | SUPER_ADMIN              | `COMPLETE`    | Bootstrap, login, dashboard, list/create/lock store + Owner                                                           | Pagination/search/audit UX nếu dữ liệu tăng                             |
 | Owner backend            | `PARTIAL`     | Settings, staff/roles, catalog CRUD, table pricing assignment, pricing, audit                                         | Pricing read/edit đầy đủ, media, pagination/search, contract hoàn chỉnh |
-| Owner portal UI          | `IN_PROGRESS` | Shell, settings, area/table, table pricing, staff/roles, catalog, đơn vị, special-hours/media and restore flows       | Pricing editor nâng cao, visual approval và data states                 |
+| Owner portal UI          | `IN_PROGRESS` | Shell, settings, area/table, table pricing, staff/roles, catalog, đơn vị, multi-filter and special-hours/media flows  | Pricing editor nâng cao, visual approval và data states                 |
 | Pricing engine           | `COMPLETE`    | Actual time/block, first period, special window, pause, rounding                                                      | UI editor/preview và E2E với dữ liệu thật                               |
 | POS backend              | `PARTIAL`     | Tables, open, quote, items, pause/resume, transfer/cancel, checkout                                                   | Contract đầy đủ, edge cases, UI và E2E                                  |
 | POS portal UI            | `BLOCKED`     | Route placeholder                                                                                                     | UI reference, table board, order workspace, auth guard                  |
@@ -271,8 +271,9 @@ Work breakdown đã thống nhất:
 5. **PRO-014 — Unit settings**.
 6. **PRO-015 — Product special hours và media completion**.
 7. **PRO-016 — Table pricing assignment**.
-8. **PRO-017 — POS table board, order workspace và checkout**.
-9. **PRO-018 — Owner E2E và staging hardening**.
+8. **PRO-017 — Product multi-filter**.
+9. **PRO-018 — POS table board, order workspace và checkout**.
+10. **PRO-019 — Owner E2E và staging hardening**.
 
 Checklist:
 

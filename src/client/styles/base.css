@@ -1646,12 +1646,32 @@ body {
   line-height: 1.55;
 }
 
+.owner-area-stat-card {
+  margin-top: 16px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.owner-area-stat-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+}
+
+.owner-area-stat-item + .owner-area-stat-item {
+  margin-top: 4px;
+  border-top: 1px dashed #e2e8f0;
+  padding-top: 8px;
+}
+
 .owner-area-list-card,
 .owner-area-create-card {
   overflow: hidden;
-  border: 0;
-  border-radius: 5px;
-  box-shadow: 0 2px 8px rgb(26 45 70 / 12%);
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgb(26 45 70 / 6%);
 }
 
 .owner-area-list-card__tab {
@@ -1661,27 +1681,24 @@ body {
   border-bottom: 2px solid #1688ff;
   color: #1688ff;
   font-size: 14px;
+  font-weight: 500;
 }
 
 .owner-area-table__header,
 .owner-area-table__row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(145px, 0.48fr) 40px;
+  grid-template-columns: minmax(0, 1fr) 150px 170px;
   align-items: center;
 }
 
 .owner-area-table__header {
-  min-height: 56px;
+  min-height: 52px;
   padding: 0 16px;
   border-block: 1px solid #e4e8ee;
   color: #202d40;
   font-size: 13px;
   font-weight: 550;
-}
-
-.owner-area-table__header span:nth-child(2),
-.owner-area-table__count {
-  text-align: center;
+  background: #f8fafc;
 }
 
 .owner-area-table__group + .owner-area-table__group {
@@ -1689,8 +1706,13 @@ body {
 }
 
 .owner-area-table__row {
-  min-height: 61px;
-  padding: 0 12px 0 16px;
+  min-height: 60px;
+  padding: 0 16px;
+  transition: background 0.15s ease;
+}
+
+.owner-area-table__row:hover {
+  background: #f8fafc;
 }
 
 .owner-area-table__name {
@@ -1705,58 +1727,151 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.owner-area-table__name span {
-  color: #263448;
+.owner-area-index {
+  color: #64748b;
+  font-weight: 500;
 }
 
-.owner-area-table__row > .ant-btn {
-  color: #7e8997;
-  font-size: 21px;
+.owner-area-name-text {
+  font-size: 14px;
+  color: #0975f7;
+  transition: color 0.15s ease;
 }
 
-.owner-area-table__details {
-  padding: 10px 16px 15px 42px;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.owner-area-table__name:hover .owner-area-name-text {
+  color: #0056b3;
+  text-decoration: underline;
+}
+
+.owner-area-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.owner-area-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 16px;
+}
+
+.owner-area-modal-title__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #0975f7;
+}
+
+.owner-area-modal-content {
+  padding-top: 10px;
+}
+
+.owner-area-add-table-bar {
+  padding: 14px 18px;
+  margin-bottom: 16px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
-  background: #f7f9fc;
 }
 
-.owner-area-order-hint {
-  grid-column: 1 / -1;
-  font-size: 12px;
-}
-
-.owner-area-detail-toolbar {
-  grid-column: 1 / -1;
+.owner-area-add-table-bar__form {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.owner-area-table-list-header {
+  margin-bottom: 12px;
+}
+
+.owner-area-modal-table-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 480px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.owner-area-modal-table-row {
+  display: grid;
+  grid-template-columns: 70px minmax(140px, 1.4fr) minmax(220px, 1.6fr) 110px 130px;
+  align-items: center;
   gap: 12px;
+  padding: 10px 14px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  transition: all 0.15s ease;
 }
 
-.owner-area-existing-table {
-  min-height: 46px;
-  padding: 6px 7px 6px 10px;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  border: 1px solid #e1e6ed;
-  border-radius: 5px;
-  background: #fff;
+.owner-area-modal-table-row:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
 }
 
-.owner-area-existing-table--ordering {
-  opacity: 0.62;
+.owner-area-modal-table-row--ordering {
+  opacity: 0.6;
   pointer-events: none;
 }
 
-.owner-area-existing-table .ant-btn {
-  width: 27px;
-  padding-inline: 0;
-  flex: 0 0 auto;
+.owner-area-modal-table-col {
+  display: flex;
+  align-items: center;
+}
+
+.owner-area-modal-table-col--order {
+  gap: 6px;
+}
+
+.owner-area-order-number {
+  font-weight: 600;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.owner-area-modal-table-col--name {
+  gap: 8px;
+}
+
+.owner-area-table-title {
+  font-size: 14px;
+  color: #1e293b;
+}
+
+.owner-area-modal-table-col--pricing {
+  gap: 6px;
+}
+
+.owner-area-pricing-label {
+  font-size: 12px;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.owner-area-table-pricing-select {
+  flex: 1;
+  min-width: 150px;
+}
+
+.owner-area-modal-table-col--actions {
+  justify-content: flex-end;
+  gap: 4px;
 }
 
 .owner-area-drag-handle {
@@ -1766,34 +1881,21 @@ body {
   cursor: grab;
 }
 
-.owner-area-existing-table:active .owner-area-drag-handle,
+.owner-area-modal-table-row:active .owner-area-drag-handle,
 .owner-area-draft-table:active {
   cursor: grabbing;
 }
 
 .owner-area-table-icon {
-  width: 27px;
-  height: 27px;
+  width: 28px;
+  height: 28px;
   display: grid;
   flex: 0 0 auto;
   place-items: center;
-  border-radius: 4px;
-  color: #708098;
-  background: #e8edf3;
-}
-
-.owner-area-existing-table__name {
-  min-width: 0;
-  overflow: hidden;
-  flex: 1;
-  color: #253348;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.owner-area-table-pricing {
-  width: 190px;
-  flex: 0 0 190px;
+  border-radius: 6px;
+  color: #0975f7;
+  background: #eff6ff;
+  font-size: 14px;
 }
 
 .owner-area-list-card__loading,
@@ -2394,9 +2496,24 @@ body {
 
 .owner-catalog-toolbar {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 190px 180px;
+  grid-template-columns: minmax(220px, 1fr) repeat(4, minmax(150px, 180px));
   gap: 10px;
   margin-bottom: 20px;
+}
+
+.owner-catalog-active-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 12px 0 4px;
+  border-top: 1px solid #edf1f6;
+  margin-bottom: 12px;
+}
+
+.owner-catalog-active-filters .ant-tag {
+  margin-inline-end: 0;
+  border-radius: 14px;
 }
 
 .owner-catalog-name-link {
@@ -2870,7 +2987,7 @@ body {
 
   .owner-area-table__header,
   .owner-area-table__row {
-    grid-template-columns: minmax(0, 1fr) 72px 34px;
+    grid-template-columns: minmax(0, 1fr) 95px 110px;
   }
 
   .owner-area-table__header {
@@ -2879,27 +2996,18 @@ body {
   }
 
   .owner-area-table__row {
-    padding-inline: 12px 5px;
+    padding-inline: 12px;
   }
 
-  .owner-area-table-pricing {
-    width: 145px;
-    flex-basis: 145px;
-  }
-
-  .owner-area-table__details {
-    padding: 10px 12px;
+  .owner-area-modal-table-row {
     grid-template-columns: 1fr;
+    gap: 8px;
   }
 
-  .owner-area-existing-table {
-    flex-wrap: wrap;
-  }
-
-  .owner-area-table-pricing {
-    width: calc(100% - 48px);
-    margin-left: 43px;
-    flex-basis: calc(100% - 48px);
+  .owner-area-modal-table-col--actions {
+    justify-content: flex-end;
+    border-top: 1px dashed #e2e8f0;
+    padding-top: 6px;
   }
 
   .owner-area-name-field {

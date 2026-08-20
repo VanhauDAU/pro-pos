@@ -57,6 +57,7 @@ Cần hoàn thiện trong giai đoạn:
 7. **PRO-016 — POS sales portal**: table board, order workspace, quote và checkout.
 8. **PRO-017 — Owner E2E và staging hardening**: cross-store/RBAC, audit, responsive E2E, smoke.
 
+
 Mỗi ticket giữ migration additive/forward-only và cập nhật OpenAPI, screen registry, tests,
 changelog cùng PR.
 

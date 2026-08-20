@@ -398,6 +398,9 @@ export class CatalogService {
     if (!references.unitValid) {
       throw new AppError('UNIT_NOT_FOUND', 'Không tìm thấy đơn vị tính.', 404);
     }
+    if (input.mediaId && !(await this.repository.findActiveMedia(storeId, input.mediaId))) {
+      throw new AppError('MEDIA_NOT_FOUND', 'Không tìm thấy ảnh mặt hàng.', 404);
+    }
     const id = crypto.randomUUID();
     const now = Date.now();
     await this.repository.createProduct({
@@ -410,6 +413,7 @@ export class CatalogService {
       productType: input.productType,
       avatarType: input.avatarType ?? 'COLOR',
       avatarColor: input.avatarColor ?? null,
+      mediaId: input.mediaId ?? null,
       variants: (input.variants ?? []).map((variant) => ({
         id: crypto.randomUUID(),
         displayCode: `MH${crypto.randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase()}`,
@@ -493,6 +497,9 @@ export class CatalogService {
     if (!references.unitValid) {
       throw new AppError('UNIT_NOT_FOUND', 'Không tìm thấy đơn vị tính.', 404);
     }
+    if (input.mediaId && !(await this.repository.findActiveMedia(storeId, input.mediaId))) {
+      throw new AppError('MEDIA_NOT_FOUND', 'Không tìm thấy ảnh mặt hàng.', 404);
+    }
     const existingVariants = await this.repository.listProductVariants(storeId, productId);
     const variantById = new Map(existingVariants.results.map((variant) => [variant.id, variant]));
     const now = Date.now();
@@ -506,6 +513,7 @@ export class CatalogService {
       productType: input.productType,
       avatarType: input.avatarType ?? 'COLOR',
       avatarColor: input.avatarColor ?? null,
+      mediaId: input.mediaId ?? null,
       variants: (input.variants ?? []).map((variant) => {
         const displayCode = variant.id
           ? String(variantById.get(variant.id)?.displayCode ?? '')
@@ -562,6 +570,26 @@ export class CatalogService {
       });
     }
     return { id: productId, deleted: true };
+  }
+
+  async restoreProduct(storeId: string, productId: string, auditContext?: AuditContext) {
+    const before = await this.repository.findProduct(storeId, productId);
+    if (!before) throw new AppError('PRODUCT_NOT_FOUND', 'Không tìm thấy mặt hàng.', 404);
+    const now = Date.now();
+    await this.repository.restoreProduct(storeId, productId, now);
+    if (auditContext) {
+      await new AuditRepository(this.env.DB).record({
+        storeId,
+        context: auditContext,
+        action: 'PRODUCT_RESTORED',
+        entityType: 'PRODUCT',
+        entityId: productId,
+        before,
+        after: { status: 'ACTIVE' },
+        now,
+      });
+    }
+    return { id: productId, restored: true };
   }
 
   listCategoryProducts(storeId: string, categoryId: string, search?: string) {

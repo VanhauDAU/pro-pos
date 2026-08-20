@@ -145,6 +145,16 @@ paths:
     delete:
       summary: Disable a product and its active variants
       responses: { '200': { description: Product disabled } }
+  /owner/catalog/products/{productId}/restore:
+    post:
+      summary: Restore a disabled product and its variants
+      responses: { '200': { description: Product restored } }
+  /owner/catalog/pricing:
+    put:
+      summary: Save time-based pricing, first period and special-hour windows
+      responses:
+        '200': { description: Pricing updated }
+        '422': { description: Invalid or overlapping pricing windows }
   /owner/catalog/categories:
     get:
       {

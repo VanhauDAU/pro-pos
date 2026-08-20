@@ -4,6 +4,11 @@
 
 ### Added
 
+- PRO-015 product pricing completion: configurable special hours by time range or all-day weekday
+  rules, overlap validation through the server pricing engine, and product avatar image upload with
+  private media preview. The product list now also supports restoring a disabled product, and the
+  product form can create and select a new category directly from the category dropdown.
+
 - PRO-014 unit settings: server-paginated unit list with search, add/edit flow, product usage
   count, product usage detail list and safe delete protection. Material and unit-conversion counts
   from the reference are intentionally omitted from this MVP.

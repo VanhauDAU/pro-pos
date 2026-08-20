@@ -1,5 +1,8 @@
 # Deploy runbook
 
+Luồng nhánh, PR, staging và production đầy đủ xem tại
+[quy trình phát triển và phát hành](../project/development-release-workflow.md).
+
 1. `pnpm verify` xanh.
 2. Xác nhận D1/R2/secrets đúng environment.
 3. Chạy migration staging, deploy auth bridge bằng `pnpm deploy:auth:staging`, đồng bộ Access

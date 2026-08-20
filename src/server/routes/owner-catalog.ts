@@ -30,6 +30,16 @@ function auditContext(c: Parameters<typeof success>[0]) {
 
 for (const table of ['areas', 'categories', 'units'] as const) {
   ownerCatalogRoutes.get(`/${table}`, requirePermission('catalog.manage'), async (c) => {
+    if (table === 'units' && (c.req.query('page') || c.req.query('q'))) {
+      return success(
+        c,
+        await new CatalogService(c.env).listUnits(c.get('actor').storeId!, {
+          page: Number(c.req.query('page') ?? 1),
+          pageSize: Number(c.req.query('pageSize') ?? 10),
+          search: c.req.query('q') ?? '',
+        }),
+      );
+    }
     const result = await new CatalogService(c.env).listNamed(c.get('actor').storeId!, table);
     return success(c, result.results);
   });
@@ -47,6 +57,50 @@ for (const table of ['areas', 'categories', 'units'] as const) {
     );
   });
 }
+
+ownerCatalogRoutes.get('/units/:unitId/products', requirePermission('catalog.manage'), async (c) =>
+  success(
+    c,
+    (
+      await new CatalogService(c.env).getUnit(c.get('actor').storeId!, c.req.param('unitId'), {
+        page: Number(c.req.query('page') ?? 1),
+        pageSize: Number(c.req.query('pageSize') ?? 10),
+        search: c.req.query('q') ?? '',
+      })
+    ).products,
+  ),
+);
+
+ownerCatalogRoutes.get('/units/:unitId', requirePermission('catalog.manage'), async (c) =>
+  success(
+    c,
+    await new CatalogService(c.env).getUnit(c.get('actor').storeId!, c.req.param('unitId')),
+  ),
+);
+
+ownerCatalogRoutes.put('/units/:unitId', requirePermission('catalog.manage'), async (c) => {
+  const body = await parseJson(c.req.raw, namedResourceSchema);
+  return success(
+    c,
+    await new CatalogService(c.env).updateUnit(
+      c.get('actor').storeId!,
+      c.req.param('unitId'),
+      body.name,
+      auditContext(c),
+    ),
+  );
+});
+
+ownerCatalogRoutes.delete('/units/:unitId', requirePermission('catalog.manage'), async (c) =>
+  success(
+    c,
+    await new CatalogService(c.env).deleteUnit(
+      c.get('actor').storeId!,
+      c.req.param('unitId'),
+      auditContext(c),
+    ),
+  ),
+);
 
 ownerCatalogRoutes.put(
   '/categories/:categoryId',
@@ -189,6 +243,20 @@ ownerCatalogRoutes.delete('/products/:productId', requirePermission('catalog.man
       auditContext(c),
     ),
   ),
+);
+
+ownerCatalogRoutes.post(
+  '/products/:productId/restore',
+  requirePermission('catalog.manage'),
+  async (c) =>
+    success(
+      c,
+      await new CatalogService(c.env).restoreProduct(
+        c.get('actor').storeId!,
+        c.req.param('productId'),
+        auditContext(c),
+      ),
+    ),
 );
 
 ownerCatalogRoutes.put('/pricing', requirePermission('pricing.manage'), async (c) => {

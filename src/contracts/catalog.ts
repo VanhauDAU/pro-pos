@@ -24,6 +24,7 @@ const productFieldsSchema = {
     .regex(/^#[0-9A-Fa-f]{6}$/)
     .nullable()
     .optional(),
+  mediaId: z.uuid().nullable().optional(),
   variants: z.array(productVariantSchema).max(20).default([]),
 };
 

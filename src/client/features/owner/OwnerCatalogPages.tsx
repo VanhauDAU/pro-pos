@@ -7,6 +7,7 @@ import {
   SearchOutlined,
   SaveOutlined,
   TagsOutlined,
+  UploadOutlined,
 } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -16,6 +17,7 @@ import {
   Card,
   Checkbox,
   Col,
+  Divider,
   Empty,
   Form,
   Input,
@@ -36,6 +38,7 @@ import {
 } from 'antd';
 import type { TableColumnsType } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
@@ -68,6 +71,7 @@ interface ProductSummary {
   unitName: string | null;
   avatarType: AvatarType;
   avatarColor: string | null;
+  mediaId: string | null;
   variantCount: number;
   minSalePriceVnd: number | null;
   maxSalePriceVnd: number | null;
@@ -91,6 +95,16 @@ interface SpecialWindow {
   weekdaysMask: number;
 }
 
+interface SpecialWindowForm {
+  id?: string;
+  name: string;
+  priceVnd: number;
+  allDay?: boolean;
+  startTime?: string;
+  endTime?: string;
+  weekdays: number[];
+}
+
 interface ProductDetail extends ProductSummary {
   description: string | null;
   variants: ProductVariant[];
@@ -112,6 +126,7 @@ interface ProductFormValues {
   unitId?: string;
   avatarType: AvatarType;
   avatarColor: string;
+  mediaId?: string;
   variants: Array<{
     id?: string;
     name: string;
@@ -128,6 +143,7 @@ interface ProductFormValues {
   firstPeriodDurationValue?: number;
   firstPeriodDurationUnit?: 'MINUTE' | 'HOUR' | 'DAY';
   firstPeriodPrice?: number;
+  specialWindows?: SpecialWindowForm[];
 }
 
 const PRODUCT_QUERY = ['owner-products'] as const;
@@ -181,6 +197,28 @@ function secondsToDuration(seconds: number) {
   return { value: Math.max(1, Math.round(seconds / 60)), unit: 'MINUTE' as const };
 }
 
+function minuteToTime(value: number) {
+  const hours = Math.floor(value / 60)
+    .toString()
+    .padStart(2, '0');
+  const minutes = (value % 60).toString().padStart(2, '0');
+  return `${hours}:${minutes}`;
+}
+
+function timeToMinute(value: string | undefined) {
+  const [hours = 0, minutes = 0] = (value ?? '').split(':').map(Number);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return 0;
+  return Math.min(1439, Math.max(0, hours * 60 + minutes));
+}
+
+function weekdaysToMask(days: number[] | undefined) {
+  return (days ?? []).reduce((mask, day) => mask | (1 << day), 0);
+}
+
+function maskToWeekdays(mask: number) {
+  return Array.from({ length: 7 }, (_, day) => day).filter((day) => (mask & (1 << day)) !== 0);
+}
+
 function durationToSeconds(value: number | undefined, unit: string | undefined) {
   const amount = value ?? 0;
   if (unit === 'DAY') return amount * 86400;
@@ -201,14 +239,18 @@ function ProductAvatar({
   product,
   size = 44,
 }: {
-  product: Pick<ProductSummary, 'name' | 'avatarColor' | 'avatarType'>;
+  product: Pick<ProductSummary, 'name' | 'avatarColor' | 'avatarType' | 'mediaId'>;
   size?: number;
 }) {
   return (
     <Avatar
       shape="square"
       size={size}
-      src={product.avatarType === 'IMAGE' ? undefined : undefined}
+      src={
+        product.avatarType === 'IMAGE' && product.mediaId
+          ? `/api/v1/media/${product.mediaId}`
+          : undefined
+      }
       style={{
         background: product.avatarColor || '#facc15',
         color: '#172235',
@@ -255,6 +297,21 @@ export function OwnerProductListPage() {
       messageApi.success('Đã ngừng kinh doanh mặt hàng.');
     } catch (error) {
       messageApi.error(errorMessage(error, 'Không thể ngừng kinh doanh mặt hàng.'));
+    }
+  };
+
+  const restoreProduct = async (product: ProductSummary) => {
+    const context = await apiRequest<AuthContextResponse>('/api/v1/auth/context');
+    try {
+      await apiRequest(`/api/v1/owner/catalog/products/${product.id}/restore`, {
+        method: 'POST',
+        headers: { 'X-CSRF-Token': context.csrfToken ?? '' },
+      });
+      await queryClient.invalidateQueries({ queryKey: PRODUCT_QUERY });
+      await queryClient.invalidateQueries({ queryKey: CATEGORY_QUERY });
+      messageApi.success('Đã khôi phục mặt hàng.');
+    } catch (error) {
+      messageApi.error(errorMessage(error, 'Không thể khôi phục mặt hàng.'));
     }
   };
 
@@ -332,7 +389,18 @@ export function OwnerProductListPage() {
                 Ngừng bán
               </Button>
             </Popconfirm>
-          ) : null}
+          ) : (
+            <Popconfirm
+              title="Khôi phục mặt hàng này?"
+              onConfirm={() => restoreProduct(product)}
+              okText="Khôi phục"
+              cancelText="Hủy"
+            >
+              <Button type="link" icon={<SaveOutlined />}>
+                Khôi phục
+              </Button>
+            </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -419,6 +487,10 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
   const [form] = Form.useForm<ProductFormValues>();
   const [productType, setProductType] = useState<ProductType>('QUANTITY');
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [categoryModalOpen, setCategoryModalOpen] = useState(false);
+  const [categorySearch, setCategorySearch] = useState('');
+  const [categoryForm] = Form.useForm<{ name: string }>();
   const isEdit = Boolean(productId);
   const detail = useQuery({
     queryKey: ['owner-product', productId],
@@ -439,6 +511,43 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
   });
   const firstPeriodEnabled = Form.useWatch('firstPeriodEnabled', form);
 
+  const createCategory = async ({ name }: { name: string }) => {
+    try {
+      const result = await jsonRequest<{ id: string }>(
+        '/api/v1/owner/catalog/categories',
+        { name },
+        { headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' } },
+      );
+      await queryClient.invalidateQueries({ queryKey: CATEGORY_QUERY });
+      form.setFieldValue('categoryId', result.id);
+      setCategoryModalOpen(false);
+      categoryForm.resetFields();
+      setCategorySearch('');
+      messageApi.success('Đã thêm danh mục và chọn vào mặt hàng.');
+    } catch (error) {
+      messageApi.error(errorMessage(error, 'Không thể thêm danh mục.'));
+    }
+  };
+
+  const categoryDropdown = (menu: ReactNode) => (
+    <>
+      {menu}
+      <Divider style={{ margin: '8px 0' }} />
+      <Button
+        type="link"
+        block
+        disabled={!categorySearch.trim()}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => {
+          categoryForm.setFieldValue('name', categorySearch.trim());
+          setCategoryModalOpen(true);
+        }}
+      >
+        <PlusOutlined /> Thêm danh mục{categorySearch.trim() ? ` “${categorySearch.trim()}”` : ''}
+      </Button>
+    </>
+  );
+
   useEffect(() => {
     if (!detail.data) {
       if (!isEdit) {
@@ -446,6 +555,7 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
           productType: 'QUANTITY',
           avatarType: 'COLOR',
           avatarColor: avatarColors[0] ?? '#facc15',
+          specialWindows: [],
           variants: [
             { name: 'Giá mặc định', salePriceVnd: 0, costPriceVnd: 0, promptPrice: false },
           ],
@@ -469,6 +579,7 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
       productType: product.productType,
       avatarType: product.avatarType,
       avatarColor: product.avatarColor || avatarColors[0] || '#facc15',
+      ...(product.mediaId ? { mediaId: product.mediaId } : {}),
       variants: product.variants.map((variant) => ({
         ...variant,
         promptPrice: Boolean(variant.promptPrice),
@@ -489,8 +600,57 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
       ...(product.pricing?.firstPeriod.enabled
         ? { firstPeriodPrice: product.pricing.firstPeriod.priceVnd }
         : {}),
+      specialWindows: (product.pricing?.specialWindows ?? []).map((window) => {
+        const item = {
+          name: window.name,
+          priceVnd: window.priceVnd,
+          allDay: window.startMinute === window.endMinute,
+          startTime: minuteToTime(window.startMinute),
+          endTime: minuteToTime(window.endMinute),
+          weekdays: maskToWeekdays(window.weekdaysMask),
+        };
+        return window.id ? { id: window.id, ...item } : item;
+      }),
     });
   }, [detail.data, form, isEdit]);
+
+  const uploadImage = async (file: File) => {
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+      messageApi.error('Chỉ hỗ trợ PNG, JPEG hoặc WebP.');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      messageApi.error('Ảnh không được vượt quá 5 MB.');
+      return;
+    }
+    setUploading(true);
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      const response = await fetch('/api/v1/media', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          Accept: 'application/json',
+          'X-CSRF-Token': authContext.data?.csrfToken ?? '',
+        },
+        body,
+      });
+      const payload = (await response.json()) as {
+        data?: { id: string };
+        error?: { message: string };
+      };
+      if (!response.ok || !payload.data)
+        throw new Error(payload.error?.message ?? 'Không thể tải ảnh.');
+      form.setFieldValue('mediaId', payload.data.id);
+      form.setFieldValue('avatarType', 'IMAGE');
+      messageApi.success('Đã tải ảnh đại diện.');
+    } catch (error) {
+      messageApi.error(errorMessage(error, 'Không thể tải ảnh đại diện.'));
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const save = async (values: ProductFormValues) => {
     setSaving(true);
@@ -503,16 +663,26 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
         unitId: values.productType === 'TIME' ? null : values.unitId || null,
         avatarType: values.avatarType,
         avatarColor: values.avatarType === 'COLOR' ? values.avatarColor : null,
+        mediaId: values.avatarType === 'IMAGE' ? values.mediaId || null : null,
         variants:
           values.productType === 'TIME'
             ? []
-            : (values.variants ?? []).map((variant) => ({
-                ...(variant.id ? { id: variant.id } : {}),
-                name: variant.name,
-                salePriceVnd: variant.promptPrice ? null : variant.salePriceVnd,
-                costPriceVnd: variant.costPriceVnd ?? 0,
-                promptPrice: Boolean(variant.promptPrice),
-              })),
+            : (values.variants ?? []).map((variant) => {
+                const item: {
+                  id?: string;
+                  name: string;
+                  salePriceVnd: number | null;
+                  costPriceVnd: number;
+                  promptPrice: boolean;
+                } = {
+                  name: variant.name,
+                  salePriceVnd: variant.promptPrice ? null : variant.salePriceVnd,
+                  costPriceVnd: variant.costPriceVnd ?? 0,
+                  promptPrice: Boolean(variant.promptPrice),
+                };
+                if (variant.id) item.id = variant.id;
+                return item;
+              }),
       };
       const saved = await jsonRequest<{ id: string }>(
         isEdit ? `/api/v1/owner/catalog/products/${productId}` : '/api/v1/owner/catalog/products',
@@ -524,7 +694,7 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
       );
       const savedId = saved.id || productId;
       if (values.productType === 'TIME' && savedId) {
-        const existingWindows = detail.data?.pricing?.specialWindows ?? [];
+        const windows = (values.specialWindows ?? []).filter((window) => window.name?.trim());
         await jsonRequest(
           '/api/v1/owner/catalog/pricing',
           {
@@ -546,7 +716,13 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
                   priceVnd: values.firstPeriodPrice,
                 }
               : { enabled: false },
-            specialWindows: existingWindows.map(({ id: _id, ...window }) => window),
+            specialWindows: windows.map((window) => ({
+              name: window.name.trim(),
+              priceVnd: window.priceVnd,
+              startMinute: window.allDay ? 0 : timeToMinute(window.startTime),
+              endMinute: window.allDay ? 0 : timeToMinute(window.endTime),
+              weekdaysMask: weekdaysToMask(window.weekdays),
+            })),
           },
           { method: 'PUT', headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' } },
         );
@@ -589,18 +765,23 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
       >
         <Row gutter={[20, 20]}>
           <Col xs={24} xl={16}>
-            <Card title="Thông tin chung">
+            <Card title="Thông tin chung" className="owner-catalog-form-card">
               <Form.Item
                 label="Tên mặt hàng"
                 name="name"
                 rules={[{ required: true, message: 'Vui lòng nhập tên mặt hàng.' }]}
               >
-                <Input placeholder="Ví dụ: Coca Cola, Trà đào, Giờ Pool" maxLength={160} />
+                <Input
+                  placeholder="Ví dụ: Coca Cola, Trà đào, Giờ Pool"
+                  maxLength={160}
+                  size="large"
+                />
               </Form.Item>
               <Row gutter={16}>
-                <Col xs={24} md={12}>
+                <Col xs={24} md={productType !== 'TIME' ? 8 : 12}>
                   <Form.Item label="Loại mặt hàng" name="productType" rules={[{ required: true }]}>
                     <Select
+                      size="large"
                       options={Object.entries(productTypeLabels).map(([value, label]) => ({
                         value,
                         label,
@@ -612,27 +793,52 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
                     />
                   </Form.Item>
                 </Col>
-                <Col xs={24} md={12}>
+                <Col xs={24} md={productType !== 'TIME' ? 8 : 12}>
                   <Form.Item label="Danh mục" name="categoryId">
                     <Select
+                      size="large"
                       allowClear
                       showSearch
                       optionFilterProp="label"
                       placeholder="Chọn danh mục"
+                      searchValue={categorySearch}
+                      onSearch={setCategorySearch}
+                      onChange={() => setCategorySearch('')}
+                      dropdownRender={categoryDropdown}
                       options={(categories.data ?? [])
                         .filter((category) => category.status !== 'DISABLED')
                         .map((category) => ({ value: category.id, label: category.name }))}
                     />
                   </Form.Item>
                 </Col>
+                {productType !== 'TIME' ? (
+                  <Col xs={24} md={8}>
+                    <Form.Item
+                      label="Đơn vị tính"
+                      name="unitId"
+                      rules={[{ required: true, message: 'Vui lòng chọn đơn vị.' }]}
+                    >
+                      <Select
+                        size="large"
+                        showSearch
+                        optionFilterProp="label"
+                        placeholder="Chọn đơn vị"
+                        options={(units.data ?? []).map((unit) => ({
+                          value: unit.id,
+                          label: unit.name,
+                        }))}
+                      />
+                    </Form.Item>
+                  </Col>
+                ) : null}
               </Row>
               {productType !== 'TIME' ? (
                 <Form.Item label="Mô tả" name="description">
                   <Input.TextArea
-                    rows={4}
+                    rows={3}
                     maxLength={1000}
                     showCount
-                    placeholder="Mô tả ngắn về mặt hàng"
+                    placeholder="Mô tả ngắn về mặt hàng (không bắt buộc)"
                   />
                 </Form.Item>
               ) : (
@@ -640,7 +846,7 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
                   type="info"
                   showIcon
                   title="Mặt hàng tính theo thời gian"
-                  description="Giá sẽ được tính theo thời gian sử dụng thực tế hoặc theo block."
+                  description="Giá sẽ được tính theo thời gian sử dụng thực tế hoặc theo block thời gian."
                 />
               )}
             </Card>
@@ -648,76 +854,84 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
               <Card title="Phiên bản giá" className="owner-catalog-form-card">
                 <Form.List name="variants">
                   {(fields, { add, remove }) => (
-                    <>
+                    <div className="owner-variant-list">
                       {fields.map((field, index) => (
                         <div className="owner-variant-row" key={field.key}>
-                          <Form.Item
-                            {...field}
-                            label={index === 0 ? 'Tên giá' : undefined}
-                            name={[field.name, 'name']}
-                            rules={[{ required: true, message: 'Nhập tên giá.' }]}
-                          >
-                            <Input
-                              placeholder={index === 0 ? 'Giá mặc định' : 'Size M, Size L...'}
-                            />
-                          </Form.Item>
-                          <Form.Item
-                            noStyle
-                            shouldUpdate={(previous, current) =>
-                              previous.variants?.[field.name]?.promptPrice !==
-                              current.variants?.[field.name]?.promptPrice
-                            }
-                          >
-                            {({ getFieldValue }) => {
-                              const promptPrice = Boolean(
-                                getFieldValue(['variants', field.name, 'promptPrice']),
-                              );
-                              return (
-                                <Form.Item
-                                  label={index === 0 ? 'Giá bán' : undefined}
-                                  name={[field.name, 'salePriceVnd']}
-                                  rules={
-                                    promptPrice
-                                      ? []
-                                      : [{ required: true, message: 'Nhập giá bán.' }]
-                                  }
-                                >
-                                  <InputNumber
-                                    min={0}
-                                    disabled={promptPrice}
-                                    className="owner-full-width"
-                                    addonAfter="đ"
-                                  />
-                                </Form.Item>
-                              );
-                            }}
-                          </Form.Item>
-                          <Form.Item
-                            label={index === 0 ? 'Giá vốn' : undefined}
-                            name={[field.name, 'costPriceVnd']}
-                          >
-                            <InputNumber min={0} className="owner-full-width" addonAfter="đ" />
-                          </Form.Item>
-                          <Form.Item
-                            label={index === 0 ? 'Nhập giá khi bán' : undefined}
-                            name={[field.name, 'promptPrice']}
-                            valuePropName="checked"
-                          >
-                            <Checkbox />
-                          </Form.Item>
+                          <div className="owner-variant-col owner-variant-col--name">
+                            <Form.Item
+                              {...field}
+                              label="Tên giá / Phiên bản"
+                              name={[field.name, 'name']}
+                              rules={[{ required: true, message: 'Nhập tên giá.' }]}
+                            >
+                              <Input
+                                placeholder={index === 0 ? 'Giá mặc định' : 'Size M, Size L...'}
+                              />
+                            </Form.Item>
+                          </div>
+                          <div className="owner-variant-col owner-variant-col--sale">
+                            <Form.Item
+                              noStyle
+                              shouldUpdate={(previous, current) =>
+                                previous.variants?.[field.name]?.promptPrice !==
+                                current.variants?.[field.name]?.promptPrice
+                              }
+                            >
+                              {({ getFieldValue }) => {
+                                const promptPrice = Boolean(
+                                  getFieldValue(['variants', field.name, 'promptPrice']),
+                                );
+                                return (
+                                  <Form.Item
+                                    label="Giá bán"
+                                    name={[field.name, 'salePriceVnd']}
+                                    rules={
+                                      promptPrice
+                                        ? []
+                                        : [{ required: true, message: 'Nhập giá bán.' }]
+                                    }
+                                  >
+                                    <InputNumber
+                                      min={0}
+                                      disabled={promptPrice}
+                                      className="owner-full-width"
+                                      addonAfter="đ"
+                                    />
+                                  </Form.Item>
+                                );
+                              }}
+                            </Form.Item>
+                          </div>
+                          <div className="owner-variant-col owner-variant-col--cost">
+                            <Form.Item label="Giá vốn" name={[field.name, 'costPriceVnd']}>
+                              <InputNumber min={0} className="owner-full-width" addonAfter="đ" />
+                            </Form.Item>
+                          </div>
+                          <div className="owner-variant-col owner-variant-col--prompt">
+                            <Form.Item
+                              label="Nhập khi bán"
+                              name={[field.name, 'promptPrice']}
+                              valuePropName="checked"
+                            >
+                              <Checkbox />
+                            </Form.Item>
+                          </div>
                           {fields.length > 1 ? (
-                            <Button
-                              type="text"
-                              danger
-                              icon={<DeleteOutlined />}
-                              aria-label="Xóa phiên bản giá"
-                              onClick={() => remove(field.name)}
-                            />
+                            <div className="owner-variant-col owner-variant-col--action">
+                              <Button
+                                type="text"
+                                danger
+                                icon={<DeleteOutlined />}
+                                aria-label="Xóa phiên bản giá"
+                                onClick={() => remove(field.name)}
+                              />
+                            </div>
                           ) : null}
                         </div>
                       ))}
                       <Button
-                        type="link"
+                        type="dashed"
+                        block
                         icon={<PlusOutlined />}
                         onClick={() =>
                           add({
@@ -728,26 +942,11 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
                           })
                         }
                       >
-                        Thêm giá
+                        Thêm phiên bản giá
                       </Button>
-                    </>
+                    </div>
                   )}
                 </Form.List>
-                <Form.Item
-                  label="Đơn vị"
-                  name="unitId"
-                  rules={[{ required: true, message: 'Vui lòng chọn đơn vị.' }]}
-                >
-                  <Select
-                    showSearch
-                    optionFilterProp="label"
-                    placeholder="Chọn đơn vị"
-                    options={(units.data ?? []).map((unit) => ({
-                      value: unit.id,
-                      label: unit.name,
-                    }))}
-                  />
-                </Form.Item>
               </Card>
             ) : (
               <Card title="Giá bán theo thời gian" className="owner-catalog-form-card">
@@ -847,17 +1046,171 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
                     </Col>
                   </Row>
                 ) : null}
-                <Alert
-                  type="info"
-                  showIcon
-                  title="Giờ đặc biệt sẽ được giữ lại khi sửa"
-                  description="Màn hình cấu hình giờ đặc biệt sẽ bổ sung ở ticket tiếp theo; dữ liệu hiện có không bị xóa khi bạn sửa giá cơ bản."
-                />
+                <div className="owner-setting-line owner-setting-line--section">
+                  <div>
+                    <Typography.Text strong>Giờ đặc biệt</Typography.Text>
+                    <Typography.Text type="secondary">
+                      Giá ưu tiên theo khung giờ và ngày trong tuần
+                    </Typography.Text>
+                  </div>
+                  <Form.List name="specialWindows">
+                    {(_fields, { add }) => (
+                      <Button
+                        type="link"
+                        icon={<PlusOutlined />}
+                        onClick={() =>
+                          add({
+                            name: 'Giờ tối',
+                            priceVnd: 70_000,
+                            allDay: false,
+                            startTime: '21:00',
+                            endTime: '23:45',
+                            weekdays: [0, 1, 2, 3, 4, 5, 6],
+                          })
+                        }
+                      >
+                        Thêm khung giờ
+                      </Button>
+                    )}
+                  </Form.List>
+                </div>
+                <Form.List name="specialWindows">
+                  {(fields, { remove }) =>
+                    fields.length ? (
+                      <div className="owner-special-window-list">
+                        {fields.map((field) => (
+                          <Card size="small" className="owner-special-window-card" key={field.key}>
+                            <div className="owner-special-window-heading">
+                              <Typography.Text strong>Khung giờ {field.name + 1}</Typography.Text>
+                              <Button
+                                type="text"
+                                danger
+                                icon={<DeleteOutlined />}
+                                onClick={() => remove(field.name)}
+                              >
+                                Xóa
+                              </Button>
+                            </div>
+                            <Row gutter={12}>
+                              <Col xs={24} md={8}>
+                                <Form.Item
+                                  {...field}
+                                  label="Tên"
+                                  name={[field.name, 'name']}
+                                  rules={[{ required: true, message: 'Nhập tên khung giờ.' }]}
+                                >
+                                  <Input placeholder="Giờ tối, Cuối tuần..." />
+                                </Form.Item>
+                              </Col>
+                              <Col xs={24} md={8}>
+                                <Form.Item
+                                  label="Giá bán"
+                                  name={[field.name, 'priceVnd']}
+                                  rules={[{ required: true, message: 'Nhập giá bán.' }]}
+                                >
+                                  <InputNumber
+                                    min={1}
+                                    className="owner-full-width"
+                                    addonAfter="đ"
+                                  />
+                                </Form.Item>
+                              </Col>
+                              <Col xs={24} md={8}>
+                                <Form.Item
+                                  label="Cả ngày"
+                                  name={[field.name, 'allDay']}
+                                  valuePropName="checked"
+                                >
+                                  <Switch />
+                                </Form.Item>
+                              </Col>
+                            </Row>
+                            <Form.Item
+                              noStyle
+                              shouldUpdate={(previous, current) =>
+                                previous.specialWindows?.[field.name]?.allDay !==
+                                current.specialWindows?.[field.name]?.allDay
+                              }
+                            >
+                              {({ getFieldValue }) =>
+                                getFieldValue(['specialWindows', field.name, 'allDay']) ? null : (
+                                  <Row gutter={12}>
+                                    <Col xs={24} md={12}>
+                                      <Form.Item
+                                        label="Từ"
+                                        name={[field.name, 'startTime']}
+                                        rules={[
+                                          {
+                                            required: true,
+                                            pattern: /^([01]\d|2[0-3]):[0-5]\d$/,
+                                            message: 'Nhập giờ HH:mm.',
+                                          },
+                                        ]}
+                                      >
+                                        <Input type="time" />
+                                      </Form.Item>
+                                    </Col>
+                                    <Col xs={24} md={12}>
+                                      <Form.Item
+                                        label="Đến"
+                                        name={[field.name, 'endTime']}
+                                        rules={[
+                                          {
+                                            required: true,
+                                            pattern: /^([01]\d|2[0-3]):[0-5]\d$/,
+                                            message: 'Nhập giờ HH:mm.',
+                                          },
+                                        ]}
+                                      >
+                                        <Input type="time" />
+                                      </Form.Item>
+                                    </Col>
+                                  </Row>
+                                )
+                              }
+                            </Form.Item>
+                            <Form.Item
+                              label="Ngày trong tuần"
+                              name={[field.name, 'weekdays']}
+                              rules={[
+                                {
+                                  required: true,
+                                  type: 'array',
+                                  min: 1,
+                                  message: 'Chọn ít nhất một ngày.',
+                                },
+                              ]}
+                            >
+                              <Checkbox.Group
+                                options={[
+                                  { label: 'T2', value: 0 },
+                                  { label: 'T3', value: 1 },
+                                  { label: 'T4', value: 2 },
+                                  { label: 'T5', value: 3 },
+                                  { label: 'T6', value: 4 },
+                                  { label: 'T7', value: 5 },
+                                  { label: 'CN', value: 6 },
+                                ]}
+                              />
+                            </Form.Item>
+                          </Card>
+                        ))}
+                      </div>
+                    ) : (
+                      <Alert
+                        type="info"
+                        showIcon
+                        title="Chưa có giờ đặc biệt"
+                        description="Giá bán thường sẽ được áp dụng cho tất cả ngày và khung giờ."
+                      />
+                    )
+                  }
+                </Form.List>
               </Card>
             )}
           </Col>
           <Col xs={24} xl={8}>
-            <Card title="Hình đại diện">
+            <Card title="Hình đại diện" className="owner-catalog-form-card">
               <Form.Item name="avatarType">
                 <Radio.Group
                   options={[
@@ -866,17 +1219,44 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
                   ]}
                 />
               </Form.Item>
-              <Form.Item noStyle shouldUpdate={(prev, next) => prev.avatarType !== next.avatarType}>
+              <Form.Item
+                noStyle
+                shouldUpdate={(prev, next) =>
+                  prev.avatarType !== next.avatarType || prev.mediaId !== next.mediaId
+                }
+              >
                 {({ getFieldValue }) =>
                   getFieldValue('avatarType') === 'IMAGE' ? (
-                    <Alert
-                      type="info"
-                      showIcon
-                      title="Upload hình ảnh sẽ bổ sung sau"
-                      description="Tạm thời dùng avatar màu để đảm bảo mặt hàng hiển thị rõ trên POS."
-                    />
+                    <div className="owner-image-upload-box">
+                      {getFieldValue('mediaId') ? (
+                        <img
+                          src={`/api/v1/media/${getFieldValue('mediaId')}`}
+                          alt="Ảnh đại diện mặt hàng"
+                          className="owner-product-image-preview"
+                        />
+                      ) : (
+                        <div className="owner-product-image-placeholder">Chưa có ảnh</div>
+                      )}
+                      <label className="ant-btn ant-btn-default owner-image-upload-button">
+                        <UploadOutlined /> {uploading ? 'Đang tải...' : 'Tải ảnh lên'}
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp"
+                          hidden
+                          disabled={uploading}
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            if (file) void uploadImage(file);
+                            event.currentTarget.value = '';
+                          }}
+                        />
+                      </label>
+                      <Typography.Text type="secondary">
+                        PNG, JPEG hoặc WebP, tối đa 5 MB.
+                      </Typography.Text>
+                    </div>
                   ) : (
-                    <Form.Item name="avatarColor">
+                    <Form.Item name="avatarColor" label="Chọn màu hiển thị">
                       <Radio.Group className="owner-avatar-grid">
                         {avatarColors.map((color) => (
                           <Radio.Button
@@ -894,23 +1274,11 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
                 }
               </Form.Item>
             </Card>
-            <Card title="Danh mục" className="owner-catalog-form-card">
-              <Form.Item name="categoryId" noStyle>
-                <Select
-                  allowClear
-                  showSearch
-                  optionFilterProp="label"
-                  placeholder="Chọn danh mục"
-                  options={(categories.data ?? [])
-                    .filter((category) => category.status !== 'DISABLED')
-                    .map((category) => ({ value: category.id, label: category.name }))}
-                />
-              </Form.Item>
-            </Card>
-            <Card className="owner-catalog-form-card">
-              <Typography.Text type="secondary">
-                Mã mặt hàng sẽ được hệ thống tự sinh khi lưu phiên bản giá.
-              </Typography.Text>
+            <Card title="Thông tin hệ thống" className="owner-catalog-form-card">
+              <Typography.Paragraph type="secondary" style={{ margin: 0 }}>
+                Mã mặt hàng (SKU) và các biến thể giá sẽ được hệ thống tự động sinh và quản lý theo
+                chuẩn POS.
+              </Typography.Paragraph>
             </Card>
           </Col>
         </Row>
@@ -921,6 +1289,24 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
           </Button>
         </div>
       </Form>
+      <Modal
+        title="Thêm danh mục nhanh"
+        open={categoryModalOpen}
+        onCancel={() => setCategoryModalOpen(false)}
+        okText="Thêm danh mục"
+        cancelText="Hủy"
+        onOk={() => categoryForm.submit()}
+      >
+        <Form form={categoryForm} layout="vertical" onFinish={createCategory}>
+          <Form.Item
+            name="name"
+            label="Tên danh mục"
+            rules={[{ required: true, message: 'Vui lòng nhập tên danh mục.' }]}
+          >
+            <Input maxLength={160} />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 }

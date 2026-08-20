@@ -52,6 +52,7 @@ import { OwnerStoreSettingsPage } from './OwnerStoreSettingsPage';
 import { OwnerAreaCreatePage, OwnerAreaSettingsPage } from './OwnerAreaSettingsPage';
 import { OwnerEmployeeFormPage, OwnerStaffListPage } from './OwnerStaffPages';
 import { OwnerRoleFormPage, OwnerRolesPage } from './OwnerRolePages';
+import { OwnerUnitDetailPage, OwnerUnitSettingsPage } from './OwnerUnitSettingsPage';
 import {
   OwnerCategoryDetailPage,
   OwnerCategoryListPage,
@@ -789,6 +790,10 @@ export function OwnerPortalPage() {
               <OwnerAreaSettingsPage />
             ) : location.pathname === '/owner/settings/areas/new' ? (
               <OwnerAreaCreatePage />
+            ) : location.pathname === '/owner/settings/units' ? (
+              <OwnerUnitSettingsPage />
+            ) : location.pathname.startsWith('/owner/settings/units/') ? (
+              <OwnerUnitDetailPage unitId={location.pathname.split('/').at(-1)!} />
             ) : location.pathname === '/owner/catalog/products' ? (
               <OwnerProductListPage />
             ) : location.pathname === '/owner/catalog/products/new' ? (

@@ -42,6 +42,14 @@ export interface AreaSummaryRow {
   occupiedTableCount: number;
 }
 
+export interface UnitProductRow {
+  id: string;
+  name: string;
+  productType: 'QUANTITY' | 'WEIGHT' | 'TIME';
+  status: 'ACTIVE' | 'DISABLED';
+  categoryName: string | null;
+}
+
 export interface ProductDetailRow {
   id: string;
   name: string;
@@ -54,6 +62,7 @@ export interface ProductDetailRow {
   unitName: string | null;
   avatarType: 'COLOR' | 'IMAGE';
   avatarColor: string | null;
+  mediaId: string | null;
 }
 
 export class CatalogRepository {
@@ -61,6 +70,87 @@ export class CatalogRepository {
 
   async listNamed(storeId: string, table: NamedTable) {
     return this.db.prepare(namedSelects[table]).bind(storeId).all();
+  }
+
+  async listUnits(storeId: string, input: { page: number; pageSize: number; search: string }) {
+    const search = input.search.trim();
+    const filter = `u.store_id = ? AND (? = '' OR LOWER(u.name) LIKE '%' || LOWER(?) || '%')`;
+    const total = await this.db
+      .prepare(`SELECT COUNT(*) AS total FROM units u WHERE ${filter}`)
+      .bind(storeId, search, search)
+      .first<{ total: number }>();
+    const items = await this.db
+      .prepare(
+        `SELECT u.id, u.name,
+                (SELECT COUNT(*) FROM products p
+                 WHERE p.store_id = u.store_id AND p.unit_id = u.id AND p.status = 'ACTIVE') AS productCount
+         FROM units u
+         WHERE ${filter}
+         ORDER BY u.name COLLATE NOCASE
+         LIMIT ? OFFSET ?`,
+      )
+      .bind(storeId, search, search, input.pageSize, (input.page - 1) * input.pageSize)
+      .all();
+    return { items: items.results, total: total?.total ?? 0 };
+  }
+
+  findUnit(storeId: string, unitId: string) {
+    return this.db
+      .prepare('SELECT id, name FROM units WHERE id = ? AND store_id = ? LIMIT 1')
+      .bind(unitId, storeId)
+      .first<{ id: string; name: string }>();
+  }
+
+  countProductsByUnit(storeId: string, unitId: string) {
+    return this.db
+      .prepare(
+        `SELECT COUNT(*) AS total FROM products
+         WHERE store_id = ? AND unit_id = ?`,
+      )
+      .bind(storeId, unitId)
+      .first<{ total: number }>();
+  }
+
+  listUnitProducts(
+    storeId: string,
+    unitId: string,
+    input: { page: number; pageSize: number; search: string },
+  ) {
+    const search = input.search.trim();
+    const filter = `p.store_id = ? AND p.unit_id = ? AND p.status = 'ACTIVE'
+      AND (? = '' OR LOWER(p.name) LIKE '%' || LOWER(?) || '%')`;
+    return Promise.all([
+      this.db
+        .prepare(`SELECT COUNT(*) AS total FROM products p WHERE ${filter}`)
+        .bind(storeId, unitId, search, search)
+        .first<{ total: number }>(),
+      this.db
+        .prepare(
+          `SELECT p.id, p.name, p.product_type AS productType, p.status,
+                  c.name AS categoryName
+           FROM products p
+           LEFT JOIN categories c ON c.id = p.category_id AND c.store_id = p.store_id
+           WHERE ${filter}
+           ORDER BY p.name COLLATE NOCASE
+           LIMIT ? OFFSET ?`,
+        )
+        .bind(storeId, unitId, search, search, input.pageSize, (input.page - 1) * input.pageSize)
+        .all<UnitProductRow>(),
+    ]).then(([total, items]) => ({ total: total?.total ?? 0, items: items.results }));
+  }
+
+  updateUnit(storeId: string, unitId: string, name: string, now: number) {
+    return this.db
+      .prepare('UPDATE units SET name = ?, updated_at = ? WHERE id = ? AND store_id = ?')
+      .bind(name, now, unitId, storeId)
+      .run();
+  }
+
+  deleteUnit(storeId: string, unitId: string) {
+    return this.db
+      .prepare('DELETE FROM units WHERE id = ? AND store_id = ?')
+      .bind(unitId, storeId)
+      .run();
   }
 
   async createNamed(input: {
@@ -302,6 +392,7 @@ export class CatalogRepository {
     productType: 'QUANTITY' | 'WEIGHT' | 'TIME';
     avatarType: 'COLOR' | 'IMAGE';
     avatarColor: string | null;
+    mediaId: string | null;
     variants: Array<{
       id: string;
       displayCode: string;
@@ -317,9 +408,8 @@ export class CatalogRepository {
         .prepare(
           `INSERT INTO products (
             id, store_id, category_id, unit_id, name, description,
-            product_type, status, created_at, updated_at
-            , avatar_type, avatar_color
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?)`,
+            product_type, status, avatar_type, avatar_color, media_id, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?)`,
         )
         .bind(
           input.id,
@@ -329,10 +419,11 @@ export class CatalogRepository {
           input.name,
           input.description,
           input.productType,
-          input.now,
-          input.now,
           input.avatarType,
           input.avatarColor,
+          input.mediaId,
+          input.now,
+          input.now,
         ),
       ...input.variants.map((variant) =>
         this.db
@@ -368,6 +459,7 @@ export class CatalogRepository {
     productType: 'QUANTITY' | 'WEIGHT' | 'TIME';
     avatarType: 'COLOR' | 'IMAGE';
     avatarColor: string | null;
+    mediaId: string | null;
     variants: Array<{
       id?: string;
       displayCode: string;
@@ -382,7 +474,7 @@ export class CatalogRepository {
       this.db
         .prepare(
           `UPDATE products SET category_id = ?, unit_id = ?, name = ?, description = ?,
-             product_type = ?, avatar_type = ?, avatar_color = ?, updated_at = ?
+             product_type = ?, avatar_type = ?, avatar_color = ?, media_id = ?, updated_at = ?
            WHERE id = ? AND store_id = ? AND is_system = 0`,
         )
         .bind(
@@ -393,6 +485,7 @@ export class CatalogRepository {
           input.productType,
           input.avatarType,
           input.avatarColor,
+          input.mediaId,
           input.now,
           input.id,
           input.storeId,
@@ -459,7 +552,8 @@ export class CatalogRepository {
         `SELECT p.id, p.name, p.description, p.product_type AS productType,
                 p.status, p.category_id AS categoryId, c.name AS categoryName,
                 p.unit_id AS unitId, u.name AS unitName,
-                p.avatar_type AS avatarType, p.avatar_color AS avatarColor
+                p.avatar_type AS avatarType, p.avatar_color AS avatarColor,
+                p.media_id AS mediaId
          FROM products p
          LEFT JOIN categories c ON c.id = p.category_id AND c.store_id = p.store_id
          LEFT JOIN units u ON u.id = p.unit_id AND u.store_id = p.store_id
@@ -485,7 +579,7 @@ export class CatalogRepository {
   getPricingConfig(storeId: string, productId: string) {
     return this.db
       .prepare(
-        `SELECT id, version, timezone, base_price AS basePriceVnd,
+        `SELECT id, version, base_price AS basePriceVnd,
                 base_duration_seconds AS baseDurationSeconds,
                 calculation_mode AS calculationMode, rounding_unit AS roundingUnitVnd,
                 first_period_enabled AS firstPeriodEnabled,
@@ -498,7 +592,6 @@ export class CatalogRepository {
       .first<{
         id: string;
         version: number;
-        timezone: string;
         basePriceVnd: number;
         baseDurationSeconds: number;
         calculationMode: 'ACTUAL_TIME' | 'TIME_BLOCK';
@@ -538,11 +631,29 @@ export class CatalogRepository {
     ]);
   }
 
+  restoreProduct(storeId: string, productId: string, now: number) {
+    return this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE products SET status = 'ACTIVE', updated_at = ?
+           WHERE id = ? AND store_id = ? AND is_system = 0`,
+        )
+        .bind(now, productId, storeId),
+      this.db
+        .prepare(
+          `UPDATE product_variants SET status = 'ACTIVE', updated_at = ?
+           WHERE product_id = ? AND store_id = ?`,
+        )
+        .bind(now, productId, storeId),
+    ]);
+  }
+
   listCategoryProducts(storeId: string, categoryId: string, search = '') {
     return this.db
       .prepare(
         `SELECT p.id, p.name, p.product_type AS productType, p.status,
                 p.avatar_type AS avatarType, p.avatar_color AS avatarColor,
+                p.media_id AS mediaId,
                 COUNT(pv.id) AS variantCount
          FROM products p
          LEFT JOIN product_variants pv ON pv.product_id = p.id AND pv.status = 'ACTIVE'
@@ -576,6 +687,16 @@ export class CatalogRepository {
     };
   }
 
+  findActiveMedia(storeId: string, mediaId: string) {
+    return this.db
+      .prepare(
+        `SELECT id FROM media_objects
+         WHERE id = ? AND store_id = ? AND status = 'ACTIVE' LIMIT 1`,
+      )
+      .bind(mediaId, storeId)
+      .first<{ id: string }>();
+  }
+
   async listProducts(storeId: string) {
     return this.db
       .prepare(
@@ -584,6 +705,7 @@ export class CatalogRepository {
           p.status, p.category_id AS categoryId, c.name AS categoryName,
           p.unit_id AS unitId, u.name AS unitName,
           p.avatar_type AS avatarType, p.avatar_color AS avatarColor,
+          p.media_id AS mediaId,
           COUNT(pv.id) AS variantCount,
           MIN(pv.sale_price) AS minSalePriceVnd,
           MAX(pv.sale_price) AS maxSalePriceVnd

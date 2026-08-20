@@ -2408,29 +2408,61 @@ body {
 }
 
 .owner-catalog-form {
-  margin-top: 20px;
+  margin-top: 16px;
+}
+
+.owner-catalog-form-card,
+.owner-catalog-form .ant-card {
+  margin-bottom: 20px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow:
+    0 1px 3px 0 rgb(0 0 0 / 0.04),
+    0 1px 2px -1px rgb(0 0 0 / 0.04);
+  background: #ffffff;
 }
 
 .owner-catalog-form .ant-card-head {
-  min-height: 52px;
+  min-height: 50px;
+  padding: 0 24px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.owner-catalog-form .ant-card-head-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1e293b;
 }
 
 .owner-catalog-form .ant-card-body {
-  padding: 22px;
+  padding: 24px;
+}
+
+.owner-variant-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .owner-variant-row {
   display: grid;
-  grid-template-columns: minmax(145px, 1.4fr) minmax(125px, 1fr) minmax(125px, 1fr) 112px 34px;
-  align-items: end;
-  gap: 10px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid #edf1f6;
-  margin-bottom: 12px;
+  grid-template-columns: minmax(140px, 1.4fr) minmax(130px, 1fr) minmax(130px, 1fr) 110px 36px;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  background: #f8fafc;
+  border: 1px solid #edf2f7;
+  border-radius: 8px;
 }
 
 .owner-variant-row .ant-form-item {
-  margin-bottom: 8px;
+  margin-bottom: 0;
+}
+
+.owner-variant-col--action {
+  padding-top: 30px;
+  display: flex;
+  justify-content: center;
 }
 
 .owner-full-width {
@@ -2443,6 +2475,55 @@ body {
   justify-content: space-between;
   padding: 14px 0;
   border-top: 1px solid #edf1f6;
+}
+
+.owner-setting-line--section {
+  margin-top: 18px;
+}
+
+.owner-special-window-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.owner-special-window-card {
+  background: #fbfcfe;
+  border-color: #e2e8f0;
+}
+
+.owner-special-window-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.owner-image-upload-box {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 10px;
+  text-align: center;
+}
+
+.owner-product-image-preview,
+.owner-product-image-placeholder {
+  display: grid;
+  width: 150px;
+  height: 150px;
+  place-items: center;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f3f5f8;
+  color: #8a94a6;
+  object-fit: cover;
+}
+
+.owner-image-upload-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .owner-setting-line .ant-typography {
@@ -2500,6 +2581,61 @@ body {
 
 .owner-category-name-input {
   margin-top: 20px;
+}
+
+.owner-unit-page {
+  width: min(1120px, 100%);
+  margin: 0 auto;
+  padding-bottom: 36px;
+}
+
+.owner-unit-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid #dfe6ef;
+  margin-bottom: 28px;
+}
+
+.owner-unit-heading h2.ant-typography {
+  margin: 0 0 5px;
+  color: #1b2a3f;
+}
+
+.owner-unit-card,
+.owner-unit-summary-card {
+  border: 1px solid #e3e9f1;
+  box-shadow: 0 8px 26px rgb(35 61 94 / 5%);
+}
+
+.owner-unit-search {
+  margin-bottom: 20px;
+}
+
+.owner-unit-name-link {
+  height: auto;
+  padding: 0;
+  color: var(--brand-primary);
+}
+
+.owner-unit-summary-card .ant-statistic-content {
+  overflow: hidden;
+  color: #1b2a3f;
+  font-size: 22px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.owner-unit-name-input {
+  margin-top: 20px;
+}
+
+.owner-unit-summary-note {
+  margin: 14px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .owner-mobile-drawer .ant-drawer-body {
@@ -2614,10 +2750,41 @@ body {
 
   .owner-variant-row {
     grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    padding: 12px;
   }
 
-  .owner-variant-row .ant-form-item:first-child {
+  .owner-variant-col--name {
     grid-column: 1 / -1;
+  }
+
+  .owner-variant-col--prompt {
+    display: flex;
+    align-items: center;
+    padding-top: 8px;
+  }
+
+  .owner-variant-col--action {
+    grid-column: 1 / -1;
+    padding-top: 6px;
+    display: flex;
+    justify-content: flex-end;
+    border-top: 1px dashed #e2e8f0;
+    margin-top: 4px;
+  }
+
+  .owner-unit-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .owner-unit-heading > .ant-btn,
+  .owner-unit-heading > .ant-space {
+    width: 100%;
+  }
+
+  .owner-unit-heading > .ant-space .ant-btn {
+    flex: 1;
   }
 
   .owner-filter-row {

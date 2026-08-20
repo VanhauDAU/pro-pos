@@ -25,6 +25,81 @@ export class CatalogService {
     return this.repository.listNamed(storeId, table);
   }
 
+  listUnits(storeId: string, input: { page?: number; pageSize?: number; search?: string }) {
+    const pageSize = Math.min(100, Math.max(1, input.pageSize ?? 10));
+    const page = Math.max(1, input.page ?? 1);
+    return this.repository
+      .listUnits(storeId, { page, pageSize, search: input.search ?? '' })
+      .then((result) => ({ ...result, page, pageSize }));
+  }
+
+  async getUnit(
+    storeId: string,
+    unitId: string,
+    input: { page?: number; pageSize?: number; search?: string } = {},
+  ) {
+    const unit = await this.repository.findUnit(storeId, unitId);
+    if (!unit) throw new AppError('UNIT_NOT_FOUND', 'Không tìm thấy đơn vị.', 404);
+    const pageSize = Math.min(100, Math.max(1, input.pageSize ?? 10));
+    const page = Math.max(1, input.page ?? 1);
+    const products = await this.repository.listUnitProducts(storeId, unitId, {
+      page,
+      pageSize,
+      search: input.search ?? '',
+    });
+    return { ...unit, products: { ...products, page, pageSize } };
+  }
+
+  async updateUnit(storeId: string, unitId: string, name: string, auditContext?: AuditContext) {
+    const before = await this.repository.findUnit(storeId, unitId);
+    if (!before) throw new AppError('UNIT_NOT_FOUND', 'Không tìm thấy đơn vị.', 404);
+    const now = Date.now();
+    try {
+      await this.repository.updateUnit(storeId, unitId, name.trim(), now);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
+        throw new AppError('UNIT_NAME_CONFLICT', 'Tên đơn vị đã tồn tại.', 409);
+      }
+      throw error;
+    }
+    if (auditContext) {
+      await new AuditRepository(this.env.DB).record({
+        storeId,
+        context: auditContext,
+        action: 'UNIT_UPDATED',
+        entityType: 'UNIT',
+        entityId: unitId,
+        before,
+        after: { name: name.trim() },
+        now,
+      });
+    }
+    return { id: unitId, updated: true };
+  }
+
+  async deleteUnit(storeId: string, unitId: string, auditContext?: AuditContext) {
+    const before = await this.repository.findUnit(storeId, unitId);
+    if (!before) throw new AppError('UNIT_NOT_FOUND', 'Không tìm thấy đơn vị.', 404);
+    const usage = await this.repository.countProductsByUnit(storeId, unitId);
+    if ((usage?.total ?? 0) > 0) {
+      throw new AppError('UNIT_IN_USE', 'Không thể xóa đơn vị đang được mặt hàng sử dụng.', 409);
+    }
+    await this.repository.deleteUnit(storeId, unitId);
+    if (auditContext) {
+      await new AuditRepository(this.env.DB).record({
+        storeId,
+        context: auditContext,
+        action: 'UNIT_DELETED',
+        entityType: 'UNIT',
+        entityId: unitId,
+        before,
+        after: { deleted: true },
+        now: Date.now(),
+      });
+    }
+    return { id: unitId, deleted: true };
+  }
+
   async createNamed(
     storeId: string,
     table: 'areas' | 'categories' | 'units',
@@ -32,13 +107,24 @@ export class CatalogService {
     auditContext?: AuditContext,
   ) {
     const id = crypto.randomUUID();
-    await this.repository.createNamed({
-      id,
-      storeId,
-      table,
-      name: name.trim(),
-      now: Date.now(),
-    });
+    try {
+      await this.repository.createNamed({
+        id,
+        storeId,
+        table,
+        name: name.trim(),
+        now: Date.now(),
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
+        throw new AppError(
+          table === 'units' ? 'UNIT_NAME_CONFLICT' : 'NAMED_RESOURCE_CONFLICT',
+          table === 'units' ? 'Tên đơn vị đã tồn tại.' : 'Tên đã tồn tại.',
+          409,
+        );
+      }
+      throw error;
+    }
     if (auditContext) {
       await new AuditRepository(this.env.DB).record({
         storeId,
@@ -312,6 +398,9 @@ export class CatalogService {
     if (!references.unitValid) {
       throw new AppError('UNIT_NOT_FOUND', 'Không tìm thấy đơn vị tính.', 404);
     }
+    if (input.mediaId && !(await this.repository.findActiveMedia(storeId, input.mediaId))) {
+      throw new AppError('MEDIA_NOT_FOUND', 'Không tìm thấy ảnh mặt hàng.', 404);
+    }
     const id = crypto.randomUUID();
     const now = Date.now();
     await this.repository.createProduct({
@@ -324,6 +413,7 @@ export class CatalogService {
       productType: input.productType,
       avatarType: input.avatarType ?? 'COLOR',
       avatarColor: input.avatarColor ?? null,
+      mediaId: input.mediaId ?? null,
       variants: (input.variants ?? []).map((variant) => ({
         id: crypto.randomUUID(),
         displayCode: `MH${crypto.randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase()}`,
@@ -407,6 +497,9 @@ export class CatalogService {
     if (!references.unitValid) {
       throw new AppError('UNIT_NOT_FOUND', 'Không tìm thấy đơn vị tính.', 404);
     }
+    if (input.mediaId && !(await this.repository.findActiveMedia(storeId, input.mediaId))) {
+      throw new AppError('MEDIA_NOT_FOUND', 'Không tìm thấy ảnh mặt hàng.', 404);
+    }
     const existingVariants = await this.repository.listProductVariants(storeId, productId);
     const variantById = new Map(existingVariants.results.map((variant) => [variant.id, variant]));
     const now = Date.now();
@@ -420,17 +513,27 @@ export class CatalogService {
       productType: input.productType,
       avatarType: input.avatarType ?? 'COLOR',
       avatarColor: input.avatarColor ?? null,
+      mediaId: input.mediaId ?? null,
       variants: (input.variants ?? []).map((variant) => {
-        const value = {
-          displayCode: variant.id
-            ? String(variantById.get(variant.id)?.displayCode ?? '')
-            : `MH${crypto.randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase()}`,
+        const displayCode = variant.id
+          ? String(variantById.get(variant.id)?.displayCode ?? '')
+          : `MH${crypto.randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase()}`;
+        const item: {
+          id?: string;
+          displayCode: string;
+          name: string;
+          salePriceVnd: number | null;
+          costPriceVnd: number;
+          promptPrice: boolean;
+        } = {
+          displayCode,
           name: variant.name.trim(),
           salePriceVnd: variant.salePriceVnd,
           costPriceVnd: variant.costPriceVnd ?? 0,
           promptPrice: variant.promptPrice ?? false,
         };
-        return variant.id ? { id: variant.id, ...value } : value;
+        if (variant.id) item.id = variant.id;
+        return item;
       }),
       now,
     });
@@ -467,6 +570,26 @@ export class CatalogService {
       });
     }
     return { id: productId, deleted: true };
+  }
+
+  async restoreProduct(storeId: string, productId: string, auditContext?: AuditContext) {
+    const before = await this.repository.findProduct(storeId, productId);
+    if (!before) throw new AppError('PRODUCT_NOT_FOUND', 'Không tìm thấy mặt hàng.', 404);
+    const now = Date.now();
+    await this.repository.restoreProduct(storeId, productId, now);
+    if (auditContext) {
+      await new AuditRepository(this.env.DB).record({
+        storeId,
+        context: auditContext,
+        action: 'PRODUCT_RESTORED',
+        entityType: 'PRODUCT',
+        entityId: productId,
+        before,
+        after: { status: 'ACTIVE' },
+        now,
+      });
+    }
+    return { id: productId, restored: true };
   }
 
   listCategoryProducts(storeId: string, categoryId: string, search?: string) {

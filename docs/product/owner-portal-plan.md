@@ -31,7 +31,8 @@ và bảng giá giờ.
 
 - `GET/PUT /api/v1/owner/store/settings`, `GET /audit-logs`.
 - `GET/POST /api/v1/owner/staff`, status và reset PIN.
-- List/create areas, categories, units, products và tables.
+- List/create areas, categories, units, products và tables; unit settings có pagination, usage count,
+  edit/delete an toàn và danh sách mặt hàng đang sử dụng.
 - Upsert pricing config.
 
 Cần hoàn thiện trong giai đoạn:
@@ -50,8 +51,11 @@ Cần hoàn thiện trong giai đoạn:
 3. **PRO-012 — Staff, roles và permissions**: employee lifecycle, vai trò, quyền và reset PIN.
 4. **PRO-013 — Catalog items và categories MVP**: danh sách/tìm kiếm, form thêm/sửa mặt hàng,
    phiên bản giá số lượng/trọng lượng, giá cơ bản theo thời gian và danh mục.
-5. **PRO-014 — POS sales portal**: table board, order workspace, quote và checkout.
-6. **PRO-015 — Owner E2E và staging hardening**: cross-store/RBAC, audit, responsive E2E, smoke.
+5. **PRO-014 — Unit settings**: danh sách đơn vị có phân trang, thêm/sửa, usage count, danh sách
+   mặt hàng sử dụng và xóa có bảo vệ.
+6. **PRO-015 — Product pricing completion**: giờ đặc biệt, overlap validation và avatar media.
+7. **PRO-016 — POS sales portal**: table board, order workspace, quote và checkout.
+8. **PRO-017 — Owner E2E và staging hardening**: cross-store/RBAC, audit, responsive E2E, smoke.
 
 Mỗi ticket giữ migration additive/forward-only và cập nhật OpenAPI, screen registry, tests,
 changelog cùng PR.

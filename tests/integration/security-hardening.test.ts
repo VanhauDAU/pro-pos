@@ -425,11 +425,25 @@ describe('PRO-010A API security and tenant boundaries', () => {
     });
     expect(settings.status).toBe(404);
 
+    const invalidPhoneSettings = await SELF.fetch(`${ORIGIN}/api/v1/owner/store/settings`, {
+      method: 'PUT',
+      headers: ownerHeaders(storeA),
+      body: JSON.stringify({
+        name: 'Security Store A',
+        phone: '0912abc456',
+        address: 'Số 1 đường Test, Đà Nẵng',
+        businessDayCutoffMinutes: 0,
+      }),
+    });
+    expect(invalidPhoneSettings.status).toBe(422);
+    expect(await errorCode(invalidPhoneSettings)).toBe('VALIDATION_ERROR');
+
     const updatedSettings = await SELF.fetch(`${ORIGIN}/api/v1/owner/store/settings`, {
       method: 'PUT',
       headers: ownerHeaders(storeA),
       body: JSON.stringify({
         name: 'Security Store A',
+        phone: '0912345678',
         address: 'Số 1 đường Test, Đà Nẵng',
         businessDayCutoffMinutes: 0,
         provinceCode: 48,
@@ -440,7 +454,7 @@ describe('PRO-010A API security and tenant boundaries', () => {
     });
     expect(updatedSettings.status).toBe(200);
     const storedLocation = await env.DB.prepare(
-      `SELECT province_code AS provinceCode, province_name AS provinceName,
+      `SELECT phone, province_code AS provinceCode, province_name AS provinceName,
               ward_code AS wardCode, ward_name AS wardName
        FROM store_settings WHERE store_id = ?`,
     )
@@ -452,6 +466,7 @@ describe('PRO-010A API security and tenant boundaries', () => {
         wardName: string;
       }>();
     expect(storedLocation).toMatchObject({
+      phone: '0912345678',
       provinceCode: 48,
       provinceName: 'Thành phố Đà Nẵng',
       wardCode: 12345,

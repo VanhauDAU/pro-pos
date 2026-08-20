@@ -1,0 +1,95 @@
+import { env } from 'cloudflare:workers';
+import { beforeAll, describe, expect, it } from 'vitest';
+
+import { CatalogService } from '@server/services/catalog-service';
+import { PlatformService } from '@server/services/platform-service';
+
+describe('Owner catalog management', () => {
+  let storeId: string;
+  let catalog: CatalogService;
+  let categoryId: string;
+  let unitId: string;
+  let productId: string;
+
+  beforeAll(async () => {
+    const platform = new PlatformService(env);
+    const store = await platform.createStore({
+      name: 'Catalog Management Store',
+      ownerDisplayName: 'Catalog Owner',
+      ownerEmail: 'catalog.owner@example.com',
+    });
+    storeId = store.storeId;
+    catalog = new CatalogService(env);
+    ({ id: categoryId } = await catalog.createNamed(storeId, 'categories', 'Đồ uống'));
+    ({ id: unitId } = await catalog.createNamed(storeId, 'units', 'Ly'));
+  });
+
+  it('creates and reads a quantity product with variants and avatar metadata', async () => {
+    ({ id: productId } = await catalog.createProduct(storeId, {
+      name: 'Trà đào',
+      description: 'Trà đào cam sả',
+      productType: 'QUANTITY',
+      categoryId,
+      unitId,
+      avatarType: 'COLOR',
+      avatarColor: '#facc15',
+      variants: [
+        {
+          name: 'Giá mặc định',
+          salePriceVnd: 35_000,
+          costPriceVnd: 12_000,
+          promptPrice: false,
+        },
+      ],
+    }));
+
+    const product = await catalog.getProduct(storeId, productId);
+    expect(product).toMatchObject({
+      id: productId,
+      name: 'Trà đào',
+      productType: 'QUANTITY',
+      categoryId,
+      unitId,
+      avatarColor: '#facc15',
+    });
+    expect(product.variants).toHaveLength(1);
+    expect(product.variants[0]).toMatchObject({ name: 'Giá mặc định', salePriceVnd: 35_000 });
+  });
+
+  it('updates a product, lists it by category, and blocks deleting a used category', async () => {
+    await catalog.updateProduct(storeId, productId, {
+      name: 'Trà đào cam sả',
+      description: null,
+      productType: 'QUANTITY',
+      categoryId,
+      unitId,
+      avatarType: 'COLOR',
+      avatarColor: '#38bdf8',
+      variants: [
+        {
+          name: 'Size M',
+          salePriceVnd: 40_000,
+          costPriceVnd: 15_000,
+          promptPrice: false,
+        },
+      ],
+    });
+
+    const listed = await catalog.listCategoryProducts(storeId, categoryId, 'cam sả');
+    expect(listed.results).toEqual([
+      expect.objectContaining({ id: productId, name: 'Trà đào cam sả', variantCount: 1 }),
+    ]);
+    await expect(catalog.deleteCategory(storeId, categoryId)).rejects.toMatchObject({
+      code: 'CATEGORY_HAS_PRODUCTS',
+    });
+  });
+
+  it('soft-deletes a product and allows deleting an empty category', async () => {
+    await catalog.deleteProduct(storeId, productId);
+    const product = await catalog.getProduct(storeId, productId);
+    expect(product.status).toBe('DISABLED');
+    await expect(catalog.deleteCategory(storeId, categoryId)).resolves.toMatchObject({
+      deleted: true,
+    });
+  });
+});

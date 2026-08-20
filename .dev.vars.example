@@ -1,0 +1,5 @@
+# Copy to .dev.vars for local development. Never commit real values.
+AUTH_PEPPER=replace-with-random-secret
+DEVICE_TOKEN_PEPPER=replace-with-random-secret
+SESSION_TOKEN_PEPPER=replace-with-random-secret
+SYSTEM_BOOTSTRAP_SECRET=replace-with-random-secret

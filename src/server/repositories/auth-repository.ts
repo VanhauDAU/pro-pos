@@ -1,0 +1,460 @@
+export interface PasswordIdentityRow {
+  user_id: string;
+  username: string;
+  display_name: string;
+  user_status: 'ACTIVE' | 'DISABLED';
+  store_id: string;
+  store_name: string;
+  store_status: 'ACTIVE' | 'LOCKED';
+  role_code: string;
+  algorithm: 'PBKDF2-HMAC-SHA256';
+  work_factor: number;
+  salt: string;
+  digest: string;
+  pepper_version: number;
+  credential_version: number;
+}
+
+export interface PinIdentityRow {
+  user_id: string;
+  display_name: string;
+  user_status: 'ACTIVE' | 'DISABLED';
+  store_id: string;
+  membership_status: 'ACTIVE' | 'DISABLED';
+  algorithm: 'PBKDF2-HMAC-SHA256';
+  work_factor: number;
+  salt: string;
+  digest: string;
+  pepper_version: number;
+  credential_version: number;
+}
+
+export interface DeviceContextRow {
+  device_id: string;
+  device_name: string;
+  device_status: 'ACTIVE' | 'REVOKED';
+  store_id: string;
+  store_name: string;
+  store_status: 'ACTIVE' | 'LOCKED';
+  credential_version: number;
+}
+
+export interface SessionContextRow {
+  session_id: string;
+  user_id: string;
+  display_name: string;
+  user_status: 'ACTIVE' | 'DISABLED';
+  store_id: string | null;
+  session_device_id: string | null;
+  session_kind: 'SUPER_ADMIN' | 'OWNER' | 'EMPLOYEE';
+  session_status: 'ACTIVE' | 'EXPIRED' | 'REVOKED';
+  expires_at: number;
+  idle_expires_at: number;
+  last_seen_at: number;
+}
+
+export interface ActivationGrantRow {
+  id: string;
+  store_id: string;
+  owner_user_id: string;
+  status: 'PENDING' | 'CONSUMED' | 'EXPIRED' | 'CANCELLED';
+  idempotency_key: string | null;
+  device_name: string | null;
+  expires_at: number;
+  owner_status: 'ACTIVE' | 'DISABLED';
+  store_status: 'ACTIVE' | 'LOCKED';
+}
+
+export class AuthRepository {
+  constructor(private readonly db: D1Database) {}
+
+  findOwnerByUsername(username: string) {
+    return this.db
+      .prepare(
+        `SELECT
+          u.id AS user_id, u.username, u.display_name, u.status AS user_status,
+          s.id AS store_id, s.name AS store_name, s.status AS store_status,
+          r.code AS role_code, pc.algorithm, pc.work_factor, pc.salt, pc.digest,
+          pc.pepper_version, pc.credential_version
+        FROM users u
+        JOIN store_memberships sm ON sm.user_id = u.id AND sm.status = 'ACTIVE'
+        JOIN stores s ON s.id = sm.store_id
+        JOIN roles r ON r.id = sm.role_id AND r.store_id = sm.store_id
+        JOIN password_credentials pc ON pc.user_id = u.id
+        WHERE u.username = ? COLLATE NOCASE AND r.code = 'OWNER'
+        LIMIT 1`,
+      )
+      .bind(username)
+      .first<PasswordIdentityRow>();
+  }
+
+  findOwnerCredentialById(userId: string, storeId: string) {
+    return this.db
+      .prepare(
+        `SELECT
+          u.id AS user_id, u.username, u.display_name, u.status AS user_status,
+          s.id AS store_id, s.name AS store_name, s.status AS store_status,
+          r.code AS role_code, pc.algorithm, pc.work_factor, pc.salt, pc.digest,
+          pc.pepper_version, pc.credential_version
+        FROM users u
+        JOIN store_memberships sm ON sm.user_id = u.id AND sm.store_id = ? AND sm.status = 'ACTIVE'
+        JOIN stores s ON s.id = sm.store_id
+        JOIN roles r ON r.id = sm.role_id AND r.store_id = sm.store_id
+        JOIN password_credentials pc ON pc.user_id = u.id
+        WHERE u.id = ? AND r.code = 'OWNER'
+        LIMIT 1`,
+      )
+      .bind(storeId, userId)
+      .first<PasswordIdentityRow>();
+  }
+
+  async updatePasswordCredential(input: {
+    userId: string;
+    salt: string;
+    digest: string;
+    workFactor: number;
+    now: number;
+  }) {
+    await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE password_credentials
+           SET salt = ?, digest = ?, work_factor = ?,
+               credential_version = credential_version + 1, updated_at = ?
+           WHERE user_id = ?`,
+        )
+        .bind(input.salt, input.digest, input.workFactor, input.now, input.userId),
+      this.db
+        .prepare('UPDATE users SET must_change_password = 0, updated_at = ? WHERE id = ?')
+        .bind(input.now, input.userId),
+      this.db
+        .prepare(
+          `UPDATE auth_sessions SET status = 'REVOKED', revoked_at = ?
+           WHERE user_id = ? AND status = 'ACTIVE'`,
+        )
+        .bind(input.now, input.userId),
+    ]);
+  }
+
+  findEmployeeByIdAndStore(userId: string, storeId: string) {
+    return this.db
+      .prepare(
+        `SELECT
+          u.id AS user_id, u.display_name, u.status AS user_status,
+          sm.store_id, sm.status AS membership_status,
+          pc.algorithm, pc.work_factor, pc.salt, pc.digest,
+          pc.pepper_version, pc.credential_version
+        FROM users u
+        JOIN store_memberships sm ON sm.user_id = u.id AND sm.store_id = ?
+        JOIN pin_credentials pc ON pc.user_id = u.id AND pc.store_id = sm.store_id
+        WHERE u.id = ?
+        LIMIT 1`,
+      )
+      .bind(storeId, userId)
+      .first<PinIdentityRow>();
+  }
+
+  async createSession(input: {
+    id: string;
+    tokenHash: string;
+    userId: string;
+    storeId: string | null;
+    deviceId: string | null;
+    kind: 'SUPER_ADMIN' | 'OWNER' | 'EMPLOYEE';
+    credentialVersion: number;
+    expiresAt: number;
+    idleExpiresAt: number;
+    now: number;
+  }) {
+    await this.db
+      .prepare(
+        `INSERT INTO auth_sessions (
+          id, token_hash, user_id, store_id, device_id, session_kind, status,
+          credential_version, expires_at, idle_expires_at, last_seen_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        input.id,
+        input.tokenHash,
+        input.userId,
+        input.storeId,
+        input.deviceId,
+        input.kind,
+        input.credentialVersion,
+        input.expiresAt,
+        input.idleExpiresAt,
+        input.now,
+        input.now,
+      )
+      .run();
+  }
+
+  findSessionByHash(tokenHash: string) {
+    return this.db
+      .prepare(
+        `SELECT
+          s.id AS session_id, s.user_id, u.display_name, u.status AS user_status,
+          s.store_id, s.device_id AS session_device_id, s.session_kind,
+          s.status AS session_status, s.expires_at, s.idle_expires_at, s.last_seen_at
+        FROM auth_sessions s
+        JOIN users u ON u.id = s.user_id
+        WHERE s.token_hash = ?
+        LIMIT 1`,
+      )
+      .bind(tokenHash)
+      .first<SessionContextRow>();
+  }
+
+  async touchSession(sessionId: string, lastSeenAt: number, idleExpiresAt: number) {
+    await this.db
+      .prepare(
+        `UPDATE auth_sessions
+         SET last_seen_at = ?, idle_expires_at = ?
+         WHERE id = ? AND status = 'ACTIVE'`,
+      )
+      .bind(lastSeenAt, idleExpiresAt, sessionId)
+      .run();
+  }
+
+  async revokeSessionByHash(tokenHash: string, now: number) {
+    await this.db
+      .prepare(
+        `UPDATE auth_sessions
+         SET status = 'REVOKED', revoked_at = ?
+         WHERE token_hash = ? AND status = 'ACTIVE'`,
+      )
+      .bind(now, tokenHash)
+      .run();
+  }
+
+  findDeviceBySecretHash(secretHash: string) {
+    return this.db
+      .prepare(
+        `SELECT
+          d.id AS device_id, d.name AS device_name, d.status AS device_status,
+          d.store_id, s.name AS store_name, s.status AS store_status,
+          dc.credential_version
+        FROM device_credentials dc
+        JOIN devices d ON d.id = dc.device_id
+        JOIN stores s ON s.id = d.store_id
+        WHERE dc.secret_hash = ? AND dc.expires_at > ?
+        LIMIT 1`,
+      )
+      .bind(secretHash, Date.now())
+      .first<DeviceContextRow>();
+  }
+
+  async createActivationGrant(input: {
+    id: string;
+    tokenHash: string;
+    storeId: string;
+    ownerUserId: string;
+    expiresAt: number;
+    now: number;
+  }) {
+    await this.db
+      .prepare(
+        `INSERT INTO activation_grants (
+          id, token_hash, store_id, owner_user_id, scope, status, expires_at, created_at
+        ) VALUES (?, ?, ?, ?, 'ACTIVATE_DEVICE', 'PENDING', ?, ?)`,
+      )
+      .bind(input.id, input.tokenHash, input.storeId, input.ownerUserId, input.expiresAt, input.now)
+      .run();
+  }
+
+  findActivationGrantByHash(tokenHash: string) {
+    return this.db
+      .prepare(
+        `SELECT
+          ag.id, ag.store_id, ag.owner_user_id, ag.status, ag.idempotency_key,
+          ag.device_name, ag.expires_at, u.status AS owner_status, s.status AS store_status
+        FROM activation_grants ag
+        JOIN users u ON u.id = ag.owner_user_id
+        JOIN stores s ON s.id = ag.store_id
+        WHERE ag.token_hash = ?
+        LIMIT 1`,
+      )
+      .bind(tokenHash)
+      .first<ActivationGrantRow>();
+  }
+
+  async confirmActivation(input: {
+    grantId: string;
+    idempotencyKey: string;
+    deviceName: string;
+    secretHash: string;
+    expiresAt: number;
+    now: number;
+  }) {
+    await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE activation_grants
+           SET status = 'CONSUMED', consumed_at = ?, idempotency_key = ?, device_name = ?
+           WHERE id = ? AND status = 'PENDING' AND expires_at > ?`,
+        )
+        .bind(input.now, input.idempotencyKey, input.deviceName, input.grantId, input.now),
+      this.db
+        .prepare(
+          `INSERT OR IGNORE INTO devices (
+            id, store_id, name, status, activated_by, activated_at,
+            created_at, updated_at
+          )
+          SELECT id, store_id, device_name, 'ACTIVE', owner_user_id, ?, ?, ?
+          FROM activation_grants
+          WHERE id = ? AND status = 'CONSUMED' AND idempotency_key = ?`,
+        )
+        .bind(input.now, input.now, input.now, input.grantId, input.idempotencyKey),
+      this.db
+        .prepare(
+          `INSERT OR IGNORE INTO device_credentials (
+            device_id, secret_hash, pepper_version, credential_version,
+            issued_at, expires_at
+          )
+          SELECT id, ?, 1, 1, ?, ?
+          FROM activation_grants
+          WHERE id = ? AND status = 'CONSUMED' AND idempotency_key = ?`,
+        )
+        .bind(input.secretHash, input.now, input.expiresAt, input.grantId, input.idempotencyKey),
+    ]);
+  }
+
+  async markGrantExpired(grantId: string) {
+    await this.db
+      .prepare(
+        `UPDATE activation_grants
+         SET status = 'EXPIRED'
+         WHERE id = ? AND status = 'PENDING'`,
+      )
+      .bind(grantId)
+      .run();
+  }
+
+  async cancelGrantByHash(tokenHash: string) {
+    await this.db
+      .prepare(
+        `UPDATE activation_grants SET status = 'CANCELLED'
+         WHERE token_hash = ? AND status = 'PENDING'`,
+      )
+      .bind(tokenHash)
+      .run();
+  }
+
+  findDeviceById(storeId: string, deviceId: string) {
+    return this.db
+      .prepare(
+        `SELECT id, store_id AS storeId, name, status
+         FROM devices WHERE id = ? AND store_id = ? LIMIT 1`,
+      )
+      .bind(deviceId, storeId)
+      .first<{ id: string; storeId: string; name: string; status: 'ACTIVE' | 'REVOKED' }>();
+  }
+
+  async listDevices(storeId: string) {
+    return this.db
+      .prepare(
+        `SELECT id, name, status, activated_at AS activatedAt,
+                revoked_at AS revokedAt, last_seen_at AS lastSeenAt
+         FROM devices WHERE store_id = ? ORDER BY created_at DESC`,
+      )
+      .bind(storeId)
+      .all();
+  }
+
+  async reissueDeviceCredential(input: {
+    storeId: string;
+    deviceId: string;
+    secretHash: string;
+    now: number;
+    expiresAt: number;
+  }) {
+    await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE devices SET status = 'ACTIVE', revoked_at = NULL, updated_at = ?
+           WHERE id = ? AND store_id = ?`,
+        )
+        .bind(input.now, input.deviceId, input.storeId),
+      this.db
+        .prepare(
+          `UPDATE device_credentials
+           SET secret_hash = ?, credential_version = credential_version + 1,
+               issued_at = ?, expires_at = ?, revoked_at = NULL
+           WHERE device_id = ?`,
+        )
+        .bind(input.secretHash, input.now, input.expiresAt, input.deviceId),
+      this.db
+        .prepare(
+          `UPDATE auth_sessions SET status = 'REVOKED', revoked_at = ?
+           WHERE device_id = ? AND session_kind = 'EMPLOYEE' AND status = 'ACTIVE'`,
+        )
+        .bind(input.now, input.deviceId),
+    ]);
+  }
+
+  async revokeDevice(storeId: string, deviceId: string, now: number) {
+    return this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE devices SET status = 'REVOKED', revoked_at = ?, updated_at = ?
+           WHERE id = ? AND store_id = ? AND status = 'ACTIVE'`,
+        )
+        .bind(now, now, deviceId, storeId),
+      this.db
+        .prepare(
+          `UPDATE device_credentials SET revoked_at = ? WHERE device_id = ? AND revoked_at IS NULL`,
+        )
+        .bind(now, deviceId),
+      this.db
+        .prepare(
+          `UPDATE auth_sessions SET status = 'REVOKED', revoked_at = ?
+           WHERE device_id = ? AND session_kind = 'EMPLOYEE' AND status = 'ACTIVE'`,
+        )
+        .bind(now, deviceId),
+    ]);
+  }
+
+  async findAttempt(scope: string, subjectKey: string) {
+    return this.db
+      .prepare(
+        `SELECT failure_count, window_started_at, locked_until
+         FROM login_attempts WHERE scope = ? AND subject_key = ?`,
+      )
+      .bind(scope, subjectKey)
+      .first<{ failure_count: number; window_started_at: number; locked_until: number | null }>();
+  }
+
+  async recordFailure(scope: string, subjectKey: string, now: number) {
+    const existing = await this.findAttempt(scope, subjectKey);
+    const windowExpired = !existing || now - existing.window_started_at > 10 * 60_000;
+    const failureCount = windowExpired ? 1 : existing.failure_count + 1;
+    const lockedUntil = failureCount >= 5 ? now + 15 * 60_000 : null;
+    await this.db
+      .prepare(
+        `INSERT INTO login_attempts (
+          scope, subject_key, failure_count, window_started_at, locked_until, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(scope, subject_key) DO UPDATE SET
+          failure_count = excluded.failure_count,
+          window_started_at = excluded.window_started_at,
+          locked_until = excluded.locked_until,
+          updated_at = excluded.updated_at`,
+      )
+      .bind(
+        scope,
+        subjectKey,
+        failureCount,
+        windowExpired ? now : existing.window_started_at,
+        lockedUntil,
+        now,
+      )
+      .run();
+  }
+
+  async clearFailures(scope: string, subjectKey: string) {
+    await this.db
+      .prepare('DELETE FROM login_attempts WHERE scope = ? AND subject_key = ?')
+      .bind(scope, subjectKey)
+      .run();
+  }
+}

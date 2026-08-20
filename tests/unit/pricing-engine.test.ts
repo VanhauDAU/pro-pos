@@ -1,0 +1,189 @@
+import { describe, expect, it } from 'vitest';
+
+import { calculateTimePrice } from '@domain/pricing/engine';
+import type { PricingConfigSnapshot } from '@domain/pricing/types';
+import { PricingConfigurationError } from '@domain/pricing/validation';
+
+const HOUR = 60 * 60 * 1000;
+const MINUTE = 60 * 1000;
+
+function config(overrides: Partial<PricingConfigSnapshot> = {}): PricingConfigSnapshot {
+  return {
+    version: 1,
+    timezone: 'Asia/Ho_Chi_Minh',
+    basePriceVnd: 60_000,
+    baseDurationSeconds: 3600,
+    calculationMode: 'ACTUAL_TIME',
+    roundingUnitVnd: 0,
+    firstPeriod: { enabled: false },
+    specialWindows: [],
+    ...overrides,
+  };
+}
+
+describe('calculateTimePrice', () => {
+  const start = Date.parse('2026-08-17T13:00:00.000Z'); // 20:00 in Ho Chi Minh City.
+
+  it.each([
+    [1, 1_000],
+    [59, 59_000],
+    [60, 60_000],
+    [61, 61_000],
+  ])('charges ACTUAL_TIME for %i minutes', (minutes, expected) => {
+    const result = calculateTimePrice({
+      startedAtMs: start,
+      endedAtMs: start + minutes * MINUTE,
+      config: config(),
+    });
+    expect(result.amountAfterRoundingVnd).toBe(expected);
+  });
+
+  it.each([
+    [1, 60_000],
+    [59, 60_000],
+    [60, 60_000],
+    [61, 120_000],
+  ])('charges TIME_BLOCK for %i minutes', (minutes, expected) => {
+    const result = calculateTimePrice({
+      startedAtMs: start,
+      endedAtMs: start + minutes * MINUTE,
+      config: config({ calculationMode: 'TIME_BLOCK' }),
+    });
+    expect(result.amountAfterRoundingVnd).toBe(expected);
+  });
+
+  it('applies first period before special and base pricing', () => {
+    const result = calculateTimePrice({
+      startedAtMs: start,
+      endedAtMs: start + 90 * MINUTE,
+      config: config({
+        firstPeriod: { enabled: true, durationSeconds: 3600, priceVnd: 70_000 },
+        specialWindows: [
+          {
+            id: 'evening',
+            name: 'Giờ tối',
+            priceVnd: 90_000,
+            startMinute: 21 * 60,
+            endMinute: 23 * 60,
+            weekdaysMask: 127,
+          },
+        ],
+      }),
+    });
+    expect(result.amountAfterRoundingVnd).toBe(115_000);
+    expect(result.segments.map((segment) => segment.type)).toEqual(['FIRST_PERIOD', 'SPECIAL']);
+  });
+
+  it('splits an ACTUAL_TIME session at a special-price boundary', () => {
+    const result = calculateTimePrice({
+      startedAtMs: Date.parse('2026-08-17T13:30:00.000Z'), // 20:30
+      endedAtMs: Date.parse('2026-08-17T14:30:00.000Z'), // 21:30
+      config: config({
+        specialWindows: [
+          {
+            id: 'evening',
+            name: 'Giờ tối',
+            priceVnd: 90_000,
+            startMinute: 21 * 60,
+            endMinute: 23 * 60,
+            weekdaysMask: 127,
+          },
+        ],
+      }),
+    });
+    expect(result.amountAfterRoundingVnd).toBe(75_000);
+    expect(result.segments).toHaveLength(2);
+  });
+
+  it('charges each TIME_BLOCK price segment independently', () => {
+    const result = calculateTimePrice({
+      startedAtMs: Date.parse('2026-08-17T13:30:00.000Z'),
+      endedAtMs: Date.parse('2026-08-17T14:30:00.000Z'),
+      config: config({
+        calculationMode: 'TIME_BLOCK',
+        specialWindows: [
+          {
+            id: 'evening',
+            name: 'Giờ tối',
+            priceVnd: 90_000,
+            startMinute: 21 * 60,
+            endMinute: 23 * 60,
+            weekdaysMask: 127,
+          },
+        ],
+      }),
+    });
+    expect(result.amountAfterRoundingVnd).toBe(150_000);
+  });
+
+  it('handles an overnight special window using the starting weekday', () => {
+    const result = calculateTimePrice({
+      startedAtMs: Date.parse('2026-08-17T16:30:00.000Z'), // Monday 23:30
+      endedAtMs: Date.parse('2026-08-17T18:30:00.000Z'), // Tuesday 01:30
+      config: config({
+        specialWindows: [
+          {
+            id: 'overnight',
+            name: 'Đêm thứ hai',
+            priceVnd: 90_000,
+            startMinute: 22 * 60,
+            endMinute: 2 * 60,
+            weekdaysMask: 1,
+          },
+        ],
+      }),
+    });
+    expect(result.amountAfterRoundingVnd).toBe(180_000);
+    expect(result.segments).toHaveLength(1);
+  });
+
+  it('excludes paused time', () => {
+    const result = calculateTimePrice({
+      startedAtMs: start,
+      endedAtMs: start + 2 * HOUR,
+      pauses: [{ pausedAtMs: start + 30 * MINUTE, resumedAtMs: start + 90 * MINUTE }],
+      config: config(),
+    });
+    expect(result.elapsedSeconds).toBe(3600);
+    expect(result.amountAfterRoundingVnd).toBe(60_000);
+  });
+
+  it('rounds once after summing all actual-time segments', () => {
+    const result = calculateTimePrice({
+      startedAtMs: start,
+      endedAtMs: start + 25.5 * MINUTE,
+      config: config({ roundingUnitVnd: 1000 }),
+    });
+    expect(result.amountBeforeRoundingVnd).toBe(25_500);
+    expect(result.amountAfterRoundingVnd).toBe(26_000);
+  });
+
+  it('rejects overlapping special windows', () => {
+    expect(() =>
+      calculateTimePrice({
+        startedAtMs: start,
+        endedAtMs: start + HOUR,
+        config: config({
+          specialWindows: [
+            {
+              id: 'a',
+              name: 'A',
+              priceVnd: 70_000,
+              startMinute: 20 * 60,
+              endMinute: 22 * 60,
+              weekdaysMask: 127,
+            },
+            {
+              id: 'b',
+              name: 'B',
+              priceVnd: 80_000,
+              startMinute: 21 * 60,
+              endMinute: 23 * 60,
+              weekdaysMask: 127,
+            },
+          ],
+        }),
+      }),
+    ).toThrow(PricingConfigurationError);
+  });
+});

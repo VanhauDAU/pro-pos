@@ -49,7 +49,11 @@ invariant POS.
 6. Policy action `Allow`; Include selector `Emails`; nhập từng email Owner/SUPER_ADMIN chính xác.
    Không dùng `Everyone`, không chỉ dùng `Login Methods: One-time PIN`, và không allow toàn
    `gmail.com`.
-7. Session duration: 15 phút; Cookie Path bật để cookie Access chỉ áp dụng callback path.
+7. Session duration: 15 phút; giữ `HTTP Only` và `SameSite=Lax`, nhưng **không bật**
+   `Enforce cookie path attribute`. Access cần dùng endpoint trung gian
+   `/cdn-cgi/access/authorized`; ép cookie vào callback path khiến OTP được Allow nhưng callback
+   không chạy trên `workers.dev`. Destination application vẫn chỉ là callback path nên Employee
+   POS và các API khác không bị Access chặn.
 8. Lưu application, mở browser sạch và kiểm tra email OTP trước khi bootstrap.
 
 ### Production

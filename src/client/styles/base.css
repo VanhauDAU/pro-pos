@@ -5432,3 +5432,189 @@ body {
   border-radius: 8px !important;
   font-size: 13px !important;
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Owner — Invoice List Page
+   ────────────────────────────────────────────────────────────────────────── */
+
+.owner-invoices-page {
+  padding: 0;
+}
+
+.owner-invoices-export-btn {
+  flex-shrink: 0;
+}
+
+/* Tabs */
+.owner-invoices-tabs {
+  margin-bottom: 0;
+}
+
+.owner-invoices-tabs .ant-tabs-nav {
+  margin-bottom: 0;
+}
+
+.owner-invoices-tabs .ant-tabs-nav::before {
+  border-bottom-color: #e8edf5;
+}
+
+/* Toolbar */
+.owner-invoices-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 0;
+  flex-wrap: wrap;
+}
+
+.owner-invoices-search {
+  flex: 1;
+  min-width: 200px;
+  max-width: 420px;
+}
+
+.owner-invoices-search .ant-input-search-button {
+  display: none;
+}
+
+.owner-invoices-toolbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.owner-invoices-filter-active {
+  border-color: #0975f7 !important;
+  color: #0975f7 !important;
+}
+
+/* Table */
+.owner-invoices-table {
+  border: 1px solid #e8edf5;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.owner-invoices-table .ant-table-thead > tr > th {
+  background: #f6f9ff;
+  font-weight: 650;
+  font-size: 13px;
+  color: #4a5568;
+  padding: 10px 14px;
+  border-bottom: 1px solid #e4ecf7;
+}
+
+.owner-invoices-table .ant-table-tbody > tr > td {
+  padding: 12px 14px;
+  font-size: 13.5px;
+  border-bottom: 1px solid #f0f4fb;
+}
+
+.owner-invoices-table .ant-table-tbody > tr:last-child > td {
+  border-bottom: none;
+}
+
+.owner-invoices-table .ant-table-tbody > tr:hover > td {
+  background: #f6f9ff;
+}
+
+.owner-invoice-code {
+  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: #0975f7;
+}
+
+.owner-invoice-datetime {
+  color: #475569;
+  font-size: 13px;
+}
+
+.owner-invoice-total {
+  color: #1c2a3d;
+  font-size: 14px;
+}
+
+.owner-invoice-dim {
+  color: #bcc3cf;
+}
+
+.owner-invoice-sub-text {
+  color: #8994a5;
+  font-size: 12px;
+}
+
+/* Error state */
+.owner-invoices-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 20px 0;
+}
+
+/* Pagination */
+.owner-invoices-pagination {
+  margin-top: 16px;
+  text-align: right;
+}
+
+/* Advanced filter drawer */
+.owner-invoices-filter-form .ant-form-item {
+  margin-bottom: 18px;
+}
+
+.owner-invoices-filter-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* Column picker popover */
+.owner-invoice-col-picker {
+  width: 220px;
+  padding: 4px 0;
+}
+
+.owner-invoice-col-picker__title {
+  font-size: 12px;
+  font-weight: 650;
+  color: #8994a5;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 0 4px 8px;
+}
+
+.owner-invoice-col-picker__row {
+  padding: 6px 4px;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+
+.owner-invoice-col-picker__row:hover {
+  background: #f6f9ff;
+}
+
+.owner-invoice-col-picker__row .ant-checkbox-wrapper {
+  width: 100%;
+  font-size: 13.5px;
+}
+
+/* Native date input for filter drawer */
+.owner-invoices-date-input {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #1c2a3d;
+  outline: none;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+
+.owner-invoices-date-input:focus {
+  border-color: #0975F7;
+  box-shadow: 0 0 0 2px rgb(9 117 247 / 10%);
+}
+

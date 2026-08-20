@@ -1,6 +1,10 @@
 import type { z } from 'zod';
 
-import type { createProductSchema, pricingConfigSchema } from '@contracts/catalog';
+import type {
+  createAreaLayoutSchema,
+  createProductSchema,
+  pricingConfigSchema,
+} from '@contracts/catalog';
 import { AppError } from '@server/lib/app-error';
 import { CatalogRepository } from '@server/repositories/catalog-repository';
 import { validatePricingConfig } from '@domain/pricing/validation';
@@ -8,6 +12,7 @@ import { AuditRepository, type AuditContext } from '@server/repositories/audit-r
 
 type ProductInput = z.infer<typeof createProductSchema>;
 type PricingInput = z.infer<typeof pricingConfigSchema>;
+type AreaLayoutInput = z.infer<typeof createAreaLayoutSchema>;
 
 export class CatalogService {
   private readonly repository: CatalogRepository;
@@ -47,6 +52,196 @@ export class CatalogService {
       });
     }
     return { id };
+  }
+
+  async listAreaLayouts(storeId: string) {
+    const result = await this.repository.listAreaLayouts(storeId);
+    const layouts = new Map<
+      string,
+      {
+        id: string;
+        name: string;
+        sortOrder: number;
+        tables: Array<{
+          id: string;
+          name: string;
+          status: 'AVAILABLE' | 'OCCUPIED';
+          sortOrder: number;
+        }>;
+      }
+    >();
+    for (const row of result.results) {
+      const layout = layouts.get(row.areaId) ?? {
+        id: row.areaId,
+        name: row.areaName,
+        sortOrder: row.areaSortOrder,
+        tables: [],
+      };
+      if (row.tableId && row.tableName && row.tableStatus && row.tableSortOrder !== null) {
+        layout.tables.push({
+          id: row.tableId,
+          name: row.tableName,
+          status: row.tableStatus,
+          sortOrder: row.tableSortOrder,
+        });
+      }
+      layouts.set(row.areaId, layout);
+    }
+    return [...layouts.values()];
+  }
+
+  async createAreaLayout(storeId: string, input: AreaLayoutInput, auditContext?: AuditContext) {
+    const areaId = crypto.randomUUID();
+    const now = Date.now();
+    const tables = input.tables.map((table, index) => ({
+      id: crypto.randomUUID(),
+      name: table.name.trim(),
+      sortOrder: index,
+    }));
+    try {
+      await this.repository.createAreaLayout({
+        areaId,
+        storeId,
+        name: input.name.trim(),
+        tables,
+        now,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('UNIQUE constraint failed: areas')) {
+        throw new AppError('AREA_NAME_CONFLICT', 'Tên khu vực đã tồn tại.', 409);
+      }
+      throw error;
+    }
+    if (auditContext) {
+      await new AuditRepository(this.env.DB).record({
+        storeId,
+        context: auditContext,
+        action: 'AREA_LAYOUT_CREATED',
+        entityType: 'AREA',
+        entityId: areaId,
+        before: null,
+        after: {
+          name: input.name.trim(),
+          tables: tables.map(({ id, name }) => ({ id, name })),
+        },
+        now,
+      });
+    }
+    return { id: areaId, tableIds: tables.map((table) => table.id) };
+  }
+
+  async updateTable(storeId: string, tableId: string, name: string, auditContext?: AuditContext) {
+    const before = await this.repository.findServiceTable(storeId, tableId);
+    if (!before || before.status === 'DISABLED') {
+      throw new AppError('SERVICE_TABLE_NOT_FOUND', 'Không tìm thấy bàn/phòng.', 404);
+    }
+    const now = Date.now();
+    await this.repository.updateServiceTableName(storeId, tableId, name.trim(), now);
+    if (auditContext) {
+      await new AuditRepository(this.env.DB).record({
+        storeId,
+        context: auditContext,
+        action: 'SERVICE_TABLE_UPDATED',
+        entityType: 'SERVICE_TABLE',
+        entityId: tableId,
+        before: { name: before.name, areaId: before.areaId },
+        after: { name: name.trim(), areaId: before.areaId },
+        now,
+      });
+    }
+    return { id: tableId, updated: true };
+  }
+
+  async deleteTable(storeId: string, tableId: string, auditContext?: AuditContext) {
+    const before = await this.repository.findServiceTable(storeId, tableId);
+    if (!before || before.status === 'DISABLED') {
+      throw new AppError('SERVICE_TABLE_NOT_FOUND', 'Không tìm thấy bàn/phòng.', 404);
+    }
+    if (before.status === 'OCCUPIED') {
+      throw new AppError('SERVICE_TABLE_OCCUPIED', 'Không thể xóa bàn/phòng đang sử dụng.', 409);
+    }
+    const now = Date.now();
+    await this.repository.disableServiceTable(storeId, tableId, now);
+    if (auditContext) {
+      await new AuditRepository(this.env.DB).record({
+        storeId,
+        context: auditContext,
+        action: 'SERVICE_TABLE_DELETED',
+        entityType: 'SERVICE_TABLE',
+        entityId: tableId,
+        before: { name: before.name, areaId: before.areaId, status: before.status },
+        after: { status: 'DISABLED' },
+        now,
+      });
+    }
+    return { id: tableId, deleted: true };
+  }
+
+  async reorderTables(
+    storeId: string,
+    areaId: string,
+    tableIds: string[],
+    auditContext?: AuditContext,
+  ) {
+    const current = await this.repository.listActiveServiceTableIds(storeId, areaId);
+    const currentIds = current.results.map((table) => table.id);
+    const requestedIds = new Set(tableIds);
+    if (
+      currentIds.length === 0 ||
+      currentIds.length !== tableIds.length ||
+      currentIds.some((tableId) => !requestedIds.has(tableId))
+    ) {
+      throw new AppError(
+        'TABLE_ORDER_INVALID',
+        'Danh sách sắp xếp phải chứa đầy đủ bàn/phòng trong khu vực.',
+        422,
+      );
+    }
+    const now = Date.now();
+    await this.repository.reorderServiceTables({ storeId, areaId, tableIds, now });
+    if (auditContext) {
+      await new AuditRepository(this.env.DB).record({
+        storeId,
+        context: auditContext,
+        action: 'SERVICE_TABLES_REORDERED',
+        entityType: 'AREA',
+        entityId: areaId,
+        before: { tableIds: currentIds },
+        after: { tableIds },
+        now,
+      });
+    }
+    return { areaId, tableIds };
+  }
+
+  async deleteAreaLayout(storeId: string, areaId: string, auditContext?: AuditContext) {
+    const area = await this.repository.findActiveArea(storeId, areaId);
+    if (!area) {
+      throw new AppError('AREA_NOT_FOUND', 'Không tìm thấy khu vực.', 404);
+    }
+    if (area.occupiedTableCount > 0) {
+      throw new AppError(
+        'AREA_HAS_OCCUPIED_TABLES',
+        'Không thể xóa khu vực đang có bàn/phòng được sử dụng.',
+        409,
+      );
+    }
+    const tables = await this.repository.listActiveServiceTableIds(storeId, areaId);
+    const now = Date.now();
+    await this.repository.disableAreaLayout(storeId, areaId, now);
+    if (auditContext) {
+      await new AuditRepository(this.env.DB).record({
+        storeId,
+        context: auditContext,
+        action: 'AREA_LAYOUT_DELETED',
+        entityType: 'AREA',
+        entityId: areaId,
+        before: { name: area.name, tableIds: tables.results.map((table) => table.id) },
+        after: { status: 'DISABLED' },
+        now,
+      });
+    }
+    return { id: areaId, deleted: true };
   }
 
   async createProduct(storeId: string, input: ProductInput, auditContext?: AuditContext) {

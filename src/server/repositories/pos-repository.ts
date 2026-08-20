@@ -56,12 +56,13 @@ export class PosRepository {
     return this.db
       .prepare(
         `SELECT
-          st.id, st.name, st.status, st.version, st.area_id AS areaId,
+          st.id, COALESCE(st.display_name, st.name) AS name, st.status, st.version,
+          st.area_id AS areaId,
           a.name AS areaName, st.sort_order AS sortOrder
         FROM service_tables st
         JOIN areas a ON a.id = st.area_id AND a.store_id = st.store_id
         WHERE st.store_id = ?
-        ORDER BY a.sort_order, st.sort_order, st.name COLLATE NOCASE`,
+        ORDER BY a.sort_order, st.sort_order, COALESCE(st.display_name, st.name) COLLATE NOCASE`,
       )
       .bind(storeId)
       .all();
@@ -71,7 +72,8 @@ export class PosRepository {
     return this.db
       .prepare(
         `SELECT
-          st.id AS table_id, st.name AS table_name, st.status AS table_status,
+          st.id AS table_id, COALESCE(st.display_name, st.name) AS table_name,
+          st.status AS table_status,
           st.version AS table_version, p.id AS product_id, p.name AS product_name,
           tpc.id AS config_id, tpc.version AS pricing_version,
           tpc.base_price, tpc.base_duration_seconds, tpc.calculation_mode,
@@ -157,7 +159,8 @@ export class PosRepository {
   findOrder(storeId: string, orderId: string) {
     return this.db
       .prepare(
-        `SELECT o.id, o.store_id, o.table_id, o.status, o.version, st.name AS table_name
+        `SELECT o.id, o.store_id, o.table_id, o.status, o.version,
+                COALESCE(st.display_name, st.name) AS table_name
          FROM orders o
          JOIN service_tables st ON st.id = o.table_id AND st.store_id = o.store_id
          WHERE o.store_id = ? AND o.id = ? LIMIT 1`,

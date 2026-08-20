@@ -94,6 +94,41 @@ paths:
       responses:
         '201': { description: Created business DTO }
         '422': { description: Invalid or cross-store references }
+  /owner/catalog/area-layouts:
+    get:
+      summary: List active areas with their available or occupied tables/rooms
+      responses:
+        '200': { description: Nested area and table/room list }
+    post:
+      summary: Atomically create an area with at least one table/room
+      responses:
+        '201': { description: Area and table identifiers }
+        '409': { description: Area name already exists }
+        '422': { description: Area name or table/room list is invalid }
+  /owner/catalog/tables/{tableId}:
+    patch:
+      summary: Rename a table/room (duplicate display names are allowed)
+      responses:
+        '200': { description: Table/room updated }
+        '404': { description: Table/room not found in the current store }
+    delete:
+      summary: Remove an available table/room from active layouts
+      responses:
+        '200': { description: Table/room removed }
+        '409': { description: Occupied table/room cannot be removed }
+  /owner/catalog/area-layouts/{areaId}/table-order:
+    put:
+      summary: Persist the display order of every active table/room in an area
+      responses:
+        '200': { description: Display order updated }
+        '422': { description: List is incomplete, duplicated or belongs to another area/store }
+  /owner/catalog/area-layouts/{areaId}:
+    delete:
+      summary: Remove an area and all of its available tables/rooms from active layouts
+      responses:
+        '200': { description: Area and its available tables/rooms removed }
+        '404': { description: Area not found in the current store }
+        '409': { description: Area contains an occupied table/room }
   /owner/store/settings:
     put:
       summary: Update store settings, bank QR media and administrative location

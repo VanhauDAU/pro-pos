@@ -4,6 +4,10 @@
 
 ### Added
 
+- PRO-010 Owner shell: Owner auth guard, responsive sidebar accordion, dashboard overview frame,
+  direct settings hub, store identity, logout and mobile navigation using the `#0975F7` system
+  color.
+
 - PRO-010A hardening: cross-store device revoke protection, conditional discount authorization,
   gross/discount/net accounting snapshots, prompt-price sales, atomic invoice numbering, tenant
   reference validation, Owner-safe staff status, atomic pause/resume commands, audit context and

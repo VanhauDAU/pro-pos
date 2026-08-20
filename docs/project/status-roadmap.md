@@ -72,28 +72,28 @@ Trạng thái production tại lần kiểm tra 2026-08-20:
 
 ## 3. Bảng trạng thái theo năng lực
 
-| Năng lực                 | Trạng thái | Đã có                                                                        | Còn thiếu chính                                                      |
-| ------------------------ | ---------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| Foundation               | `COMPLETE` | React/Vite/PWA, Hono Worker, D1/R2, TypeScript, CI                           | Theo dõi dependency/compatibility định kỳ                            |
-| Database schema          | `COMPLETE` | 6 migrations cho identity, catalog, POS, billing, Access bridge và hardening | Migration mới theo feature; kiểm tra upgrade path mỗi release        |
-| Auth và device           | `COMPLETE` | Owner/SUPER_ADMIN OTP, Employee PIN, activation/revoke/reissue               | Duy trì policy email và smoke định kỳ                                |
-| Access bridge            | `COMPLETE` | Worker riêng, one-time code, replay protection, D1 chung, Access             | Theo dõi Access logs và đồng bộ exact-email policy                   |
-| SUPER_ADMIN              | `COMPLETE` | Bootstrap, login, dashboard, list/create/lock store + Owner                  | Pagination/search/audit UX nếu dữ liệu tăng                          |
-| Owner backend            | `PARTIAL`  | Settings, staff, catalog create/list, tables, pricing upsert, audit          | Update/disable, pricing read, pagination/search, contract hoàn chỉnh |
-| Owner portal UI          | `BLOCKED`  | Route và kế hoạch màn hình                                                   | UI reference, shell, forms, states, responsive approval              |
-| Pricing engine           | `COMPLETE` | Actual time/block, first period, special window, pause, rounding             | UI editor/preview và E2E với dữ liệu thật                            |
-| POS backend              | `PARTIAL`  | Tables, open, quote, items, pause/resume, transfer/cancel, checkout          | Contract đầy đủ, edge cases, UI và E2E                               |
-| POS portal UI            | `BLOCKED`  | Route placeholder                                                            | UI reference, table board, order workspace, auth guard               |
-| Checkout/invoice backend | `PARTIAL`  | Idempotent checkout, invoice list/detail baseline                            | Payment UX, receipt/reprint, reconciliation test                     |
-| Checkout/receipt UI      | `PLANNED`  | Scope 58/80 mm đã xác định                                                   | Reference, implementation, browser print validation                  |
-| Media/R2                 | `PARTIAL`  | Private upload/read/delete service và binding                                | Owner UI, validation/limits, orphan cleanup, production smoke        |
-| OpenAPI                  | `PARTIAL`  | Auth và một số platform/owner/POS paths                                      | Đồng bộ toàn bộ routes, schemas, errors và examples                  |
-| Unit tests               | `COMPLETE` | 18 tests Pricing Engine/state machine                                        | Mở rộng theo domain mới                                              |
-| Worker integration tests | `COMPLETE` | 5 files, 26 tests auth/device/database/POS/security vertical slice           | Bổ sung Owner CRUD, media, failure/recovery coverage                 |
-| Browser E2E              | `PLANNED`  | Có script/dependency Playwright                                              | Chưa có test suite/config/happy path                                 |
-| Observability            | `PARTIAL`  | Structured logs, request ID, Worker observability                            | Alert, dashboard, retention, runbook truy vấn                        |
-| Backup/rollback/incident | `PARTIAL`  | Có runbook                                                                   | Chưa ghi nhận restore/rollback/incident drill                        |
-| Production readiness     | `PARTIAL`  | Worker/D1/R2/secrets, Access OTP và production smoke đã hoạt động            | Backup record, rollback target, tag/release, monitoring và GA gates  |
+| Năng lực                 | Trạng thái    | Đã có                                                                        | Còn thiếu chính                                                      |
+| ------------------------ | ------------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Foundation               | `COMPLETE`    | React/Vite/PWA, Hono Worker, D1/R2, TypeScript, CI                           | Theo dõi dependency/compatibility định kỳ                            |
+| Database schema          | `COMPLETE`    | 6 migrations cho identity, catalog, POS, billing, Access bridge và hardening | Migration mới theo feature; kiểm tra upgrade path mỗi release        |
+| Auth và device           | `COMPLETE`    | Owner/SUPER_ADMIN OTP, Employee PIN, activation/revoke/reissue               | Duy trì policy email và smoke định kỳ                                |
+| Access bridge            | `COMPLETE`    | Worker riêng, one-time code, replay protection, D1 chung, Access             | Theo dõi Access logs và đồng bộ exact-email policy                   |
+| SUPER_ADMIN              | `COMPLETE`    | Bootstrap, login, dashboard, list/create/lock store + Owner                  | Pagination/search/audit UX nếu dữ liệu tăng                          |
+| Owner backend            | `PARTIAL`     | Settings, staff, catalog create/list, tables, pricing upsert, audit          | Update/disable, pricing read, pagination/search, contract hoàn chỉnh |
+| Owner portal UI          | `IN_PROGRESS` | Owner shell/dashboard khung, route guard và responsive sidebar accordion     | Module forms, visual approval và data states                         |
+| Pricing engine           | `COMPLETE`    | Actual time/block, first period, special window, pause, rounding             | UI editor/preview và E2E với dữ liệu thật                            |
+| POS backend              | `PARTIAL`     | Tables, open, quote, items, pause/resume, transfer/cancel, checkout          | Contract đầy đủ, edge cases, UI và E2E                               |
+| POS portal UI            | `BLOCKED`     | Route placeholder                                                            | UI reference, table board, order workspace, auth guard               |
+| Checkout/invoice backend | `PARTIAL`     | Idempotent checkout, invoice list/detail baseline                            | Payment UX, receipt/reprint, reconciliation test                     |
+| Checkout/receipt UI      | `PLANNED`     | Scope 58/80 mm đã xác định                                                   | Reference, implementation, browser print validation                  |
+| Media/R2                 | `PARTIAL`     | Private upload/read/delete service và binding                                | Owner UI, validation/limits, orphan cleanup, production smoke        |
+| OpenAPI                  | `PARTIAL`     | Auth và một số platform/owner/POS paths                                      | Đồng bộ toàn bộ routes, schemas, errors và examples                  |
+| Unit tests               | `COMPLETE`    | 18 tests Pricing Engine/state machine                                        | Mở rộng theo domain mới                                              |
+| Worker integration tests | `COMPLETE`    | 5 files, 26 tests auth/device/database/POS/security vertical slice           | Bổ sung Owner CRUD, media, failure/recovery coverage                 |
+| Browser E2E              | `PLANNED`     | Có script/dependency Playwright                                              | Chưa có test suite/config/happy path                                 |
+| Observability            | `PARTIAL`     | Structured logs, request ID, Worker observability                            | Alert, dashboard, retention, runbook truy vấn                        |
+| Backup/rollback/incident | `PARTIAL`     | Có runbook                                                                   | Chưa ghi nhận restore/rollback/incident drill                        |
+| Production readiness     | `PARTIAL`     | Worker/D1/R2/secrets, Access OTP và production smoke đã hoạt động            | Backup record, rollback target, tag/release, monitoring và GA gates  |
 
 Quality evidence tại lần cập nhật:
 
@@ -179,10 +179,10 @@ Quality evidence tại lần cập nhật:
 
 ### 5.2 Product/UI
 
-- [ ] Nhận/duyệt UI reference Owner portal desktop/mobile.
+- [x] Nhận UI reference Owner shell/dashboard desktop/mobile; module references tiếp tục theo PRO-011–014.
 - [ ] Nhận/duyệt UI reference POS table board/order desktop/mobile/tablet.
 - [ ] Nhận/duyệt UI reference checkout/receipt 58/80 mm.
-- [ ] Thay `/owner/*` placeholder bằng portal thật.
+- [x] Thay `/owner/*` placeholder bằng Owner shell/dashboard khung; module forms tiếp tục theo PRO-011–014.
 - [ ] Thay `/pos/*` placeholder bằng portal thật.
 - [ ] Xây receipt preview/print/reprint.
 - [ ] Hoàn thiện empty/loading/error/403/session-expired/conflict/offline states.
@@ -272,9 +272,10 @@ Work breakdown đã thống nhất:
 
 Checklist:
 
-- [ ] UI reference Owner shell/dashboard/settings/staff/catalog/tables/pricing/audit.
-- [ ] Route guard, deep link, logout và session-expired behavior.
-- [ ] Dashboard readiness checklist.
+- [x] UI reference Owner shell/dashboard đã nhận và chuyển thành khung MVP; settings/staff/catalog/tables/pricing/audit tiếp tục theo ticket sau.
+- [x] Route guard, deep link, logout và session-expired behavior cho Owner shell.
+- [x] Dashboard readiness checklist khung.
+- [x] Settings landing hub theo nhóm thông tin, chức năng và nhật ký; form chi tiết tiếp tục theo ticket sau.
 - [ ] Store settings form.
 - [ ] Employee lifecycle, permission và PIN reset UI.
 - [ ] Area/table CRUD và time product assignment.
@@ -491,7 +492,7 @@ Chỉ đưa vào kế hoạch sau khi pilot ổn định và có nhu cầu đã 
 Thứ tự khuyến nghị tại thời điểm cập nhật:
 
 1. Ghi production deployment/version ID, migration state, backup bookmark và rollback target.
-2. Chốt UI reference Owner portal; đây là dependency lớn nhất của PRO-010–PRO-014.
+2. Chốt tiếp UI reference cho các module Owner; shell/dashboard reference đã có và là nền của PRO-010.
 3. Triển khai Owner shell/route guard trước, sau đó settings/staff.
 4. Hoàn thiện catalog/tables/pricing API + UI và Owner E2E.
 5. Chốt UI reference POS rồi triển khai table board/order workspace.

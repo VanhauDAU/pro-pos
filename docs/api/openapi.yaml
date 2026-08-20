@@ -59,7 +59,31 @@ paths:
     post: { summary: Create store and Owner, responses: { '201': { description: Created } } }
   /owner/staff:
     get: { summary: List employees, responses: { '200': { description: Employee list } } }
-    post: { summary: Create employee and PIN, responses: { '201': { description: Created } } }
+    post:
+      {
+        summary: Create employee with email,
+        role and 4-digit PIN,
+        responses: { '201': { description: Created } },
+      }
+  /owner/staff/bulk-action:
+    post:
+      summary: Activate, disable, delete or revoke sessions for selected employees
+      responses:
+        '200': { description: Bulk action completed }
+  /owner/staff/{userId}:
+    get: { summary: Get employee details, responses: { '200': { description: Employee details } } }
+    put:
+      {
+        summary: Update employee name,
+        email,
+        role or PIN,
+        responses: { '200': { description: Updated } },
+      }
+    delete:
+      {
+        summary: Disable and remove an employee from active use,
+        responses: { '200': { description: Deleted } },
+      }
   /owner/staff/{userId}/status:
     patch:
       summary: Enable or disable a non-Owner employee in the current store
@@ -85,6 +109,29 @@ paths:
       summary: Reset an employee PIN
       responses:
         '200': { description: PIN reset }
+  /owner/staff/{userId}/sessions/revoke:
+    post:
+      summary: Revoke every active employee session
+      responses:
+        '200': { description: Sessions revoked }
+  /owner/staff/roles:
+    get: { summary: List store roles, responses: { '200': { description: Role list } } }
+    post:
+      {
+        summary: Create a role with supported permission keys,
+        responses: { '201': { description: Created } },
+      }
+  /owner/staff/roles/permissions:
+    get:
+      summary: Get the supported sales and store-management permission catalog
+      responses:
+        '200': { description: Permission catalog }
+  /owner/staff/roles/{roleId}:
+    get: { summary: Get role permissions, responses: { '200': { description: Role details } } }
+    put:
+      { summary: Update role name and permissions, responses: { '200': { description: Updated } } }
+    delete:
+      { summary: Delete an unused non-system role, responses: { '200': { description: Deleted } } }
   /owner/catalog/products:
     get: { summary: List products, responses: { '200': { description: Product list } } }
     post: { summary: Create product, responses: { '201': { description: Created } } }

@@ -262,6 +262,88 @@ body {
   border-radius: 8px;
 }
 
+.employee-pin-login-item .ant-form-item-control-input-content {
+  display: flex;
+  justify-content: center;
+}
+
+.employee-pin-wrapper {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.employee-pin-login-item .ant-otp,
+.employee-pin-wrapper .ant-otp {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.employee-pin-login-item .ant-otp-input-wrapper,
+.employee-pin-wrapper .ant-otp-input-wrapper {
+  width: 100%;
+  height: 54px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.employee-pin-login-item .ant-otp input,
+.employee-pin-login-item .ant-otp .ant-otp-input,
+.employee-pin-wrapper .ant-otp input,
+.employee-pin-wrapper .ant-otp .ant-otp-input {
+  width: 100%;
+  height: 54px;
+  border-radius: 8px;
+  color: #172033;
+  font-size: 24px;
+  font-weight: 650;
+  text-align: center;
+}
+
+.employee-pin-login-item .ant-otp input:hover,
+.employee-pin-login-item .ant-otp input:focus,
+.employee-pin-login-item .ant-otp .ant-otp-input:hover,
+.employee-pin-login-item .ant-otp .ant-otp-input:focus,
+.employee-pin-wrapper .ant-otp input:hover,
+.employee-pin-wrapper .ant-otp input:focus,
+.employee-pin-wrapper .ant-otp .ant-otp-input:hover,
+.employee-pin-wrapper .ant-otp .ant-otp-input:focus {
+  border-color: var(--brand-primary);
+  box-shadow: 0 0 0 3px rgb(9 117 247 / 12%);
+}
+
+.employee-pin-login-item .ant-otp-mask-icon,
+.employee-pin-wrapper .ant-otp-mask-icon {
+  font-size: 26px;
+  color: #172033;
+}
+
+.employee-pin-toggle-btn {
+  height: 54px;
+  width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  font-size: 18px;
+  border-radius: 8px;
+  border: 1px solid #d9d9d9;
+  background: #f8fafc;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+
+.employee-pin-toggle-btn:hover {
+  color: var(--brand-primary);
+  border-color: var(--brand-primary);
+  background: #eff6ff;
+}
+
 .auth-card .ant-btn-primary {
   min-height: 50px;
   border-color: var(--brand-primary);
@@ -1842,6 +1924,387 @@ body {
   border-radius: 3px;
 }
 
+.owner-staff-page,
+.owner-role-page,
+.owner-staff-form-page,
+.owner-role-form-page {
+  width: min(1120px, 100%);
+  margin: 0 auto;
+}
+
+.owner-staff-heading,
+.owner-role-heading,
+.owner-staff-form-heading,
+.owner-role-form-heading {
+  min-height: 68px;
+  margin-bottom: 28px;
+  padding-bottom: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid #e1e6ee;
+}
+
+.owner-staff-heading h2.ant-typography,
+.owner-role-heading h2.ant-typography,
+.owner-staff-form-heading h2.ant-typography,
+.owner-role-form-heading h2.ant-typography {
+  margin: 7px 0 0;
+  color: #1c2a3d;
+  font-size: clamp(24px, 3vw, 30px);
+}
+
+.owner-staff-heading > .ant-btn,
+.owner-role-heading > .ant-btn {
+  border-radius: 4px;
+}
+
+.owner-staff-list-card,
+.owner-role-list-card,
+.owner-staff-form-card,
+.owner-role-name-card {
+  overflow: hidden;
+  border: 0;
+  border-radius: 5px;
+  box-shadow: 0 2px 8px rgb(26 45 70 / 12%);
+}
+
+.owner-staff-list-card__tab {
+  width: fit-content;
+  margin-left: 20px;
+  padding: 17px 1px 14px;
+  border-bottom: 2px solid #1688ff;
+  color: #1688ff;
+  font-size: 14px;
+}
+
+.owner-staff-table__header,
+.owner-staff-table__row {
+  display: grid;
+  grid-template-columns: 46px minmax(230px, 1.4fr) minmax(170px, 1fr) minmax(150px, 0.8fr);
+  align-items: center;
+}
+
+.owner-staff-table__header {
+  min-height: 60px;
+  margin: 0 20px;
+  padding: 0 4px;
+  border-bottom: 1px solid #e1e6ee;
+  color: #263448;
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.owner-staff-table__row {
+  min-height: 61px;
+  margin: 0 20px;
+  padding: 0 4px;
+  border-bottom: 1px solid #e1e6ee;
+  color: #263448;
+  font-size: 13px;
+}
+
+.owner-staff-table__row:last-child {
+  border-bottom: 0;
+}
+
+.owner-staff-table__name {
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  color: #1688ff;
+  background: none;
+  font: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.owner-staff-table__name span {
+  color: #263448;
+}
+
+.owner-staff-bulk-toolbar {
+  min-height: 54px;
+  padding: 8px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #e1e6ee;
+  background: #f7faff;
+}
+
+.owner-staff-bulk-toolbar .ant-select {
+  min-width: 260px;
+}
+
+.owner-staff-list-loading,
+.owner-staff-empty {
+  padding: 42px 24px;
+}
+
+.owner-staff-form-heading,
+.owner-role-form-heading {
+  align-items: flex-end;
+}
+
+.owner-staff-form-heading > .ant-tag {
+  margin-bottom: 5px;
+}
+
+.owner-staff-form-layout,
+.owner-role-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.72fr) minmax(0, 1.68fr);
+  align-items: start;
+  gap: clamp(30px, 6vw, 76px);
+}
+
+.owner-staff-form-intro,
+.owner-role-intro {
+  padding-top: 5px;
+}
+
+.owner-staff-form-intro h4.ant-typography,
+.owner-role-intro h4.ant-typography {
+  margin: 0 0 8px;
+  color: #1c2a3d;
+}
+
+.owner-staff-form-tip,
+.owner-role-tip {
+  margin-top: 24px;
+  padding: 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  border-radius: 7px;
+  color: #6e7b8d;
+  background: #eef6ff;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.owner-staff-form-tip .anticon,
+.owner-role-tip .anticon {
+  flex: 0 0 auto;
+  color: #0975f7;
+  font-size: 16px;
+}
+
+.owner-staff-form-card .ant-form-item,
+.owner-role-name-card .ant-form-item {
+  margin-bottom: 16px;
+}
+
+.owner-staff-form-section {
+  padding: 24px 26px 12px;
+  border-bottom: 1px solid #e1e6ee;
+}
+
+.owner-staff-form-section--pin {
+  padding-bottom: 24px;
+}
+
+.owner-staff-form-section--pin .ant-otp,
+.ant-modal .ant-otp {
+  gap: 8px;
+}
+
+.owner-staff-form-section--pin .ant-otp input,
+.ant-modal .ant-otp input {
+  width: 44px;
+  height: 46px;
+  border-radius: 4px;
+  color: #1c2a3d;
+  font-size: 20px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.owner-staff-form-section--pin .ant-otp input:focus,
+.owner-staff-form-section--pin .ant-otp input:hover,
+.ant-modal .ant-otp input:focus,
+.ant-modal .ant-otp input:hover {
+  border-color: #0975f7;
+  box-shadow: 0 0 0 2px rgb(9 117 247 / 12%);
+}
+
+.owner-pin-otp-gap {
+  width: 4px;
+  height: 4px;
+  display: inline-block;
+}
+
+.owner-staff-form-section h5.ant-typography {
+  margin: 0 0 6px;
+  color: #263448;
+}
+
+.owner-staff-form-actions,
+.owner-role-form-actions {
+  min-height: 70px;
+  padding: 16px 26px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid #edf0f4;
+}
+
+.owner-role-list-card__title {
+  padding: 20px;
+  color: #263448;
+  font-size: 16px;
+  font-weight: 600;
+  border-bottom: 1px solid #e1e6ee;
+}
+
+.owner-role-list-loading {
+  padding: 30px 24px;
+}
+
+.owner-role-list__item + .owner-role-list__item {
+  border-top: 1px solid #e1e6ee;
+}
+
+.owner-role-list__row {
+  min-height: 70px;
+  padding: 0 18px 0 20px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, 0.65fr) 40px;
+  align-items: center;
+  gap: 12px;
+}
+
+.owner-role-list__name {
+  padding: 0;
+  border: 0;
+  color: #1688ff;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.owner-role-list__meta {
+  color: #7b8797;
+  font-size: 12px;
+  text-align: right;
+}
+
+.owner-role-list__actions {
+  padding: 12px 20px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  background: #f7f9fc;
+}
+
+.owner-role-form-page {
+  padding-bottom: 34px;
+}
+
+.owner-role-form-heading {
+  margin-bottom: 20px;
+}
+
+.owner-role-name-card {
+  margin-bottom: 18px;
+}
+
+.owner-role-name-card .ant-card-body {
+  padding: 24px 26px 8px;
+}
+
+.owner-role-permission-toolbar {
+  min-height: 48px;
+  padding: 0 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.owner-role-permission-toolbar > .ant-typography {
+  color: #263448;
+  font-size: 13px;
+}
+
+.owner-role-permission-collapse {
+  border: 0;
+  background: transparent;
+}
+
+.owner-role-permission-collapse > .ant-collapse-item {
+  margin-bottom: 10px;
+  overflow: hidden;
+  border: 1px solid #dfe5ec !important;
+  border-radius: 7px !important;
+  background: #fff;
+}
+
+.owner-role-permission-collapse .ant-collapse-header {
+  align-items: center !important;
+  padding: 16px 18px !important;
+}
+
+.owner-role-permission-group-label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.owner-role-permission-group-label strong {
+  color: #263448;
+}
+
+.owner-role-permission-group-label small {
+  color: #7b8797;
+  font-size: 12px;
+}
+
+.owner-role-permission-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.owner-role-permission-section {
+  padding: 14px 16px 16px;
+  border: 1px solid #e1e6ee;
+  border-radius: 6px;
+  background: #fafbfd;
+}
+
+.owner-role-permission-section__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.owner-role-permission-section > .ant-typography {
+  display: block;
+  margin: 4px 0 13px 24px;
+  font-size: 12px;
+}
+
+.owner-role-permission-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 22px;
+}
+
+.owner-staff-page__spinner {
+  max-width: 760px;
+  margin: 0 auto;
+  padding-top: 30px;
+}
+
 .owner-module-placeholder {
   max-width: 980px;
   padding: 8px 0 34px;
@@ -1941,6 +2404,11 @@ body {
 
   .owner-area-draft-grid {
     grid-template-columns: repeat(4, minmax(96px, 1fr));
+  }
+
+  .owner-staff-form-layout,
+  .owner-role-layout {
+    gap: 30px;
   }
 }
 
@@ -2085,5 +2553,65 @@ body {
 
   .owner-area-draft-table__actions {
     opacity: 1;
+  }
+
+  .owner-staff-heading,
+  .owner-role-heading,
+  .owner-staff-form-heading,
+  .owner-role-form-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .owner-staff-heading > .ant-btn,
+  .owner-role-heading > .ant-btn {
+    width: 100%;
+  }
+
+  .owner-staff-table__header,
+  .owner-staff-table__row {
+    grid-template-columns: 34px minmax(145px, 1.2fr) minmax(100px, 0.8fr) minmax(105px, 0.8fr);
+    margin-inline: 12px;
+    font-size: 12px;
+  }
+
+  .owner-staff-bulk-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    padding-inline: 12px;
+  }
+
+  .owner-staff-bulk-toolbar .ant-select {
+    width: 100%;
+  }
+
+  .owner-staff-form-layout,
+  .owner-role-layout {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+
+  .owner-staff-form-section,
+  .owner-staff-form-actions,
+  .owner-role-form-actions {
+    padding-inline: 16px;
+  }
+
+  .owner-role-list__row {
+    grid-template-columns: minmax(0, 1fr) 34px;
+  }
+
+  .owner-role-list__meta {
+    display: none;
+  }
+
+  .owner-role-permission-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+    padding-inline: 0;
+  }
+
+  .owner-role-permission-grid {
+    grid-template-columns: 1fr;
   }
 }

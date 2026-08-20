@@ -27,6 +27,8 @@ function errorMessage(error: unknown) {
 
 function accessErrorMessage(code: string | null) {
   if (!code) return null;
+  if (code === 'SESSION_EXPIRED') return 'Phiên Owner đã hết hạn. Vui lòng đăng nhập lại.';
+  if (code === 'CONNECTION_ERROR') return 'Không thể kết nối Pro POS. Vui lòng thử lại.';
   if (code === 'STORE_LOCKED') return 'Cửa hàng đang bị khóa.';
   if (code === 'ACCESS_IDENTITY_DENIED') return 'Email chưa được cấp quyền sử dụng Pro POS.';
   if (code === 'ACCESS_REQUEST_EXPIRED') return 'Yêu cầu đăng nhập đã hết hạn. Vui lòng thử lại.';

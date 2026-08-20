@@ -44,7 +44,8 @@ Cần hoàn thiện trong giai đoạn:
 
 ## Work breakdown đề xuất
 
-1. **PRO-010 — Owner shell và route guard**: auth context, layout, navigation, logout, 401/403.
+1. **PRO-010 — Owner shell và route guard**: auth context, layout, accordion navigation, logout,
+   401/403, dashboard khung và settings landing hub; các module nghiệp vụ tiếp tục theo PRO-011–014.
 2. **PRO-011 — Store settings và staff**: form settings, employee lifecycle, reset PIN.
 3. **PRO-012 — Catalog foundations**: areas, categories, units, products/variants.
 4. **PRO-013 — Tables và time pricing**: table assignment, pricing editor/validation preview.

@@ -27,6 +27,16 @@ ownerStoreRoutes.put('/settings', requirePermission('store.manage'), async (c) =
     bankAccountNumber: body.bankAccountNumber ?? null,
     bankAccountName: body.bankAccountName ?? null,
     bankQrMediaId: body.bankQrMediaId ?? null,
+    provinceCode: body.provinceCode ?? null,
+    provinceName: body.provinceName ?? null,
+    wardCode: body.wardCode ?? null,
+    wardName: body.wardName ?? null,
+    auditContext: {
+      actorUserId: c.get('actor').id,
+      actorSessionId: c.get('sessionId'),
+      deviceId: c.get('device')?.id ?? null,
+      requestId: c.get('requestId'),
+    },
   });
   return success(c, result);
 });

@@ -24,7 +24,16 @@ ownerStaffRoutes.post('/', async (c) => {
   const body = await parseJson(c.req.raw, createEmployeeSchema);
   return success(
     c,
-    await new StaffService(c.env).createEmployee({ storeId: actor.storeId!, ...body }),
+    await new StaffService(c.env).createEmployee({
+      storeId: actor.storeId!,
+      ...body,
+      auditContext: {
+        actorUserId: actor.id,
+        actorSessionId: c.get('sessionId'),
+        deviceId: c.get('device')?.id ?? null,
+        requestId: c.get('requestId'),
+      },
+    }),
     201,
   );
 });
@@ -38,6 +47,12 @@ ownerStaffRoutes.patch('/:userId/status', async (c) => {
       actor.storeId!,
       c.req.param('userId'),
       body.status,
+      {
+        actorUserId: actor.id,
+        actorSessionId: c.get('sessionId'),
+        deviceId: c.get('device')?.id ?? null,
+        requestId: c.get('requestId'),
+      },
     ),
   );
 });
@@ -47,7 +62,12 @@ ownerStaffRoutes.put('/:userId/pin', async (c) => {
   const body = await parseJson(c.req.raw, resetPinSchema);
   return success(
     c,
-    await new StaffService(c.env).resetPin(actor.storeId!, c.req.param('userId'), body.pin),
+    await new StaffService(c.env).resetPin(actor.storeId!, c.req.param('userId'), body.pin, {
+      actorUserId: actor.id,
+      actorSessionId: c.get('sessionId'),
+      deviceId: c.get('device')?.id ?? null,
+      requestId: c.get('requestId'),
+    }),
   );
 });
 

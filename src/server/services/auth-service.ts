@@ -13,6 +13,7 @@ import {
 } from '@server/lib/crypto';
 import { requireSecret } from '@server/lib/env';
 import { AuthRepository, type DeviceContextRow } from '@server/repositories/auth-repository';
+import { AuditRepository, type AuditContext } from '@server/repositories/audit-repository';
 
 const EMPLOYEE_ABSOLUTE_SECONDS = 12 * 60 * 60;
 const EMPLOYEE_IDLE_SECONDS = 30 * 60;
@@ -135,10 +136,24 @@ export class AuthService {
     return result.results;
   }
 
-  async revokeDevice(storeId: string, deviceId: string) {
-    const result = await this.repository.revokeDevice(storeId, deviceId, Date.now());
+  async revokeDevice(storeId: string, deviceId: string, auditContext?: AuditContext) {
+    const now = Date.now();
+    const before = auditContext ? await this.repository.findDevice(storeId, deviceId) : null;
+    const result = await this.repository.revokeDevice(storeId, deviceId, now);
     if ((result[0]?.meta.changes ?? 0) !== 1) {
       throw new AppError('DEVICE_NOT_FOUND', 'Không tìm thấy thiết bị đang hoạt động.', 404);
+    }
+    if (auditContext) {
+      await new AuditRepository(this.env.DB).record({
+        storeId,
+        context: auditContext,
+        action: 'DEVICE_REVOKED',
+        entityType: 'DEVICE',
+        entityId: deviceId,
+        before,
+        after: { status: 'REVOKED', revokedAt: now },
+        now,
+      });
     }
     return { deviceId, status: 'REVOKED' as const };
   }
@@ -217,11 +232,15 @@ export class AuthService {
     return this.repository.findDeviceBySecretHash(secretHash);
   }
 
-  async context(rawSession?: string, rawDevice?: string): Promise<AuthContextResponse> {
+  async context(
+    rawSession?: string,
+    rawDevice?: string,
+  ): Promise<AuthContextResponse & { sessionId: string | null }> {
     const now = Date.now();
     const device = await this.resolveDevice(rawDevice);
     let actor: AuthContextResponse['actor'] = null;
     let csrfToken: string | null = null;
+    let sessionId: string | null = null;
 
     if (rawSession) {
       const sessionHash = await hashOpaqueToken(rawSession, this.sessionTokenPepper);
@@ -239,6 +258,7 @@ export class AuthService {
           session.store_id === device.store_id);
 
       if (session && sessionValid && employeeDeviceValid) {
+        sessionId = session.session_id;
         actor = {
           id: session.user_id,
           displayName: session.display_name,
@@ -275,6 +295,7 @@ export class AuthService {
         : null,
       allowedEntrypoints,
       csrfToken,
+      sessionId,
     };
   }
 

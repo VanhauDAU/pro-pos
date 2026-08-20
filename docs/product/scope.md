@@ -6,7 +6,8 @@
 - Identity/device: hoàn thành Owner/SUPER_ADMIN Access OTP qua auth bridge, Employee PIN và POS
   activation.
 - SUPER_ADMIN portal: đã có màn hình quản lý store/Owner tối giản.
-- Owner portal và POS portal: backend/contract đã có một phần; UI cuối đang chờ reference.
+- Owner shell/dashboard đã có reference và đang triển khai khung; các module Owner chi tiết và POS UI
+  vẫn chờ reference/triển khai theo từng ticket.
 
 Theo dõi chi tiết tại [trạng thái và roadmap](../project/status-roadmap.md).
 
@@ -22,6 +23,8 @@ bàn → tính giờ/thêm món → thanh toán → phiếu bán hàng`
 - Owner/SUPER_ADMIN login bằng Cloudflare Access email OTP; Owner không yêu cầu device activation.
 - Employee PIN chỉ trên POS device `ACTIVE`.
 - Nhân viên, permissions, khu vực, bàn, đơn vị, danh mục, sản phẩm và giá giờ.
+- Sản phẩm số lượng/trọng lượng có thể bật “Nhập giá khi bán”; giá nhập được validate và snapshot
+  tại thời điểm thêm món.
 - Mở/chuyển/hủy bàn, pause/resume, thêm món, quote và checkout.
 - Cash và bank transfer xác nhận thủ công.
 - Phiếu bán hàng nội bộ, browser print 58/80 mm.

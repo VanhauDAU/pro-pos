@@ -284,6 +284,16 @@ export class AuthRepository {
       .all();
   }
 
+  findDevice(storeId: string, deviceId: string) {
+    return this.db
+      .prepare(
+        `SELECT id, name, status, activated_at AS activatedAt, revoked_at AS revokedAt
+         FROM devices WHERE store_id = ? AND id = ? LIMIT 1`,
+      )
+      .bind(storeId, deviceId)
+      .first();
+  }
+
   async reissueDeviceCredential(input: {
     storeId: string;
     deviceId: string;
@@ -303,15 +313,22 @@ export class AuthRepository {
           `UPDATE device_credentials
            SET secret_hash = ?, credential_version = credential_version + 1,
                issued_at = ?, expires_at = ?, revoked_at = NULL
-           WHERE device_id = ?`,
+           WHERE device_id = ? AND EXISTS (
+             SELECT 1 FROM devices
+             WHERE devices.id = device_credentials.device_id AND devices.store_id = ?
+           )`,
         )
-        .bind(input.secretHash, input.now, input.expiresAt, input.deviceId),
+        .bind(input.secretHash, input.now, input.expiresAt, input.deviceId, input.storeId),
       this.db
         .prepare(
           `UPDATE auth_sessions SET status = 'REVOKED', revoked_at = ?
-           WHERE device_id = ? AND session_kind = 'EMPLOYEE' AND status = 'ACTIVE'`,
+           WHERE device_id = ? AND session_kind = 'EMPLOYEE' AND status = 'ACTIVE'
+             AND EXISTS (
+               SELECT 1 FROM devices
+               WHERE devices.id = auth_sessions.device_id AND devices.store_id = ?
+             )`,
         )
-        .bind(input.now, input.deviceId),
+        .bind(input.now, input.deviceId, input.storeId),
     ]);
   }
 
@@ -325,15 +342,24 @@ export class AuthRepository {
         .bind(now, now, deviceId, storeId),
       this.db
         .prepare(
-          `UPDATE device_credentials SET revoked_at = ? WHERE device_id = ? AND revoked_at IS NULL`,
+          `UPDATE device_credentials SET revoked_at = ?
+           WHERE device_id = ? AND revoked_at IS NULL
+             AND EXISTS (
+               SELECT 1 FROM devices
+               WHERE devices.id = device_credentials.device_id AND devices.store_id = ?
+             )`,
         )
-        .bind(now, deviceId),
+        .bind(now, deviceId, storeId),
       this.db
         .prepare(
           `UPDATE auth_sessions SET status = 'REVOKED', revoked_at = ?
-           WHERE device_id = ? AND session_kind = 'EMPLOYEE' AND status = 'ACTIVE'`,
+           WHERE device_id = ? AND session_kind = 'EMPLOYEE' AND status = 'ACTIVE'
+             AND EXISTS (
+               SELECT 1 FROM devices
+               WHERE devices.id = auth_sessions.device_id AND devices.store_id = ?
+             )`,
         )
-        .bind(now, deviceId),
+        .bind(now, deviceId, storeId),
     ]);
   }
 

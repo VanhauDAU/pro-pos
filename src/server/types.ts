@@ -13,6 +13,7 @@ export interface AppVariables {
     storeId: string;
   };
   rawSession: string;
+  sessionId: string;
 }
 
 export interface AppEnv {

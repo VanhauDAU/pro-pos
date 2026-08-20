@@ -11,7 +11,11 @@ import {
 import { AppError } from '@server/lib/app-error';
 import { success } from '@server/lib/response';
 import { parseJson } from '@server/lib/validation';
-import { requireActor, requirePermission } from '@server/middleware/authorization';
+import {
+  assertPermission,
+  requireActor,
+  requirePermission,
+} from '@server/middleware/authorization';
 import { PosService } from '@server/services/pos-service';
 import type { AppEnv } from '@server/types';
 
@@ -42,6 +46,8 @@ posRoutes.post('/tables/open', requirePermission('table.open'), async (c) => {
       idempotencyKey: idempotencyKey(c),
       tableId: body.tableId,
       expectedTableVersion: body.expectedTableVersion,
+      actorSessionId: c.get('sessionId'),
+      deviceId: c.get('device')?.id ?? null,
     }),
     201,
   );
@@ -54,6 +60,7 @@ posRoutes.get('/orders/:orderId/quote', requirePermission('table.view'), async (
 posRoutes.post('/orders/:orderId/items', requirePermission('order.manage'), async (c) => {
   const body = await parseJson(c.req.raw, addOrderItemSchema);
   const actor = c.get('actor');
+  if (body.discount) await assertPermission(c, 'discount.apply');
   return success(
     c,
     await new PosService(c.env).addItem({
@@ -64,9 +71,14 @@ posRoutes.post('/orders/:orderId/items', requirePermission('order.manage'), asyn
       orderId: c.req.param('orderId'),
       productId: body.productId,
       variantId: body.variantId ?? null,
+      ...(body.enteredUnitPriceVnd === undefined
+        ? {}
+        : { enteredUnitPriceVnd: body.enteredUnitPriceVnd }),
       quantityMilli: body.quantityMilli,
       expectedOrderVersion: body.expectedOrderVersion,
       discount: body.discount ?? null,
+      actorSessionId: c.get('sessionId'),
+      deviceId: c.get('device')?.id ?? null,
     }),
     201,
   );
@@ -80,6 +92,10 @@ posRoutes.post('/orders/:orderId/time/pause', requirePermission('time.pause'), a
     await new PosService(c.env).pause({
       storeId: actor.storeId!,
       actorId: actor.id,
+      actorSessionId: c.get('sessionId'),
+      deviceId: c.get('device')?.id ?? null,
+      requestId: c.get('requestId'),
+      idempotencyKey: idempotencyKey(c),
       orderId: c.req.param('orderId'),
       expectedOrderVersion: body.expectedOrderVersion,
     }),
@@ -88,12 +104,18 @@ posRoutes.post('/orders/:orderId/time/pause', requirePermission('time.pause'), a
 
 posRoutes.post('/orders/:orderId/time/resume', requirePermission('time.pause'), async (c) => {
   const body = await parseJson(c.req.raw, timeActionSchema);
+  const actor = c.get('actor');
   return success(
     c,
     await new PosService(c.env).resume({
-      storeId: c.get('actor').storeId!,
+      storeId: actor.storeId!,
+      actorId: actor.id,
       orderId: c.req.param('orderId'),
       expectedOrderVersion: body.expectedOrderVersion,
+      actorSessionId: c.get('sessionId'),
+      deviceId: c.get('device')?.id ?? null,
+      requestId: c.get('requestId'),
+      idempotencyKey: idempotencyKey(c),
     }),
   );
 });
@@ -112,6 +134,8 @@ posRoutes.post('/orders/:orderId/checkout', requirePermission('checkout.complete
       expectedOrderVersion: body.expectedOrderVersion,
       method: body.method,
       cashReceivedVnd: body.cashReceivedVnd ?? null,
+      actorSessionId: c.get('sessionId'),
+      deviceId: c.get('device')?.id ?? null,
     }),
   );
 });
@@ -131,6 +155,8 @@ posRoutes.post('/orders/:orderId/transfer', requirePermission('table.transfer'),
       expectedOrderVersion: body.expectedOrderVersion,
       expectedSourceTableVersion: body.expectedSourceTableVersion,
       expectedTargetTableVersion: body.expectedTargetTableVersion,
+      actorSessionId: c.get('sessionId'),
+      deviceId: c.get('device')?.id ?? null,
     }),
   );
 });
@@ -148,6 +174,8 @@ posRoutes.post('/orders/:orderId/cancel', requirePermission('order.manage'), asy
       orderId: c.req.param('orderId'),
       expectedOrderVersion: body.expectedOrderVersion,
       reason: body.reason,
+      actorSessionId: c.get('sessionId'),
+      deviceId: c.get('device')?.id ?? null,
     }),
   );
 });

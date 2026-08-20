@@ -8,6 +8,7 @@ export const openTableSchema = z.object({
 export const addOrderItemSchema = z.object({
   productId: z.uuid(),
   variantId: z.uuid().nullable().optional(),
+  enteredUnitPriceVnd: z.number().int().nonnegative().optional(),
   quantityMilli: z.number().int().positive(),
   expectedOrderVersion: z.number().int().positive(),
   discount: z

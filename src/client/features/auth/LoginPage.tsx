@@ -1,7 +1,8 @@
 import {
   DesktopOutlined,
+  EyeInvisibleOutlined,
+  EyeOutlined,
   MailOutlined,
-  SafetyCertificateOutlined,
   UserOutlined,
 } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -18,6 +19,39 @@ import { AuthLayout } from './AuthLayout';
 interface EmployeeFormValues {
   username: string;
   pin: string;
+}
+
+interface PinOtpInputProps {
+  value?: string;
+  onChange?: (value: string) => void;
+  showPin: boolean;
+  onToggleShowPin: () => void;
+}
+
+function PinOtpInput({ value, onChange, showPin, onToggleShowPin }: PinOtpInputProps) {
+  const otpProps = {
+    size: 'large' as const,
+    length: 4,
+    mask: !showPin,
+    inputMode: 'numeric' as const,
+    formatter: (val: string) => val.replace(/\D/g, ''),
+    ...(value !== undefined ? { value } : {}),
+    ...(onChange !== undefined ? { onChange } : {}),
+  };
+
+  return (
+    <div className="employee-pin-wrapper">
+      <Input.OTP {...otpProps} />
+      <Button
+        type="text"
+        className="employee-pin-toggle-btn"
+        icon={showPin ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+        onClick={onToggleShowPin}
+        title={showPin ? 'Ẩn mã PIN' : 'Xem mã PIN'}
+        aria-label={showPin ? 'Ẩn mã PIN' : 'Xem mã PIN'}
+      />
+    </div>
+  );
 }
 
 function errorMessage(error: unknown) {
@@ -43,6 +77,7 @@ export function LoginPage() {
     searchParams.get('tab') === 'owner' ? 'owner' : 'employee',
   );
   const [submitting, setSubmitting] = useState(false);
+  const [showPin, setShowPin] = useState(false);
   const [error, setError] = useState<string | null>(() =>
     accessErrorMessage(searchParams.get('authError')),
   );
@@ -133,21 +168,17 @@ export function LoginPage() {
               />
             </Form.Item>
             <Form.Item
+              className="employee-pin-login-item"
               name="pin"
-              normalize={(value: string) => value.replaceAll(/\D/gu, '').slice(0, 4)}
+              normalize={(value: string | undefined) =>
+                (value ?? '').replace(/\D/g, '').slice(0, 4)
+              }
               rules={[
                 { required: true, message: 'Vui lòng nhập mã PIN.' },
                 { pattern: /^\d{4}$/u, message: 'Mã PIN phải gồm đúng 4 số.' },
               ]}
             >
-              <Input.Password
-                size="large"
-                autoComplete="off"
-                inputMode="numeric"
-                maxLength={4}
-                prefix={<SafetyCertificateOutlined />}
-                placeholder="Mã PIN 4 số"
-              />
+              <PinOtpInput showPin={showPin} onToggleShowPin={() => setShowPin((prev) => !prev)} />
             </Form.Item>
             <Button type="primary" htmlType="submit" size="large" block loading={submitting}>
               Đăng nhập
@@ -182,7 +213,7 @@ export function LoginPage() {
         ),
       },
     ],
-    [context.data?.device?.name, context.data?.device?.status, deviceIsActive, submitting],
+    [context.data?.device?.name, context.data?.device?.status, deviceIsActive, showPin, submitting],
   );
 
   if (context.isLoading) {

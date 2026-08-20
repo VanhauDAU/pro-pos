@@ -77,3 +77,24 @@ export const createServiceTableSchema = z.object({
   name: z.string().trim().min(1).max(120),
   sortOrder: z.number().int().min(0).default(0),
 });
+
+const areaTableNameSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+});
+
+export const createAreaLayoutSchema = z.object({
+  name: z.string().trim().min(1).max(160),
+  tables: z.array(areaTableNameSchema).min(1).max(100),
+});
+
+export const updateServiceTableSchema = areaTableNameSchema;
+
+export const reorderServiceTablesSchema = z
+  .object({
+    tableIds: z.array(z.uuid()).min(1).max(100),
+  })
+  .superRefine((value, context) => {
+    if (new Set(value.tableIds).size !== value.tableIds.length) {
+      context.addIssue({ code: 'custom', message: 'Danh sách bàn/phòng không được trùng.' });
+    }
+  });

@@ -4,6 +4,10 @@
 
 ### Added
 
+- PRO-013 catalog MVP: responsive Owner danh sách mặt hàng, tìm kiếm/lọc, form thêm/sửa mặt hàng
+  số lượng/trọng lượng/thời gian, phiên bản giá, avatar màu, CRUD danh mục và xem mặt hàng theo
+  danh mục. Import/export, thuế, kho, kênh bán hàng và upload ảnh được deferred.
+
 - PRO-010 Owner shell: Owner auth guard, responsive sidebar accordion, dashboard overview frame,
   direct settings hub, two-column store information form with province/ward location lookup,
   store identity, logout and mobile navigation using the `#0975F7` system color.
@@ -12,7 +16,7 @@
   gross/discount/net accounting snapshots, prompt-price sales, atomic invoice numbering, tenant
   reference validation, Owner-safe staff status, atomic pause/resume commands, audit context and
   controlled PWA update prompt. Local quality gate passes with 18 unit tests, 26 Worker integration
-  tests and a 0005 → 0007 migration-upgrade check; staging smoke remains a release gate.
+  tests and a 0005 → 0009 migration-upgrade check; staging smoke remains a release gate.
 
 - React/Web Worker/PWA foundation.
 - D1 tenant, authentication, device, catalog, pricing, POS and billing schema.

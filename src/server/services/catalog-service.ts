@@ -10,7 +10,7 @@ import { CatalogRepository } from '@server/repositories/catalog-repository';
 import { validatePricingConfig } from '@domain/pricing/validation';
 import { AuditRepository, type AuditContext } from '@server/repositories/audit-repository';
 
-type ProductInput = z.infer<typeof createProductSchema>;
+type ProductInput = z.input<typeof createProductSchema>;
 type PricingInput = z.infer<typeof pricingConfigSchema>;
 type AreaLayoutInput = z.infer<typeof createAreaLayoutSchema>;
 
@@ -52,6 +52,62 @@ export class CatalogService {
       });
     }
     return { id };
+  }
+
+  async updateNamed(
+    storeId: string,
+    table: 'categories' | 'units',
+    id: string,
+    name: string,
+    auditContext?: AuditContext,
+  ) {
+    const before = await this.repository.findNamed(storeId, table, id);
+    if (!before) {
+      throw new AppError('NAMED_RESOURCE_NOT_FOUND', 'Không tìm thấy dữ liệu.', 404);
+    }
+    const now = Date.now();
+    await this.repository.updateNamed({ storeId, table, id, name: name.trim(), now });
+    if (auditContext) {
+      await new AuditRepository(this.env.DB).record({
+        storeId,
+        context: auditContext,
+        action: `${table === 'categories' ? 'CATEGORY' : 'UNIT'}_UPDATED`,
+        entityType: table === 'categories' ? 'CATEGORY' : 'UNIT',
+        entityId: id,
+        before,
+        after: { name: name.trim() },
+        now,
+      });
+    }
+    return { id, updated: true };
+  }
+
+  async deleteCategory(storeId: string, id: string, auditContext?: AuditContext) {
+    const before = await this.repository.findNamed(storeId, 'categories', id);
+    if (!before) throw new AppError('CATEGORY_NOT_FOUND', 'Không tìm thấy danh mục.', 404);
+    const count = await this.repository.countActiveProductsByCategory(storeId, id);
+    if ((count?.total ?? 0) > 0) {
+      throw new AppError(
+        'CATEGORY_HAS_PRODUCTS',
+        'Không thể xóa danh mục đang có mặt hàng. Hãy chuyển mặt hàng trước.',
+        409,
+      );
+    }
+    const now = Date.now();
+    await this.repository.disableNamed(storeId, id, now);
+    if (auditContext) {
+      await new AuditRepository(this.env.DB).record({
+        storeId,
+        context: auditContext,
+        action: 'CATEGORY_DELETED',
+        entityType: 'CATEGORY',
+        entityId: id,
+        before,
+        after: { status: 'DISABLED' },
+        now,
+      });
+    }
+    return { id, deleted: true };
   }
 
   async listAreaLayouts(storeId: string) {
@@ -266,13 +322,15 @@ export class CatalogService {
       name: input.name.trim(),
       description: input.description?.trim() || null,
       productType: input.productType,
-      variants: input.variants.map((variant) => ({
+      avatarType: input.avatarType ?? 'COLOR',
+      avatarColor: input.avatarColor ?? null,
+      variants: (input.variants ?? []).map((variant) => ({
         id: crypto.randomUUID(),
         displayCode: `MH${crypto.randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase()}`,
         name: variant.name.trim(),
         salePriceVnd: variant.salePriceVnd,
-        costPriceVnd: variant.costPriceVnd,
-        promptPrice: variant.promptPrice,
+        costPriceVnd: variant.costPriceVnd ?? 0,
+        promptPrice: variant.promptPrice ?? false,
       })),
       now,
     });
@@ -289,7 +347,7 @@ export class CatalogService {
           productType: input.productType,
           categoryId: input.categoryId ?? null,
           unitId: input.unitId ?? null,
-          variantCount: input.variants.length,
+          variantCount: (input.variants ?? []).length,
         },
         now,
       });
@@ -299,6 +357,120 @@ export class CatalogService {
 
   listProducts(storeId: string) {
     return this.repository.listProducts(storeId);
+  }
+
+  async getProduct(storeId: string, productId: string) {
+    const product = await this.repository.findProduct(storeId, productId);
+    if (!product) throw new AppError('PRODUCT_NOT_FOUND', 'Không tìm thấy mặt hàng.', 404);
+    const variants = await this.repository.listProductVariants(storeId, productId);
+    let pricing: unknown = null;
+    if (product.productType === 'TIME') {
+      const config = await this.repository.getPricingConfig(storeId, productId);
+      if (config) {
+        const specialWindows = await this.repository.listSpecialPriceWindows(storeId, config.id);
+        pricing = {
+          basePriceVnd: config.basePriceVnd,
+          baseDurationSeconds: config.baseDurationSeconds,
+          calculationMode: config.calculationMode,
+          roundingUnitVnd: config.roundingUnitVnd,
+          firstPeriod:
+            config.firstPeriodEnabled === 1
+              ? {
+                  enabled: true,
+                  durationSeconds: config.firstPeriodDurationSeconds,
+                  priceVnd: config.firstPeriodPrice,
+                }
+              : { enabled: false },
+          specialWindows: specialWindows.results,
+        };
+      }
+    }
+    return { ...product, variants: variants.results, pricing };
+  }
+
+  async updateProduct(
+    storeId: string,
+    productId: string,
+    input: ProductInput,
+    auditContext?: AuditContext,
+  ) {
+    const before = await this.repository.findProduct(storeId, productId);
+    if (!before) throw new AppError('PRODUCT_NOT_FOUND', 'Không tìm thấy mặt hàng.', 404);
+    const references = await this.repository.validateProductReferences(
+      storeId,
+      input.categoryId ?? null,
+      input.unitId ?? null,
+    );
+    if (!references.categoryValid) {
+      throw new AppError('CATEGORY_NOT_FOUND', 'Không tìm thấy danh mục đang hoạt động.', 404);
+    }
+    if (!references.unitValid) {
+      throw new AppError('UNIT_NOT_FOUND', 'Không tìm thấy đơn vị tính.', 404);
+    }
+    const existingVariants = await this.repository.listProductVariants(storeId, productId);
+    const variantById = new Map(existingVariants.results.map((variant) => [variant.id, variant]));
+    const now = Date.now();
+    await this.repository.updateProduct({
+      id: productId,
+      storeId,
+      categoryId: input.categoryId ?? null,
+      unitId: input.unitId ?? null,
+      name: input.name.trim(),
+      description: input.description?.trim() || null,
+      productType: input.productType,
+      avatarType: input.avatarType ?? 'COLOR',
+      avatarColor: input.avatarColor ?? null,
+      variants: (input.variants ?? []).map((variant) => {
+        const value = {
+          displayCode: variant.id
+            ? String(variantById.get(variant.id)?.displayCode ?? '')
+            : `MH${crypto.randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase()}`,
+          name: variant.name.trim(),
+          salePriceVnd: variant.salePriceVnd,
+          costPriceVnd: variant.costPriceVnd ?? 0,
+          promptPrice: variant.promptPrice ?? false,
+        };
+        return variant.id ? { id: variant.id, ...value } : value;
+      }),
+      now,
+    });
+    if (auditContext) {
+      await new AuditRepository(this.env.DB).record({
+        storeId,
+        context: auditContext,
+        action: 'PRODUCT_UPDATED',
+        entityType: 'PRODUCT',
+        entityId: productId,
+        before,
+        after: { name: input.name.trim(), productType: input.productType },
+        now,
+      });
+    }
+    return { id: productId, updated: true };
+  }
+
+  async deleteProduct(storeId: string, productId: string, auditContext?: AuditContext) {
+    const before = await this.repository.findProduct(storeId, productId);
+    if (!before) throw new AppError('PRODUCT_NOT_FOUND', 'Không tìm thấy mặt hàng.', 404);
+    const now = Date.now();
+    await this.repository.disableProduct(storeId, productId, now);
+    if (auditContext) {
+      await new AuditRepository(this.env.DB).record({
+        storeId,
+        context: auditContext,
+        action: 'PRODUCT_DISABLED',
+        entityType: 'PRODUCT',
+        entityId: productId,
+        before,
+        after: { status: 'DISABLED' },
+        now,
+      });
+    }
+    return { id: productId, deleted: true };
+  }
+
+  listCategoryProducts(storeId: string, categoryId: string, search?: string) {
+    return this.repository.listCategoryProducts(storeId, categoryId, search?.trim() ?? '');
   }
 
   async upsertPricing(storeId: string, input: PricingInput, auditContext?: AuditContext) {

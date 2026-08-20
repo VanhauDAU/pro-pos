@@ -135,6 +135,40 @@ paths:
   /owner/catalog/products:
     get: { summary: List products, responses: { '200': { description: Product list } } }
     post: { summary: Create product, responses: { '201': { description: Created } } }
+  /owner/catalog/products/{productId}:
+    get:
+      summary: Get product details, variants and time pricing
+      responses: { '200': { description: Product details } }
+    put:
+      summary: Update product, variants and avatar metadata
+      responses: { '200': { description: Product updated } }
+    delete:
+      summary: Disable a product and its active variants
+      responses: { '200': { description: Product disabled } }
+  /owner/catalog/categories:
+    get:
+      {
+        summary: List categories with active product counts,
+        responses: { '200': { description: Category list } },
+      }
+    post: { summary: Create a category, responses: { '201': { description: Created } } }
+  /owner/catalog/categories/{categoryId}:
+    put:
+      summary: Rename a category
+      responses: { '200': { description: Category updated } }
+    delete:
+      summary: Disable an empty category
+      responses:
+        '200': { description: Category disabled }
+        '409': { description: Category still has active products }
+  /owner/catalog/categories/{categoryId}/products:
+    get:
+      summary: List products assigned to a category
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string }
+      responses: { '200': { description: Products in category } }
   /owner/catalog/tables:
     post:
       summary: Create a service table with same-store ACTIVE area and TIME product references

@@ -45,11 +45,13 @@ Cần hoàn thiện trong giai đoạn:
 ## Work breakdown đề xuất
 
 1. **PRO-010 — Owner shell và route guard**: auth context, layout, accordion navigation, logout,
-   401/403, dashboard khung và settings landing hub; các module nghiệp vụ tiếp tục theo PRO-011–014.
-2. **PRO-011 — Store settings và staff**: form settings, employee lifecycle, reset PIN.
-3. **PRO-012 — Catalog foundations**: areas, categories, units, products/variants.
-4. **PRO-013 — Tables và time pricing**: table assignment, pricing editor/validation preview.
-5. **PRO-014 — Owner E2E và staging hardening**: cross-store/RBAC, audit, responsive E2E, smoke.
+   401/403, dashboard khung và settings landing hub.
+2. **PRO-011 — Area/table settings**: khu vực, bàn/phòng, sắp xếp và trạng thái sử dụng.
+3. **PRO-012 — Staff, roles và permissions**: employee lifecycle, vai trò, quyền và reset PIN.
+4. **PRO-013 — Catalog items và categories MVP**: danh sách/tìm kiếm, form thêm/sửa mặt hàng,
+   phiên bản giá số lượng/trọng lượng, giá cơ bản theo thời gian và danh mục.
+5. **PRO-014 — POS sales portal**: table board, order workspace, quote và checkout.
+6. **PRO-015 — Owner E2E và staging hardening**: cross-store/RBAC, audit, responsive E2E, smoke.
 
 Mỗi ticket giữ migration additive/forward-only và cập nhật OpenAPI, screen registry, tests,
 changelog cùng PR.

@@ -12,6 +12,10 @@ Binding names giống nhau (`DB`, `MEDIA`), nhưng resource IDs và secrets ph�
 D1 staging/production đã được tạo. Trước deploy còn phải kích hoạt R2, tạo hai bucket, đặt
 Worker Secrets qua `wrangler secret put`, migrate staging, smoke, sau đó mới production.
 
+Sinh file secrets một lần bằng `pnpm secrets:generate:staging`; script tạo file ignored với mode
+0600 và không in giá trị. Upload bằng `wrangler deploy --env staging --secrets-file
+.env.staging.secrets`. Không chạy lại nếu file đã tồn tại; dùng `wrangler secret put` khi rotate.
+
 Workers Builds:
 
 - Production connection theo dõi `main`, non-production build tắt.

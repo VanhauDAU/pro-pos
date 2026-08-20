@@ -172,13 +172,13 @@ CREATE TABLE open_table_commands (
 CREATE TRIGGER trg_open_table_validate
 BEFORE INSERT ON open_table_commands
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM service_tables
     WHERE id = NEW.table_id
       AND store_id = NEW.store_id
       AND status = 'AVAILABLE'
       AND version = NEW.expected_table_version
-  ) THEN RAISE(ABORT, 'TABLE_NOT_AVAILABLE') END;
+  ) THEN RAISE(ABORT, 'TABLE_NOT_AVAILABLE') END);
 END;
 
 CREATE TRIGGER trg_open_table_execute
@@ -241,13 +241,13 @@ CREATE TABLE add_item_commands (
 CREATE TRIGGER trg_add_item_validate
 BEFORE INSERT ON add_item_commands
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM orders
     WHERE id = NEW.order_id
       AND store_id = NEW.store_id
       AND status = 'OPEN'
       AND version = NEW.expected_order_version
-  ) THEN RAISE(ABORT, 'ORDER_VERSION_CONFLICT') END;
+  ) THEN RAISE(ABORT, 'ORDER_VERSION_CONFLICT') END);
 END;
 
 CREATE TRIGGER trg_add_item_execute
@@ -299,23 +299,23 @@ CREATE TABLE checkout_commands (
 CREATE TRIGGER trg_checkout_validate
 BEFORE INSERT ON checkout_commands
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM orders
     WHERE id = NEW.order_id
       AND store_id = NEW.store_id
       AND table_id = NEW.table_id
       AND status = 'OPEN'
       AND version = NEW.expected_order_version
-  ) THEN RAISE(ABORT, 'ORDER_VERSION_CONFLICT') END;
+  ) THEN RAISE(ABORT, 'ORDER_VERSION_CONFLICT') END);
 
-  SELECT CASE WHEN EXISTS (
+  SELECT (CASE WHEN EXISTS (
     SELECT 1 FROM payments
     WHERE order_id = NEW.order_id AND status = 'SUCCEEDED'
-  ) THEN RAISE(ABORT, 'ORDER_ALREADY_PAID') END;
+  ) THEN RAISE(ABORT, 'ORDER_ALREADY_PAID') END);
 
-  SELECT CASE WHEN NEW.method = 'CASH' AND (
+  SELECT (CASE WHEN NEW.method = 'CASH' AND (
     NEW.cash_received IS NULL OR NEW.cash_received < NEW.total
-  ) THEN RAISE(ABORT, 'INSUFFICIENT_CASH') END;
+  ) THEN RAISE(ABORT, 'INSUFFICIENT_CASH') END);
 END;
 
 CREATE TRIGGER trg_checkout_execute
@@ -410,7 +410,7 @@ CREATE TABLE transfer_table_commands (
 CREATE TRIGGER trg_transfer_table_validate
 BEFORE INSERT ON transfer_table_commands
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM orders o
     JOIN service_tables source ON source.id = o.table_id AND source.store_id = o.store_id
     JOIN service_tables target ON target.id = NEW.target_table_id AND target.store_id = o.store_id
@@ -419,7 +419,7 @@ BEGIN
       AND source.id = NEW.source_table_id AND source.status = 'OCCUPIED'
       AND source.version = NEW.expected_source_version
       AND target.status = 'AVAILABLE' AND target.version = NEW.expected_target_version
-  ) THEN RAISE(ABORT, 'TABLE_TRANSFER_CONFLICT') END;
+  ) THEN RAISE(ABORT, 'TABLE_TRANSFER_CONFLICT') END);
 END;
 
 CREATE TRIGGER trg_transfer_table_execute
@@ -467,12 +467,12 @@ CREATE TABLE cancel_order_commands (
 CREATE TRIGGER trg_cancel_order_validate
 BEFORE INSERT ON cancel_order_commands
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM orders
     WHERE id = NEW.order_id AND store_id = NEW.store_id
       AND table_id = NEW.table_id AND status = 'OPEN'
       AND version = NEW.expected_order_version
-  ) THEN RAISE(ABORT, 'ORDER_VERSION_CONFLICT') END;
+  ) THEN RAISE(ABORT, 'ORDER_VERSION_CONFLICT') END);
 END;
 
 CREATE TRIGGER trg_cancel_order_execute

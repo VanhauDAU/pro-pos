@@ -11,3 +11,5 @@ Quy tắc:
 - PR phải test database sạch và upgrade từ version trước.
 - Staging migration sau merge `dev`; production migration sau release PR `dev → main`.
 - Worker rollback không rollback D1/R2.
+- SQL migrations luôn dùng LF (`.gitattributes`). Với D1 triggers, bọc `CASE ... END` trong
+  ngoặc để tránh Wrangler/D1 remote parser hiểu nhầm `END` của CASE là cuối trigger.

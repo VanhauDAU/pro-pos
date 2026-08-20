@@ -44,6 +44,14 @@
   "env": {
     "staging": {
       "name": "pro-pos-staging",
+      "secrets": {
+        "required": [
+          "AUTH_PEPPER",
+          "DEVICE_TOKEN_PEPPER",
+          "SESSION_TOKEN_PEPPER",
+          "SYSTEM_BOOTSTRAP_SECRET",
+        ],
+      },
       "vars": {
         "ENVIRONMENT": "staging",
         "APP_VERSION": "staging",
@@ -68,6 +76,14 @@
     },
     "production": {
       "name": "pro-pos-production",
+      "secrets": {
+        "required": [
+          "AUTH_PEPPER",
+          "DEVICE_TOKEN_PEPPER",
+          "SESSION_TOKEN_PEPPER",
+          "SYSTEM_BOOTSTRAP_SECRET",
+        ],
+      },
       "vars": {
         "ENVIRONMENT": "production",
         "APP_VERSION": "production",

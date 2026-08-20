@@ -1791,6 +1791,11 @@ body {
   white-space: nowrap;
 }
 
+.owner-area-table-pricing {
+  width: 190px;
+  flex: 0 0 190px;
+}
+
 .owner-area-list-card__loading,
 .owner-area-empty {
   padding: 38px 24px;
@@ -2877,9 +2882,24 @@ body {
     padding-inline: 12px 5px;
   }
 
+  .owner-area-table-pricing {
+    width: 145px;
+    flex-basis: 145px;
+  }
+
   .owner-area-table__details {
     padding: 10px 12px;
     grid-template-columns: 1fr;
+  }
+
+  .owner-area-existing-table {
+    flex-wrap: wrap;
+  }
+
+  .owner-area-table-pricing {
+    width: calc(100% - 48px);
+    margin-left: 43px;
+    flex-basis: calc(100% - 48px);
   }
 
   .owner-area-name-field {

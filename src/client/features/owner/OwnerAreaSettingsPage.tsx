@@ -19,6 +19,7 @@ import {
   Input,
   Modal,
   Popconfirm,
+  Select,
   Skeleton,
   Tag,
   Typography,
@@ -36,6 +37,15 @@ interface AreaTable {
   name: string;
   status: 'AVAILABLE' | 'OCCUPIED';
   sortOrder: number;
+  timeProductId: string | null;
+  timeProductName: string | null;
+}
+
+interface TimeProduct {
+  id: string;
+  name: string;
+  productType: 'QUANTITY' | 'WEIGHT' | 'TIME';
+  status: 'ACTIVE' | 'DISABLED';
 }
 
 interface AreaLayout {
@@ -100,6 +110,7 @@ export function OwnerAreaSettingsPage() {
   const [editingTable, setEditingTable] = useState<AreaTable | null>(null);
   const [savingTable, setSavingTable] = useState(false);
   const [orderingAreaId, setOrderingAreaId] = useState<string | null>(null);
+  const [pricingTableId, setPricingTableId] = useState<string | null>(null);
   const [draggedTable, setDraggedTable] = useState<{ areaId: string; tableId: string } | null>(
     null,
   );
@@ -112,6 +123,10 @@ export function OwnerAreaSettingsPage() {
   const authContext = useQuery({
     queryKey: ['auth-context'],
     queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
+  });
+  const timeProducts = useQuery({
+    queryKey: ['owner-time-products'],
+    queryFn: () => apiRequest<TimeProduct[]>('/api/v1/owner/catalog/products'),
   });
 
   const totalTables = useMemo(
@@ -194,6 +209,40 @@ export function OwnerAreaSettingsPage() {
       setOrderingAreaId(null);
       setDraggedTable(null);
     }
+  };
+
+  const saveTablePricing = async (table: AreaTable, timeProductId: string) => {
+    if (table.status === 'OCCUPIED' || timeProductId === table.timeProductId) return;
+    setPricingTableId(table.id);
+    try {
+      await jsonRequest(
+        `/api/v1/owner/catalog/tables/${table.id}/pricing`,
+        { timeProductId },
+        {
+          method: 'PATCH',
+          headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' },
+        },
+      );
+      await queryClient.invalidateQueries({ queryKey: AREA_LAYOUTS_QUERY });
+      messageApi.success('Đã cập nhật bảng giá cho bàn/phòng.');
+    } catch (error) {
+      messageApi.error(errorMessage(error, 'Không thể cập nhật bảng giá.'));
+    } finally {
+      setPricingTableId(null);
+    }
+  };
+
+  const pricingOptions = (table: AreaTable) => {
+    const options = (timeProducts.data ?? [])
+      .filter((product) => product.productType === 'TIME' && product.status === 'ACTIVE')
+      .map((product) => ({ value: product.id, label: product.name }));
+    if (table.timeProductId && !options.some((option) => option.value === table.timeProductId)) {
+      options.unshift({
+        value: table.timeProductId,
+        label: table.timeProductName ?? 'Bảng giá hiện tại',
+      });
+    }
+    return options;
   };
 
   return (
@@ -320,6 +369,19 @@ export function OwnerAreaSettingsPage() {
                                 <AppstoreOutlined />
                               </span>
                               <span className="owner-area-existing-table__name">{table.name}</span>
+                              <Select
+                                className="owner-area-table-pricing"
+                                size="small"
+                                value={table.timeProductId ?? null}
+                                placeholder="Chọn bảng giá"
+                                loading={timeProducts.isLoading || pricingTableId === table.id}
+                                disabled={
+                                  table.status === 'OCCUPIED' || pricingTableId === table.id
+                                }
+                                options={pricingOptions(table)}
+                                onChange={(value: string) => void saveTablePricing(table, value)}
+                                notFoundContent="Chưa có mặt hàng tính giờ"
+                              />
                               {table.status === 'OCCUPIED' ? (
                                 <Tag color="processing">Đang dùng</Tag>
                               ) : null}

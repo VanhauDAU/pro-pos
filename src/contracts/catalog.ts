@@ -100,6 +100,10 @@ export const createAreaLayoutSchema = z.object({
 
 export const updateServiceTableSchema = areaTableNameSchema;
 
+export const updateServiceTablePricingSchema = z.object({
+  timeProductId: z.uuid(),
+});
+
 export const reorderServiceTablesSchema = z
   .object({
     tableIds: z.array(z.uuid()).min(1).max(100),

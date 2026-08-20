@@ -4,6 +4,10 @@
 
 ### Added
 
+- PRO-016 table pricing assignment: each available table/room can select an active time product
+  and its pricing; occupied tables are locked against pricing changes and POS snapshots the
+  selected pricing when opening a session.
+
 - PRO-015 product pricing completion: configurable special hours by time range or all-day weekday
   rules, overlap validation through the server pricing engine, and product avatar image upload with
   private media preview. The product list now also supports restoring a disabled product, and the

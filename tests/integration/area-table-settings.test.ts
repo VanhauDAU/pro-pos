@@ -70,6 +70,42 @@ describe('Owner area and table settings', () => {
     ).rejects.toMatchObject({ code: 'TABLE_ORDER_INVALID' });
   });
 
+  it('assigns a priced time product to an available table and blocks occupied changes', async () => {
+    const timeProduct = await catalog.createProduct(storeId, {
+      name: 'Giờ VIP',
+      productType: 'TIME',
+      variants: [],
+    });
+    await catalog.upsertPricing(storeId, {
+      productId: timeProduct.id,
+      basePriceVnd: 90_000,
+      baseDurationSeconds: 3600,
+      calculationMode: 'ACTUAL_TIME',
+      roundingUnitVnd: 1000,
+      firstPeriod: { enabled: false },
+      specialWindows: [],
+    });
+    const [layout] = await catalog.listAreaLayouts(storeId);
+    const table = layout!.tables[0]!;
+    await catalog.updateTablePricing(storeId, table.id, timeProduct.id);
+    expect((await catalog.listAreaLayouts(storeId))[0]!.tables[0]).toMatchObject({
+      id: table.id,
+      timeProductId: timeProduct.id,
+      timeProductName: 'Giờ VIP',
+    });
+    await env.DB.prepare("UPDATE service_tables SET status = 'OCCUPIED' WHERE id = ?")
+      .bind(table.id)
+      .run();
+    await expect(
+      catalog.updateTablePricing(storeId, table.id, timeProduct.id),
+    ).rejects.toMatchObject({
+      code: 'SERVICE_TABLE_OCCUPIED',
+    });
+    await env.DB.prepare("UPDATE service_tables SET status = 'AVAILABLE' WHERE id = ?")
+      .bind(table.id)
+      .run();
+  });
+
   it('renames and soft-deletes an available table', async () => {
     const [layout] = await catalog.listAreaLayouts(storeId);
     const table = layout!.tables[0]!;

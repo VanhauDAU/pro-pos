@@ -244,6 +244,13 @@ paths:
       responses:
         '200': { description: Table/room removed }
         '409': { description: Occupied table/room cannot be removed }
+  /owner/catalog/tables/{tableId}/pricing:
+    patch:
+      summary: Assign an active time product and its pricing to an available table
+      responses:
+        '200': { description: Table pricing updated }
+        '409': { description: Occupied table cannot change pricing }
+        '422': { description: Time product has no pricing configuration }
   /owner/catalog/area-layouts/{areaId}/table-order:
     put:
       summary: Persist the display order of every active table/room in an area

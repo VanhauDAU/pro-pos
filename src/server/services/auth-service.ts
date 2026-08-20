@@ -275,7 +275,7 @@ export class AuthService {
 
   async employeeLogin(input: {
     rawDeviceSecret: string;
-    employeeId: string;
+    username: string;
     pin: string;
   }): Promise<{ rawToken: string; response: LoginResponse }> {
     const now = Date.now();
@@ -289,10 +289,11 @@ export class AuthService {
     if (device.store_status !== 'ACTIVE') {
       throw new AppError('STORE_LOCKED', 'Cửa hàng đang bị khóa.', 403);
     }
-    const subjectKey = `pin:${device.device_id}:${input.employeeId}`;
+    const normalizedUsername = input.username.trim().toLocaleLowerCase('en-US');
+    const subjectKey = `pin:${device.device_id}:${normalizedUsername}`;
     await this.assertNotLocked('EMPLOYEE_PIN', subjectKey, now);
-    const identity = await this.repository.findEmployeeByIdAndStore(
-      input.employeeId,
+    const identity = await this.repository.findEmployeeByUsernameAndStore(
+      normalizedUsername,
       device.store_id,
     );
     const valid = await verifyPasswordDigest({

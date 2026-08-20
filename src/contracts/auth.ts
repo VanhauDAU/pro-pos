@@ -9,7 +9,7 @@ export const ownerLoginRequestSchema = z.object({
 });
 
 export const employeeLoginRequestSchema = z.object({
-  employeeId: z.uuid(),
+  username: z.string().trim().min(1).max(128),
   pin: z.string().regex(/^\d{4}$/),
 });
 

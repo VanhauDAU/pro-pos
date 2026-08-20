@@ -56,7 +56,7 @@ authRoutes.post('/employee/login', async (c) => {
   try {
     result = await service.employeeLogin({
       rawDeviceSecret: rawDevice,
-      employeeId: body.employeeId,
+      username: body.username,
       pin: body.pin,
     });
   } catch (error) {

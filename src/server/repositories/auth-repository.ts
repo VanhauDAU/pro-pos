@@ -136,7 +136,7 @@ export class AuthRepository {
     ]);
   }
 
-  findEmployeeByIdAndStore(userId: string, storeId: string) {
+  findEmployeeByUsernameAndStore(username: string, storeId: string) {
     return this.db
       .prepare(
         `SELECT
@@ -147,10 +147,10 @@ export class AuthRepository {
         FROM users u
         JOIN store_memberships sm ON sm.user_id = u.id AND sm.store_id = ?
         JOIN pin_credentials pc ON pc.user_id = u.id AND pc.store_id = sm.store_id
-        WHERE u.id = ?
+        WHERE u.username = ? COLLATE NOCASE
         LIMIT 1`,
       )
-      .bind(storeId, userId)
+      .bind(storeId, username)
       .first<PinIdentityRow>();
   }
 

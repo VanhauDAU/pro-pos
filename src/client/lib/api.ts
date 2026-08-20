@@ -32,3 +32,15 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
 
   return payload.data;
 }
+
+export function jsonRequest<T>(path: string, body: unknown, init?: RequestInit) {
+  return apiRequest<T>(path, {
+    ...init,
+    method: init?.method ?? 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...init?.headers,
+    },
+    body: JSON.stringify(body),
+  });
+}

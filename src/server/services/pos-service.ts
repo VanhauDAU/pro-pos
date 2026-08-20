@@ -52,6 +52,100 @@ export class PosService {
     return result.results;
   }
 
+  async listOrders(storeId: string, now = Date.now()) {
+    const result = await this.repository.listActiveOrders(storeId);
+    return Promise.all(
+      result.results.map(async (order) => {
+        const quote = await this.quote(storeId, order.id, now);
+        return {
+          id: order.id,
+          displayCode: order.display_code,
+          orderType: order.order_type,
+          status: order.status,
+          version: order.version,
+          openedAt: order.opened_at,
+          tableId: order.table_id,
+          tableName: order.table_name,
+          areaId: order.area_id,
+          areaName: order.area_name,
+          itemCount: quote.items.reduce((sum, item) => sum + Number(item.quantityMilli) / 1000, 0),
+          totalVnd: quote.totalVnd,
+        };
+      }),
+    );
+  }
+
+  async createTakeaway(input: {
+    storeId: string;
+    actorId: string;
+    requestId: string;
+    idempotencyKey: string;
+    note: string | null;
+  }) {
+    const replay = await this.repository.findCreateTakeawayCommand(
+      input.storeId,
+      input.idempotencyKey,
+    );
+    if (replay) return replay;
+    const orderId = crypto.randomUUID();
+    const displayCode = `MD-${orderId.replaceAll('-', '').slice(0, 8).toUpperCase()}`;
+    await this.repository.createTakeawayOrder({
+      commandId: input.idempotencyKey,
+      storeId: input.storeId,
+      orderId,
+      displayCode,
+      note: input.note,
+      actorId: input.actorId,
+      requestId: input.requestId,
+      issuedAt: Date.now(),
+    });
+    return { orderId, displayCode };
+  }
+
+  async listCatalog(storeId: string) {
+    const result = await this.repository.listSaleCatalog(storeId);
+    const products = new Map<
+      string,
+      Omit<
+        (typeof result.results)[number],
+        'variantId' | 'variantName' | 'salePriceVnd' | 'promptPrice'
+      > & {
+        variants: Array<{
+          id: string;
+          name: string;
+          salePriceVnd: number | null;
+          promptPrice: 0 | 1;
+        }>;
+      }
+    >();
+    for (const row of result.results) {
+      const product = products.get(row.productId) ?? {
+        productId: row.productId,
+        productName: row.productName,
+        productType: row.productType,
+        avatarType: row.avatarType,
+        avatarColor: row.avatarColor,
+        mediaId: row.mediaId,
+        categoryId: row.categoryId,
+        categoryName: row.categoryName,
+        unitName: row.unitName,
+        variants: [],
+      };
+      product.variants.push({
+        id: row.variantId,
+        name: row.variantName,
+        salePriceVnd: row.salePriceVnd,
+        promptPrice: row.promptPrice,
+      });
+      products.set(row.productId, product);
+    }
+    return [...products.values()];
+  }
+
+  getStaffContext(storeId: string, actorId: string) {
+    return this.repository.getStaffContext(storeId, actorId);
+  }
+
   private async pricingSnapshot(storeId: string, tableId: string) {
     const row = await this.repository.findTablePricing(storeId, tableId);
     if (!row) throw new AppError('TABLE_PRICING_MISSING', 'Bàn chưa có bảng giá.', 422);
@@ -137,8 +231,11 @@ export class PosService {
     actorSessionId?: string | null;
     deviceId?: string | null;
   }) {
-    const replay = await this.repository.findAddItemCommand(input.storeId, input.idempotencyKey);
+    const replay =
+      (await this.repository.findAddItemCommand(input.storeId, input.idempotencyKey)) ??
+      (await this.repository.findAddTakeawayItemCommand(input.storeId, input.idempotencyKey));
     if (replay) return replay;
+    const takeawayOrder = await this.repository.findTakeawayOrder(input.storeId, input.orderId);
     const product = await this.repository.findSaleVariant(
       input.storeId,
       input.productId,
@@ -178,30 +275,32 @@ export class PosService {
     }
     discountAmount = Math.min(subtotal, discountAmount);
     const itemId = crypto.randomUUID();
+    const command = {
+      commandId: input.idempotencyKey,
+      storeId: input.storeId,
+      orderId: input.orderId,
+      expectedOrderVersion: input.expectedOrderVersion,
+      itemId,
+      productId: product.product_id,
+      variantId: product.variant_id,
+      productType: product.product_type,
+      productName: product.product_name,
+      variantName: product.variant_name,
+      unitName: product.unit_name,
+      unitPriceVnd,
+      quantityMilli: input.quantityMilli,
+      discountType: input.discount?.type ?? null,
+      discountInputValue: input.discount?.value ?? null,
+      discountAmountVnd: discountAmount,
+      grossLineTotalVnd: subtotal,
+      netLineTotalVnd: subtotal - discountAmount,
+      actorId: input.actorId,
+      requestId: input.requestId,
+      issuedAt: Date.now(),
+    };
     try {
-      await this.repository.executeAddItem({
-        commandId: input.idempotencyKey,
-        storeId: input.storeId,
-        orderId: input.orderId,
-        expectedOrderVersion: input.expectedOrderVersion,
-        itemId,
-        productId: product.product_id,
-        variantId: product.variant_id,
-        productType: product.product_type,
-        productName: product.product_name,
-        variantName: product.variant_name,
-        unitName: product.unit_name,
-        unitPriceVnd,
-        quantityMilli: input.quantityMilli,
-        discountType: input.discount?.type ?? null,
-        discountInputValue: input.discount?.value ?? null,
-        discountAmountVnd: discountAmount,
-        grossLineTotalVnd: subtotal,
-        netLineTotalVnd: subtotal - discountAmount,
-        actorId: input.actorId,
-        requestId: input.requestId,
-        issuedAt: Date.now(),
-      });
+      if (takeawayOrder) await this.repository.executeAddTakeawayItem(command);
+      else await this.repository.executeAddItem(command);
     } catch (error) {
       mapDatabaseError(error);
     }
@@ -235,20 +334,30 @@ export class PosService {
   }
 
   async quote(storeId: string, orderId: string, now = Date.now()) {
-    const order = await this.repository.findOrder(storeId, orderId);
+    const order =
+      (await this.repository.findOrder(storeId, orderId)) ??
+      (await this.repository.findTakeawayOrder(storeId, orderId));
     const session = await this.repository.findTimeSession(storeId, orderId);
-    if (!order || !session) throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn.', 404);
-    const pauses = await this.repository.listPauses(storeId, session.id);
-    const items = await this.repository.listOrderItems(storeId, orderId);
-    const pricing = calculateTimePrice({
-      startedAtMs: session.started_at,
-      endedAtMs: session.ended_at ?? now,
-      pauses: pauses.results.map((pause) => ({
-        pausedAtMs: pause.pausedAtMs,
-        resumedAtMs: pause.resumedAtMs ?? now,
-      })),
-      config: JSON.parse(session.pricing_snapshot_json) as PricingConfigSnapshot,
-    });
+    if (!order) throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn.', 404);
+    if (order.order_type === 'DINE_IN' && !session) {
+      throw new AppError('ORDER_TIME_SESSION_MISSING', 'Đơn tại chỗ thiếu phiên tính giờ.', 409);
+    }
+    const pauses = session ? await this.repository.listPauses(storeId, session.id) : null;
+    const items =
+      order.order_type === 'TAKEAWAY'
+        ? await this.repository.listTakeawayOrderItems(storeId, orderId)
+        : await this.repository.listOrderItems(storeId, orderId);
+    const pricing = session
+      ? calculateTimePrice({
+          startedAtMs: session.started_at,
+          endedAtMs: Math.max(session.started_at + 1, session.ended_at ?? now),
+          pauses: pauses!.results.map((pause) => ({
+            pausedAtMs: pause.pausedAtMs,
+            resumedAtMs: pause.resumedAtMs ?? now,
+          })),
+          config: JSON.parse(session.pricing_snapshot_json) as PricingConfigSnapshot,
+        })
+      : null;
     const productGross = items.results.reduce(
       (sum, item) => sum + Number(item.grossLineTotalVnd),
       0,
@@ -257,14 +366,19 @@ export class PosService {
       (sum, item) => sum + Number(item.discountAmountVnd),
       0,
     );
-    const subtotal = productGross + pricing.amountAfterRoundingVnd;
+    const subtotal = productGross + (pricing?.amountAfterRoundingVnd ?? 0);
     return {
       order: {
         id: order.id,
+        displayCode: order.display_code,
+        orderType: order.order_type,
         tableId: order.table_id,
         tableName: order.table_name,
+        areaId: order.area_id,
+        areaName: order.area_name,
         status: order.status,
         version: order.version,
+        openedAt: order.opened_at,
       },
       items: items.results,
       time: pricing,
@@ -345,6 +459,13 @@ export class PosService {
     const quote = await this.quote(input.storeId, input.orderId);
     if (quote.order.status !== 'OPEN') {
       throw new AppError('ORDER_NOT_OPEN', 'Đơn hàng không ở trạng thái mở.', 409);
+    }
+    if (quote.order.orderType !== 'DINE_IN' || !quote.order.tableId || !quote.time) {
+      throw new AppError(
+        'TAKEAWAY_CHECKOUT_NOT_READY',
+        'Thanh toán đơn mang đi sẽ được hoàn thiện ở bước tiếp theo.',
+        422,
+      );
     }
     if (quote.order.version !== input.expectedOrderVersion) {
       throw new AppError('ORDER_VERSION_CONFLICT', 'Đơn hàng đã thay đổi. Vui lòng tải lại.', 409);
@@ -442,6 +563,9 @@ export class PosService {
     if (replay) return replay;
     const order = await this.repository.findOrder(input.storeId, input.orderId);
     if (!order) throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn.', 404);
+    if (order.order_type !== 'DINE_IN' || !order.table_id) {
+      throw new AppError('DINE_IN_ORDER_REQUIRED', 'Chỉ đơn tại chỗ mới có thể chuyển bàn.', 422);
+    }
     try {
       await this.repository.executeTransfer({
         commandId: input.idempotencyKey,
@@ -483,6 +607,13 @@ export class PosService {
     if (replay) return { ...replay, cancelled: true };
     const order = await this.repository.findOrder(input.storeId, input.orderId);
     if (!order) throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn.', 404);
+    if (order.order_type !== 'DINE_IN' || !order.table_id) {
+      throw new AppError(
+        'TAKEAWAY_CANCEL_NOT_READY',
+        'Hủy đơn mang đi sẽ được hoàn thiện ở bước tiếp theo.',
+        422,
+      );
+    }
     try {
       await this.repository.executeCancel({
         commandId: input.idempotencyKey,

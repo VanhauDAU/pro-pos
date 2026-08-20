@@ -5,6 +5,10 @@ export const openTableSchema = z.object({
   expectedTableVersion: z.number().int().positive(),
 });
 
+export const createTakeawayOrderSchema = z.object({
+  note: z.string().trim().max(500).nullable().optional(),
+});
+
 export const addOrderItemSchema = z.object({
   productId: z.uuid(),
   variantId: z.uuid().nullable().optional(),

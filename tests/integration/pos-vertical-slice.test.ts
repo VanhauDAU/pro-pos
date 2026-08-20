@@ -143,6 +143,93 @@ describe('online POS vertical slice', () => {
     ).rejects.toMatchObject({ code: 'TABLE_NOT_AVAILABLE' });
   });
 
+  it('hides soft-deleted areas and disabled tables from the staff POS', async () => {
+    const catalog = new CatalogService(env);
+    const deletedArea = await catalog.createAreaLayout(storeId, {
+      name: 'Khu vực sẽ xóa',
+      tables: [{ name: 'Bàn sẽ ẩn' }],
+    });
+    await catalog.deleteAreaLayout(storeId, deletedArea.id);
+
+    const tables = await new PosService(env).listTables(storeId);
+    expect(tables.some((table) => table.areaId === deletedArea.id)).toBe(false);
+    expect(tables.every((table) => table.status !== 'DISABLED')).toBe(true);
+  });
+
+  it('groups active variants under one product in the staff sale catalog', async () => {
+    const catalog = new CatalogService(env);
+    const multiVariant = await catalog.createProduct(storeId, {
+      name: 'Nước nhiều size',
+      productType: 'QUANTITY',
+      variants: [
+        { name: 'Nhỏ', salePriceVnd: 10_000, costPriceVnd: 0, promptPrice: false },
+        { name: 'Lớn', salePriceVnd: 15_000, costPriceVnd: 0, promptPrice: false },
+      ],
+    });
+
+    const products = await new PosService(env).listCatalog(storeId);
+    const matches = products.filter((product) => product.productId === multiVariant.id);
+    expect(matches).toHaveLength(1);
+    expect(matches[0]!.variants).toHaveLength(2);
+  });
+
+  it('creates and lists an idempotent takeaway order without a table or time session', async () => {
+    const pos = new PosService(env);
+    const first = await pos.createTakeaway({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-create-takeaway-1',
+      idempotencyKey: 'create-takeaway-command-001',
+      note: 'Khách lấy tại quầy',
+    });
+    const replay = await pos.createTakeaway({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-create-takeaway-replay',
+      idempotencyKey: 'create-takeaway-command-001',
+      note: null,
+    });
+    expect(replay).toEqual(first);
+
+    const quote = await pos.quote(storeId, first.orderId);
+    expect(quote).toMatchObject({
+      order: { orderType: 'TAKEAWAY', tableId: null, displayCode: first.displayCode },
+      time: null,
+      totalVnd: 0,
+    });
+    await pos.addItem({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-add-takeaway-1',
+      idempotencyKey: 'add-takeaway-item-command-001',
+      orderId: first.orderId,
+      productId,
+      variantId,
+      quantityMilli: 1000,
+      expectedOrderVersion: 1,
+      discount: null,
+    });
+    const updatedQuote = await pos.quote(storeId, first.orderId);
+    expect(updatedQuote).toMatchObject({
+      order: { orderType: 'TAKEAWAY', version: 2 },
+      totalVnd: 20_000,
+    });
+    const session = await env.DB.prepare('SELECT id FROM time_sessions WHERE order_id = ?')
+      .bind(first.orderId)
+      .first();
+    expect(session).toBeNull();
+
+    const orders = await pos.listOrders(storeId);
+    expect(orders).toContainEqual(
+      expect.objectContaining({
+        id: first.orderId,
+        orderType: 'TAKEAWAY',
+        tableId: null,
+        totalVnd: 20_000,
+      }),
+    );
+  });
+
   it('adds a snapshotted product and completes idempotent checkout', async () => {
     const pos = new PosService(env);
     const opened = await pos.openTable({

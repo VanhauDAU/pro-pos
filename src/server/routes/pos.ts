@@ -4,6 +4,7 @@ import {
   addOrderItemSchema,
   cancelOrderSchema,
   checkoutSchema,
+  createTakeawayOrderSchema,
   openTableSchema,
   timeActionSchema,
   transferTableSchema,
@@ -33,6 +34,35 @@ function idempotencyKey(c: Parameters<typeof success>[0]) {
 posRoutes.get('/tables', requirePermission('table.view'), async (c) =>
   success(c, await new PosService(c.env).listTables(c.get('actor').storeId!)),
 );
+
+posRoutes.get('/context', async (c) => {
+  const actor = c.get('actor');
+  return success(c, await new PosService(c.env).getStaffContext(actor.storeId!, actor.id));
+});
+
+posRoutes.get('/catalog', requirePermission('order.manage'), async (c) =>
+  success(c, await new PosService(c.env).listCatalog(c.get('actor').storeId!)),
+);
+
+posRoutes.get('/orders', requirePermission('order.manage'), async (c) =>
+  success(c, await new PosService(c.env).listOrders(c.get('actor').storeId!)),
+);
+
+posRoutes.post('/orders', requirePermission('order.manage'), async (c) => {
+  const body = await parseJson(c.req.raw, createTakeawayOrderSchema);
+  const actor = c.get('actor');
+  return success(
+    c,
+    await new PosService(c.env).createTakeaway({
+      storeId: actor.storeId!,
+      actorId: actor.id,
+      requestId: c.get('requestId'),
+      idempotencyKey: idempotencyKey(c),
+      note: body.note ?? null,
+    }),
+    201,
+  );
+});
 
 posRoutes.post('/tables/open', requirePermission('table.open'), async (c) => {
   const body = await parseJson(c.req.raw, openTableSchema);

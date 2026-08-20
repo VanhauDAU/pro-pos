@@ -19,10 +19,15 @@ export interface TablePricingRow {
 export interface OrderRow {
   id: string;
   store_id: string;
-  table_id: string;
+  table_id: string | null;
+  order_type: 'DINE_IN' | 'TAKEAWAY';
+  display_code: string | null;
   status: 'OPEN' | 'PAYMENT_PENDING' | 'PAID' | 'CANCELLED';
   version: number;
-  table_name: string;
+  table_name: string | null;
+  area_id: string | null;
+  area_name: string | null;
+  opened_at: number;
 }
 
 export interface TimeSessionRow {
@@ -49,6 +54,22 @@ export interface SaleVariantRow {
   unit_name: string | null;
 }
 
+export interface SaleCatalogRow {
+  productId: string;
+  productName: string;
+  productType: 'QUANTITY' | 'WEIGHT';
+  avatarType: 'COLOR' | 'IMAGE';
+  avatarColor: string | null;
+  mediaId: string | null;
+  categoryId: string | null;
+  categoryName: string | null;
+  variantId: string;
+  variantName: string;
+  salePriceVnd: number | null;
+  promptPrice: 0 | 1;
+  unitName: string | null;
+}
+
 export class PosRepository {
   constructor(private readonly db: D1Database) {}
 
@@ -58,10 +79,16 @@ export class PosRepository {
         `SELECT
           st.id, COALESCE(st.display_name, st.name) AS name, st.status, st.version,
           st.area_id AS areaId,
-          a.name AS areaName, st.sort_order AS sortOrder
+          a.name AS areaName, a.sort_order AS areaSortOrder,
+          st.sort_order AS sortOrder,
+          o.id AS activeOrderId, o.opened_at AS occupiedSince
         FROM service_tables st
         JOIN areas a ON a.id = st.area_id AND a.store_id = st.store_id
+        LEFT JOIN orders o ON o.table_id = st.id AND o.store_id = st.store_id
+          AND o.order_type = 'DINE_IN' AND o.status IN ('OPEN', 'PAYMENT_PENDING')
         WHERE st.store_id = ?
+          AND a.status = 'ACTIVE'
+          AND st.status != 'DISABLED'
         ORDER BY a.sort_order, st.sort_order, COALESCE(st.display_name, st.name) COLLATE NOCASE`,
       )
       .bind(storeId)
@@ -159,14 +186,219 @@ export class PosRepository {
   findOrder(storeId: string, orderId: string) {
     return this.db
       .prepare(
-        `SELECT o.id, o.store_id, o.table_id, o.status, o.version,
-                COALESCE(st.display_name, st.name) AS table_name
+        `SELECT o.id, o.store_id, o.table_id, o.order_type, o.display_code,
+                o.status, o.version, o.opened_at,
+                COALESCE(st.display_name, st.name) AS table_name,
+                a.id AS area_id, a.name AS area_name
          FROM orders o
-         JOIN service_tables st ON st.id = o.table_id AND st.store_id = o.store_id
+         LEFT JOIN service_tables st ON st.id = o.table_id AND st.store_id = o.store_id
+         LEFT JOIN areas a ON a.id = st.area_id AND a.store_id = st.store_id
          WHERE o.store_id = ? AND o.id = ? LIMIT 1`,
       )
       .bind(storeId, orderId)
       .first<OrderRow>();
+  }
+
+  async listActiveOrders(storeId: string) {
+    return this.db
+      .prepare(
+        `SELECT o.id, o.store_id, o.table_id, o.order_type, o.display_code,
+                o.status, o.version, o.opened_at,
+                COALESCE(st.display_name, st.name) AS table_name,
+                a.id AS area_id, a.name AS area_name
+         FROM orders o
+         LEFT JOIN service_tables st ON st.id = o.table_id AND st.store_id = o.store_id
+         LEFT JOIN areas a ON a.id = st.area_id AND a.store_id = o.store_id
+         WHERE o.store_id = ? AND o.status IN ('OPEN', 'PAYMENT_PENDING')
+         UNION ALL
+         SELECT t.id, t.store_id, NULL AS table_id, 'TAKEAWAY' AS order_type,
+                t.display_code, t.status, t.version, t.opened_at,
+                NULL AS table_name, NULL AS area_id, NULL AS area_name
+         FROM takeaway_orders t
+         WHERE t.store_id = ? AND t.status IN ('OPEN', 'PAYMENT_PENDING')
+         ORDER BY opened_at DESC`,
+      )
+      .bind(storeId, storeId)
+      .all<OrderRow>();
+  }
+
+  findTakeawayOrder(storeId: string, orderId: string) {
+    return this.db
+      .prepare(
+        `SELECT id, store_id, NULL AS table_id, 'TAKEAWAY' AS order_type,
+                display_code, status, version, opened_at,
+                NULL AS table_name, NULL AS area_id, NULL AS area_name
+         FROM takeaway_orders WHERE store_id = ? AND id = ? LIMIT 1`,
+      )
+      .bind(storeId, orderId)
+      .first<OrderRow>();
+  }
+
+  async listTakeawayOrderItems(storeId: string, orderId: string) {
+    return this.db
+      .prepare(
+        `SELECT
+          id, product_id AS productId, variant_id AS variantId,
+          product_name_snapshot AS productName, variant_name_snapshot AS variantName,
+          unit_name_snapshot AS unitName, unit_price_snapshot AS unitPriceVnd,
+          quantity_milli AS quantityMilli, discount_type AS discountType,
+          discount_input_value AS discountInputValue,
+          discount_amount AS discountAmountVnd,
+          gross_line_total AS grossLineTotalVnd,
+          net_line_total AS netLineTotalVnd,
+          net_line_total AS lineTotalVnd
+         FROM takeaway_order_items
+         WHERE store_id = ? AND order_id = ? ORDER BY created_at`,
+      )
+      .bind(storeId, orderId)
+      .all();
+  }
+
+  findAddTakeawayItemCommand(storeId: string, commandId: string) {
+    return this.db
+      .prepare(
+        `SELECT item_id AS itemId, order_id AS orderId
+         FROM add_takeaway_item_commands WHERE store_id = ? AND id = ? LIMIT 1`,
+      )
+      .bind(storeId, commandId)
+      .first<{ itemId: string; orderId: string }>();
+  }
+
+  executeAddTakeawayItem(input: {
+    commandId: string;
+    storeId: string;
+    orderId: string;
+    expectedOrderVersion: number;
+    itemId: string;
+    productId: string;
+    variantId: string | null;
+    productType: string;
+    productName: string;
+    variantName: string | null;
+    unitName: string | null;
+    unitPriceVnd: number;
+    quantityMilli: number;
+    discountType: string | null;
+    discountInputValue: number | null;
+    discountAmountVnd: number;
+    grossLineTotalVnd: number;
+    netLineTotalVnd: number;
+    actorId: string;
+    requestId: string;
+    issuedAt: number;
+  }) {
+    return this.db
+      .prepare(
+        `INSERT INTO add_takeaway_item_commands (
+          id, store_id, order_id, expected_order_version, item_id,
+          product_id, variant_id, product_type, product_name_snapshot,
+          variant_name_snapshot, unit_name_snapshot, unit_price_snapshot,
+          quantity_milli, discount_type, discount_input_value, discount_amount,
+          gross_line_total, net_line_total, actor_user_id, request_id, issued_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        input.commandId,
+        input.storeId,
+        input.orderId,
+        input.expectedOrderVersion,
+        input.itemId,
+        input.productId,
+        input.variantId,
+        input.productType,
+        input.productName,
+        input.variantName,
+        input.unitName,
+        input.unitPriceVnd,
+        input.quantityMilli,
+        input.discountType,
+        input.discountInputValue,
+        input.discountAmountVnd,
+        input.grossLineTotalVnd,
+        input.netLineTotalVnd,
+        input.actorId,
+        input.requestId,
+        input.issuedAt,
+      )
+      .run();
+  }
+
+  findCreateTakeawayCommand(storeId: string, commandId: string) {
+    return this.db
+      .prepare(
+        `SELECT order_id AS orderId, display_code AS displayCode
+         FROM create_takeaway_order_commands
+         WHERE store_id = ? AND id = ? LIMIT 1`,
+      )
+      .bind(storeId, commandId)
+      .first<{ orderId: string; displayCode: string }>();
+  }
+
+  createTakeawayOrder(input: {
+    commandId: string;
+    storeId: string;
+    orderId: string;
+    displayCode: string;
+    note: string | null;
+    actorId: string;
+    requestId: string;
+    issuedAt: number;
+  }) {
+    return this.db
+      .prepare(
+        `INSERT INTO create_takeaway_order_commands (
+          id, store_id, order_id, display_code, note, actor_user_id, request_id, issued_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        input.commandId,
+        input.storeId,
+        input.orderId,
+        input.displayCode,
+        input.note,
+        input.actorId,
+        input.requestId,
+        input.issuedAt,
+      )
+      .run();
+  }
+
+  async listSaleCatalog(storeId: string) {
+    return this.db
+      .prepare(
+        `SELECT
+          p.id AS productId, p.name AS productName, p.product_type AS productType,
+          p.avatar_type AS avatarType, p.avatar_color AS avatarColor,
+          p.media_id AS mediaId,
+          p.category_id AS categoryId, c.name AS categoryName,
+          pv.id AS variantId, pv.name AS variantName, pv.sale_price AS salePriceVnd,
+          pv.prompt_price AS promptPrice, u.name AS unitName
+         FROM products p
+         JOIN product_variants pv ON pv.product_id = p.id AND pv.store_id = p.store_id
+           AND pv.status = 'ACTIVE'
+         LEFT JOIN categories c ON c.id = p.category_id AND c.store_id = p.store_id
+         LEFT JOIN units u ON u.id = p.unit_id AND u.store_id = p.store_id
+         WHERE p.store_id = ? AND p.status = 'ACTIVE' AND p.is_system = 0
+           AND p.product_type IN ('QUANTITY', 'WEIGHT')
+         ORDER BY c.sort_order, p.name COLLATE NOCASE, pv.name COLLATE NOCASE`,
+      )
+      .bind(storeId)
+      .all<SaleCatalogRow>();
+  }
+
+  getStaffContext(storeId: string, actorId: string) {
+    return this.db
+      .prepare(
+        `SELECT s.id AS storeId, s.name AS storeName,
+                u.id AS employeeId, u.display_name AS employeeName
+         FROM stores s
+         JOIN store_memberships sm ON sm.store_id = s.id AND sm.user_id = ?
+           AND sm.status = 'ACTIVE' AND sm.deleted_at IS NULL
+         JOIN users u ON u.id = sm.user_id
+         WHERE s.id = ? LIMIT 1`,
+      )
+      .bind(actorId, storeId)
+      .first();
   }
 
   findTimeSession(storeId: string, orderId: string) {

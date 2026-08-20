@@ -1,7 +1,8 @@
 # Pro POS
 
-Pro POS là Web App/PWA quản lý cửa hàng billiards, triển khai React SPA và Worker API trong
-cùng một Cloudflare Worker. Dữ liệu nghiệp vụ lưu tại D1; ảnh lưu trong R2.
+Pro POS là Web App/PWA quản lý cửa hàng billiards, triển khai React SPA và API trên Cloudflare
+Workers. Main Worker phục vụ SPA/API; auth bridge Worker riêng hoàn tất Cloudflare Access email
+OTP. Dữ liệu nghiệp vụ lưu tại D1; ảnh lưu trong R2.
 
 ## Trạng thái
 
@@ -12,7 +13,11 @@ cùng một Cloudflare Worker. Dữ liệu nghiệp vụ lưu tại D1; ảnh l�
 - Pricing Engine: ACTUAL_TIME, TIME_BLOCK, first period, special windows, pause và rounding.
 - UI auth: responsive login/activation flow theo mẫu đã duyệt; Owner/SUPER_ADMIN dùng Cloudflare
   Access email OTP, Employee dùng PIN và chỉ đăng nhập trên device `ACTIVE`.
+- Auth bridge: Access-protected Worker riêng, authorization code one-time và callback theo đúng
+  mục đích Owner/platform/device; main Worker không bị Access chặn.
 - SUPER_ADMIN UI tối giản: thống kê, danh sách, tạo store + Owner email và khóa/mở store.
+- Giai đoạn kế tiếp được đề xuất: Owner Operations Portal. Xem
+  [trạng thái và roadmap](docs/project/status-roadmap.md).
 
 ## Yêu cầu
 
@@ -26,8 +31,15 @@ cùng một Cloudflare Worker. Dữ liệu nghiệp vụ lưu tại D1; ảnh l�
 pnpm install --frozen-lockfile
 cp .dev.vars.example .dev.vars
 pnpm cf-typegen
+pnpm cf-typegen:auth
 pnpm db:migrate:local
 pnpm dev
+```
+
+Chạy auth bridge ở terminal thứ hai:
+
+```bash
+pnpm dev:auth
 ```
 
 Kiểm tra API:
@@ -50,6 +62,7 @@ pnpm format:check
 pnpm lint
 pnpm typecheck
 pnpm cf-typegen:check
+pnpm cf-typegen:auth:check
 pnpm test
 pnpm test:integration
 pnpm build

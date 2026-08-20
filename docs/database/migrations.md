@@ -3,6 +3,9 @@
 - `0001_identity_and_access.sql`: store, user, RBAC, credentials, sessions, device/grant, audit.
 - `0002_catalog_and_pricing.sql`: settings, area, unit, category, product, pricing, media.
 - `0003_pos_and_billing.sql`: table, order, session, payment, invoice và command triggers.
+- `0004_access_otp_and_pin_verifiers.sql`: Access identity, request OTP và PIN verifier keyed-HMAC.
+- `0005_access_bridge_codes.sql`: identity đã xác thực và hash authorization code one-time cho auth
+  bridge exchange.
 
 Quy tắc:
 

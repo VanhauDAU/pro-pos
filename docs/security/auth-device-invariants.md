@@ -11,8 +11,10 @@
 
 ## POS activation
 
-1. UI tạo Access request one-time rồi điều hướng tới callback được Cloudflare Access bảo vệ.
-2. Cloudflare xác thực email; backend suy ra Owner/store từ D1, không nhận `store_id` từ client.
+1. UI tạo Access request one-time rồi điều hướng tới auth bridge Worker được Cloudflare Access bảo
+   vệ.
+2. Bridge ghi hash của authorization code one-time vào D1 rồi redirect về main Worker; main Worker
+   đổi code lấy identity và suy ra Owner/store từ D1, không nhận `store_id` từ client.
 3. Grant 5 phút, one-time, scope `ACTIVATE_DEVICE`; D1 chỉ lưu hash.
 4. Confirm + `Idempotency-Key` tạo đúng một device và secret 256 bit.
 5. Setup không tạo Owner session; sau thành công chỉ giữ device cookie.

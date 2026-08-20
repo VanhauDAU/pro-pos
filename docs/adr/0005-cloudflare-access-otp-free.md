@@ -13,10 +13,11 @@ nhận.
 ## Quyết định
 
 - Owner và SUPER_ADMIN xác thực bằng Cloudflare Access One-time PIN gửi tới email được phép.
-- Chỉ path `/api/v1/auth/access/complete` được Access bảo vệ; SPA, health và Employee POS không bị
-  khóa bởi Access.
-- Access xác thực identity ở edge; Worker đọc identity qua `ctx.access`, sau đó bắt buộc ánh xạ email
-  với `access_identities` trong D1 trước khi tạo Pro POS session hoặc activation grant.
+- Chỉ auth bridge Worker `pro-pos-auth-<environment>` được Access bảo vệ; SPA, health và Employee
+  POS trên main Worker không bị khóa bởi Access.
+- Access xác thực identity ở edge; bridge Worker đọc identity qua `ctx.access`, ghi hash của
+  authorization code one-time vào D1 rồi redirect về main Worker. Main Worker bắt buộc ánh xạ email
+  với `access_identities` trước khi tạo Pro POS session hoặc activation grant.
 - Mỗi flow dùng `__Host-propos-access` và `access_auth_requests` one-time TTL 10 phút để chống login
   CSRF/replay và bind mục đích Owner, platform, activation hoặc device reissue.
 - Employee tiếp tục dùng username/PIN trên ACTIVE device. PIN verifier dùng HMAC-SHA256 keyed bằng

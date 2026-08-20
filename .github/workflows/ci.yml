@@ -30,6 +30,7 @@ jobs:
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm cf-typegen
+      - run: pnpm cf-typegen:auth
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm test:integration

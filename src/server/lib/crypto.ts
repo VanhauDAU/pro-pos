@@ -35,6 +35,11 @@ export async function hashOpaqueToken(token: string, pepper: string): Promise<st
   return bytesToBase64Url(await hmac(token, pepper));
 }
 
+export async function hashExchangeCode(code: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', encoder.encode(code));
+  return bytesToBase64Url(new Uint8Array(digest));
+}
+
 export async function deriveDeterministicSecret(
   grantToken: string,
   idempotencyKey: string,

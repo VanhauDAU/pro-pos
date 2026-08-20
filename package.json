@@ -30,7 +30,9 @@
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:staging": "wrangler d1 migrations apply DB --remote --env staging",
     "db:migrate:production": "wrangler d1 migrations apply DB --remote --env production",
-    "check:startup": "wrangler check startup"
+    "check:startup": "wrangler check startup",
+    "secrets:generate:staging": "node scripts/generate-secrets.mjs staging",
+    "secrets:generate:production": "node scripts/generate-secrets.mjs production"
   },
   "dependencies": {
     "@ant-design/icons": "^6.3.2",

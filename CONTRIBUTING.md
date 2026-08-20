@@ -10,6 +10,9 @@
 
 Không direct push, force push hoặc xóa `main`/`dev`.
 
+Quy trình đầy đủ từ code, PR, staging đến production và hotfix xem tại
+[docs/project/development-release-workflow.md](docs/project/development-release-workflow.md).
+
 ## Commit và PR
 
 Dùng Conventional Commits: `feat:`, `fix:`, `test:`, `docs:`, `chore:`.

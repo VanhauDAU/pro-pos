@@ -74,7 +74,9 @@ pnpm build
 - `dev`: staging.
 - `feat/PRO-<id>-<slug>`: nhánh ngắn hạn, PR vào `dev`.
 
-Xem [CONTRIBUTING.md](CONTRIBUTING.md) và [docs/README.md](docs/README.md).
+Xem [CONTRIBUTING.md](CONTRIBUTING.md),
+[quy trình phát triển và phát hành](docs/project/development-release-workflow.md) và
+[docs/README.md](docs/README.md).
 
 ## Bảo mật
 

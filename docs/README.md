@@ -2,6 +2,7 @@
 
 - [Scope MVP](product/scope.md)
 - [Trạng thái và roadmap](project/status-roadmap.md)
+- [Quy trình phát triển, staging và production](project/development-release-workflow.md)
 - [Kế hoạch Owner Operations Portal](product/owner-portal-plan.md)
 - [Đặc tả Pricing Engine](product/pricing.md)
 - [Kiến trúc hệ thống](architecture/system.md)

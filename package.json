@@ -32,7 +32,9 @@
     "db:migrate:production": "wrangler d1 migrations apply DB --remote --env production",
     "check:startup": "wrangler check startup",
     "secrets:generate:staging": "node scripts/generate-secrets.mjs staging",
-    "secrets:generate:production": "node scripts/generate-secrets.mjs production"
+    "secrets:generate:production": "node scripts/generate-secrets.mjs production",
+    "bootstrap:staging": "node scripts/bootstrap-platform.mjs staging",
+    "bootstrap:production": "node scripts/bootstrap-platform.mjs production"
   },
   "dependencies": {
     "@ant-design/icons": "^6.3.2",

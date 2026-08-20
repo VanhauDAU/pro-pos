@@ -1,0 +1,8 @@
+{
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "warn"
+  },
+  "ignorePatterns": ["dist/**", "coverage/**", "worker-configuration.d.ts"]
+}

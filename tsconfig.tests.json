@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "tsBuildInfoFile": "./node_modules/.cache/tsconfig.tests.tsbuildinfo",
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "WebWorker"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": [
+      "node",
+      "vitest/globals",
+      "@cloudflare/workers-types",
+      "@cloudflare/vitest-pool-workers/types"
+    ],
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "paths": {
+      "@server/*": ["./src/server/*"],
+      "@contracts/*": ["./src/contracts/*"],
+      "@domain/*": ["./src/domain/*"]
+    }
+  },
+  "include": ["tests", "src/server", "src/contracts", "src/domain", "worker-configuration.d.ts"]
+}

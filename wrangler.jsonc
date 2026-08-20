@@ -1,0 +1,110 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "pro-pos",
+  "main": "./src/server/index.ts",
+  "compatibility_date": "2026-08-20",
+  "assets": {
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"],
+  },
+  "preview_urls": true,
+  "secrets": {
+    "required": [
+      "AUTH_PEPPER",
+      "DEVICE_TOKEN_PEPPER",
+      "SESSION_TOKEN_PEPPER",
+      "SYSTEM_BOOTSTRAP_SECRET",
+    ],
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+  },
+  "vars": {
+    "ENVIRONMENT": "local",
+    "APP_VERSION": "local",
+    "STORE_TIMEZONE": "Asia/Ho_Chi_Minh",
+    "COOKIE_MODE": "local",
+    "ACCESS_BRIDGE_URL": "http://127.0.0.1:8788",
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "pro-pos-local-db",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "./migrations",
+    },
+  ],
+  "r2_buckets": [
+    {
+      "binding": "MEDIA",
+      "bucket_name": "pro-pos-local-media",
+    },
+  ],
+  "env": {
+    "staging": {
+      "name": "pro-pos-staging",
+      "secrets": {
+        "required": [
+          "AUTH_PEPPER",
+          "DEVICE_TOKEN_PEPPER",
+          "SESSION_TOKEN_PEPPER",
+          "SYSTEM_BOOTSTRAP_SECRET",
+        ],
+      },
+      "vars": {
+        "ENVIRONMENT": "staging",
+        "APP_VERSION": "staging",
+        "STORE_TIMEZONE": "Asia/Ho_Chi_Minh",
+        "COOKIE_MODE": "secure",
+        "ACCESS_BRIDGE_URL": "https://pro-pos-auth-staging.vanhau-laravel.workers.dev",
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "pro-pos-staging-db",
+          "database_id": "7ec0c566-2bf4-48b9-a9e6-fd5b75b6dc31",
+          "migrations_dir": "./migrations",
+        },
+      ],
+      "r2_buckets": [
+        {
+          "binding": "MEDIA",
+          "bucket_name": "pro-pos-staging-media",
+        },
+      ],
+    },
+    "production": {
+      "name": "pro-pos-production",
+      "secrets": {
+        "required": [
+          "AUTH_PEPPER",
+          "DEVICE_TOKEN_PEPPER",
+          "SESSION_TOKEN_PEPPER",
+          "SYSTEM_BOOTSTRAP_SECRET",
+        ],
+      },
+      "vars": {
+        "ENVIRONMENT": "production",
+        "APP_VERSION": "production",
+        "STORE_TIMEZONE": "Asia/Ho_Chi_Minh",
+        "COOKIE_MODE": "secure",
+        "ACCESS_BRIDGE_URL": "https://pro-pos-auth-production.vanhau-laravel.workers.dev",
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "pro-pos-production-db",
+          "database_id": "651d7ec6-a2c8-4fa1-82d5-679b6e90c8ca",
+          "migrations_dir": "./migrations",
+        },
+      ],
+      "r2_buckets": [
+        {
+          "binding": "MEDIA",
+          "bucket_name": "pro-pos-production-media",
+        },
+      ],
+    },
+  },
+}

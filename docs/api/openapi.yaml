@@ -1,0 +1,90 @@
+openapi: 3.1.0
+info:
+  title: Pro POS API
+  version: 0.1.0
+servers:
+  - url: /api/v1
+paths:
+  /auth/context:
+    get:
+      summary: Resolve user and device context from HttpOnly cookies
+      responses:
+        '200': { description: Context resolved }
+  /auth/access/start:
+    post:
+      summary: Create one-time Access state and return the protected auth bridge URL
+      responses:
+        '200': { description: Access request created }
+  /auth/access/complete:
+    get:
+      summary: Exchange a one-time auth bridge code and redirect
+      parameters:
+        - in: query
+          name: code
+          required: true
+          schema: { type: string }
+      responses:
+        '303': { description: Session, activation grant or device credential issued }
+        '401': { description: Access authentication or state missing }
+  /auth/employee/login:
+    post:
+      summary: Employee PIN login bound to an ACTIVE POS device
+      responses:
+        '200': { description: Employee session created }
+        '401': { description: Device or credentials invalid }
+  /device-activations/context:
+    get:
+      summary: Resolve the short-lived activation grant after Access authentication
+      responses:
+        '200': { description: Activation context and CSRF token }
+  /device-activations/confirm:
+    post:
+      summary: Consume activation grant and create a POS device
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string }
+      responses:
+        '201': { description: Device activated }
+  /platform/stores:
+    get: { summary: List stores, responses: { '200': { description: Store list } } }
+    post: { summary: Create store and Owner, responses: { '201': { description: Created } } }
+  /owner/staff:
+    get: { summary: List employees, responses: { '200': { description: Employee list } } }
+    post: { summary: Create employee and PIN, responses: { '201': { description: Created } } }
+  /owner/catalog/products:
+    get: { summary: List products, responses: { '200': { description: Product list } } }
+    post: { summary: Create product, responses: { '201': { description: Created } } }
+  /pos/tables:
+    get: { summary: List POS tables, responses: { '200': { description: Table list } } }
+  /pos/tables/open:
+    post:
+      {
+        summary: Atomically open table and time session,
+        responses: { '201': { description: Opened } },
+      }
+  /pos/orders/{orderId}/quote:
+    get:
+      summary: Server-authoritative order quote
+      parameters:
+        - in: path
+          name: orderId
+          required: true
+          schema: { type: string, format: uuid }
+      responses: { '200': { description: Quote } }
+  /pos/orders/{orderId}/checkout:
+    post:
+      summary: Atomic and idempotent checkout
+      parameters:
+        - in: path
+          name: orderId
+          required: true
+          schema: { type: string, format: uuid }
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Payment and invoice created }
+        '409': { description: Version conflict or already paid }

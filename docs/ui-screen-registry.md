@@ -15,6 +15,8 @@ Không có mẫu thì không triển khai visual cuối. Mẫu được người
 | Owner product list   | User-provided Sapo product list reference, selected MVP fields                                       | loading/list/search/empty/error | desktop/tablet/mobile | IN_PROGRESS | PRO-013     |
 | Owner product form   | User-provided Sapo add/edit product reference, selected MVP fields                                   | create/edit/validation/error    | desktop/tablet/mobile | IN_PROGRESS | PRO-013     |
 | Owner category list  | User-provided Sapo category list reference, selected MVP fields                                      | loading/list/search/empty/error | desktop/tablet/mobile | IN_PROGRESS | PRO-013     |
+| Owner unit list      | User-provided unit settings reference, only unit and product usage columns                           | loading/list/search/empty/error | desktop/tablet/mobile | IN_PROGRESS | PRO-014     |
+| Owner unit detail    | User-provided unit edit reference, product usage list and safe delete                                | loading/edit/pagination/error   | desktop/tablet/mobile | IN_PROGRESS | PRO-014     |
 | POS tables/orders    | Chưa nhận                                                                                            | Chưa chốt                       | Chưa chốt             | BLOCKED     | —           |
 | Checkout/receipt     | Chưa nhận                                                                                            | Chưa chốt                       | Chưa chốt             | BLOCKED     | —           |
 

@@ -42,6 +42,14 @@ export interface AreaSummaryRow {
   occupiedTableCount: number;
 }
 
+export interface UnitProductRow {
+  id: string;
+  name: string;
+  productType: 'QUANTITY' | 'WEIGHT' | 'TIME';
+  status: 'ACTIVE' | 'DISABLED';
+  categoryName: string | null;
+}
+
 export interface ProductDetailRow {
   id: string;
   name: string;
@@ -61,6 +69,87 @@ export class CatalogRepository {
 
   async listNamed(storeId: string, table: NamedTable) {
     return this.db.prepare(namedSelects[table]).bind(storeId).all();
+  }
+
+  async listUnits(storeId: string, input: { page: number; pageSize: number; search: string }) {
+    const search = input.search.trim();
+    const filter = `u.store_id = ? AND (? = '' OR LOWER(u.name) LIKE '%' || LOWER(?) || '%')`;
+    const total = await this.db
+      .prepare(`SELECT COUNT(*) AS total FROM units u WHERE ${filter}`)
+      .bind(storeId, search, search)
+      .first<{ total: number }>();
+    const items = await this.db
+      .prepare(
+        `SELECT u.id, u.name,
+                (SELECT COUNT(*) FROM products p
+                 WHERE p.store_id = u.store_id AND p.unit_id = u.id AND p.status = 'ACTIVE') AS productCount
+         FROM units u
+         WHERE ${filter}
+         ORDER BY u.name COLLATE NOCASE
+         LIMIT ? OFFSET ?`,
+      )
+      .bind(storeId, search, search, input.pageSize, (input.page - 1) * input.pageSize)
+      .all();
+    return { items: items.results, total: total?.total ?? 0 };
+  }
+
+  findUnit(storeId: string, unitId: string) {
+    return this.db
+      .prepare('SELECT id, name FROM units WHERE id = ? AND store_id = ? LIMIT 1')
+      .bind(unitId, storeId)
+      .first<{ id: string; name: string }>();
+  }
+
+  countProductsByUnit(storeId: string, unitId: string) {
+    return this.db
+      .prepare(
+        `SELECT COUNT(*) AS total FROM products
+         WHERE store_id = ? AND unit_id = ?`,
+      )
+      .bind(storeId, unitId)
+      .first<{ total: number }>();
+  }
+
+  listUnitProducts(
+    storeId: string,
+    unitId: string,
+    input: { page: number; pageSize: number; search: string },
+  ) {
+    const search = input.search.trim();
+    const filter = `p.store_id = ? AND p.unit_id = ? AND p.status = 'ACTIVE'
+      AND (? = '' OR LOWER(p.name) LIKE '%' || LOWER(?) || '%')`;
+    return Promise.all([
+      this.db
+        .prepare(`SELECT COUNT(*) AS total FROM products p WHERE ${filter}`)
+        .bind(storeId, unitId, search, search)
+        .first<{ total: number }>(),
+      this.db
+        .prepare(
+          `SELECT p.id, p.name, p.product_type AS productType, p.status,
+                  c.name AS categoryName
+           FROM products p
+           LEFT JOIN categories c ON c.id = p.category_id AND c.store_id = p.store_id
+           WHERE ${filter}
+           ORDER BY p.name COLLATE NOCASE
+           LIMIT ? OFFSET ?`,
+        )
+        .bind(storeId, unitId, search, search, input.pageSize, (input.page - 1) * input.pageSize)
+        .all<UnitProductRow>(),
+    ]).then(([total, items]) => ({ total: total?.total ?? 0, items: items.results }));
+  }
+
+  updateUnit(storeId: string, unitId: string, name: string, now: number) {
+    return this.db
+      .prepare('UPDATE units SET name = ?, updated_at = ? WHERE id = ? AND store_id = ?')
+      .bind(name, now, unitId, storeId)
+      .run();
+  }
+
+  deleteUnit(storeId: string, unitId: string) {
+    return this.db
+      .prepare('DELETE FROM units WHERE id = ? AND store_id = ?')
+      .bind(unitId, storeId)
+      .run();
   }
 
   async createNamed(input: {

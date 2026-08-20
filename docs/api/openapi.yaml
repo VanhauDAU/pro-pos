@@ -169,6 +169,43 @@ paths:
           name: q
           schema: { type: string }
       responses: { '200': { description: Products in category } }
+  /owner/catalog/units:
+    get:
+      summary: List units with server-side search and pagination
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: pageSize
+          schema: { type: integer, minimum: 1, maximum: 100, default: 10 }
+        - in: query
+          name: q
+          schema: { type: string }
+      responses: { '200': { description: Paginated unit list and active product usage count } }
+    post: { summary: Create a unit, responses: { '201': { description: Created } } }
+  /owner/catalog/units/{unitId}:
+    get: { summary: Get a unit, responses: { '200': { description: Unit details } } }
+    put: { summary: Rename a unit, responses: { '200': { description: Unit updated } } }
+    delete:
+      summary: Delete an unused unit
+      responses:
+        '200': { description: Unit deleted }
+        '409': { description: Unit is used by active products }
+  /owner/catalog/units/{unitId}/products:
+    get:
+      summary: List active products using a unit with server-side pagination
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: pageSize
+          schema: { type: integer, minimum: 1, maximum: 100, default: 10 }
+        - in: query
+          name: q
+          schema: { type: string }
+      responses: { '200': { description: Paginated product usage list } }
   /owner/catalog/tables:
     post:
       summary: Create a service table with same-store ACTIVE area and TIME product references

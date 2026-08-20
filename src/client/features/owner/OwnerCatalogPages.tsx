@@ -506,13 +506,22 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
         variants:
           values.productType === 'TIME'
             ? []
-            : (values.variants ?? []).map((variant) => ({
-                ...(variant.id ? { id: variant.id } : {}),
-                name: variant.name,
-                salePriceVnd: variant.promptPrice ? null : variant.salePriceVnd,
-                costPriceVnd: variant.costPriceVnd ?? 0,
-                promptPrice: Boolean(variant.promptPrice),
-              })),
+            : (values.variants ?? []).map((variant) => {
+                const item: {
+                  id?: string;
+                  name: string;
+                  salePriceVnd: number | null;
+                  costPriceVnd: number;
+                  promptPrice: boolean;
+                } = {
+                  name: variant.name,
+                  salePriceVnd: variant.promptPrice ? null : variant.salePriceVnd,
+                  costPriceVnd: variant.costPriceVnd ?? 0,
+                  promptPrice: Boolean(variant.promptPrice),
+                };
+                if (variant.id) item.id = variant.id;
+                return item;
+              }),
       };
       const saved = await jsonRequest<{ id: string }>(
         isEdit ? `/api/v1/owner/catalog/products/${productId}` : '/api/v1/owner/catalog/products',
@@ -589,18 +598,23 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
       >
         <Row gutter={[20, 20]}>
           <Col xs={24} xl={16}>
-            <Card title="Thông tin chung">
+            <Card title="Thông tin chung" className="owner-catalog-form-card">
               <Form.Item
                 label="Tên mặt hàng"
                 name="name"
                 rules={[{ required: true, message: 'Vui lòng nhập tên mặt hàng.' }]}
               >
-                <Input placeholder="Ví dụ: Coca Cola, Trà đào, Giờ Pool" maxLength={160} />
+                <Input
+                  placeholder="Ví dụ: Coca Cola, Trà đào, Giờ Pool"
+                  maxLength={160}
+                  size="large"
+                />
               </Form.Item>
               <Row gutter={16}>
-                <Col xs={24} md={12}>
+                <Col xs={24} md={productType !== 'TIME' ? 8 : 12}>
                   <Form.Item label="Loại mặt hàng" name="productType" rules={[{ required: true }]}>
                     <Select
+                      size="large"
                       options={Object.entries(productTypeLabels).map(([value, label]) => ({
                         value,
                         label,
@@ -612,9 +626,10 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
                     />
                   </Form.Item>
                 </Col>
-                <Col xs={24} md={12}>
+                <Col xs={24} md={productType !== 'TIME' ? 8 : 12}>
                   <Form.Item label="Danh mục" name="categoryId">
                     <Select
+                      size="large"
                       allowClear
                       showSearch
                       optionFilterProp="label"
@@ -625,14 +640,34 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
                     />
                   </Form.Item>
                 </Col>
+                {productType !== 'TIME' ? (
+                  <Col xs={24} md={8}>
+                    <Form.Item
+                      label="Đơn vị tính"
+                      name="unitId"
+                      rules={[{ required: true, message: 'Vui lòng chọn đơn vị.' }]}
+                    >
+                      <Select
+                        size="large"
+                        showSearch
+                        optionFilterProp="label"
+                        placeholder="Chọn đơn vị"
+                        options={(units.data ?? []).map((unit) => ({
+                          value: unit.id,
+                          label: unit.name,
+                        }))}
+                      />
+                    </Form.Item>
+                  </Col>
+                ) : null}
               </Row>
               {productType !== 'TIME' ? (
                 <Form.Item label="Mô tả" name="description">
                   <Input.TextArea
-                    rows={4}
+                    rows={3}
                     maxLength={1000}
                     showCount
-                    placeholder="Mô tả ngắn về mặt hàng"
+                    placeholder="Mô tả ngắn về mặt hàng (không bắt buộc)"
                   />
                 </Form.Item>
               ) : (
@@ -640,7 +675,7 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
                   type="info"
                   showIcon
                   title="Mặt hàng tính theo thời gian"
-                  description="Giá sẽ được tính theo thời gian sử dụng thực tế hoặc theo block."
+                  description="Giá sẽ được tính theo thời gian sử dụng thực tế hoặc theo block thời gian."
                 />
               )}
             </Card>
@@ -648,76 +683,84 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
               <Card title="Phiên bản giá" className="owner-catalog-form-card">
                 <Form.List name="variants">
                   {(fields, { add, remove }) => (
-                    <>
+                    <div className="owner-variant-list">
                       {fields.map((field, index) => (
                         <div className="owner-variant-row" key={field.key}>
-                          <Form.Item
-                            {...field}
-                            label={index === 0 ? 'Tên giá' : undefined}
-                            name={[field.name, 'name']}
-                            rules={[{ required: true, message: 'Nhập tên giá.' }]}
-                          >
-                            <Input
-                              placeholder={index === 0 ? 'Giá mặc định' : 'Size M, Size L...'}
-                            />
-                          </Form.Item>
-                          <Form.Item
-                            noStyle
-                            shouldUpdate={(previous, current) =>
-                              previous.variants?.[field.name]?.promptPrice !==
-                              current.variants?.[field.name]?.promptPrice
-                            }
-                          >
-                            {({ getFieldValue }) => {
-                              const promptPrice = Boolean(
-                                getFieldValue(['variants', field.name, 'promptPrice']),
-                              );
-                              return (
-                                <Form.Item
-                                  label={index === 0 ? 'Giá bán' : undefined}
-                                  name={[field.name, 'salePriceVnd']}
-                                  rules={
-                                    promptPrice
-                                      ? []
-                                      : [{ required: true, message: 'Nhập giá bán.' }]
-                                  }
-                                >
-                                  <InputNumber
-                                    min={0}
-                                    disabled={promptPrice}
-                                    className="owner-full-width"
-                                    addonAfter="đ"
-                                  />
-                                </Form.Item>
-                              );
-                            }}
-                          </Form.Item>
-                          <Form.Item
-                            label={index === 0 ? 'Giá vốn' : undefined}
-                            name={[field.name, 'costPriceVnd']}
-                          >
-                            <InputNumber min={0} className="owner-full-width" addonAfter="đ" />
-                          </Form.Item>
-                          <Form.Item
-                            label={index === 0 ? 'Nhập giá khi bán' : undefined}
-                            name={[field.name, 'promptPrice']}
-                            valuePropName="checked"
-                          >
-                            <Checkbox />
-                          </Form.Item>
+                          <div className="owner-variant-col owner-variant-col--name">
+                            <Form.Item
+                              {...field}
+                              label="Tên giá / Phiên bản"
+                              name={[field.name, 'name']}
+                              rules={[{ required: true, message: 'Nhập tên giá.' }]}
+                            >
+                              <Input
+                                placeholder={index === 0 ? 'Giá mặc định' : 'Size M, Size L...'}
+                              />
+                            </Form.Item>
+                          </div>
+                          <div className="owner-variant-col owner-variant-col--sale">
+                            <Form.Item
+                              noStyle
+                              shouldUpdate={(previous, current) =>
+                                previous.variants?.[field.name]?.promptPrice !==
+                                current.variants?.[field.name]?.promptPrice
+                              }
+                            >
+                              {({ getFieldValue }) => {
+                                const promptPrice = Boolean(
+                                  getFieldValue(['variants', field.name, 'promptPrice']),
+                                );
+                                return (
+                                  <Form.Item
+                                    label="Giá bán"
+                                    name={[field.name, 'salePriceVnd']}
+                                    rules={
+                                      promptPrice
+                                        ? []
+                                        : [{ required: true, message: 'Nhập giá bán.' }]
+                                    }
+                                  >
+                                    <InputNumber
+                                      min={0}
+                                      disabled={promptPrice}
+                                      className="owner-full-width"
+                                      addonAfter="đ"
+                                    />
+                                  </Form.Item>
+                                );
+                              }}
+                            </Form.Item>
+                          </div>
+                          <div className="owner-variant-col owner-variant-col--cost">
+                            <Form.Item label="Giá vốn" name={[field.name, 'costPriceVnd']}>
+                              <InputNumber min={0} className="owner-full-width" addonAfter="đ" />
+                            </Form.Item>
+                          </div>
+                          <div className="owner-variant-col owner-variant-col--prompt">
+                            <Form.Item
+                              label="Nhập khi bán"
+                              name={[field.name, 'promptPrice']}
+                              valuePropName="checked"
+                            >
+                              <Checkbox />
+                            </Form.Item>
+                          </div>
                           {fields.length > 1 ? (
-                            <Button
-                              type="text"
-                              danger
-                              icon={<DeleteOutlined />}
-                              aria-label="Xóa phiên bản giá"
-                              onClick={() => remove(field.name)}
-                            />
+                            <div className="owner-variant-col owner-variant-col--action">
+                              <Button
+                                type="text"
+                                danger
+                                icon={<DeleteOutlined />}
+                                aria-label="Xóa phiên bản giá"
+                                onClick={() => remove(field.name)}
+                              />
+                            </div>
                           ) : null}
                         </div>
                       ))}
                       <Button
-                        type="link"
+                        type="dashed"
+                        block
                         icon={<PlusOutlined />}
                         onClick={() =>
                           add({
@@ -728,26 +771,11 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
                           })
                         }
                       >
-                        Thêm giá
+                        Thêm phiên bản giá
                       </Button>
-                    </>
+                    </div>
                   )}
                 </Form.List>
-                <Form.Item
-                  label="Đơn vị"
-                  name="unitId"
-                  rules={[{ required: true, message: 'Vui lòng chọn đơn vị.' }]}
-                >
-                  <Select
-                    showSearch
-                    optionFilterProp="label"
-                    placeholder="Chọn đơn vị"
-                    options={(units.data ?? []).map((unit) => ({
-                      value: unit.id,
-                      label: unit.name,
-                    }))}
-                  />
-                </Form.Item>
               </Card>
             ) : (
               <Card title="Giá bán theo thời gian" className="owner-catalog-form-card">
@@ -857,7 +885,7 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
             )}
           </Col>
           <Col xs={24} xl={8}>
-            <Card title="Hình đại diện">
+            <Card title="Hình đại diện" className="owner-catalog-form-card">
               <Form.Item name="avatarType">
                 <Radio.Group
                   options={[
@@ -876,7 +904,7 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
                       description="Tạm thời dùng avatar màu để đảm bảo mặt hàng hiển thị rõ trên POS."
                     />
                   ) : (
-                    <Form.Item name="avatarColor">
+                    <Form.Item name="avatarColor" label="Chọn màu hiển thị">
                       <Radio.Group className="owner-avatar-grid">
                         {avatarColors.map((color) => (
                           <Radio.Button
@@ -894,23 +922,11 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
                 }
               </Form.Item>
             </Card>
-            <Card title="Danh mục" className="owner-catalog-form-card">
-              <Form.Item name="categoryId" noStyle>
-                <Select
-                  allowClear
-                  showSearch
-                  optionFilterProp="label"
-                  placeholder="Chọn danh mục"
-                  options={(categories.data ?? [])
-                    .filter((category) => category.status !== 'DISABLED')
-                    .map((category) => ({ value: category.id, label: category.name }))}
-                />
-              </Form.Item>
-            </Card>
-            <Card className="owner-catalog-form-card">
-              <Typography.Text type="secondary">
-                Mã mặt hàng sẽ được hệ thống tự sinh khi lưu phiên bản giá.
-              </Typography.Text>
+            <Card title="Thông tin hệ thống" className="owner-catalog-form-card">
+              <Typography.Paragraph type="secondary" style={{ margin: 0 }}>
+                Mã mặt hàng (SKU) và các biến thể giá sẽ được hệ thống tự động sinh và quản lý theo
+                chuẩn POS.
+              </Typography.Paragraph>
             </Card>
           </Col>
         </Row>

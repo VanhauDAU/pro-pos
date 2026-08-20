@@ -4,6 +4,10 @@
 
 ### Added
 
+- PRO-014 unit settings: server-paginated unit list with search, add/edit flow, product usage
+  count, product usage detail list and safe delete protection. Material and unit-conversion counts
+  from the reference are intentionally omitted from this MVP.
+
 - PRO-013 catalog MVP: responsive Owner danh sách mặt hàng, tìm kiếm/lọc, form thêm/sửa mặt hàng
   số lượng/trọng lượng/thời gian, phiên bản giá, avatar màu, CRUD danh mục và xem mặt hàng theo
   danh mục. Import/export, thuế, kho, kênh bán hàng và upload ảnh được deferred.

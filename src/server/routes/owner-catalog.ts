@@ -24,7 +24,12 @@ for (const table of ['areas', 'categories', 'units'] as const) {
     const body = await parseJson(c.req.raw, namedResourceSchema);
     return success(
       c,
-      await new CatalogService(c.env).createNamed(c.get('actor').storeId!, table, body.name),
+      await new CatalogService(c.env).createNamed(c.get('actor').storeId!, table, body.name, {
+        actorUserId: c.get('actor').id,
+        actorSessionId: c.get('sessionId'),
+        deviceId: c.get('device')?.id ?? null,
+        requestId: c.get('requestId'),
+      }),
       201,
     );
   });
@@ -39,14 +44,27 @@ ownerCatalogRoutes.post('/products', requirePermission('catalog.manage'), async 
   const body = await parseJson(c.req.raw, createProductSchema);
   return success(
     c,
-    await new CatalogService(c.env).createProduct(c.get('actor').storeId!, body),
+    await new CatalogService(c.env).createProduct(c.get('actor').storeId!, body, {
+      actorUserId: c.get('actor').id,
+      actorSessionId: c.get('sessionId'),
+      deviceId: c.get('device')?.id ?? null,
+      requestId: c.get('requestId'),
+    }),
     201,
   );
 });
 
 ownerCatalogRoutes.put('/pricing', requirePermission('pricing.manage'), async (c) => {
   const body = await parseJson(c.req.raw, pricingConfigSchema);
-  return success(c, await new CatalogService(c.env).upsertPricing(c.get('actor').storeId!, body));
+  return success(
+    c,
+    await new CatalogService(c.env).upsertPricing(c.get('actor').storeId!, body, {
+      actorUserId: c.get('actor').id,
+      actorSessionId: c.get('sessionId'),
+      deviceId: c.get('device')?.id ?? null,
+      requestId: c.get('requestId'),
+    }),
+  );
 });
 
 ownerCatalogRoutes.get('/tables', requirePermission('table.manage'), async (c) => {
@@ -64,6 +82,12 @@ ownerCatalogRoutes.post('/tables', requirePermission('table.manage'), async (c) 
       timeProductId: body.timeProductId,
       name: body.name,
       sortOrder: body.sortOrder,
+      auditContext: {
+        actorUserId: c.get('actor').id,
+        actorSessionId: c.get('sessionId'),
+        deviceId: c.get('device')?.id ?? null,
+        requestId: c.get('requestId'),
+      },
     }),
     201,
   );

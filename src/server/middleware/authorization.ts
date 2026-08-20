@@ -34,24 +34,32 @@ export function requireActor(
     c.set('actor', context.actor);
     c.set('device', context.device);
     c.set('rawSession', rawSession);
+    c.set('sessionId', context.sessionId!);
     await next();
   };
 }
 
 export function requirePermission(permissionKey: string): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
-    const actor = c.get('actor');
-    if (!actor.storeId) {
-      throw new AppError('STORE_CONTEXT_REQUIRED', 'Thiếu ngữ cảnh cửa hàng.', 403);
-    }
-    const allowed = await new AuthorizationRepository(c.env.DB).hasPermission(
-      actor.storeId,
-      actor.id,
-      permissionKey,
-    );
-    if (!allowed) {
-      throw new AppError('PERMISSION_DENIED', 'Bạn không có quyền thực hiện thao tác này.', 403);
-    }
+    await assertPermission(c, permissionKey);
     await next();
   };
+}
+
+export async function assertPermission(
+  c: Parameters<MiddlewareHandler<AppEnv>>[0],
+  permissionKey: string,
+): Promise<void> {
+  const actor = c.get('actor');
+  if (!actor.storeId) {
+    throw new AppError('STORE_CONTEXT_REQUIRED', 'Thiếu ngữ cảnh cửa hàng.', 403);
+  }
+  const allowed = await new AuthorizationRepository(c.env.DB).hasPermission(
+    actor.storeId,
+    actor.id,
+    permissionKey,
+  );
+  if (!allowed) {
+    throw new AppError('PERMISSION_DENIED', 'Bạn không có quyền thực hiện thao tác này.', 403);
+  }
 }

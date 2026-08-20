@@ -1,5 +1,6 @@
 import { AppError } from '@server/lib/app-error';
 import { MediaRepository } from '@server/repositories/media-repository';
+import { AuditRepository, type AuditContext } from '@server/repositories/audit-repository';
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
@@ -33,7 +34,12 @@ export class MediaService {
     this.repository = new MediaRepository(env.DB);
   }
 
-  async upload(input: { storeId: string; actorId: string; file: File }) {
+  async upload(input: {
+    storeId: string;
+    actorId: string;
+    file: File;
+    auditContext?: AuditContext;
+  }) {
     if (input.file.size <= 0 || input.file.size > MAX_IMAGE_BYTES) {
       throw new AppError('MEDIA_SIZE_INVALID', 'Ảnh phải có dung lượng từ 1 byte đến 5 MB.', 422);
     }
@@ -59,7 +65,20 @@ export class MediaService {
       await this.env.MEDIA.delete(objectKey);
       throw error;
     }
-    return { id, mimeType: detected.mimeType, byteSize: body.byteLength };
+    const result = { id, mimeType: detected.mimeType, byteSize: body.byteLength };
+    if (input.auditContext) {
+      await new AuditRepository(this.env.DB).record({
+        storeId: input.storeId,
+        context: input.auditContext,
+        action: 'MEDIA_UPLOADED',
+        entityType: 'MEDIA',
+        entityId: id,
+        before: null,
+        after: result,
+        now: Date.now(),
+      });
+    }
+    return result;
   }
 
   async get(storeId: string, mediaId: string) {
@@ -72,12 +91,25 @@ export class MediaService {
     return { media, object };
   }
 
-  async remove(storeId: string, mediaId: string) {
+  async remove(storeId: string, mediaId: string, auditContext?: AuditContext) {
     const media = await this.repository.find(storeId, mediaId);
     if (!media || media.status !== 'ACTIVE') {
       throw new AppError('MEDIA_NOT_FOUND', 'Không tìm thấy ảnh.', 404);
     }
     await this.repository.markDeleted(storeId, mediaId, Date.now());
-    return { mediaId, deleted: true };
+    const result = { mediaId, deleted: true };
+    if (auditContext) {
+      await new AuditRepository(this.env.DB).record({
+        storeId,
+        context: auditContext,
+        action: 'MEDIA_DELETED',
+        entityType: 'MEDIA',
+        entityId: mediaId,
+        before: media,
+        after: result,
+        now: Date.now(),
+      });
+    }
+    return result;
   }
 }

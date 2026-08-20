@@ -6,12 +6,20 @@
 - `0004_access_otp_and_pin_verifiers.sql`: Access identity, request OTP và PIN verifier keyed-HMAC.
 - `0005_access_bridge_codes.sql`: identity đã xác thực và hash authorization code one-time cho auth
   bridge exchange.
+- `0006_security_tenant_financial_hardening.sql`: one-user-one-store index, accounting snapshots,
+  atomic invoice sequence, pause/resume commands và tenant reference guards. Migration này không
+  sửa các file 0001–0005; dữ liệu PERCENT lịch sử không thể suy ngược input phần trăm nên giữ
+  `discount_input_value` là `NULL`. Backfill tính lại gross từ unit price × quantity và cap
+  discount theo gross để không làm phình dữ liệu tài chính lịch sử.
 
 Quy tắc:
 
 - Forward-only; không sửa/xóa migration đã chạy remote.
 - Additive expand trước, code tương thích cũ+mới, contract sau.
 - PR phải test database sạch và upgrade từ version trước.
+- Trước khi áp dụng `0006`, kiểm tra không có user thuộc nhiều store (`GROUP BY user_id HAVING COUNT(*) > 1`);
+  membership trùng tenant phải được xử lý và ghi nhận trước migration vì unique index mới cố ý
+  không tự động chọn tenant thay người vận hành.
 - Staging migration sau merge `dev`; production migration sau release PR `dev → main`.
 - Worker rollback không rollback D1/R2.
 - SQL migrations luôn dùng LF (`.gitattributes`). Với D1 triggers, bọc `CASE ... END` trong

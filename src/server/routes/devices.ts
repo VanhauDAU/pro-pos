@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { AppError } from '@server/lib/app-error';
 import { clearCredentialCookie } from '@server/lib/cookies';
 import { success } from '@server/lib/response';
+import { assertSameStore } from '@server/lib/tenant';
 import { requireActor, requirePermission } from '@server/middleware/authorization';
 import { AuthService } from '@server/services/auth-service';
 import type { AppEnv } from '@server/types';
@@ -15,12 +16,18 @@ ownerDeviceRoutes.get('/', async (c) =>
   success(c, await new AuthService(c.env).listDevices(c.get('actor').storeId!)),
 );
 
-ownerDeviceRoutes.post('/:deviceId/revoke', async (c) =>
-  success(
+ownerDeviceRoutes.post('/:deviceId/revoke', async (c) => {
+  const actor = c.get('actor');
+  return success(
     c,
-    await new AuthService(c.env).revokeDevice(c.get('actor').storeId!, c.req.param('deviceId')),
-  ),
-);
+    await new AuthService(c.env).revokeDevice(actor.storeId!, c.req.param('deviceId'), {
+      actorUserId: actor.id,
+      actorSessionId: c.get('sessionId'),
+      deviceId: c.get('device')?.id ?? null,
+      requestId: c.get('requestId'),
+    }),
+  );
+});
 
 const currentDeviceRoutes = new Hono<AppEnv>();
 currentDeviceRoutes.use('*', requireActor('OWNER'));
@@ -29,7 +36,14 @@ currentDeviceRoutes.post('/revoke', requirePermission('device.manage'), async (c
   if (!device || device.status !== 'ACTIVE') {
     throw new AppError('DEVICE_REQUIRED', 'Thiết bị POS chưa được kích hoạt.', 401);
   }
-  const result = await new AuthService(c.env).revokeDevice(device.storeId, device.id);
+  const actor = c.get('actor');
+  assertSameStore(actor.storeId!, device.storeId);
+  const result = await new AuthService(c.env).revokeDevice(actor.storeId!, device.id, {
+    actorUserId: actor.id,
+    actorSessionId: c.get('sessionId'),
+    deviceId: device.id,
+    requestId: c.get('requestId'),
+  });
   clearCredentialCookie(c, 'device');
   return success(c, result);
 });

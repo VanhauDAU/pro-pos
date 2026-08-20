@@ -2,6 +2,7 @@ import { AppError } from '@server/lib/app-error';
 import { derivePinDigest, randomSalt } from '@server/lib/crypto';
 import { requireSecret } from '@server/lib/env';
 import { StaffRepository } from '@server/repositories/staff-repository';
+import { AuditRepository, type AuditContext } from '@server/repositories/audit-repository';
 
 const DEFAULT_EMPLOYEE_PERMISSIONS = [
   'table.view',
@@ -25,6 +26,7 @@ export class StaffService {
     username: string;
     pin: string;
     permissionKeys: string[];
+    auditContext?: AuditContext;
   }) {
     const userId = crypto.randomUUID();
     const salt = randomSalt();
@@ -51,6 +53,23 @@ export class StaffService {
       }),
       now: Date.now(),
     });
+    if (input.auditContext) {
+      await new AuditRepository(this.env.DB).record({
+        storeId: input.storeId,
+        context: input.auditContext,
+        action: 'STAFF_CREATED',
+        entityType: 'USER',
+        entityId: userId,
+        before: null,
+        after: {
+          displayName: input.displayName.trim(),
+          username: input.username.trim().toLocaleLowerCase('en-US'),
+          permissionKeys: permissions,
+          status: 'ACTIVE',
+        },
+        now: Date.now(),
+      });
+    }
     return { userId };
   }
 
@@ -66,12 +85,38 @@ export class StaffService {
     );
   }
 
-  async setEmployeeStatus(storeId: string, userId: string, status: 'ACTIVE' | 'DISABLED') {
-    await this.repository.setEmployeeStatus(storeId, userId, status, Date.now());
+  async setEmployeeStatus(
+    storeId: string,
+    userId: string,
+    status: 'ACTIVE' | 'DISABLED',
+    auditContext?: AuditContext,
+  ) {
+    const target = await this.repository.findEmployeeTarget(storeId, userId);
+    if (!target) {
+      throw new AppError('EMPLOYEE_NOT_FOUND', 'Không tìm thấy nhân viên.', 404);
+    }
+    const result = await this.repository.setEmployeeStatus(storeId, userId, status, Date.now());
+    if ((result[0]?.meta.changes ?? 0) !== 1 || (result[1]?.meta.changes ?? 0) !== 1) {
+      throw new AppError('EMPLOYEE_NOT_FOUND', 'Không tìm thấy nhân viên.', 404);
+    }
+    if (auditContext) {
+      await new AuditRepository(this.env.DB).record({
+        storeId,
+        context: auditContext,
+        action: 'STAFF_STATUS_CHANGED',
+        entityType: 'USER',
+        entityId: userId,
+        before: { status: target.status, membershipStatus: target.membershipStatus },
+        after: { status },
+        now: Date.now(),
+      });
+    }
     return { userId, status };
   }
 
-  async resetPin(storeId: string, userId: string, pin: string) {
+  async resetPin(storeId: string, userId: string, pin: string, auditContext?: AuditContext) {
+    const target = await this.repository.findEmployeeTarget(storeId, userId);
+    if (!target) throw new AppError('EMPLOYEE_NOT_FOUND', 'Không tìm thấy nhân viên.', 404);
     const salt = randomSalt();
     const result = await this.repository.resetPin({
       storeId,
@@ -88,6 +133,18 @@ export class StaffService {
     });
     if ((result[0]?.meta.changes ?? 0) !== 1) {
       throw new AppError('EMPLOYEE_NOT_FOUND', 'Không tìm thấy nhân viên.', 404);
+    }
+    if (auditContext) {
+      await new AuditRepository(this.env.DB).record({
+        storeId,
+        context: auditContext,
+        action: 'STAFF_PIN_RESET',
+        entityType: 'USER',
+        entityId: userId,
+        before: null,
+        after: { pinReset: true },
+        now: Date.now(),
+      });
     }
     return { userId, pinReset: true };
   }

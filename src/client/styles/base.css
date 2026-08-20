@@ -500,3 +500,11 @@ body {
     gap: 12px;
   }
 }
+.pwa-update-banner {
+  position: fixed;
+  z-index: 1100;
+  top: 16px;
+  right: 16px;
+  width: min(420px, calc(100vw - 32px));
+  box-shadow: 0 8px 28px rgb(15 23 42 / 18%);
+}

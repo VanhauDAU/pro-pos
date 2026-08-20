@@ -16,6 +16,18 @@ export class StoreRepository {
       .first();
   }
 
+  findActiveBankQrMedia(storeId: string, mediaId: string) {
+    return this.db
+      .prepare(
+        `SELECT id, mime_type AS mimeType FROM media_objects
+         WHERE id = ? AND store_id = ? AND status = 'ACTIVE'
+           AND mime_type IN ('image/png', 'image/jpeg', 'image/webp')
+         LIMIT 1`,
+      )
+      .bind(mediaId, storeId)
+      .first();
+  }
+
   async updateSettings(input: {
     storeId: string;
     name: string;

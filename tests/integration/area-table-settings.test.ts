@@ -143,4 +143,25 @@ describe('Owner area and table settings', () => {
     });
     expect((await catalog.listAreaLayouts(storeId))[0]!.id).toBe(occupiedArea.id);
   });
+
+  it('creates individual tables in an existing area and renames the area', async () => {
+    const [layout] = await catalog.listAreaLayouts(storeId);
+    await env.DB.prepare("UPDATE service_tables SET status = 'AVAILABLE' WHERE id = ?")
+      .bind(layout!.tables[0]!.id)
+      .run();
+
+    const createdTable = await catalog.createTable({
+      storeId,
+      areaId: layout!.id,
+      name: 'Bàn thêm mới',
+    });
+    expect(createdTable.name).toBe('Bàn thêm mới');
+
+    await catalog.updateNamed(storeId, 'areas', layout!.id, 'Tầng 1 VIP');
+
+    const [updated] = await catalog.listAreaLayouts(storeId);
+    expect(updated!.name).toBe('Tầng 1 VIP');
+    expect(updated!.tables).toHaveLength(2);
+    expect(updated!.tables.some((t) => t.name === 'Bàn thêm mới')).toBe(true);
+  });
 });

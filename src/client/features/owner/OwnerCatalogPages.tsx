@@ -268,22 +268,71 @@ export function OwnerProductListPage() {
   const queryClient = useQueryClient();
   const [messageApi, contextHolder] = message.useMessage();
   const [search, setSearch] = useState('');
-  const [typeFilter, setTypeFilter] = useState<'ALL' | ProductType>('ALL');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'DISABLED'>('ACTIVE');
+  const [typeFilters, setTypeFilters] = useState<ProductType[]>([]);
+  const [statusFilters, setStatusFilters] = useState<Array<'ACTIVE' | 'DISABLED'>>(['ACTIVE']);
+  const [categoryFilters, setCategoryFilters] = useState<string[]>([]);
+  const [unitFilters, setUnitFilters] = useState<string[]>([]);
   const products = useQuery({
     queryKey: PRODUCT_QUERY,
     queryFn: () => apiRequest<ProductSummary[]>('/api/v1/owner/catalog/products'),
+  });
+  const categories = useQuery({
+    queryKey: CATEGORY_QUERY,
+    queryFn: () => apiRequest<Category[]>('/api/v1/owner/catalog/categories'),
+  });
+  const units = useQuery({
+    queryKey: ['owner-units'],
+    queryFn: () => apiRequest<Unit[]>('/api/v1/owner/catalog/units'),
   });
 
   const rows = useMemo(() => {
     const value = search.trim().toLowerCase();
     return (products.data ?? []).filter((product) => {
       const matchesSearch = !value || product.name.toLowerCase().includes(value);
-      const matchesType = typeFilter === 'ALL' || product.productType === typeFilter;
-      const matchesStatus = statusFilter === 'ALL' || product.status === statusFilter;
-      return matchesSearch && matchesType && matchesStatus;
+      const matchesType = !typeFilters.length || typeFilters.includes(product.productType);
+      const matchesStatus = !statusFilters.length || statusFilters.includes(product.status);
+      const matchesCategory =
+        !categoryFilters.length || categoryFilters.includes(product.categoryId ?? '');
+      const matchesUnit = !unitFilters.length || unitFilters.includes(product.unitId ?? '');
+      return matchesSearch && matchesType && matchesStatus && matchesCategory && matchesUnit;
     });
-  }, [products.data, search, statusFilter, typeFilter]);
+  }, [categoryFilters, products.data, search, statusFilters, typeFilters, unitFilters]);
+
+  const filterLabels = {
+    type: Object.fromEntries(Object.entries(productTypeLabels)),
+    status: { ACTIVE: 'Đang bán', DISABLED: 'Ngừng bán' },
+    category: Object.fromEntries((categories.data ?? []).map((item) => [item.id, item.name])),
+    unit: Object.fromEntries((units.data ?? []).map((item) => [item.id, item.name])),
+  };
+  const activeFilters = [
+    ...typeFilters.map((value) => ({
+      key: `type:${value}`,
+      label: `Loại: ${filterLabels.type[value]}`,
+      remove: () => setTypeFilters((current) => current.filter((item) => item !== value)),
+    })),
+    ...statusFilters.map((value) => ({
+      key: `status:${value}`,
+      label: `Trạng thái: ${filterLabels.status[value]}`,
+      remove: () => setStatusFilters((current) => current.filter((item) => item !== value)),
+    })),
+    ...categoryFilters.map((value) => ({
+      key: `category:${value}`,
+      label: `Danh mục: ${filterLabels.category[value] ?? value}`,
+      remove: () => setCategoryFilters((current) => current.filter((item) => item !== value)),
+    })),
+    ...unitFilters.map((value) => ({
+      key: `unit:${value}`,
+      label: `Đơn vị: ${filterLabels.unit[value] ?? value}`,
+      remove: () => setUnitFilters((current) => current.filter((item) => item !== value)),
+    })),
+  ];
+
+  const clearFilters = () => {
+    setTypeFilters([]);
+    setStatusFilters([]);
+    setCategoryFilters([]);
+    setUnitFilters([]);
+  };
 
   const disableProduct = async (product: ProductSummary) => {
     const context = await apiRequest<AuthContextResponse>('/api/v1/auth/context');
@@ -443,23 +492,64 @@ export function OwnerProductListPage() {
             allowClear
           />
           <Select
-            value={typeFilter}
-            onChange={setTypeFilter}
-            options={[
-              { value: 'ALL', label: 'Tất cả loại' },
-              ...Object.entries(productTypeLabels).map(([value, label]) => ({ value, label })),
-            ]}
+            mode="multiple"
+            maxTagCount={0}
+            maxTagPlaceholder={(values) => `${values.length} loại`}
+            value={typeFilters}
+            onChange={setTypeFilters}
+            placeholder="Loại mặt hàng"
+            options={Object.entries(productTypeLabels).map(([value, label]) => ({ value, label }))}
           />
           <Select
-            value={statusFilter}
-            onChange={setStatusFilter}
+            mode="multiple"
+            maxTagCount={0}
+            maxTagPlaceholder={(values) => `${values.length} trạng thái`}
+            value={statusFilters}
+            onChange={setStatusFilters}
+            placeholder="Trạng thái"
             options={[
               { value: 'ACTIVE', label: 'Đang bán' },
               { value: 'DISABLED', label: 'Ngừng bán' },
-              { value: 'ALL', label: 'Tất cả trạng thái' },
             ]}
           />
+          <Select
+            mode="multiple"
+            maxTagCount={0}
+            maxTagPlaceholder={(values) => `${values.length} danh mục`}
+            value={categoryFilters}
+            onChange={setCategoryFilters}
+            placeholder="Danh mục"
+            showSearch
+            optionFilterProp="label"
+            options={(categories.data ?? [])
+              .filter((item) => item.status !== 'DISABLED')
+              .map((item) => ({ value: item.id, label: item.name }))}
+          />
+          <Select
+            mode="multiple"
+            maxTagCount={0}
+            maxTagPlaceholder={(values) => `${values.length} đơn vị`}
+            value={unitFilters}
+            onChange={setUnitFilters}
+            placeholder="Đơn vị"
+            showSearch
+            optionFilterProp="label"
+            options={(units.data ?? []).map((item) => ({ value: item.id, label: item.name }))}
+          />
         </div>
+        {activeFilters.length ? (
+          <div className="owner-catalog-active-filters">
+            <Typography.Text type="secondary">Đang lọc:</Typography.Text>
+            {activeFilters.map((filter) => (
+              <Tag key={filter.key} closable onClose={filter.remove}>
+                {filter.label}
+              </Tag>
+            ))}
+            <Button type="link" size="small" onClick={clearFilters}>
+              Xóa tất cả
+            </Button>
+          </div>
+        ) : null}
         {products.isLoading ? (
           <Skeleton active />
         ) : products.isError ? (
@@ -601,7 +691,15 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
         ? { firstPeriodPrice: product.pricing.firstPeriod.priceVnd }
         : {}),
       specialWindows: (product.pricing?.specialWindows ?? []).map((window) => {
-        const item = {
+        const item: {
+          id?: string;
+          name: string;
+          priceVnd: number;
+          allDay: boolean;
+          startTime: string;
+          endTime: string;
+          weekdays: number[];
+        } = {
           name: window.name,
           priceVnd: window.priceVnd,
           allDay: window.startMinute === window.endMinute,
@@ -609,7 +707,8 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
           endTime: minuteToTime(window.endMinute),
           weekdays: maskToWeekdays(window.weekdaysMask),
         };
-        return window.id ? { id: window.id, ...item } : item;
+        if (window.id) item.id = window.id;
+        return item;
       }),
     });
   }, [detail.data, form, isEdit]);

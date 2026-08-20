@@ -4,6 +4,15 @@
 
 ### Added
 
+- Area settings UI revamp: dedicated full-screen/spacious Area Detail Modal with quick-add table,
+  reordering, per-table pricing selector, table rename/delete, area rename and clean 2-column layout.
+
+- Product create/edit UI refinement: unified unit and category fields, removed redundant right-column
+  category card, added clear card margins and padding, and responsive variant rows.
+
+- PRO-017 product filters: multi-select filtering by type, status, category and unit with removable
+  filter chips and a clear-all action.
+
 - PRO-016 table pricing assignment: each available table/room can select an active time product
   and its pricing; occupied tables are locked against pricing changes and POS snapshots the
   selected pricing when opening a session.

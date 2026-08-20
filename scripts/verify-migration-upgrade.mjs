@@ -14,6 +14,7 @@ const migrationFiles = [
   '0004_access_otp_and_pin_verifiers.sql',
   '0005_access_bridge_codes.sql',
   '0006_security_tenant_financial_hardening.sql',
+  '0007_owner_store_location.sql',
 ];
 
 const fixture = `
@@ -69,7 +70,7 @@ try {
   const migrations = await Promise.all(
     migrationFiles.map(async (file) => readFile(new URL(`migrations/${file}`, root), 'utf8')),
   );
-  const sql = `${migrations.slice(0, 5).join('\n')}\n${fixture}\n${migrations[5]}`;
+  const sql = `${migrations.slice(0, 5).join('\n')}\n${fixture}\n${migrations.slice(5).join('\n')}`;
   const result = spawnSync('sqlite3', ['-batch', '-noheader', '-separator', '|', databasePath], {
     input: `${sql}\nSELECT gross_line_total, discount_amount, net_line_total FROM order_items WHERE id = 'item-upgrade';\nSELECT gross_line_total, discount_amount, line_total FROM invoice_lines WHERE id = 'line-upgrade';\n`,
     encoding: 'utf8',
@@ -80,10 +81,10 @@ try {
   const rows = result.stdout.trim().split('\n');
   const expected = ['100000|100000|0', '100000|100000|0'];
   if (rows.at(-2) !== expected[0] || rows.at(-1) !== expected[1]) {
-    throw new Error(`Unexpected 0005 → 0006 backfill: ${rows.slice(-2).join(', ')}`);
+    throw new Error(`Unexpected 0005 → 0007 backfill: ${rows.slice(-2).join(', ')}`);
   }
   console.log(
-    '0005 → 0006 upgrade path passed: legacy over-gross FIXED discount is capped safely.',
+    '0005 → 0007 upgrade path passed: legacy accounting backfill and Owner location columns are safe.',
   );
 } finally {
   await rm(tempDirectory, { recursive: true, force: true });

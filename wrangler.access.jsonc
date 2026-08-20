@@ -7,8 +7,8 @@
     "dev": {
       "aud": "pro-pos-auth-local",
       "identity": {
-        "email": "system.admin@example.com",
-        "user_uuid": "access-system-admin-test",
+        "email": "owner.local@example.com",
+        "user_uuid": "access-owner-local",
       },
     },
   },

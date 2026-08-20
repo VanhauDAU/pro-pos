@@ -6,7 +6,8 @@
 - Identity/device: hoàn thành Owner/SUPER_ADMIN Access OTP qua auth bridge, Employee PIN và POS
   activation.
 - SUPER_ADMIN portal: đã có màn hình quản lý store/Owner tối giản.
-- Owner portal và POS portal: backend/contract đã có một phần; UI cuối đang chờ reference.
+- Owner shell/dashboard đã có reference và đang triển khai khung; các module Owner chi tiết và POS UI
+  vẫn chờ reference/triển khai theo từng ticket.
 
 Theo dõi chi tiết tại [trạng thái và roadmap](../project/status-roadmap.md).
 

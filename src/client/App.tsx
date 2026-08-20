@@ -6,6 +6,7 @@ import { DeviceActivationPage } from '@client/features/auth/DeviceActivationPage
 import { LoginPage } from '@client/features/auth/LoginPage';
 import { PlatformAccessPage } from '@client/features/auth/PlatformAccessPage';
 import { PwaUpdatePrompt } from '@client/features/pwa/PwaUpdatePrompt';
+import { OwnerPortalPage } from '@client/features/owner/OwnerPortalPage';
 
 const SuperAdminPage = lazy(async () => {
   const module = await import('@client/features/platform/SuperAdminPage');
@@ -36,7 +37,7 @@ export function App() {
         <Route path="/device-activation" element={<DeviceActivationPage />} />
         <Route path="/pos/login" element={<Navigate to="/?tab=employee" replace />} />
         <Route path="/platform/login" element={<PlatformAccessPage />} />
-        <Route path="/owner/*" element={<PlaceholderPage title="Cổng Chủ cửa hàng" />} />
+        <Route path="/owner/*" element={<OwnerPortalPage />} />
         <Route path="/pos/*" element={<PlaceholderPage title="Cổng Nhân viên" />} />
         <Route
           path="/platform/*"

@@ -30,7 +30,7 @@ createRoot(root).render(
       <ConfigProvider
         theme={{
           token: {
-            colorPrimary: '#0D7CFF',
+            colorPrimary: '#0975F7',
             borderRadius: 8,
             fontFamily:
               'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',

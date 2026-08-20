@@ -514,7 +514,10 @@ body {
    ========================================================================== */
 
 .owner-shell {
+  width: 100%;
   min-height: 100vh;
+  flex-direction: row !important;
+  align-items: stretch;
   background: #f4f6fa;
 }
 

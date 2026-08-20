@@ -31,11 +31,11 @@ Tất cả: `HttpOnly; Secure; SameSite=Lax; Path=/`, không có `Domain`. Logou
 
 ## PBKDF2 CPU gate
 
-PBKDF2-HMAC-SHA256 dùng `node:crypto` native của Workers, salt riêng, pepper server-side; hash lưu
-algorithm, work factor và versions. Không dùng `SubtleCrypto.deriveBits()` cho PBKDF2 vì Workers
-runtime từ chối iteration count lớn hơn 100.000. Adapter `node:crypto` giữ nguyên thuật toán và work
-factor bảo mật đã chọn, thay vì hạ policy để né giới hạn API này.
+PBKDF2-HMAC-SHA256 dùng implementation portable `@noble/hashes`, salt riêng, pepper server-side;
+hash lưu algorithm, work factor và versions. Không dùng PBKDF2 của `SubtleCrypto` hoặc `node:crypto`
+trên Workers vì edge runtime từ chối iteration count lớn hơn 100.000. Adapter portable giữ nguyên
+thuật toán và work factor bảo mật đã chọn, thay vì hạ policy để né giới hạn API này.
 
 Work factor được benchmark trên deployed Worker. Workers Free chỉ được chấp nhận nếu không có error
-1102 và P99 auth CPU ≤ 8 ms. Không hạ security baseline để giữ free; mặc định nâng Workers Paid nếu
-không đạt.
+1102 và P99 auth CPU ≤ 8 ms. Với policy 600.000 hiện tại, Workers Paid là yêu cầu triển khai cho auth
+trừ khi edge benchmark chứng minh Free đạt gate. Không hạ security baseline để giữ free.

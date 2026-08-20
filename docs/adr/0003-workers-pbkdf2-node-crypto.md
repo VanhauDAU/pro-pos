@@ -1,6 +1,6 @@
 # ADR-0003: PBKDF2 qua Workers Node Crypto
 
-Status: Accepted
+Status: Superseded by ADR-0004
 
 ## Bối cảnh
 

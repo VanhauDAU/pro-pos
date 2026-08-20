@@ -96,7 +96,27 @@ paths:
         '422': { description: Invalid or cross-store references }
   /owner/store/settings:
     put:
-      summary: Update store settings and validate same-store ACTIVE bank QR media
+      summary: Update store settings, bank QR media and administrative location
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, address, businessDayCutoffMinutes]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 160 }
+                phone: { type: string, nullable: true }
+                address: { type: string, minLength: 1, maxLength: 500 }
+                provinceCode: { type: integer, minimum: 1, nullable: true }
+                provinceName: { type: string, nullable: true }
+                wardCode: { type: integer, minimum: 1, nullable: true }
+                wardName: { type: string, nullable: true }
+                businessDayCutoffMinutes: { type: integer, minimum: 0, maximum: 1439 }
+                bankName: { type: string, nullable: true }
+                bankAccountNumber: { type: string, nullable: true }
+                bankAccountName: { type: string, nullable: true }
+                bankQrMediaId: { type: string, format: uuid, nullable: true }
       responses:
         '200': { description: Settings updated }
         '404': { description: Bank QR media not found in current store }

@@ -5,14 +5,14 @@
 ### Added
 
 - PRO-010 Owner shell: Owner auth guard, responsive sidebar accordion, dashboard overview frame,
-  direct settings hub, store identity, logout and mobile navigation using the `#0975F7` system
-  color.
+  direct settings hub, two-column store information form with province/ward location lookup,
+  store identity, logout and mobile navigation using the `#0975F7` system color.
 
 - PRO-010A hardening: cross-store device revoke protection, conditional discount authorization,
   gross/discount/net accounting snapshots, prompt-price sales, atomic invoice numbering, tenant
   reference validation, Owner-safe staff status, atomic pause/resume commands, audit context and
   controlled PWA update prompt. Local quality gate passes with 18 unit tests, 26 Worker integration
-  tests and a 0005 → 0006 migration-upgrade check; staging smoke remains a release gate.
+  tests and a 0005 → 0007 migration-upgrade check; staging smoke remains a release gate.
 
 - React/Web Worker/PWA foundation.
 - D1 tenant, authentication, device, catalog, pricing, POS and billing schema.

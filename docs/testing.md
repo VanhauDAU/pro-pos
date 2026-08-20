@@ -3,7 +3,7 @@
 - Unit: Pricing Engine, state machines, crypto/cookie helpers.
 - Worker integration: migrations, auth bridge code exchange/replay, purpose-aware callback,
   auth/device cookies, tenant/RBAC và POS command triggers.
-- Migration upgrade script: applies 0001–0005 with legacy accounting rows, then 0006, and verifies
+- Migration upgrade script: applies 0001–0005 with legacy accounting rows, then 0006–0007, and verifies
   gross/discount/net backfill invariants.
 - E2E: store → owner/device → employee → table/order → checkout → invoice.
 - Release smoke: health/version, environment bindings và critical mutations.

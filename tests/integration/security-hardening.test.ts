@@ -418,11 +418,45 @@ describe('PRO-010A API security and tenant boundaries', () => {
       headers: ownerHeaders(storeA),
       body: JSON.stringify({
         name: 'Security Store A',
+        address: 'Store A address',
         businessDayCutoffMinutes: 0,
         bankQrMediaId: mediaId,
       }),
     });
     expect(settings.status).toBe(404);
+
+    const updatedSettings = await SELF.fetch(`${ORIGIN}/api/v1/owner/store/settings`, {
+      method: 'PUT',
+      headers: ownerHeaders(storeA),
+      body: JSON.stringify({
+        name: 'Security Store A',
+        address: 'Số 1 đường Test, Đà Nẵng',
+        businessDayCutoffMinutes: 0,
+        provinceCode: 48,
+        provinceName: 'Thành phố Đà Nẵng',
+        wardCode: 12345,
+        wardName: 'Phường Hải Châu',
+      }),
+    });
+    expect(updatedSettings.status).toBe(200);
+    const storedLocation = await env.DB.prepare(
+      `SELECT province_code AS provinceCode, province_name AS provinceName,
+              ward_code AS wardCode, ward_name AS wardName
+       FROM store_settings WHERE store_id = ?`,
+    )
+      .bind(storeA.storeId)
+      .first<{
+        provinceCode: number;
+        provinceName: string;
+        wardCode: number;
+        wardName: string;
+      }>();
+    expect(storedLocation).toMatchObject({
+      provinceCode: 48,
+      provinceName: 'Thành phố Đà Nẵng',
+      wardCode: 12345,
+      wardName: 'Phường Hải Châu',
+    });
   });
 
   it('protects Owners from staff status API and enforces one-user-one-store', async () => {

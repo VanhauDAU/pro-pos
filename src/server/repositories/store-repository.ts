@@ -8,7 +8,9 @@ export class StoreRepository {
           s.id, s.name, s.status, s.timezone, ss.phone, ss.address,
           ss.currency, ss.business_day_cutoff_minutes AS businessDayCutoffMinutes,
           ss.bank_name AS bankName, ss.bank_account_number AS bankAccountNumber,
-          ss.bank_account_name AS bankAccountName, ss.bank_qr_media_id AS bankQrMediaId
+          ss.bank_account_name AS bankAccountName, ss.bank_qr_media_id AS bankQrMediaId,
+          ss.province_code AS provinceCode, ss.province_name AS provinceName,
+          ss.ward_code AS wardCode, ss.ward_name AS wardName
          FROM stores s JOIN store_settings ss ON ss.store_id = s.id
          WHERE s.id = ? LIMIT 1`,
       )
@@ -38,6 +40,10 @@ export class StoreRepository {
     bankAccountNumber: string | null;
     bankAccountName: string | null;
     bankQrMediaId: string | null;
+    provinceCode: number | null;
+    provinceName: string | null;
+    wardCode: number | null;
+    wardName: string | null;
     now: number;
   }) {
     return this.db.batch([
@@ -49,7 +55,8 @@ export class StoreRepository {
           `UPDATE store_settings
            SET phone = ?, address = ?, business_day_cutoff_minutes = ?,
                bank_name = ?, bank_account_number = ?, bank_account_name = ?,
-               bank_qr_media_id = ?, updated_at = ?
+               bank_qr_media_id = ?, province_code = ?, province_name = ?,
+               ward_code = ?, ward_name = ?, updated_at = ?
            WHERE store_id = ?`,
         )
         .bind(
@@ -60,6 +67,10 @@ export class StoreRepository {
           input.bankAccountNumber,
           input.bankAccountName,
           input.bankQrMediaId,
+          input.provinceCode,
+          input.provinceName,
+          input.wardCode,
+          input.wardName,
           input.now,
           input.storeId,
         ),

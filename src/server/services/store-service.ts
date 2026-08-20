@@ -23,6 +23,10 @@ export class StoreService {
     bankAccountNumber: string | null;
     bankAccountName: string | null;
     bankQrMediaId: string | null;
+    provinceCode: number | null;
+    provinceName: string | null;
+    wardCode: number | null;
+    wardName: string | null;
     auditContext?: AuditContext;
   }) {
     if (

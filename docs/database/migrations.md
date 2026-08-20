@@ -11,6 +11,8 @@
   sửa các file 0001–0005; dữ liệu PERCENT lịch sử không thể suy ngược input phần trăm nên giữ
   `discount_input_value` là `NULL`. Backfill tính lại gross từ unit price × quantity và cap
   discount theo gross để không làm phình dữ liệu tài chính lịch sử.
+- `0007_owner_store_location.sql`: thêm mã/tên tỉnh và phường/xã để lưu địa chỉ hành chính mới
+  của Owner settings.
 
 Quy tắc:
 

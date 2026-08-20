@@ -1413,6 +1413,109 @@ body {
   line-height: 1.4;
 }
 
+.owner-store-settings-page {
+  width: min(1120px, 100%);
+  margin: 0 auto;
+}
+
+.owner-back-link {
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  color: #8490a0;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.owner-back-link:hover {
+  color: #0975f7;
+}
+
+.owner-store-settings-heading {
+  margin-top: 8px;
+}
+
+.owner-store-settings-heading h2.ant-typography {
+  margin: 0 0 4px;
+  color: #1c2a3d;
+}
+
+.owner-store-settings-layout {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.75fr) minmax(0, 1.5fr);
+  align-items: start;
+  gap: clamp(28px, 5vw, 72px);
+}
+
+.owner-store-settings-intro {
+  padding-top: 8px;
+}
+
+.owner-store-settings-intro h4.ant-typography {
+  margin: 0 0 10px;
+  color: #1c2a3d;
+}
+
+.owner-store-settings-intro .ant-typography {
+  line-height: 1.6;
+}
+
+.owner-store-settings-tip {
+  margin-top: 28px;
+  padding: 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  border-radius: 7px;
+  color: #6e7b8d;
+  background: #eef6ff;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.owner-store-settings-tip .anticon {
+  flex: 0 0 auto;
+  color: #0975f7;
+  font-size: 16px;
+}
+
+.owner-store-settings-card {
+  border: 1px solid #e1e8f0;
+  box-shadow: 0 5px 18px rgb(31 55 83 / 7%);
+}
+
+.owner-store-settings-card .ant-card-body {
+  padding: clamp(20px, 3vw, 30px);
+}
+
+.owner-store-settings-card .ant-form-item-label > label {
+  color: #29374b;
+}
+
+.owner-required {
+  color: #ff4d4f;
+  font-weight: 500;
+}
+
+.owner-store-settings-card .ant-input,
+.owner-store-settings-card .ant-input-affix-wrapper,
+.owner-store-settings-card .ant-select-selector {
+  border-radius: 3px !important;
+}
+
+.owner-form-actions {
+  margin-top: 12px;
+  padding-top: 18px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  border-top: 1px solid #edf0f4;
+}
+
 .owner-module-placeholder {
   max-width: 980px;
   padding: 8px 0 34px;
@@ -1578,6 +1681,19 @@ body {
 
   .owner-settings-group {
     padding: 17px 12px 18px;
+  }
+
+  .owner-store-settings-layout {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+
+  .owner-store-settings-intro {
+    padding-top: 0;
+  }
+
+  .owner-store-settings-tip {
+    margin-top: 14px;
   }
 
   .owner-settings-tile {

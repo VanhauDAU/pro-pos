@@ -48,6 +48,8 @@ import type { AuthContextResponse } from '@contracts/auth';
 import logo from '@client/assets/logo-white.svg';
 import { ApiError, apiRequest } from '@client/lib/api';
 
+import { OwnerStoreSettingsPage } from './OwnerStoreSettingsPage';
+
 const BRAND = '#0975F7';
 
 interface StoreSettings {
@@ -772,6 +774,8 @@ export function OwnerPortalPage() {
             ) : null}
             {selectedKey === '/owner' ? (
               <OverviewDashboard settings={settings.data} />
+            ) : location.pathname === '/owner/settings/store' ? (
+              <OwnerStoreSettingsPage />
             ) : selectedKey === '/owner/settings' && location.pathname === '/owner/settings' ? (
               <SettingsHub onNavigate={(path) => navigate(path)} />
             ) : (

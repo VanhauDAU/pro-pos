@@ -60,7 +60,7 @@ WHERE line_type = 'PRODUCT';
 CREATE TRIGGER trg_add_item_accounting_validate
 BEFORE INSERT ON add_item_commands
 BEGIN
-  SELECT CASE WHEN NEW.discount_amount < 0
+  SELECT (CASE WHEN NEW.discount_amount < 0
     OR NEW.gross_line_total < 0
     OR NEW.net_line_total < 0
     OR NEW.discount_amount > NEW.gross_line_total
@@ -68,28 +68,28 @@ BEGIN
     OR (NEW.discount_type = 'PERCENT' AND (
       NEW.discount_input_value IS NULL OR NEW.discount_input_value < 0 OR NEW.discount_input_value > 100
     ))
-  THEN RAISE(ABORT, 'DISCOUNT_INVALID') END;
+  THEN RAISE(ABORT, 'DISCOUNT_INVALID') END);
 END;
 
 CREATE TRIGGER trg_order_item_accounting_validate
 BEFORE INSERT ON order_items
 BEGIN
-  SELECT CASE WHEN NEW.discount_amount < 0
+  SELECT (CASE WHEN NEW.discount_amount < 0
     OR NEW.gross_line_total < 0
     OR NEW.net_line_total < 0
     OR NEW.discount_amount > NEW.gross_line_total
     OR NEW.gross_line_total - NEW.discount_amount <> NEW.net_line_total
-  THEN RAISE(ABORT, 'DISCOUNT_INVALID') END;
+  THEN RAISE(ABORT, 'DISCOUNT_INVALID') END);
 END;
 
 CREATE TRIGGER trg_invoice_line_accounting_validate
 BEFORE INSERT ON invoice_lines
 BEGIN
-  SELECT CASE WHEN NEW.discount_amount < 0
+  SELECT (CASE WHEN NEW.discount_amount < 0
     OR NEW.gross_line_total < 0
     OR NEW.discount_amount > NEW.gross_line_total
     OR NEW.gross_line_total - NEW.discount_amount <> NEW.line_total
-  THEN RAISE(ABORT, 'DISCOUNT_INVALID') END;
+  THEN RAISE(ABORT, 'DISCOUNT_INVALID') END);
 END;
 
 DROP TRIGGER trg_add_item_execute;
@@ -249,7 +249,7 @@ CREATE TABLE pause_time_commands (
 CREATE TRIGGER trg_pause_time_validate
 BEFORE INSERT ON pause_time_commands
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM orders o
     JOIN time_sessions ts ON ts.order_id = o.id AND ts.store_id = o.store_id
     WHERE o.id = NEW.order_id AND o.store_id = NEW.store_id
@@ -259,7 +259,7 @@ BEGIN
         SELECT 1 FROM time_pauses tp
         WHERE tp.time_session_id = ts.id AND tp.resumed_at IS NULL
       )
-  ) THEN RAISE(ABORT, 'TIME_NOT_RUNNING') END;
+  ) THEN RAISE(ABORT, 'TIME_NOT_RUNNING') END);
 END;
 
 CREATE TRIGGER trg_pause_time_execute
@@ -303,14 +303,14 @@ CREATE TABLE resume_time_commands (
 CREATE TRIGGER trg_resume_time_validate
 BEFORE INSERT ON resume_time_commands
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM orders o
     JOIN time_sessions ts ON ts.order_id = o.id AND ts.store_id = o.store_id
     JOIN time_pauses tp ON tp.time_session_id = ts.id AND tp.resumed_at IS NULL
     WHERE o.id = NEW.order_id AND o.store_id = NEW.store_id
       AND o.status = 'OPEN' AND o.version = NEW.expected_order_version
       AND ts.status = 'PAUSED'
-  ) THEN RAISE(ABORT, 'TIME_NOT_PAUSED') END;
+  ) THEN RAISE(ABORT, 'TIME_NOT_PAUSED') END);
 END;
 
 CREATE TRIGGER trg_resume_time_execute
@@ -343,12 +343,12 @@ DROP TRIGGER trg_pause_time_validate;
 CREATE TRIGGER trg_pause_time_validate
 BEFORE INSERT ON pause_time_commands
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM orders
     WHERE id = NEW.order_id AND store_id = NEW.store_id
       AND status = 'OPEN' AND version = NEW.expected_order_version
-  ) THEN RAISE(ABORT, 'ORDER_VERSION_CONFLICT') END;
-  SELECT CASE WHEN NOT EXISTS (
+  ) THEN RAISE(ABORT, 'ORDER_VERSION_CONFLICT') END);
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM orders o
     JOIN time_sessions ts ON ts.order_id = o.id AND ts.store_id = o.store_id
     WHERE o.id = NEW.order_id AND o.store_id = NEW.store_id
@@ -357,24 +357,24 @@ BEGIN
         SELECT 1 FROM time_pauses tp
         WHERE tp.time_session_id = ts.id AND tp.resumed_at IS NULL
       )
-  ) THEN RAISE(ABORT, 'TIME_NOT_RUNNING') END;
+  ) THEN RAISE(ABORT, 'TIME_NOT_RUNNING') END);
 END;
 
 DROP TRIGGER trg_resume_time_validate;
 CREATE TRIGGER trg_resume_time_validate
 BEFORE INSERT ON resume_time_commands
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM orders
     WHERE id = NEW.order_id AND store_id = NEW.store_id
       AND status = 'OPEN' AND version = NEW.expected_order_version
-  ) THEN RAISE(ABORT, 'ORDER_VERSION_CONFLICT') END;
-  SELECT CASE WHEN NOT EXISTS (
+  ) THEN RAISE(ABORT, 'ORDER_VERSION_CONFLICT') END);
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM orders o
     JOIN time_sessions ts ON ts.order_id = o.id AND ts.store_id = o.store_id
     JOIN time_pauses tp ON tp.time_session_id = ts.id AND tp.resumed_at IS NULL
     WHERE o.id = NEW.order_id AND o.store_id = NEW.store_id AND ts.status = 'PAUSED'
-  ) THEN RAISE(ABORT, 'TIME_NOT_PAUSED') END;
+  ) THEN RAISE(ABORT, 'TIME_NOT_PAUSED') END);
 END;
 
 -- Tenant-safe client supplied references. Service validation provides the public
@@ -382,67 +382,67 @@ END;
 CREATE TRIGGER trg_products_tenant_refs_insert
 BEFORE INSERT ON products
 BEGIN
-  SELECT CASE WHEN NEW.category_id IS NOT NULL AND NOT EXISTS (
+  SELECT (CASE WHEN NEW.category_id IS NOT NULL AND NOT EXISTS (
     SELECT 1 FROM categories WHERE id = NEW.category_id AND store_id = NEW.store_id AND status = 'ACTIVE'
-  ) THEN RAISE(ABORT, 'CATEGORY_REFERENCE_INVALID') END;
-  SELECT CASE WHEN NEW.unit_id IS NOT NULL AND NOT EXISTS (
+  ) THEN RAISE(ABORT, 'CATEGORY_REFERENCE_INVALID') END);
+  SELECT (CASE WHEN NEW.unit_id IS NOT NULL AND NOT EXISTS (
     SELECT 1 FROM units WHERE id = NEW.unit_id AND store_id = NEW.store_id
-  ) THEN RAISE(ABORT, 'UNIT_REFERENCE_INVALID') END;
+  ) THEN RAISE(ABORT, 'UNIT_REFERENCE_INVALID') END);
 END;
 
 CREATE TRIGGER trg_products_tenant_refs_update
 BEFORE UPDATE OF store_id, category_id, unit_id ON products
 BEGIN
-  SELECT CASE WHEN NEW.category_id IS NOT NULL AND NOT EXISTS (
+  SELECT (CASE WHEN NEW.category_id IS NOT NULL AND NOT EXISTS (
     SELECT 1 FROM categories WHERE id = NEW.category_id AND store_id = NEW.store_id AND status = 'ACTIVE'
-  ) THEN RAISE(ABORT, 'CATEGORY_REFERENCE_INVALID') END;
-  SELECT CASE WHEN NEW.unit_id IS NOT NULL AND NOT EXISTS (
+  ) THEN RAISE(ABORT, 'CATEGORY_REFERENCE_INVALID') END);
+  SELECT (CASE WHEN NEW.unit_id IS NOT NULL AND NOT EXISTS (
     SELECT 1 FROM units WHERE id = NEW.unit_id AND store_id = NEW.store_id
-  ) THEN RAISE(ABORT, 'UNIT_REFERENCE_INVALID') END;
+  ) THEN RAISE(ABORT, 'UNIT_REFERENCE_INVALID') END);
 END;
 
 CREATE TRIGGER trg_store_settings_bank_qr_insert
 BEFORE INSERT ON store_settings
 WHEN NEW.bank_qr_media_id IS NOT NULL
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM media_objects
     WHERE id = NEW.bank_qr_media_id AND store_id = NEW.store_id
       AND status = 'ACTIVE' AND mime_type IN ('image/png', 'image/jpeg', 'image/webp')
-  ) THEN RAISE(ABORT, 'BANK_QR_MEDIA_INVALID') END;
+  ) THEN RAISE(ABORT, 'BANK_QR_MEDIA_INVALID') END);
 END;
 
 CREATE TRIGGER trg_store_settings_bank_qr_update
 BEFORE UPDATE OF bank_qr_media_id ON store_settings
 WHEN NEW.bank_qr_media_id IS NOT NULL
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM media_objects
     WHERE id = NEW.bank_qr_media_id AND store_id = NEW.store_id
       AND status = 'ACTIVE' AND mime_type IN ('image/png', 'image/jpeg', 'image/webp')
-  ) THEN RAISE(ABORT, 'BANK_QR_MEDIA_INVALID') END;
+  ) THEN RAISE(ABORT, 'BANK_QR_MEDIA_INVALID') END);
 END;
 
 CREATE TRIGGER trg_service_tables_tenant_refs_insert
 BEFORE INSERT ON service_tables
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM areas WHERE id = NEW.area_id AND store_id = NEW.store_id AND status = 'ACTIVE'
-  ) THEN RAISE(ABORT, 'AREA_REFERENCE_INVALID') END;
-  SELECT CASE WHEN NOT EXISTS (
+  ) THEN RAISE(ABORT, 'AREA_REFERENCE_INVALID') END);
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM products WHERE id = NEW.time_product_id AND store_id = NEW.store_id
       AND status = 'ACTIVE' AND product_type = 'TIME'
-  ) THEN RAISE(ABORT, 'TIME_PRODUCT_REFERENCE_INVALID') END;
+  ) THEN RAISE(ABORT, 'TIME_PRODUCT_REFERENCE_INVALID') END);
 END;
 
 CREATE TRIGGER trg_service_tables_tenant_refs_update
 BEFORE UPDATE OF store_id, area_id, time_product_id ON service_tables
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM areas WHERE id = NEW.area_id AND store_id = NEW.store_id AND status = 'ACTIVE'
-  ) THEN RAISE(ABORT, 'AREA_REFERENCE_INVALID') END;
-  SELECT CASE WHEN NOT EXISTS (
+  ) THEN RAISE(ABORT, 'AREA_REFERENCE_INVALID') END);
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM products WHERE id = NEW.time_product_id AND store_id = NEW.store_id
       AND status = 'ACTIVE' AND product_type = 'TIME'
-  ) THEN RAISE(ABORT, 'TIME_PRODUCT_REFERENCE_INVALID') END;
+  ) THEN RAISE(ABORT, 'TIME_PRODUCT_REFERENCE_INVALID') END);
 END;

@@ -29,6 +29,8 @@ Quy tắc bắt buộc:
   `test:`, `docs:`, `chore:`.
 - Không commit `.dev.vars`, `.env*`, file secret, database export hoặc dữ liệu cửa hàng thật.
 - Migration là forward-only; không sửa/xóa migration đã chạy trên staging hoặc production.
+- Release phải cung cấp `BUILD_SHA` và `BUILD_TIME` (không phải secret) để `/api/version` truy nguyên
+  đúng commit/build; script deploy tự truyền hai biến qua Wrangler. Local dùng `local-dev`/`local`.
 
 ## 2. Phân biệt CI và deployment
 
@@ -78,6 +80,10 @@ Kiểm tra nhanh:
 curl http://localhost:5173/api/health
 curl http://localhost:5173/api/version
 ```
+
+`/api/version` trả `environment`, `version`, `commit` và `builtAt`. Khi deploy thủ công, cập nhật
+hai biến build identity trong environment trước khi smoke; không đưa token, pepper hoặc session vào
+response/log.
 
 ## 4. Quy trình code một hạng mục
 

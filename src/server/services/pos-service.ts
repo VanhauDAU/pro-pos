@@ -2,6 +2,7 @@ import type { PricingConfigSnapshot } from '@domain/pricing/types';
 import { calculateTimePrice } from '@domain/pricing/engine';
 import { AppError } from '@server/lib/app-error';
 import { PosRepository } from '@server/repositories/pos-repository';
+import { AuditRepository } from '@server/repositories/audit-repository';
 
 function mapDatabaseError(error: unknown): never {
   const message = error instanceof Error ? error.message : String(error);
@@ -23,6 +24,15 @@ function mapDatabaseError(error: unknown): never {
   }
   if (message.includes('INSUFFICIENT_CASH')) {
     throw new AppError('INSUFFICIENT_CASH', 'Tiền khách đưa không đủ.', 422);
+  }
+  if (message.includes('TIME_NOT_RUNNING')) {
+    throw new AppError('TIME_NOT_RUNNING', 'Phiên thời gian không ở trạng thái đang chạy.', 409);
+  }
+  if (message.includes('TIME_NOT_PAUSED')) {
+    throw new AppError('TIME_NOT_PAUSED', 'Phiên thời gian không ở trạng thái tạm dừng.', 409);
+  }
+  if (message.includes('DISCOUNT_INVALID')) {
+    throw new AppError('DISCOUNT_INVALID', 'Giảm giá không hợp lệ.', 422);
   }
   if (message.includes('UNIQUE constraint failed')) {
     throw new AppError('CONFLICT', 'Dữ liệu đã được xử lý trước đó.', 409);
@@ -75,6 +85,8 @@ export class PosService {
     idempotencyKey: string;
     tableId: string;
     expectedTableVersion: number;
+    actorSessionId?: string | null;
+    deviceId?: string | null;
   }) {
     const replay = await this.repository.findOpenCommand(input.storeId, input.idempotencyKey);
     if (replay) return replay;
@@ -101,6 +113,12 @@ export class PosService {
     } catch (error) {
       mapDatabaseError(error);
     }
+    await new AuditRepository(this.env.DB).enrichByRequest(input.storeId, input.requestId, {
+      actorUserId: input.actorId,
+      actorSessionId: input.actorSessionId ?? null,
+      deviceId: input.deviceId ?? null,
+      requestId: input.requestId,
+    });
     return { orderId, timeSessionId, tableId: input.tableId };
   }
 
@@ -112,9 +130,12 @@ export class PosService {
     orderId: string;
     productId: string;
     variantId: string | null;
+    enteredUnitPriceVnd?: number;
     quantityMilli: number;
     expectedOrderVersion: number;
     discount: null | { type: 'FIXED' | 'PERCENT'; value: number };
+    actorSessionId?: string | null;
+    deviceId?: string | null;
   }) {
     const replay = await this.repository.findAddItemCommand(input.storeId, input.idempotencyKey);
     if (replay) return replay;
@@ -128,11 +149,22 @@ export class PosService {
       product.product_status !== 'ACTIVE' ||
       product.product_type === 'TIME' ||
       product.variant_status !== 'ACTIVE' ||
-      product.sale_price === null
+      (product.prompt_price !== 1 && product.sale_price === null)
     ) {
       throw new AppError('PRODUCT_NOT_AVAILABLE', 'Mặt hàng không khả dụng.', 422);
     }
-    const subtotal = Math.floor((product.sale_price * input.quantityMilli + 500) / 1000);
+    if (product.prompt_price === 1 && input.enteredUnitPriceVnd === undefined) {
+      throw new AppError('ENTERED_UNIT_PRICE_REQUIRED', 'Mặt hàng yêu cầu nhập giá bán.', 422);
+    }
+    if (
+      product.prompt_price === 1 &&
+      (!Number.isInteger(input.enteredUnitPriceVnd) || input.enteredUnitPriceVnd! < 0)
+    ) {
+      throw new AppError('ENTERED_UNIT_PRICE_INVALID', 'Giá nhập khi bán không hợp lệ.', 422);
+    }
+    const unitPriceVnd =
+      product.prompt_price === 1 ? input.enteredUnitPriceVnd! : product.sale_price!;
+    const subtotal = Math.floor((unitPriceVnd * input.quantityMilli + 500) / 1000);
     let discountAmount = 0;
     if (input.discount) {
       if (input.discount.type === 'PERCENT') {
@@ -144,6 +176,7 @@ export class PosService {
         discountAmount = input.discount.value;
       }
     }
+    discountAmount = Math.min(subtotal, discountAmount);
     const itemId = crypto.randomUUID();
     try {
       await this.repository.executeAddItem({
@@ -158,11 +191,13 @@ export class PosService {
         productName: product.product_name,
         variantName: product.variant_name,
         unitName: product.unit_name,
-        unitPriceVnd: product.sale_price,
+        unitPriceVnd,
         quantityMilli: input.quantityMilli,
         discountType: input.discount?.type ?? null,
-        discountValue: discountAmount,
-        lineTotalVnd: Math.max(0, subtotal - discountAmount),
+        discountInputValue: input.discount?.value ?? null,
+        discountAmountVnd: discountAmount,
+        grossLineTotalVnd: subtotal,
+        netLineTotalVnd: subtotal - discountAmount,
         actorId: input.actorId,
         requestId: input.requestId,
         issuedAt: Date.now(),
@@ -170,6 +205,32 @@ export class PosService {
     } catch (error) {
       mapDatabaseError(error);
     }
+    await new AuditRepository(this.env.DB).record({
+      storeId: input.storeId,
+      context: {
+        actorUserId: input.actorId,
+        actorSessionId: input.actorSessionId ?? null,
+        deviceId: input.deviceId ?? null,
+        requestId: input.requestId,
+      },
+      action: input.discount ? 'ORDER_ITEM_ADDED_WITH_DISCOUNT' : 'ORDER_ITEM_ADDED',
+      entityType: 'ORDER_ITEM',
+      entityId: itemId,
+      before: null,
+      after: {
+        orderId: input.orderId,
+        productId: product.product_id,
+        variantId: product.variant_id,
+        unitPriceVnd,
+        quantityMilli: input.quantityMilli,
+        discountType: input.discount?.type ?? null,
+        discountInputValue: input.discount?.value ?? null,
+        discountAmountVnd: discountAmount,
+        grossLineTotalVnd: subtotal,
+        netLineTotalVnd: subtotal - discountAmount,
+      },
+      now: Date.now(),
+    });
     return { itemId, orderId: input.orderId };
   }
 
@@ -188,8 +249,15 @@ export class PosService {
       })),
       config: JSON.parse(session.pricing_snapshot_json) as PricingConfigSnapshot,
     });
-    const productSubtotal = items.results.reduce((sum, item) => sum + Number(item.lineTotalVnd), 0);
-    const subtotal = productSubtotal + pricing.amountAfterRoundingVnd;
+    const productGross = items.results.reduce(
+      (sum, item) => sum + Number(item.grossLineTotalVnd),
+      0,
+    );
+    const discountTotal = items.results.reduce(
+      (sum, item) => sum + Number(item.discountAmountVnd),
+      0,
+    );
+    const subtotal = productGross + pricing.amountAfterRoundingVnd;
     return {
       order: {
         id: order.id,
@@ -201,8 +269,8 @@ export class PosService {
       items: items.results,
       time: pricing,
       subtotalVnd: subtotal,
-      discountTotalVnd: 0,
-      totalVnd: subtotal,
+      discountTotalVnd: discountTotal,
+      totalVnd: subtotal - discountTotal,
     };
   }
 
@@ -211,24 +279,52 @@ export class PosService {
     orderId: string;
     actorId: string;
     expectedOrderVersion: number;
+    actorSessionId?: string | null;
+    deviceId?: string | null;
+    requestId: string;
+    idempotencyKey: string;
   }) {
-    const results = await this.repository.pauseTime({
-      pauseId: crypto.randomUUID(),
-      ...input,
-      now: Date.now(),
-    });
-    if ((results[0]?.meta.changes ?? 0) !== 1 || (results[1]?.meta.changes ?? 0) !== 1) {
-      throw new AppError('ORDER_VERSION_CONFLICT', 'Không thể tạm dừng phiên.', 409);
+    const replay = await this.repository.findPauseCommand(input.storeId, input.idempotencyKey);
+    if (replay) return { ...replay, paused: true };
+    try {
+      await this.repository.pauseTime({
+        commandId: input.idempotencyKey,
+        pauseId: crypto.randomUUID(),
+        ...input,
+        now: Date.now(),
+        actorSessionId: input.actorSessionId ?? null,
+        deviceId: input.deviceId ?? null,
+      });
+    } catch (error) {
+      mapDatabaseError(error);
     }
-    return { paused: true };
+    return { orderId: input.orderId, paused: true };
   }
 
-  async resume(input: { storeId: string; orderId: string; expectedOrderVersion: number }) {
-    const results = await this.repository.resumeTime({ ...input, now: Date.now() });
-    if ((results[0]?.meta.changes ?? 0) !== 1 || (results[1]?.meta.changes ?? 0) !== 1) {
-      throw new AppError('ORDER_VERSION_CONFLICT', 'Không thể tiếp tục phiên.', 409);
+  async resume(input: {
+    storeId: string;
+    orderId: string;
+    actorId: string;
+    expectedOrderVersion: number;
+    actorSessionId?: string | null;
+    deviceId?: string | null;
+    requestId: string;
+    idempotencyKey: string;
+  }) {
+    const replay = await this.repository.findResumeCommand(input.storeId, input.idempotencyKey);
+    if (replay) return { ...replay, resumed: true };
+    try {
+      await this.repository.resumeTime({
+        commandId: input.idempotencyKey,
+        ...input,
+        actorSessionId: input.actorSessionId ?? null,
+        deviceId: input.deviceId ?? null,
+        now: Date.now(),
+      });
+    } catch (error) {
+      mapDatabaseError(error);
     }
-    return { resumed: true };
+    return { orderId: input.orderId, resumed: true };
   }
 
   async checkout(input: {
@@ -240,6 +336,9 @@ export class PosService {
     expectedOrderVersion: number;
     method: 'CASH' | 'BANK_TRANSFER';
     cashReceivedVnd: number | null;
+    actorSessionId?: string | null;
+    deviceId?: string | null;
+    now?: number;
   }) {
     const replay = await this.repository.findCheckoutCommand(input.storeId, input.idempotencyKey);
     if (replay) return replay;
@@ -254,13 +353,19 @@ export class PosService {
     if (input.method === 'CASH' && (cashReceived === null || cashReceived < quote.totalVnd)) {
       throw new AppError('INSUFFICIENT_CASH', 'Tiền khách đưa không đủ.', 422);
     }
-    const now = Date.now();
+    const now = input.now ?? Date.now();
     const invoiceId = crypto.randomUUID();
     const paymentId = crypto.randomUUID();
-    const displayCode = `HD${new Date(now)
-      .toISOString()
-      .replaceAll(/[-:TZ.]/gu, '')
-      .slice(0, 14)}`;
+    const numbering = await this.repository.findInvoiceNumberingSettings(input.storeId);
+    if (!numbering) throw new AppError('STORE_NOT_FOUND', 'Không tìm thấy cửa hàng.', 404);
+    const businessDay = new Intl.DateTimeFormat('en-CA', {
+      timeZone: numbering.timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    })
+      .format(new Date(now - numbering.cutoffMinutes * 60_000))
+      .replaceAll('-', '');
     const invoiceSnapshot = {
       order: quote.order,
       items: quote.items,
@@ -281,7 +386,7 @@ export class PosService {
         expectedOrderVersion: input.expectedOrderVersion,
         paymentId,
         invoiceId,
-        invoiceDisplayCode: displayCode,
+        businessDay,
         method: input.method,
         subtotal: quote.subtotalVnd,
         discountTotal: quote.discountTotalVnd,
@@ -300,10 +405,21 @@ export class PosService {
     } catch (error) {
       mapDatabaseError(error);
     }
+    await new AuditRepository(this.env.DB).enrichByRequest(input.storeId, input.requestId, {
+      actorUserId: input.actorId,
+      actorSessionId: input.actorSessionId ?? null,
+      deviceId: input.deviceId ?? null,
+      requestId: input.requestId,
+    });
+    const completed = await this.repository.findCheckoutCommand(
+      input.storeId,
+      input.idempotencyKey,
+    );
     return {
       invoiceId,
       paymentId,
       orderId: input.orderId,
+      displayCode: completed!.displayCode,
       total: quote.totalVnd,
       method: input.method,
     };
@@ -319,6 +435,8 @@ export class PosService {
     expectedOrderVersion: number;
     expectedSourceTableVersion: number;
     expectedTargetTableVersion: number;
+    actorSessionId?: string | null;
+    deviceId?: string | null;
   }) {
     const replay = await this.repository.findTransferCommand(input.storeId, input.idempotencyKey);
     if (replay) return replay;
@@ -341,6 +459,12 @@ export class PosService {
     } catch (error) {
       mapDatabaseError(error);
     }
+    await new AuditRepository(this.env.DB).enrichByRequest(input.storeId, input.requestId, {
+      actorUserId: input.actorId,
+      actorSessionId: input.actorSessionId ?? null,
+      deviceId: input.deviceId ?? null,
+      requestId: input.requestId,
+    });
     return { orderId: input.orderId, targetTableId: input.targetTableId };
   }
 
@@ -352,6 +476,8 @@ export class PosService {
     orderId: string;
     expectedOrderVersion: number;
     reason: string;
+    actorSessionId?: string | null;
+    deviceId?: string | null;
   }) {
     const replay = await this.repository.findCancelCommand(input.storeId, input.idempotencyKey);
     if (replay) return { ...replay, cancelled: true };
@@ -372,6 +498,12 @@ export class PosService {
     } catch (error) {
       mapDatabaseError(error);
     }
+    await new AuditRepository(this.env.DB).enrichByRequest(input.storeId, input.requestId, {
+      actorUserId: input.actorId,
+      actorSessionId: input.actorSessionId ?? null,
+      deviceId: input.deviceId ?? null,
+      requestId: input.requestId,
+    });
     return { orderId: input.orderId, cancelled: true };
   }
 

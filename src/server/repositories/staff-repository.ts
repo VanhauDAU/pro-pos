@@ -80,6 +80,25 @@ export class StaffRepository {
       .all();
   }
 
+  findEmployeeTarget(storeId: string, userId: string) {
+    return this.db
+      .prepare(
+        `SELECT u.id, u.status, sm.status AS membershipStatus, r.code AS roleCode
+         FROM store_memberships sm
+         JOIN users u ON u.id = sm.user_id
+         JOIN roles r ON r.id = sm.role_id AND r.store_id = sm.store_id
+         WHERE sm.store_id = ? AND sm.user_id = ? AND r.code <> 'OWNER'
+         LIMIT 1`,
+      )
+      .bind(storeId, userId)
+      .first<{
+        id: string;
+        status: 'ACTIVE' | 'DISABLED';
+        membershipStatus: 'ACTIVE' | 'DISABLED';
+        roleCode: string;
+      }>();
+  }
+
   async setEmployeeStatus(
     storeId: string,
     userId: string,
@@ -91,14 +110,21 @@ export class StaffRepository {
         .prepare(
           `UPDATE users SET status = ?, updated_at = ?
            WHERE id = ? AND EXISTS (
-             SELECT 1 FROM store_memberships WHERE store_id = ? AND user_id = users.id
+             SELECT 1 FROM store_memberships sm
+             JOIN roles r ON r.id = sm.role_id AND r.store_id = sm.store_id
+             WHERE sm.store_id = ? AND sm.user_id = users.id AND r.code <> 'OWNER'
            )`,
         )
         .bind(status, now, userId, storeId),
       this.db
         .prepare(
           `UPDATE store_memberships SET status = ?, updated_at = ?
-           WHERE store_id = ? AND user_id = ?`,
+           WHERE store_id = ? AND user_id = ?
+             AND EXISTS (
+               SELECT 1 FROM roles r
+               WHERE r.id = store_memberships.role_id
+                 AND r.store_id = store_memberships.store_id AND r.code <> 'OWNER'
+             )`,
         )
         .bind(status, now, storeId, userId),
       this.db
@@ -123,7 +149,7 @@ export class StaffRepository {
           `UPDATE pin_verifiers
            SET salt = ?, digest = ?,
                credential_version = credential_version + 1, updated_at = ?
-           WHERE store_id = ? AND user_id = ?`,
+           WHERE store_id = ? AND user_id = ? AND session_kind = 'EMPLOYEE'`,
         )
         .bind(input.salt, input.digest, input.now, input.storeId, input.userId),
       this.db

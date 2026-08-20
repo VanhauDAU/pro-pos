@@ -36,13 +36,27 @@ mediaRoutes.post('/', requirePermission('catalog.manage'), async (c) => {
       storeId: actor.storeId!,
       actorId: actor.id,
       file,
+      auditContext: {
+        actorUserId: actor.id,
+        actorSessionId: c.get('sessionId'),
+        deviceId: c.get('device')?.id ?? null,
+        requestId: c.get('requestId'),
+      },
     }),
     201,
   );
 });
 
 mediaRoutes.delete('/:mediaId', requirePermission('catalog.manage'), async (c) =>
-  success(c, await new MediaService(c.env).remove(c.get('actor').storeId!, c.req.param('mediaId'))),
+  success(
+    c,
+    await new MediaService(c.env).remove(c.get('actor').storeId!, c.req.param('mediaId'), {
+      actorUserId: c.get('actor').id,
+      actorSessionId: c.get('sessionId'),
+      deviceId: c.get('device')?.id ?? null,
+      requestId: c.get('requestId'),
+    }),
+  ),
 );
 
 export { mediaRoutes };

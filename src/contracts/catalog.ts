@@ -28,6 +28,12 @@ export const createProductSchema = z
       context.addIssue({ code: 'custom', message: 'Mặt hàng cần ít nhất một phiên bản giá.' });
     }
     for (const variant of value.variants) {
+      if (value.productType === 'TIME' && variant.promptPrice) {
+        context.addIssue({
+          code: 'custom',
+          message: 'Nhập giá khi bán chỉ áp dụng cho mặt hàng số lượng hoặc trọng lượng.',
+        });
+      }
       if (!variant.promptPrice && variant.salePriceVnd === null) {
         context.addIssue({ code: 'custom', message: 'Thiếu giá bán.' });
       }

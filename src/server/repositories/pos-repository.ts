@@ -196,7 +196,11 @@ export class PosRepository {
           product_name_snapshot AS productName, variant_name_snapshot AS variantName,
           unit_name_snapshot AS unitName, unit_price_snapshot AS unitPriceVnd,
           quantity_milli AS quantityMilli, discount_type AS discountType,
-          discount_value AS discountValue, line_total AS lineTotalVnd
+          discount_input_value AS discountInputValue,
+          discount_amount AS discountAmountVnd,
+          gross_line_total AS grossLineTotalVnd,
+          net_line_total AS netLineTotalVnd,
+          line_total AS lineTotalVnd
         FROM order_items WHERE store_id = ? AND order_id = ? ORDER BY created_at`,
       )
       .bind(storeId, orderId)
@@ -247,8 +251,10 @@ export class PosRepository {
     unitPriceVnd: number;
     quantityMilli: number;
     discountType: string | null;
-    discountValue: number;
-    lineTotalVnd: number;
+    discountInputValue: number | null;
+    discountAmountVnd: number;
+    grossLineTotalVnd: number;
+    netLineTotalVnd: number;
     actorId: string;
     requestId: string;
     issuedAt: number;
@@ -260,8 +266,9 @@ export class PosRepository {
           product_id, variant_id, product_type, product_name_snapshot,
           variant_name_snapshot, unit_name_snapshot, unit_price_snapshot,
           quantity_milli, discount_type, discount_value, line_total,
-          actor_user_id, request_id, issued_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          actor_user_id, request_id, issued_at, discount_input_value,
+          discount_amount, gross_line_total, net_line_total
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         input.commandId,
@@ -278,112 +285,110 @@ export class PosRepository {
         input.unitPriceVnd,
         input.quantityMilli,
         input.discountType,
-        input.discountValue,
-        input.lineTotalVnd,
+        input.discountAmountVnd,
+        input.netLineTotalVnd,
         input.actorId,
         input.requestId,
         input.issuedAt,
+        input.discountInputValue,
+        input.discountAmountVnd,
+        input.grossLineTotalVnd,
+        input.netLineTotalVnd,
       )
       .run();
   }
 
+  findPauseCommand(storeId: string, commandId: string) {
+    return this.db
+      .prepare(
+        `SELECT order_id AS orderId FROM pause_time_commands
+         WHERE store_id = ? AND id = ? LIMIT 1`,
+      )
+      .bind(storeId, commandId)
+      .first<{ orderId: string }>();
+  }
+
   async pauseTime(input: {
+    commandId: string;
     pauseId: string;
     storeId: string;
     orderId: string;
     expectedOrderVersion: number;
     actorId: string;
+    actorSessionId: string | null;
+    deviceId: string | null;
+    requestId: string;
     now: number;
   }) {
-    return this.db.batch([
-      this.db
-        .prepare(
-          `UPDATE orders SET version = version + 1, updated_at = ?
-           WHERE id = ? AND store_id = ? AND status = 'OPEN' AND version = ?`,
-        )
-        .bind(input.now, input.orderId, input.storeId, input.expectedOrderVersion),
-      this.db
-        .prepare(
-          `INSERT INTO time_pauses (
-            id, store_id, time_session_id, paused_at, actor_user_id, created_at
-          )
-          SELECT ?, ?, ts.id, ?, ?, ?
-          FROM time_sessions ts JOIN orders o ON o.id = ts.order_id
-          WHERE ts.store_id = ? AND ts.order_id = ? AND ts.status = 'RUNNING'
-            AND o.version = ?`,
-        )
-        .bind(
-          input.pauseId,
-          input.storeId,
-          input.now,
-          input.actorId,
-          input.now,
-          input.storeId,
-          input.orderId,
-          input.expectedOrderVersion + 1,
-        ),
-      this.db
-        .prepare(
-          `UPDATE time_sessions SET status = 'PAUSED', updated_at = ?
-           WHERE store_id = ? AND order_id = ? AND status = 'RUNNING'
-             AND EXISTS (
-               SELECT 1 FROM time_pauses
-               WHERE id = ? AND time_session_id = time_sessions.id
-             )`,
-        )
-        .bind(input.now, input.storeId, input.orderId, input.pauseId),
-    ]);
+    return this.db
+      .prepare(
+        `INSERT INTO pause_time_commands (
+          id, store_id, order_id, expected_order_version, pause_id,
+          actor_user_id, actor_session_id, device_id, request_id, issued_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        input.commandId,
+        input.storeId,
+        input.orderId,
+        input.expectedOrderVersion,
+        input.pauseId,
+        input.actorId,
+        input.actorSessionId,
+        input.deviceId,
+        input.requestId,
+        input.now,
+      )
+      .run();
+  }
+
+  findResumeCommand(storeId: string, commandId: string) {
+    return this.db
+      .prepare(
+        `SELECT order_id AS orderId FROM resume_time_commands
+         WHERE store_id = ? AND id = ? LIMIT 1`,
+      )
+      .bind(storeId, commandId)
+      .first<{ orderId: string }>();
   }
 
   async resumeTime(input: {
+    commandId: string;
     storeId: string;
     orderId: string;
     expectedOrderVersion: number;
+    actorId: string;
+    actorSessionId: string | null;
+    deviceId: string | null;
+    requestId: string;
     now: number;
   }) {
-    return this.db.batch([
-      this.db
-        .prepare(
-          `UPDATE orders SET version = version + 1, updated_at = ?
-           WHERE id = ? AND store_id = ? AND status = 'OPEN' AND version = ?`,
-        )
-        .bind(input.now, input.orderId, input.storeId, input.expectedOrderVersion),
-      this.db
-        .prepare(
-          `UPDATE time_pauses SET resumed_at = ?
-           WHERE store_id = ? AND resumed_at IS NULL
-             AND time_session_id = (
-               SELECT ts.id FROM time_sessions ts
-               JOIN orders o ON o.id = ts.order_id
-               WHERE ts.store_id = ? AND ts.order_id = ? AND ts.status = 'PAUSED'
-                 AND o.version = ?
-             )`,
-        )
-        .bind(
-          input.now,
-          input.storeId,
-          input.storeId,
-          input.orderId,
-          input.expectedOrderVersion + 1,
-        ),
-      this.db
-        .prepare(
-          `UPDATE time_sessions SET status = 'RUNNING', updated_at = ?
-           WHERE store_id = ? AND order_id = ? AND status = 'PAUSED'
-             AND NOT EXISTS (
-               SELECT 1 FROM time_pauses
-               WHERE time_session_id = time_sessions.id AND resumed_at IS NULL
-             )`,
-        )
-        .bind(input.now, input.storeId, input.orderId),
-    ]);
+    return this.db
+      .prepare(
+        `INSERT INTO resume_time_commands (
+          id, store_id, order_id, expected_order_version, actor_user_id,
+          actor_session_id, device_id, request_id, issued_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        input.commandId,
+        input.storeId,
+        input.orderId,
+        input.expectedOrderVersion,
+        input.actorId,
+        input.actorSessionId,
+        input.deviceId,
+        input.requestId,
+        input.now,
+      )
+      .run();
   }
 
   findCheckoutCommand(storeId: string, idempotencyKey: string) {
     return this.db
       .prepare(
         `SELECT invoice_id AS invoiceId, payment_id AS paymentId, order_id AS orderId,
-                total, method
+                invoice_display_code AS displayCode, total, method
          FROM checkout_commands WHERE store_id = ? AND id = ? LIMIT 1`,
       )
       .bind(storeId, idempotencyKey)
@@ -391,6 +396,7 @@ export class PosRepository {
         invoiceId: string;
         paymentId: string;
         orderId: string;
+        displayCode: string;
         total: number;
         method: 'CASH' | 'BANK_TRANSFER';
       }>();
@@ -404,7 +410,7 @@ export class PosRepository {
     expectedOrderVersion: number;
     paymentId: string;
     invoiceId: string;
-    invoiceDisplayCode: string;
+    businessDay: string;
     method: 'CASH' | 'BANK_TRANSFER';
     subtotal: number;
     discountTotal: number;
@@ -428,8 +434,8 @@ export class PosRepository {
           discount_total, total, cash_received, cash_change,
           time_line_description, time_elapsed_seconds, time_amount,
           time_snapshot_json, invoice_snapshot_json, actor_user_id,
-          request_id, issued_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          request_id, issued_at, business_day
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         input.idempotencyKey,
@@ -439,7 +445,6 @@ export class PosRepository {
         input.expectedOrderVersion,
         input.paymentId,
         input.invoiceId,
-        input.invoiceDisplayCode,
         input.method,
         input.subtotal,
         input.discountTotal,
@@ -454,8 +459,20 @@ export class PosRepository {
         input.actorId,
         input.requestId,
         input.issuedAt,
+        input.businessDay,
       )
       .run();
+  }
+
+  findInvoiceNumberingSettings(storeId: string) {
+    return this.db
+      .prepare(
+        `SELECT s.timezone, ss.business_day_cutoff_minutes AS cutoffMinutes
+         FROM stores s JOIN store_settings ss ON ss.store_id = s.id
+         WHERE s.id = ? LIMIT 1`,
+      )
+      .bind(storeId)
+      .first<{ timezone: string; cutoffMinutes: number }>();
   }
 
   findTransferCommand(storeId: string, commandId: string) {
@@ -572,7 +589,10 @@ export class PosRepository {
     const lines = await this.db
       .prepare(
         `SELECT id, line_type AS lineType, description, quantity_milli AS quantityMilli,
-                unit_price AS unitPrice, discount_amount AS discountAmount,
+                unit_price AS unitPrice, discount_type AS discountType,
+                discount_input_value AS discountInputValue,
+                discount_amount AS discountAmount,
+                gross_line_total AS grossLineTotal,
                 line_total AS lineTotal, snapshot_json AS snapshotJson
          FROM invoice_lines WHERE store_id = ? AND invoice_id = ? ORDER BY rowid`,
       )

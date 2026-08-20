@@ -32,6 +32,13 @@ paths:
       responses:
         '200': { description: Employee session created }
         '401': { description: Device or credentials invalid }
+  /version:
+    servers:
+      - url: /api
+    get:
+      summary: Return release/build identity for runtime diagnostics
+      responses:
+        '200': { description: Environment, version, commit and build time }
   /device-activations/context:
     get:
       summary: Resolve the short-lived activation grant after Access authentication
@@ -53,9 +60,64 @@ paths:
   /owner/staff:
     get: { summary: List employees, responses: { '200': { description: Employee list } } }
     post: { summary: Create employee and PIN, responses: { '201': { description: Created } } }
+  /owner/staff/{userId}/status:
+    patch:
+      summary: Enable or disable a non-Owner employee in the current store
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [ACTIVE, DISABLED] }
+      responses:
+        '200': { description: Employee status changed }
+        '404': { description: Employee not found; Owner and cross-store users are not disclosed }
+  /owner/staff/{userId}/pin:
+    put:
+      summary: Reset an employee PIN
+      responses:
+        '200': { description: PIN reset }
   /owner/catalog/products:
     get: { summary: List products, responses: { '200': { description: Product list } } }
     post: { summary: Create product, responses: { '201': { description: Created } } }
+  /owner/catalog/tables:
+    post:
+      summary: Create a service table with same-store ACTIVE area and TIME product references
+      responses:
+        '201': { description: Created business DTO }
+        '422': { description: Invalid or cross-store references }
+  /owner/store/settings:
+    put:
+      summary: Update store settings and validate same-store ACTIVE bank QR media
+      responses:
+        '200': { description: Settings updated }
+        '404': { description: Bank QR media not found in current store }
+  /owner/devices:
+    get:
+      {
+        summary: List current-store POS devices,
+        responses: { '200': { description: Device list } },
+      }
+  /owner/devices/{deviceId}/revoke:
+    post:
+      summary: Revoke a current-store POS device
+      responses:
+        '200': { description: Device revoked }
+        '404': { description: Device not found in current store }
+  /devices/current/revoke:
+    post:
+      summary: Revoke the current device only when its store matches the Owner session store
+      responses:
+        '200': { description: Current device revoked }
+        '403': { description: Cross-store device cookie rejected without tenant disclosure }
   /pos/tables:
     get: { summary: List POS tables, responses: { '200': { description: Table list } } }
   /pos/tables/open:
@@ -73,6 +135,65 @@ paths:
           required: true
           schema: { type: string, format: uuid }
       responses: { '200': { description: Quote } }
+  /pos/orders/{orderId}/items:
+    post:
+      summary: Add an item using a server-authoritative price snapshot
+      parameters:
+        - in: path
+          name: orderId
+          required: true
+          schema: { type: string, format: uuid }
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [productId, quantityMilli, expectedOrderVersion]
+              properties:
+                productId: { type: string, format: uuid }
+                variantId: { type: string, format: uuid, nullable: true }
+                quantityMilli: { type: integer, minimum: 1 }
+                expectedOrderVersion: { type: integer, minimum: 1 }
+                enteredUnitPriceVnd:
+                  { type: integer, minimum: 0, description: Required only for promptPrice variants }
+                discount:
+                  type: object
+                  required: [type, value]
+                  properties:
+                    type: { type: string, enum: [FIXED, PERCENT] }
+                    value: { type: integer, minimum: 0 }
+                  nullable: true
+      responses:
+        '201': { description: Item added and price/discount snapshotted }
+        '403': { description: discount.apply required when discount is present }
+        '422': { description: Prompt-price or discount validation failed }
+  /pos/orders/{orderId}/time/pause:
+    post:
+      summary: Atomically pause a running time session
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Paused }
+        '409': { description: Stale version or invalid state }
+  /pos/orders/{orderId}/time/resume:
+    post:
+      summary: Atomically resume a paused time session
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Resumed }
+        '409': { description: Stale version or invalid state }
   /pos/orders/{orderId}/checkout:
     post:
       summary: Atomic and idempotent checkout

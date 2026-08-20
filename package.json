@@ -14,8 +14,8 @@
     "build": "vite build",
     "build:staging": "cross-env CLOUDFLARE_ENV=staging vite build --mode staging",
     "build:production": "cross-env CLOUDFLARE_ENV=production vite build --mode production",
-    "deploy:staging": "pnpm build:staging && wrangler deploy --env staging",
-    "deploy:production": "pnpm build:production && wrangler deploy --env production",
+    "deploy:staging": "pnpm build:staging && node scripts/deploy-worker.mjs staging",
+    "deploy:production": "pnpm build:production && node scripts/deploy-worker.mjs production",
     "deploy:auth:staging": "wrangler deploy --config wrangler.access.jsonc --env staging",
     "deploy:auth:production": "wrangler deploy --config wrangler.access.jsonc --env production",
     "preview": "vite preview",
@@ -29,9 +29,10 @@
     "cf-typegen:auth:check": "wrangler types worker-configuration.access.d.ts --config wrangler.access.jsonc --env-interface AccessWorkerBindings --check",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:migrations": "node scripts/verify-migration-upgrade.mjs",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "verify": "pnpm format:check && pnpm lint && pnpm cf-typegen && pnpm cf-typegen:auth && pnpm typecheck && pnpm test && pnpm test:integration && pnpm build",
+    "verify": "pnpm format:check && pnpm lint && pnpm cf-typegen && pnpm cf-typegen:auth && pnpm typecheck && pnpm test && pnpm test:integration && pnpm test:migrations && pnpm build",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:staging": "wrangler d1 migrations apply DB --remote --env staging",
     "db:migrate:production": "wrangler d1 migrations apply DB --remote --env production",
@@ -69,6 +70,7 @@
     "vite": "^8.2.1",
     "vite-plugin-pwa": "^1.3.0",
     "vitest": "^4.1.11",
+    "workbox-window": "7.4.1",
     "wrangler": "^4.124.0"
   }
 }

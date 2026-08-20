@@ -4,6 +4,12 @@
 
 ### Added
 
+- PRO-010A hardening: cross-store device revoke protection, conditional discount authorization,
+  gross/discount/net accounting snapshots, prompt-price sales, atomic invoice numbering, tenant
+  reference validation, Owner-safe staff status, atomic pause/resume commands, audit context and
+  controlled PWA update prompt. Local quality gate passes with 18 unit tests, 26 Worker integration
+  tests and a 0005 → 0006 migration-upgrade check; staging smoke remains a release gate.
+
 - React/Web Worker/PWA foundation.
 - D1 tenant, authentication, device, catalog, pricing, POS and billing schema.
 - Owner direct login and dedicated POS activation grant flow.

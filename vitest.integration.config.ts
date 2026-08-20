@@ -20,6 +20,8 @@ export default defineConfig({
           COOKIE_MODE: 'secure',
           ENVIRONMENT: 'staging',
           APP_VERSION: 'test',
+          BUILD_SHA: 'test-sha',
+          BUILD_TIME: '2026-08-20T00:00:00.000Z',
         },
       },
     })),

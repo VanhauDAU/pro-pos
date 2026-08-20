@@ -33,6 +33,8 @@ app.get('/api/version', (c) =>
   success(c, {
     version: c.env.APP_VERSION,
     environment: c.env.ENVIRONMENT,
+    commit: c.env.BUILD_SHA,
+    builtAt: c.env.BUILD_TIME,
   }),
 );
 

@@ -1,7 +1,7 @@
 import { DesktopOutlined, MailOutlined } from '@ant-design/icons';
 import { useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Form, Input, Steps, Typography } from 'antd';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 
 import type {
@@ -30,6 +30,7 @@ export function DeviceActivationPage() {
   const [csrfToken, setCsrfToken] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const activationIntentKey = useRef<string | null>(null);
 
   useEffect(() => {
     if (searchParams.get('authorized') !== '1') return;
@@ -44,6 +45,7 @@ export function DeviceActivationPage() {
   }, [searchParams]);
 
   const authorize = async () => {
+    activationIntentKey.current = null;
     setSubmitting(true);
     setError(null);
     try {
@@ -59,6 +61,7 @@ export function DeviceActivationPage() {
 
   const confirm = async (values: DeviceValues) => {
     if (!csrfToken) return;
+    activationIntentKey.current ??= crypto.randomUUID();
     setSubmitting(true);
     setError(null);
     try {
@@ -68,11 +71,12 @@ export function DeviceActivationPage() {
         {
           headers: {
             'X-CSRF-Token': csrfToken,
-            'Idempotency-Key': crypto.randomUUID(),
+            'Idempotency-Key': activationIntentKey.current,
           },
         },
       );
       await queryClient.invalidateQueries({ queryKey: ['auth-context'] });
+      activationIntentKey.current = null;
       navigate('/?tab=employee', { replace: true });
     } catch (confirmationError) {
       setError(activationError(confirmationError));
@@ -82,6 +86,7 @@ export function DeviceActivationPage() {
   };
 
   const cancel = async () => {
+    activationIntentKey.current = null;
     await apiRequest('/api/v1/device-activations/current', { method: 'DELETE' }).catch(() => null);
     navigate('/?tab=employee');
   };

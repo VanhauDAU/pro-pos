@@ -32,7 +32,8 @@ authRoutes.get('/context', async (c) => {
     clearCredentialCookie(c, 'device');
     if (context.actor?.kind === 'EMPLOYEE') clearCredentialCookie(c, 'session');
   }
-  return success(c, context);
+  const { sessionId: _sessionId, ...publicContext } = context;
+  return success(c, publicContext);
 });
 
 authRoutes.post('/access/start', async (c) => {

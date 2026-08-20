@@ -22,7 +22,9 @@
   },
   "vars": {
     "ENVIRONMENT": "local",
-    "APP_VERSION": "local",
+    "APP_VERSION": "0.1.0",
+    "BUILD_SHA": "local-dev",
+    "BUILD_TIME": "local",
     "STORE_TIMEZONE": "Asia/Ho_Chi_Minh",
     "COOKIE_MODE": "local",
     "ACCESS_BRIDGE_URL": "http://127.0.0.1:8788",
@@ -54,7 +56,9 @@
       },
       "vars": {
         "ENVIRONMENT": "staging",
-        "APP_VERSION": "staging",
+        "APP_VERSION": "0.1.0",
+        "BUILD_SHA": "set-by-release-workflow",
+        "BUILD_TIME": "set-by-release-workflow",
         "STORE_TIMEZONE": "Asia/Ho_Chi_Minh",
         "COOKIE_MODE": "secure",
         "ACCESS_BRIDGE_URL": "https://pro-pos-auth-staging.vanhau-laravel.workers.dev",
@@ -86,7 +90,9 @@
       },
       "vars": {
         "ENVIRONMENT": "production",
-        "APP_VERSION": "production",
+        "APP_VERSION": "0.1.0",
+        "BUILD_SHA": "set-by-release-workflow",
+        "BUILD_TIME": "set-by-release-workflow",
         "STORE_TIMEZONE": "Asia/Ho_Chi_Minh",
         "COOKIE_MODE": "secure",
         "ACCESS_BRIDGE_URL": "https://pro-pos-auth-production.vanhau-laravel.workers.dev",

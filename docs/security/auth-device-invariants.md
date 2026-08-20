@@ -8,6 +8,8 @@
 - Owner và SUPER_ADMIN xác thực bằng email OTP của Cloudflare Access; Pro POS không nhận hoặc lưu
   password của hai loại tài khoản này.
 - Callback Access chỉ cấp session khi email đã có trong `access_identities` và user/store còn active.
+- V1 chốt một user chỉ thuộc một store. SUPER_ADMIN là ngoại lệ nền tảng và không có membership.
+- Staff status API chỉ target membership có role khác `OWNER`; Owner không thể tự khóa hoặc khóa Owner khác.
 
 ## POS activation
 
@@ -29,7 +31,31 @@
 - Sai 5 lần trong cửa sổ 10 phút khóa 15 phút theo device + username.
 - Employee session bound đúng `device_id + store_id`.
 - Mọi POS request recheck device; remote revoke có hiệu lực ngay.
+- `/api/v1/devices/current/revoke` bắt buộc `device.store_id === actor.store_id`; cross-store cookie bị
+  từ chối và không làm thay đổi device.
 - Revoke không tự hủy order/time session đang lưu server-side.
+
+## Tenant và giá bán
+
+- Mọi UUID do client gửi (catalog, media, table, order và POS references) đều được lọc theo
+  `actor.store_id`; service validation trả lỗi contract trước khi ghi D1.
+- `promptPrice=true` cho phép `salePriceVnd=null`, nhưng add-item bắt buộc `enteredUnitPriceVnd`
+  là số nguyên VND không âm. Variant giá cố định luôn dùng giá snapshot server-side và bỏ qua giá
+  override từ client.
+- Discount cần `discount.apply`; `order.manage` một mình chỉ đủ thêm item không giảm giá.
+- Accounting lưu gross line total, discount type/input/amount và net line total; invoice snapshot
+  reconstruct được `gross - discount = total`.
+- Idempotency-Key đại diện business intent, giữ nguyên qua HTTP retries. POS mutation không tạo key
+  mới cho từng attempt; PWA không thực hiện offline mutation.
+
+## Invoice và update an toàn
+
+- Invoice code dạng `HD-YYYYMMDD-000001`, sequence atomic theo store và ngày kinh doanh local; không
+  dùng timestamp-second làm uniqueness guarantee.
+- Pause/resume ghi command table với expected order version; trigger validate trước mutation để
+  conflict không bump version một phần.
+- PWA phát hiện service worker mới và chỉ reload sau khi người dùng bấm “Cập nhật”; đang có mutation
+  thì nút bị khóa.
 
 ## Cookie production
 

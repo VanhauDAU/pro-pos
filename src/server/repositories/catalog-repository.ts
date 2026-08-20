@@ -110,6 +110,28 @@ export class CatalogRepository {
     ]);
   }
 
+  async validateProductReferences(
+    storeId: string,
+    categoryId: string | null,
+    unitId: string | null,
+  ) {
+    const [category, unit] = await this.db.batch([
+      this.db
+        .prepare(
+          `SELECT 1 AS valid FROM categories
+           WHERE id = ? AND store_id = ? AND status = 'ACTIVE' LIMIT 1`,
+        )
+        .bind(categoryId, storeId),
+      this.db
+        .prepare('SELECT 1 AS valid FROM units WHERE id = ? AND store_id = ? LIMIT 1')
+        .bind(unitId, storeId),
+    ]);
+    return {
+      categoryValid: categoryId === null || category?.results.length === 1,
+      unitValid: unitId === null || unit?.results.length === 1,
+    };
+  }
+
   async listProducts(storeId: string) {
     return this.db
       .prepare(
@@ -226,7 +248,7 @@ export class CatalogRepository {
     sortOrder: number;
     now: number;
   }) {
-    await this.db
+    return this.db
       .prepare(
         `INSERT INTO service_tables (
           id, store_id, area_id, time_product_id, name, sort_order,

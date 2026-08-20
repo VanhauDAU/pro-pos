@@ -3,6 +3,7 @@ import { SELF } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { PlatformService } from '@server/services/platform-service';
+import { StaffService } from '@server/services/staff-service';
 
 const ORIGIN = 'https://pro-pos.test';
 const OWNER_USERNAME = 'owner.test';
@@ -98,12 +99,62 @@ describe('Owner and POS activation invariants', () => {
       method: 'POST',
       headers: { Origin: ORIGIN, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        employeeId: crypto.randomUUID(),
+        username: 'employee.test',
         pin: '1234',
       }),
     });
     expect(response.status).toBe(401);
     const payload = (await response.json()) as { error: { code: string } };
     expect(payload.error.code).toBe('DEVICE_REQUIRED');
+  });
+
+  it('logs an employee in with username and PIN on an ACTIVE device', async () => {
+    const store = await env.DB.prepare("SELECT id FROM stores WHERE name = 'Pilot Store'").first<{
+      id: string;
+    }>();
+    await new StaffService(env).createEmployee({
+      storeId: store!.id,
+      displayName: 'Nhân viên thử nghiệm',
+      username: 'employee.test',
+      pin: '1234',
+      permissionKeys: [],
+    });
+
+    const authorize = await SELF.fetch(`${ORIGIN}/api/v1/device-activations/authorize`, {
+      method: 'POST',
+      headers: { Origin: ORIGIN, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: OWNER_USERNAME, password: OWNER_PASSWORD }),
+    });
+    const grantCookie = cookieValue(authorize, '__Host-propos-activation');
+    const authorization = await jsonData<{ csrfToken: string }>(authorize);
+    const confirm = await SELF.fetch(`${ORIGIN}/api/v1/device-activations/confirm`, {
+      method: 'POST',
+      headers: {
+        Origin: ORIGIN,
+        'Content-Type': 'application/json',
+        Cookie: grantCookie!,
+        'X-CSRF-Token': authorization.csrfToken,
+        'Idempotency-Key': 'activate-employee-login-pos',
+      },
+      body: JSON.stringify({ deviceName: 'Máy nhân viên' }),
+    });
+    const deviceCookie = cookieValue(confirm, '__Host-propos-device');
+
+    const login = await SELF.fetch(`${ORIGIN}/api/v1/auth/employee/login`, {
+      method: 'POST',
+      headers: {
+        Origin: ORIGIN,
+        'Content-Type': 'application/json',
+        Cookie: deviceCookie!,
+      },
+      body: JSON.stringify({ username: 'employee.test', pin: '1234' }),
+    });
+    expect(login.status).toBe(200);
+    expect(login.headers.get('Set-Cookie')).toContain('__Host-propos-session=');
+    const payload = await jsonData<{ actor: { kind: string; displayName: string } }>(login);
+    expect(payload.actor).toMatchObject({
+      kind: 'EMPLOYEE',
+      displayName: 'Nhân viên thử nghiệm',
+    });
   });
 });

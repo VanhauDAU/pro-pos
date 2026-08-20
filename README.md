@@ -10,7 +10,8 @@ cùng một Cloudflare Worker. Dữ liệu nghiệp vụ lưu tại D1; ảnh l�
 - Auth invariant: Owner vào `/owner` không cần kích hoạt POS; Employee PIN bắt buộc device
   `ACTIVE`.
 - Pricing Engine: ACTUAL_TIME, TIME_BLOCK, first period, special windows, pause và rounding.
-- UI: chỉ có khung chức năng; visual cuối chờ mẫu được duyệt theo từng màn hình.
+- UI auth: responsive login/activation flow theo mẫu đã duyệt; Owner dùng mật khẩu, Employee dùng
+  PIN và chỉ đăng nhập trên device `ACTIVE`.
 
 ## Yêu cầu
 

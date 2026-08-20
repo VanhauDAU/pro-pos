@@ -23,7 +23,7 @@ export default defineConfig({
         name: 'Pro POS',
         short_name: 'Pro POS',
         description: 'Hệ thống quản lý cửa hàng billiards',
-        theme_color: '#ffffff',
+        theme_color: '#0D7CFF',
         background_color: '#ffffff',
         display: 'standalone',
         start_url: '/',

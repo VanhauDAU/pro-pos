@@ -59,6 +59,7 @@ import { calculateTimePrice } from '@domain/pricing/engine';
 import type { PricingConfigSnapshot, PricingResult } from '@domain/pricing/types';
 
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
+import { playClickSound } from '@client/lib/sound';
 
 const BRAND = '#0975f7';
 
@@ -1898,6 +1899,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   };
 
   const chooseProduct = (product: CatalogProduct) => {
+    playClickSound();
     if (product.variants.length > 1) {
       setVariantProduct(product);
       return;
@@ -1908,6 +1910,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   };
 
   const chooseVariant = (product: CatalogProduct, variant: CatalogVariant) => {
+    playClickSound();
     setVariantProduct(null);
     if (variant.promptPrice === 1 || variant.salePriceVnd === null) {
       setPromptTarget({ product, variant });
@@ -2956,7 +2959,10 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   : displayedItems.length === 0 && !quote.data?.time
               }
               loading={saving}
-              onClick={beginCheckout}
+              onClick={() => {
+                playClickSound();
+                void beginCheckout();
+              }}
             >
               Thanh toán
             </Button>
@@ -3984,7 +3990,10 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
                 disabled={
                   !quote.data || (selectedMethod === 'CASH' && (cashReceived ?? 0) < totalVnd)
                 }
-                onClick={handleConfirmPayment}
+                onClick={() => {
+                  playClickSound();
+                  void handleConfirmPayment();
+                }}
               >
                 Xác nhận thanh toán
               </Button>

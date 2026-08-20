@@ -148,6 +148,86 @@ describe('calculateTimePrice', () => {
     expect(result.amountAfterRoundingVnd).toBe(60_000);
   });
 
+  it('does not start a new TIME_BLOCK when the same tariff resumes after a pause', () => {
+    const result = calculateTimePrice({
+      startedAtMs: start,
+      endedAtMs: start + 2 * HOUR,
+      pauses: [{ pausedAtMs: start + 30 * MINUTE, resumedAtMs: start + 90 * MINUTE }],
+      config: config({ calculationMode: 'TIME_BLOCK' }),
+    });
+    expect(result.elapsedSeconds).toBe(3600);
+    expect(result.amountAfterRoundingVnd).toBe(60_000);
+    expect(result.segments).toHaveLength(1);
+  });
+
+  it('counts only active time toward the first-period duration', () => {
+    const result = calculateTimePrice({
+      startedAtMs: start,
+      endedAtMs: start + 2 * HOUR,
+      pauses: [{ pausedAtMs: start + 30 * MINUTE, resumedAtMs: start + HOUR }],
+      config: config({
+        firstPeriod: { enabled: true, durationSeconds: 3600, priceVnd: 70_000 },
+      }),
+    });
+    expect(result.elapsedSeconds).toBe(5400);
+    expect(result.amountAfterRoundingVnd).toBe(100_000);
+    expect(result.segments.map((segment) => segment.type)).toEqual([
+      'FIRST_PERIOD',
+      'FIRST_PERIOD',
+      'BASE',
+    ]);
+  });
+
+  it('switches from special to regular price at the exact end boundary', () => {
+    const result = calculateTimePrice({
+      startedAtMs: Date.parse('2026-08-17T15:30:00.000Z'), // 22:30
+      endedAtMs: Date.parse('2026-08-17T16:30:00.000Z'), // 23:30
+      config: config({
+        specialWindows: [
+          {
+            id: 'evening',
+            name: 'Giờ tối',
+            priceVnd: 90_000,
+            startMinute: 21 * 60,
+            endMinute: 23 * 60,
+            weekdaysMask: 127,
+          },
+        ],
+      }),
+    });
+    expect(result.amountAfterRoundingVnd).toBe(75_000);
+    expect(result.segments.map((segment) => segment.type)).toEqual(['SPECIAL', 'BASE']);
+  });
+
+  it('accepts adjacent special windows and applies each price once', () => {
+    const result = calculateTimePrice({
+      startedAtMs: Date.parse('2026-08-17T13:30:00.000Z'), // 20:30
+      endedAtMs: Date.parse('2026-08-17T14:30:00.000Z'), // 21:30
+      config: config({
+        specialWindows: [
+          {
+            id: 'early',
+            name: 'Sớm',
+            priceVnd: 70_000,
+            startMinute: 20 * 60,
+            endMinute: 21 * 60,
+            weekdaysMask: 127,
+          },
+          {
+            id: 'late',
+            name: 'Muộn',
+            priceVnd: 90_000,
+            startMinute: 21 * 60,
+            endMinute: 22 * 60,
+            weekdaysMask: 127,
+          },
+        ],
+      }),
+    });
+    expect(result.amountAfterRoundingVnd).toBe(80_000);
+    expect(result.segments.map((segment) => segment.name)).toEqual(['Sớm', 'Muộn']);
+  });
+
   it('rounds once after summing all actual-time segments', () => {
     const result = calculateTimePrice({
       startedAtMs: start,

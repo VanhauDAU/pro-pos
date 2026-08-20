@@ -4,9 +4,15 @@ import {
   addOrderItemSchema,
   cancelOrderSchema,
   checkoutSchema,
+  createTakeawayOrderSchema,
   openTableSchema,
+  removeOrderItemSchema,
+  removeTimeSessionSchema,
   timeActionSchema,
+  updateTimeRangeSchema,
   transferTableSchema,
+  updateOrderItemSchema,
+  updateOrderNoteSchema,
 } from '@contracts/pos';
 import { AppError } from '@server/lib/app-error';
 import { success } from '@server/lib/response';
@@ -33,6 +39,35 @@ function idempotencyKey(c: Parameters<typeof success>[0]) {
 posRoutes.get('/tables', requirePermission('table.view'), async (c) =>
   success(c, await new PosService(c.env).listTables(c.get('actor').storeId!)),
 );
+
+posRoutes.get('/context', async (c) => {
+  const actor = c.get('actor');
+  return success(c, await new PosService(c.env).getStaffContext(actor.storeId!, actor.id));
+});
+
+posRoutes.get('/catalog', requirePermission('order.manage'), async (c) =>
+  success(c, await new PosService(c.env).listCatalog(c.get('actor').storeId!)),
+);
+
+posRoutes.get('/orders', requirePermission('order.manage'), async (c) =>
+  success(c, await new PosService(c.env).listOrders(c.get('actor').storeId!)),
+);
+
+posRoutes.post('/orders', requirePermission('order.manage'), async (c) => {
+  const body = await parseJson(c.req.raw, createTakeawayOrderSchema);
+  const actor = c.get('actor');
+  return success(
+    c,
+    await new PosService(c.env).createTakeaway({
+      storeId: actor.storeId!,
+      actorId: actor.id,
+      requestId: c.get('requestId'),
+      idempotencyKey: idempotencyKey(c),
+      note: body.note ?? null,
+    }),
+    201,
+  );
+});
 
 posRoutes.post('/tables/open', requirePermission('table.open'), async (c) => {
   const body = await parseJson(c.req.raw, openTableSchema);
@@ -75,12 +110,88 @@ posRoutes.post('/orders/:orderId/items', requirePermission('order.manage'), asyn
         ? {}
         : { enteredUnitPriceVnd: body.enteredUnitPriceVnd }),
       quantityMilli: body.quantityMilli,
+      timeStartedAtMs: body.timeStartedAtMs,
+      timeEndedAtMs: body.timeEndedAtMs,
+      note: body.note ?? null,
       expectedOrderVersion: body.expectedOrderVersion,
       discount: body.discount ?? null,
       actorSessionId: c.get('sessionId'),
       deviceId: c.get('device')?.id ?? null,
     }),
     201,
+  );
+});
+
+posRoutes.patch('/orders/:orderId/items/:itemId', requirePermission('order.manage'), async (c) => {
+  const body = await parseJson(c.req.raw, updateOrderItemSchema);
+  const actor = c.get('actor');
+  return success(
+    c,
+    await new PosService(c.env).updateItem({
+      storeId: actor.storeId!,
+      actorId: actor.id,
+      requestId: c.get('requestId'),
+      idempotencyKey: idempotencyKey(c),
+      orderId: c.req.param('orderId'),
+      itemId: c.req.param('itemId'),
+      expectedOrderVersion: body.expectedOrderVersion,
+      quantityMilli: body.quantityMilli,
+      timeStartedAtMs: body.timeStartedAtMs,
+      timeEndedAtMs: body.timeEndedAtMs,
+      note: body.note ?? null,
+    }),
+  );
+});
+
+posRoutes.delete('/orders/:orderId/items/:itemId', requirePermission('order.manage'), async (c) => {
+  const body = await parseJson(c.req.raw, removeOrderItemSchema);
+  const actor = c.get('actor');
+  return success(
+    c,
+    await new PosService(c.env).removeItem({
+      storeId: actor.storeId!,
+      actorId: actor.id,
+      requestId: c.get('requestId'),
+      idempotencyKey: idempotencyKey(c),
+      orderId: c.req.param('orderId'),
+      itemId: c.req.param('itemId'),
+      expectedOrderVersion: body.expectedOrderVersion,
+      reason: body.reason,
+    }),
+  );
+});
+
+posRoutes.delete('/orders/:orderId/time', requirePermission('order.manage'), async (c) => {
+  const body = await parseJson(c.req.raw, removeTimeSessionSchema);
+  const actor = c.get('actor');
+  return success(
+    c,
+    await new PosService(c.env).removeTimeSession({
+      storeId: actor.storeId!,
+      actorId: actor.id,
+      requestId: c.get('requestId'),
+      idempotencyKey: idempotencyKey(c),
+      orderId: c.req.param('orderId'),
+      expectedOrderVersion: body.expectedOrderVersion,
+      reason: body.reason,
+    }),
+  );
+});
+
+posRoutes.patch('/orders/:orderId/note', requirePermission('order.manage'), async (c) => {
+  const body = await parseJson(c.req.raw, updateOrderNoteSchema);
+  const actor = c.get('actor');
+  return success(
+    c,
+    await new PosService(c.env).updateNote({
+      storeId: actor.storeId!,
+      actorId: actor.id,
+      requestId: c.get('requestId'),
+      idempotencyKey: idempotencyKey(c),
+      orderId: c.req.param('orderId'),
+      expectedOrderVersion: body.expectedOrderVersion,
+      note: body.note,
+    }),
   );
 });
 
@@ -116,6 +227,26 @@ posRoutes.post('/orders/:orderId/time/resume', requirePermission('time.pause'), 
       deviceId: c.get('device')?.id ?? null,
       requestId: c.get('requestId'),
       idempotencyKey: idempotencyKey(c),
+    }),
+  );
+});
+
+posRoutes.patch('/orders/:orderId/time/range', requirePermission('time.pause'), async (c) => {
+  const body = await parseJson(c.req.raw, updateTimeRangeSchema);
+  const actor = c.get('actor');
+  return success(
+    c,
+    await new PosService(c.env).updateTimeRange({
+      storeId: actor.storeId!,
+      actorId: actor.id,
+      actorSessionId: c.get('sessionId'),
+      deviceId: c.get('device')?.id ?? null,
+      requestId: c.get('requestId'),
+      idempotencyKey: idempotencyKey(c),
+      orderId: c.req.param('orderId'),
+      expectedOrderVersion: body.expectedOrderVersion,
+      startedAtMs: body.startedAtMs,
+      endedAtMs: body.endedAtMs,
     }),
   );
 });

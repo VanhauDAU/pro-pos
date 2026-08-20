@@ -1,31 +1,18 @@
-import { Alert, Result, Spin, Typography } from 'antd';
+import { Result, Spin } from 'antd';
 import { lazy, Suspense } from 'react';
-import { Link, Navigate, Route, Routes } from 'react-router';
+import { Navigate, Route, Routes } from 'react-router';
 
 import { DeviceActivationPage } from '@client/features/auth/DeviceActivationPage';
 import { LoginPage } from '@client/features/auth/LoginPage';
 import { PlatformAccessPage } from '@client/features/auth/PlatformAccessPage';
 import { PwaUpdatePrompt } from '@client/features/pwa/PwaUpdatePrompt';
 import { OwnerPortalPage } from '@client/features/owner/OwnerPortalPage';
+import { StaffPosPortalPage } from '@client/features/pos/StaffPosPortalPage';
 
 const SuperAdminPage = lazy(async () => {
   const module = await import('@client/features/platform/SuperAdminPage');
   return { default: module.SuperAdminPage };
 });
-
-function PlaceholderPage({ title }: { title: string }) {
-  return (
-    <main className="app-shell">
-      <Typography.Title level={1}>{title}</Typography.Title>
-      <Alert
-        type="info"
-        title="Đang chờ mẫu UI tham khảo"
-        description="Contract và backend được triển khai trước; visual không được tự suy đoán."
-      />
-      <Link to="/">Quay lại</Link>
-    </main>
-  );
-}
 
 export function App() {
   return (
@@ -38,7 +25,7 @@ export function App() {
         <Route path="/pos/login" element={<Navigate to="/?tab=employee" replace />} />
         <Route path="/platform/login" element={<PlatformAccessPage />} />
         <Route path="/owner/*" element={<OwnerPortalPage />} />
-        <Route path="/pos/*" element={<PlaceholderPage title="Cổng Nhân viên" />} />
+        <Route path="/pos/*" element={<StaffPosPortalPage />} />
         <Route
           path="/platform/*"
           element={

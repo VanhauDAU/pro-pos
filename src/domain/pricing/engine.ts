@@ -136,7 +136,7 @@ function mergeSegments(segments: DraftSegment[], mode: PricingConfigSnapshot['ca
       previous.windowId === segment.windowId &&
       previous.priceVnd === segment.priceVnd &&
       previous.durationSeconds === segment.durationSeconds &&
-      previous.endedAtMs === segment.startedAtMs
+      (previous.endedAtMs === segment.startedAtMs || mode === 'TIME_BLOCK')
     ) {
       previous.endedAtMs = segment.endedAtMs;
       previous.elapsedSeconds += segment.elapsedSeconds;

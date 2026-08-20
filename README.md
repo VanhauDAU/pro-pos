@@ -1,1 +1,71 @@
-# pro-pos
+# Pro POS
+
+Pro POS là Web App/PWA quản lý cửa hàng billiards, triển khai React SPA và Worker API trong
+cùng một Cloudflare Worker. Dữ liệu nghiệp vụ lưu tại D1; ảnh lưu trong R2.
+
+## Trạng thái
+
+- Foundation React/Vite/Worker/PWA: đã khởi tạo.
+- D1 schema: tenant, auth/device, catalog/pricing, POS, checkout, invoice và audit.
+- Auth invariant: Owner vào `/owner` không cần kích hoạt POS; Employee PIN bắt buộc device
+  `ACTIVE`.
+- Pricing Engine: ACTUAL_TIME, TIME_BLOCK, first period, special windows, pause và rounding.
+- UI: chỉ có khung chức năng; visual cuối chờ mẫu được duyệt theo từng màn hình.
+
+## Yêu cầu
+
+- Node.js 24 LTS.
+- pnpm 11.
+- Tài khoản Cloudflare và Wrangler 4.x khi cần deploy.
+
+## Chạy local
+
+```bash
+pnpm install --frozen-lockfile
+cp .dev.vars.example .dev.vars
+pnpm cf-typegen
+pnpm db:migrate:local
+pnpm dev
+```
+
+Kiểm tra API:
+
+```bash
+curl http://localhost:5173/api/health
+curl http://localhost:5173/api/version
+```
+
+## Quality gate
+
+```bash
+pnpm verify
+```
+
+Các gate thành phần:
+
+```bash
+pnpm format:check
+pnpm lint
+pnpm typecheck
+pnpm cf-typegen:check
+pnpm test
+pnpm test:integration
+pnpm build
+```
+
+## Nhánh Git
+
+- `main`: production.
+- `dev`: staging.
+- `feat/PRO-<id>-<slug>`: nhánh ngắn hạn, PR vào `dev`.
+
+Xem [CONTRIBUTING.md](CONTRIBUTING.md) và [docs/README.md](docs/README.md).
+
+## Bảo mật
+
+- Không commit `.dev.vars`, `.env`, database export hoặc dữ liệu cửa hàng thật.
+- Không lưu session/device credential trong localStorage.
+- Production cookies: `__Host-propos-device`, `__Host-propos-session`,
+  `__Host-propos-activation` với `HttpOnly; Secure; SameSite=Lax; Path=/; no Domain`.
+- Không giảm PBKDF2 work factor chỉ để giữ Workers Free; xem
+  [auth-device-invariants.md](docs/security/auth-device-invariants.md).

@@ -1,0 +1,22 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.app-shell {
+  width: min(100% - 32px, 560px);
+  margin: 0 auto;
+  padding-block: 32px;
+}
+
+.ui-reference-note {
+  margin-top: 24px;
+}

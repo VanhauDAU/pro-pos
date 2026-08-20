@@ -18,6 +18,9 @@ const migrationFiles = [
   '0008_area_table_setup.sql',
   '0009_staff_roles_permissions.sql',
   '0010_staff_pos_orders.sql',
+  '0011_pos_order_lifecycle.sql',
+  '0012_compact_pos_codes.sql',
+  '0013_adjust_time_session.sql',
 ];
 
 const fixture = `
@@ -84,10 +87,10 @@ try {
   const rows = result.stdout.trim().split('\n');
   const expected = ['100000|100000|0', '100000|100000|0'];
   if (rows.at(-2) !== expected[0] || rows.at(-1) !== expected[1]) {
-    throw new Error(`Unexpected 0005 → 0010 backfill: ${rows.slice(-2).join(', ')}`);
+    throw new Error(`Unexpected 0005 → 0013 backfill: ${rows.slice(-2).join(', ')}`);
   }
   console.log(
-    '0005 → 0010 upgrade path passed: accounting, Owner setup, staff permissions and POS order types are safe.',
+    '0005 → 0013 upgrade path passed: accounting, POS lifecycle, compact codes and time corrections are safe.',
   );
 } finally {
   await rm(tempDirectory, { recursive: true, force: true });

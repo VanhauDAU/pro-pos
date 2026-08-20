@@ -182,13 +182,13 @@ function formatMoney(value: number | null | undefined) {
 }
 
 function initials(name: string) {
-  return name
-    .trim()
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((part) => part[0])
-    .join('')
-    .toUpperCase();
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const p0 = parts[0];
+  const p1 = parts[1];
+  if (p0 && p1) {
+    return (p0.slice(0, 1) + p1.slice(0, 1)).toUpperCase();
+  }
+  return name.trim().slice(0, 2).toUpperCase();
 }
 
 function secondsToDuration(seconds: number) {

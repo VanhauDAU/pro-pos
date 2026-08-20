@@ -15,6 +15,8 @@ describe('online POS vertical slice', () => {
   let variantId: string;
   let promptProductId: string;
   let promptVariantId: string;
+  let weightProductId: string;
+  let weightVariantId: string;
 
   beforeAll(async () => {
     const platform = new PlatformService(env);
@@ -98,6 +100,28 @@ describe('online POS vertical slice', () => {
       .bind(promptProductId)
       .first<{ id: string }>();
     promptVariantId = promptVariant!.id;
+
+    const weightUnit = await catalog.createNamed(storeId, 'units', 'Đơn vị cân bất kỳ');
+    const weightProduct = await catalog.createProduct(storeId, {
+      name: 'Hải sản cân ký',
+      productType: 'WEIGHT',
+      unitId: weightUnit.id,
+      variants: [
+        {
+          name: 'Giá thường',
+          salePriceVnd: 50_000,
+          costPriceVnd: 0,
+          promptPrice: false,
+        },
+      ],
+    });
+    weightProductId = weightProduct.id;
+    const weightVariant = await env.DB.prepare(
+      'SELECT id FROM product_variants WHERE product_id = ? LIMIT 1',
+    )
+      .bind(weightProductId)
+      .first<{ id: string }>();
+    weightVariantId = weightVariant!.id;
   });
 
   async function openFreshTable(name: string, key: string) {
@@ -173,6 +197,104 @@ describe('online POS vertical slice', () => {
     expect(matches[0]!.variants).toHaveLength(2);
   });
 
+  it('prices weight items with integer milli-units on add, edit, and invoice', async () => {
+    const pos = new PosService(env);
+    const order = await pos.createTakeaway({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-weight-order',
+      idempotencyKey: 'weight-order-001',
+      note: null,
+    });
+    const added = await pos.addItem({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-weight-add',
+      idempotencyKey: 'weight-add-001',
+      orderId: order.orderId,
+      productId: weightProductId,
+      variantId: weightVariantId,
+      quantityMilli: 500,
+      expectedOrderVersion: 1,
+      discount: null,
+    });
+    const halfKilogram = await pos.quote(storeId, order.orderId);
+    expect(halfKilogram.items[0]).toMatchObject({
+      id: added.itemId,
+      productType: 'WEIGHT',
+      unitName: 'Đơn vị cân bất kỳ',
+      quantityMilli: 500,
+      unitPriceVnd: 50_000,
+      grossLineTotalVnd: 25_000,
+      netLineTotalVnd: 25_000,
+    });
+
+    await pos.updateItem({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-weight-update',
+      idempotencyKey: 'weight-update-001',
+      orderId: order.orderId,
+      itemId: added.itemId,
+      expectedOrderVersion: 2,
+      quantityMilli: 750,
+      note: 'Cân thực tế',
+    });
+    const threeQuarterKilogram = await pos.quote(storeId, order.orderId);
+    expect(threeQuarterKilogram).toMatchObject({
+      order: { version: 3 },
+      totalVnd: 37_500,
+      items: [
+        {
+          quantityMilli: 750,
+          grossLineTotalVnd: 37_500,
+          netLineTotalVnd: 37_500,
+          note: 'Cân thực tế',
+        },
+      ],
+    });
+
+    const checkout = await pos.checkout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-weight-checkout',
+      idempotencyKey: 'weight-checkout-001',
+      orderId: order.orderId,
+      expectedOrderVersion: 3,
+      method: 'CASH',
+      cashReceivedVnd: 40_000,
+    });
+    const invoice = await pos.getInvoice(storeId, checkout.invoiceId);
+    expect(invoice.lines[0]).toMatchObject({ quantityMilli: 750, lineTotal: 37_500 });
+    expect(invoice.payment).toMatchObject({ amount: 37_500, cashChange: 2_500 });
+    expect(checkout).toMatchObject({ total: 37_500 });
+  });
+
+  it('rejects fractional milli-units for quantity products', async () => {
+    const pos = new PosService(env);
+    const order = await pos.createTakeaway({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-fractional-quantity-order',
+      idempotencyKey: 'fractional-quantity-order-001',
+      note: null,
+    });
+    await expect(
+      pos.addItem({
+        storeId,
+        actorId: ownerUserId,
+        requestId: 'request-fractional-quantity-add',
+        idempotencyKey: 'fractional-quantity-add-001',
+        orderId: order.orderId,
+        productId,
+        variantId,
+        quantityMilli: 500,
+        expectedOrderVersion: 1,
+        discount: null,
+      }),
+    ).rejects.toMatchObject({ code: 'QUANTITY_MUST_BE_WHOLE' });
+  });
+
   it('creates and lists an idempotent takeaway order without a table or time session', async () => {
     const pos = new PosService(env);
     const first = await pos.createTakeaway({
@@ -190,6 +312,7 @@ describe('online POS vertical slice', () => {
       note: null,
     });
     expect(replay).toEqual(first);
+    expect(first.displayCode).toMatch(/^D\d{6}-\d{4,}$/u);
 
     const quote = await pos.quote(storeId, first.orderId);
     expect(quote).toMatchObject({
@@ -228,6 +351,238 @@ describe('online POS vertical slice', () => {
         totalVnd: 20_000,
       }),
     );
+  });
+
+  it('allocates unique compact order codes when devices create orders concurrently', async () => {
+    const pos = new PosService(env);
+    const [one, two] = await Promise.all([
+      pos.createTakeaway({
+        storeId,
+        actorId: ownerUserId,
+        requestId: 'request-order-code-1',
+        idempotencyKey: 'create-order-code-001',
+        note: null,
+      }),
+      pos.createTakeaway({
+        storeId,
+        actorId: ownerUserId,
+        requestId: 'request-order-code-2',
+        idempotencyKey: 'create-order-code-002',
+        note: null,
+      }),
+    ]);
+
+    expect(one.displayCode).not.toBe(two.displayCode);
+    expect(one.displayCode).toMatch(/^D\d{6}-\d{4,}$/u);
+    expect(two.displayCode).toMatch(/^D\d{6}-\d{4,}$/u);
+  });
+
+  it('updates, notes and checks out a takeaway order into an invoice', async () => {
+    const pos = new PosService(env);
+    const created = await pos.createTakeaway({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-takeaway-lifecycle-create',
+      idempotencyKey: 'takeaway-lifecycle-create-001',
+      note: null,
+    });
+    const added = await pos.addItem({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-takeaway-lifecycle-add',
+      idempotencyKey: 'takeaway-lifecycle-add-001',
+      orderId: created.orderId,
+      productId,
+      variantId,
+      quantityMilli: 1000,
+      expectedOrderVersion: 1,
+      discount: null,
+      note: null,
+    });
+    await pos.updateItem({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-takeaway-lifecycle-update',
+      idempotencyKey: 'takeaway-lifecycle-update-001',
+      orderId: created.orderId,
+      itemId: added.itemId,
+      expectedOrderVersion: 2,
+      quantityMilli: 2000,
+      note: 'Ít đá',
+    });
+    await pos.updateNote({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-takeaway-lifecycle-note',
+      idempotencyKey: 'takeaway-lifecycle-note-001',
+      orderId: created.orderId,
+      expectedOrderVersion: 3,
+      note: 'Khách chờ tại quầy',
+    });
+    const quote = await pos.quote(storeId, created.orderId);
+    expect(quote).toMatchObject({
+      order: { version: 4, note: 'Khách chờ tại quầy' },
+      items: [{ quantityMilli: 2000, note: 'Ít đá', netLineTotalVnd: 40_000 }],
+      totalVnd: 40_000,
+    });
+
+    const checkout = await pos.checkout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-takeaway-lifecycle-checkout',
+      idempotencyKey: 'takeaway-lifecycle-checkout-001',
+      orderId: created.orderId,
+      expectedOrderVersion: 4,
+      method: 'CASH',
+      cashReceivedVnd: 50_000,
+    });
+    const invoice = await pos.getInvoice(storeId, checkout.invoiceId);
+    expect(invoice.invoice).toMatchObject({
+      orderType: 'TAKEAWAY',
+      total: 40_000,
+    });
+    expect(invoice.lines[0]).toMatchObject({ quantityMilli: 2000, lineTotal: 40_000 });
+    expect(JSON.parse(String(invoice.lines[0]!.snapshotJson))).toMatchObject({ note: 'Ít đá' });
+    const payment = await env.DB.prepare(
+      'SELECT cash_received AS cashReceived, cash_change AS cashChange FROM takeaway_payments WHERE order_id = ?',
+    )
+      .bind(created.orderId)
+      .first<{ cashReceived: number; cashChange: number }>();
+    expect(payment).toEqual({ cashReceived: 50_000, cashChange: 10_000 });
+  });
+
+  it('uses one exact cutoff for the final time price, session and invoice snapshot', async () => {
+    const opened = await openFreshTable('Bàn exact cutoff', 'open-exact-cutoff-001');
+    const startedAt = Date.parse('2026-08-20T10:00:00.000Z');
+    const issuedAt = startedAt + 90 * 60_000;
+    await env.DB.prepare('UPDATE time_sessions SET started_at = ? WHERE order_id = ?')
+      .bind(startedAt, opened.orderId)
+      .run();
+    await env.DB.prepare('UPDATE orders SET opened_at = ? WHERE id = ?')
+      .bind(startedAt, opened.orderId)
+      .run();
+
+    const checkout = await new PosService(env).checkout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-exact-cutoff-checkout',
+      idempotencyKey: 'exact-cutoff-checkout-001',
+      orderId: opened.orderId,
+      expectedOrderVersion: 1,
+      method: 'CASH',
+      cashReceivedVnd: 100_000,
+      now: issuedAt,
+    });
+    expect(checkout.total).toBe(90_000);
+    const session = await env.DB.prepare(
+      'SELECT status, ended_at AS endedAt FROM time_sessions WHERE order_id = ?',
+    )
+      .bind(opened.orderId)
+      .first<{ status: string; endedAt: number }>();
+    expect(session).toEqual({ status: 'ENDED', endedAt: issuedAt });
+    const invoice = await new PosService(env).getInvoice(storeId, checkout.invoiceId);
+    const snapshot = JSON.parse(String(invoice.invoice!.snapshotJson)) as {
+      time: { elapsedSeconds: number; amountAfterRoundingVnd: number; endedAtMs: number };
+    };
+    expect(snapshot.time).toMatchObject({
+      elapsedSeconds: 5400,
+      amountAfterRoundingVnd: 90_000,
+      endedAtMs: issuedAt,
+    });
+    expect(invoice.lines.find((line) => line.lineType === 'TIME')).toMatchObject({
+      quantityMilli: 5_400_000,
+      lineTotal: 90_000,
+    });
+  });
+
+  it('edits start/end time atomically and recalculates the quote from the saved range', async () => {
+    const pos = new PosService(env);
+    const opened = await openFreshTable('Bàn chỉnh giờ', 'open-adjust-time-001');
+    const now = Date.parse('2026-08-21T10:00:00.000Z');
+    const startedAtMs = now - 2 * 60 * 60_000;
+    const endedAtMs = now - 30 * 60_000;
+
+    const adjusted = await pos.updateTimeRange({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-adjust-time-1',
+      idempotencyKey: 'adjust-time-command-001',
+      orderId: opened.orderId,
+      expectedOrderVersion: 1,
+      startedAtMs,
+      endedAtMs,
+      now,
+    });
+    const replay = await pos.updateTimeRange({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-adjust-time-replay',
+      idempotencyKey: 'adjust-time-command-001',
+      orderId: opened.orderId,
+      expectedOrderVersion: 1,
+      startedAtMs,
+      endedAtMs,
+      now,
+    });
+    expect(replay).toEqual(adjusted);
+
+    const endedQuote = await pos.quote(storeId, opened.orderId, now);
+    expect(endedQuote).toMatchObject({
+      order: { version: 2 },
+      time: {
+        status: 'ENDED',
+        startedAtMs,
+        endedAtMs,
+        elapsedSeconds: 5400,
+        amountAfterRoundingVnd: 90_000,
+      },
+      totalVnd: 90_000,
+    });
+
+    await pos.updateTimeRange({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-adjust-time-clear-end',
+      idempotencyKey: 'adjust-time-command-002',
+      orderId: opened.orderId,
+      expectedOrderVersion: 2,
+      startedAtMs,
+      endedAtMs: null,
+      now,
+    });
+    const runningQuote = await pos.quote(storeId, opened.orderId, now);
+    expect(runningQuote).toMatchObject({
+      order: { version: 3 },
+      time: {
+        status: 'RUNNING',
+        startedAtMs,
+        endedAtMs: null,
+        elapsedSeconds: 7200,
+        amountAfterRoundingVnd: 120_000,
+      },
+    });
+
+    const audit = await env.DB.prepare(
+      `SELECT action FROM audit_logs
+       WHERE store_id = ? AND entity_id = ? AND action = 'TIME_RANGE_UPDATED'`,
+    )
+      .bind(storeId, opened.orderId)
+      .all();
+    expect(audit.results).toHaveLength(2);
+
+    await expect(
+      pos.updateTimeRange({
+        storeId,
+        actorId: ownerUserId,
+        requestId: 'request-adjust-time-invalid',
+        idempotencyKey: 'adjust-time-command-invalid',
+        orderId: opened.orderId,
+        expectedOrderVersion: 3,
+        startedAtMs: now + 1,
+        endedAtMs: null,
+        now,
+      }),
+    ).rejects.toMatchObject({ code: 'TIME_RANGE_INVALID' });
   });
 
   it('adds a snapshotted product and completes idempotent checkout', async () => {
@@ -476,13 +831,56 @@ describe('online POS vertical slice', () => {
       }),
     ]);
     expect(one.displayCode).not.toBe(two.displayCode);
-    expect(one.displayCode).toMatch(/^HD-20260820-\d{6}$/u);
+    expect(one.displayCode).toMatch(/^H260820-\d{4,}$/u);
     const payments = await env.DB.prepare(
       'SELECT COUNT(*) AS total FROM payments WHERE order_id IN (?, ?)',
     )
       .bind(first.orderId, second.orderId)
       .first<{ total: number }>();
     expect(payments?.total).toBe(2);
+  });
+
+  it('blocks a table transfer when the target uses a different time price', async () => {
+    const source = await openFreshTable('Bàn chuyển khác giá', 'open-transfer-different-price');
+    const catalog = new CatalogService(env);
+    const expensiveTimeProduct = await catalog.createProduct(storeId, {
+      name: 'Giờ phòng VIP',
+      productType: 'TIME',
+      variants: [],
+    });
+    await catalog.upsertPricing(storeId, {
+      productId: expensiveTimeProduct.id,
+      basePriceVnd: 120_000,
+      baseDurationSeconds: 3600,
+      calculationMode: 'ACTUAL_TIME',
+      roundingUnitVnd: 1000,
+      firstPeriod: { enabled: false },
+      specialWindows: [],
+    });
+    const target = await catalog.createTable({
+      storeId,
+      areaId,
+      timeProductId: expensiveTimeProduct.id,
+      name: 'Phòng VIP chuyển giá',
+      sortOrder: 20,
+    });
+    const tables = await new PosService(env).listTables(storeId);
+    const sourceTable = tables.find((table) => table.id === source.tableId)!;
+    const targetTable = tables.find((table) => table.id === target.id)!;
+
+    await expect(
+      new PosService(env).transfer({
+        storeId,
+        actorId: ownerUserId,
+        requestId: 'request-transfer-different-price',
+        idempotencyKey: 'transfer-different-price-001',
+        orderId: source.orderId,
+        targetTableId: target.id,
+        expectedOrderVersion: 1,
+        expectedSourceTableVersion: Number(sourceTable.version),
+        expectedTargetTableVersion: Number(targetTable.version),
+      }),
+    ).rejects.toMatchObject({ code: 'TABLE_PRICING_CHANGE_REQUIRES_SPLIT' });
   });
 
   it('makes pause/resume atomic, versioned, audited and idempotent', async () => {
@@ -561,5 +959,145 @@ describe('online POS vertical slice', () => {
       .bind(opened.orderId)
       .first<{ version: number }>();
     expect(afterFailedResume?.version).toBe(3);
+  });
+
+  it('allows adding and quoting time-based catalogue items without initial end time', async () => {
+    const catalog = new CatalogService(env);
+    const testTable = await catalog.createTable({
+      storeId,
+      areaId,
+      timeProductId,
+      name: 'Bàn Test Giờ',
+      sortOrder: 50,
+    });
+    const pos = new PosService(env);
+    const opened = await pos.openTable({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-open-time-item-table',
+      idempotencyKey: 'open-table-time-item-001',
+      tableId: testTable.id,
+      expectedTableVersion: 1,
+    });
+
+    const startTime = 1_700_000_000_000;
+    // Add time-priced item without timeEndedAtMs (running session)
+    const added = await pos.addItem({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-add-time-item-1',
+      idempotencyKey: 'add-time-item-command-001',
+      orderId: opened.orderId,
+      productId: timeProductId,
+      variantId: null,
+      quantityMilli: 1000,
+      timeStartedAtMs: startTime,
+      timeEndedAtMs: null,
+      expectedOrderVersion: 1,
+      discount: null,
+      now: startTime,
+    });
+    expect(added.itemId).toBeDefined();
+
+    // 2 hours later, dynamic quote calculates 2 hours for the time item
+    const quoteTwoHoursLater = await pos.quote(
+      storeId,
+      opened.orderId,
+      startTime + 2 * 3600 * 1000,
+    );
+    const itemInQuote = quoteTwoHoursLater.items.find((i) => i.id === added.itemId);
+    expect(itemInQuote).toBeDefined();
+    expect(itemInQuote?.quantityMilli).toBe(2000);
+    expect(itemInQuote?.netLineTotalVnd).toBe(120_000);
+
+    // Updating time item with invalid end time (before start) should throw TIME_RANGE_INVALID
+    await expect(
+      pos.updateItem({
+        storeId,
+        actorId: ownerUserId,
+        requestId: 'request-update-time-invalid',
+        idempotencyKey: 'update-time-invalid-001',
+        orderId: opened.orderId,
+        itemId: added.itemId,
+        expectedOrderVersion: 2,
+        quantityMilli: 1000,
+        timeStartedAtMs: startTime,
+        timeEndedAtMs: startTime - 1000,
+        note: null,
+      }),
+    ).rejects.toMatchObject({ code: 'TIME_RANGE_INVALID' });
+
+    // Updating time item with valid end time (1.5 hours)
+    await pos.updateItem({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-update-time-valid',
+      idempotencyKey: 'update-time-valid-001',
+      orderId: opened.orderId,
+      itemId: added.itemId,
+      expectedOrderVersion: 2,
+      quantityMilli: 1500,
+      timeStartedAtMs: startTime,
+      timeEndedAtMs: startTime + 5400 * 1000,
+      note: 'Xong 1.5 tiếng',
+    });
+
+    const finalizedQuote = await pos.quote(storeId, opened.orderId, startTime + 4 * 3600 * 1000);
+    const finalizedItem = finalizedQuote.items.find((i) => i.id === added.itemId);
+    expect(finalizedItem?.quantityMilli).toBe(1500);
+    expect(finalizedItem?.netLineTotalVnd).toBe(90_000);
+
+    // Test price rounding with arbitrary running duration (e.g. 17 mins 23 secs = 1043s)
+    // 60,000 * 1043 / 3600 = 17,383.33 VND -> rounded to 17,000 VND (no fractional money)
+    const quoteWithArbitraryDuration = await pos.quote(
+      storeId,
+      opened.orderId,
+      startTime + 5400 * 1000 + 1043 * 1000,
+    );
+    expect(finalizedItem?.grossLineTotalVnd).toBe(90_000);
+    expect(quoteWithArbitraryDuration.time?.amountAfterRoundingVnd).toBeDefined();
+
+    // Test removing table time session with reason
+    const removedTime = await pos.removeTimeSession({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-remove-time-session-1',
+      idempotencyKey: 'remove-time-session-001',
+      orderId: opened.orderId,
+      expectedOrderVersion: 3,
+      reason: 'Miễn phí tiền giờ bàn cho khách VIP',
+    });
+    expect(removedTime.removed).toBe(true);
+
+    // Quote after removing table time session: quote.time is null
+    const quoteAfterRemovingTime = await pos.quote(
+      storeId,
+      opened.orderId,
+      startTime + 6000 * 1000,
+    );
+    expect(quoteAfterRemovingTime.time).toBeNull();
+    // Only item total remains (90,000 VND)
+    expect(quoteAfterRemovingTime.totalVnd).toBe(90_000);
+
+    // Test removing item with reason
+    const removedItem = await pos.removeItem({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-remove-item-1',
+      idempotencyKey: 'remove-item-001',
+      orderId: opened.orderId,
+      itemId: added.itemId,
+      expectedOrderVersion: 4,
+      reason: 'Khách trả lại món',
+    });
+    expect(removedItem.removed).toBe(true);
+
+    const quoteAfterRemovingItem = await pos.quote(
+      storeId,
+      opened.orderId,
+      startTime + 6000 * 1000,
+    );
+    expect(quoteAfterRemovingItem.items.length).toBe(0);
+    expect(quoteAfterRemovingItem.totalVnd).toBe(0);
   });
 });

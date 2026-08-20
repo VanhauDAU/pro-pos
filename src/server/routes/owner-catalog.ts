@@ -245,6 +245,20 @@ ownerCatalogRoutes.delete('/products/:productId', requirePermission('catalog.man
   ),
 );
 
+ownerCatalogRoutes.post(
+  '/products/:productId/restore',
+  requirePermission('catalog.manage'),
+  async (c) =>
+    success(
+      c,
+      await new CatalogService(c.env).restoreProduct(
+        c.get('actor').storeId!,
+        c.req.param('productId'),
+        auditContext(c),
+      ),
+    ),
+);
+
 ownerCatalogRoutes.put('/pricing', requirePermission('pricing.manage'), async (c) => {
   const body = await parseJson(c.req.raw, pricingConfigSchema);
   return success(

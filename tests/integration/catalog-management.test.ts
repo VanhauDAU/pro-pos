@@ -88,8 +88,67 @@ describe('Owner catalog management', () => {
     await catalog.deleteProduct(storeId, productId);
     const product = await catalog.getProduct(storeId, productId);
     expect(product.status).toBe('DISABLED');
+    await catalog.restoreProduct(storeId, productId);
+    expect((await catalog.getProduct(storeId, productId)).status).toBe('ACTIVE');
+    await catalog.deleteProduct(storeId, productId);
     await expect(catalog.deleteCategory(storeId, categoryId)).resolves.toMatchObject({
       deleted: true,
     });
+  });
+
+  it('persists special hours and rejects overlapping windows', async () => {
+    const timeProduct = await catalog.createProduct(storeId, {
+      name: 'Giờ Pool',
+      productType: 'TIME',
+      variants: [],
+    });
+    await catalog.upsertPricing(storeId, {
+      productId: timeProduct.id,
+      basePriceVnd: 60_000,
+      baseDurationSeconds: 3600,
+      calculationMode: 'ACTUAL_TIME',
+      roundingUnitVnd: 1000,
+      firstPeriod: { enabled: false },
+      specialWindows: [
+        {
+          name: 'Giờ tối',
+          priceVnd: 70_000,
+          startMinute: 21 * 60,
+          endMinute: 23 * 60 + 45,
+          weekdaysMask: 127,
+        },
+      ],
+    });
+    const detail = await catalog.getProduct(storeId, timeProduct.id);
+    const pricing = detail.pricing as { specialWindows: Array<Record<string, unknown>> } | null;
+    expect(pricing?.specialWindows).toEqual([
+      expect.objectContaining({ name: 'Giờ tối', priceVnd: 70_000, weekdaysMask: 127 }),
+    ]);
+    await expect(
+      catalog.upsertPricing(storeId, {
+        productId: timeProduct.id,
+        basePriceVnd: 60_000,
+        baseDurationSeconds: 3600,
+        calculationMode: 'ACTUAL_TIME',
+        roundingUnitVnd: 1000,
+        firstPeriod: { enabled: false },
+        specialWindows: [
+          {
+            name: 'A',
+            priceVnd: 70_000,
+            startMinute: 21 * 60,
+            endMinute: 23 * 60,
+            weekdaysMask: 127,
+          },
+          {
+            name: 'B',
+            priceVnd: 80_000,
+            startMinute: 22 * 60,
+            endMinute: 23 * 60 + 30,
+            weekdaysMask: 127,
+          },
+        ],
+      }),
+    ).rejects.toMatchObject({ code: 'PRICING_CONFIG_INVALID' });
   });
 });

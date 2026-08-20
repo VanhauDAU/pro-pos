@@ -53,8 +53,10 @@ Cần hoàn thiện trong giai đoạn:
    phiên bản giá số lượng/trọng lượng, giá cơ bản theo thời gian và danh mục.
 5. **PRO-014 — Unit settings**: danh sách đơn vị có phân trang, thêm/sửa, usage count, danh sách
    mặt hàng sử dụng và xóa có bảo vệ.
-6. **PRO-015 — POS sales portal**: table board, order workspace, quote và checkout.
-7. **PRO-016 — Owner E2E và staging hardening**: cross-store/RBAC, audit, responsive E2E, smoke.
+6. **PRO-015 — Product pricing completion**: giờ đặc biệt, overlap validation và avatar media.
+7. **PRO-016 — POS sales portal**: table board, order workspace, quote và checkout.
+8. **PRO-017 — Owner E2E và staging hardening**: cross-store/RBAC, audit, responsive E2E, smoke.
+
 
 Mỗi ticket giữ migration additive/forward-only và cập nhật OpenAPI, screen registry, tests,
 changelog cùng PR.

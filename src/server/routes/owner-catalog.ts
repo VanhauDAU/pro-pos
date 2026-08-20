@@ -9,6 +9,7 @@ import {
   reorderServiceTablesSchema,
   updateProductSchema,
   updateServiceTableSchema,
+  updateServiceTablePricingSchema,
 } from '@contracts/catalog';
 import { success } from '@server/lib/response';
 import { parseJson } from '@server/lib/validation';
@@ -310,6 +311,23 @@ ownerCatalogRoutes.patch('/tables/:tableId', requirePermission('table.manage'), 
     ),
   );
 });
+
+ownerCatalogRoutes.patch(
+  '/tables/:tableId/pricing',
+  requirePermission('table.manage'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, updateServiceTablePricingSchema);
+    return success(
+      c,
+      await new CatalogService(c.env).updateTablePricing(
+        c.get('actor').storeId!,
+        c.req.param('tableId'),
+        body.timeProductId,
+        auditContext(c),
+      ),
+    );
+  },
+);
 
 ownerCatalogRoutes.delete('/tables/:tableId', requirePermission('table.manage'), async (c) =>
   success(

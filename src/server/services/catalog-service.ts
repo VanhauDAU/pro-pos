@@ -209,6 +209,8 @@ export class CatalogService {
           name: string;
           status: 'AVAILABLE' | 'OCCUPIED';
           sortOrder: number;
+          timeProductId: string | null;
+          timeProductName: string | null;
         }>;
       }
     >();
@@ -225,6 +227,8 @@ export class CatalogService {
           name: row.tableName,
           status: row.tableStatus,
           sortOrder: row.tableSortOrder,
+          timeProductId: row.timeProductId,
+          timeProductName: row.timeProductName,
         });
       }
       layouts.set(row.areaId, layout);
@@ -292,6 +296,47 @@ export class CatalogService {
       });
     }
     return { id: tableId, updated: true };
+  }
+
+  async updateTablePricing(
+    storeId: string,
+    tableId: string,
+    timeProductId: string,
+    auditContext?: AuditContext,
+  ) {
+    const table = await this.repository.findServiceTablePricing(storeId, tableId);
+    if (!table || table.status === 'DISABLED') {
+      throw new AppError('SERVICE_TABLE_NOT_FOUND', 'Không tìm thấy bàn/phòng.', 404);
+    }
+    if (table.status === 'OCCUPIED') {
+      throw new AppError(
+        'SERVICE_TABLE_OCCUPIED',
+        'Không thể đổi bảng giá khi bàn đang dùng.',
+        409,
+      );
+    }
+    const product = await this.repository.findTimeProduct(storeId, timeProductId);
+    if (!product || product.status !== 'ACTIVE') {
+      throw new AppError('TIME_PRODUCT_NOT_FOUND', 'Không tìm thấy mặt hàng tính giờ.', 404);
+    }
+    if (!(await this.repository.getPricingConfig(storeId, timeProductId))) {
+      throw new AppError('TABLE_PRICING_MISSING', 'Mặt hàng tính giờ chưa có bảng giá.', 422);
+    }
+    const now = Date.now();
+    await this.repository.updateServiceTablePricing(storeId, tableId, timeProductId, now);
+    if (auditContext) {
+      await new AuditRepository(this.env.DB).record({
+        storeId,
+        context: auditContext,
+        action: 'SERVICE_TABLE_PRICING_UPDATED',
+        entityType: 'SERVICE_TABLE',
+        entityId: tableId,
+        before: { timeProductId: table.timeProductId },
+        after: { timeProductId },
+        now,
+      });
+    }
+    return { id: tableId, timeProductId, updated: true };
   }
 
   async deleteTable(storeId: string, tableId: string, auditContext?: AuditContext) {

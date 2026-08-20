@@ -27,6 +27,8 @@ export interface AreaLayoutRow {
   tableName: string | null;
   tableStatus: 'AVAILABLE' | 'OCCUPIED' | null;
   tableSortOrder: number | null;
+  timeProductId: string | null;
+  timeProductName: string | null;
 }
 
 export interface ServiceTableSummaryRow {
@@ -229,10 +231,14 @@ export class CatalogRepository {
           a.id AS areaId, a.name AS areaName, a.sort_order AS areaSortOrder,
           st.id AS tableId, COALESCE(st.display_name, st.name) AS tableName,
           st.status AS tableStatus,
-          st.sort_order AS tableSortOrder
+          st.sort_order AS tableSortOrder,
+          st.time_product_id AS timeProductId,
+          tp.name AS timeProductName
         FROM areas a
         LEFT JOIN service_tables st
           ON st.area_id = a.id AND st.store_id = a.store_id AND st.status != 'DISABLED'
+        LEFT JOIN products tp
+          ON tp.id = st.time_product_id AND tp.store_id = st.store_id
         WHERE a.store_id = ? AND a.status = 'ACTIVE'
         ORDER BY a.sort_order, a.name COLLATE NOCASE, st.sort_order, st.created_at, st.id`,
       )
@@ -304,6 +310,31 @@ export class CatalogRepository {
          WHERE id = ? AND store_id = ? AND status != 'DISABLED'`,
       )
       .bind(name, now, tableId, storeId)
+      .run();
+  }
+
+  findServiceTablePricing(storeId: string, tableId: string) {
+    return this.db
+      .prepare(
+        `SELECT id, status, time_product_id AS timeProductId
+         FROM service_tables WHERE id = ? AND store_id = ? LIMIT 1`,
+      )
+      .bind(tableId, storeId)
+      .first<{
+        id: string;
+        status: 'AVAILABLE' | 'OCCUPIED' | 'DISABLED';
+        timeProductId: string;
+      }>();
+  }
+
+  updateServiceTablePricing(storeId: string, tableId: string, timeProductId: string, now: number) {
+    return this.db
+      .prepare(
+        `UPDATE service_tables
+         SET time_product_id = ?, version = version + 1, updated_at = ?
+         WHERE id = ? AND store_id = ? AND status = 'AVAILABLE'`,
+      )
+      .bind(timeProductId, now, tableId, storeId)
       .run();
   }
 

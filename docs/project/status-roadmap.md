@@ -1,6 +1,6 @@
 # Kế hoạch tổng thể, trạng thái và checklist phần mềm
 
-Cập nhật: 2026-08-21. Baseline đánh giá: nhánh `feat/PRO-015-product-special-hours`, đối chiếu trực tiếp code,
+Cập nhật: 2026-08-21. Baseline đánh giá: nhánh `feat/PRO-016-table-pricing-assignment`, đối chiếu trực tiếp code,
 migrations, OpenAPI, test và runbook trong repository.
 
 Tài liệu này là nguồn theo dõi cấp dự án cho ba câu hỏi:
@@ -27,7 +27,7 @@ Quality evidence ngày 2026-08-20:
 
 - `pnpm verify` xanh: format, lint, type generation, typecheck, unit, integration, migration upgrade
   check và production build.
-- Unit: `18/18`; Worker integration: `9 files / 42 tests`; migration `0005 → 0009`: pass.
+- Unit: `18/18`; Worker integration: `9 files / 43 tests`; migration `0005 → 0009`: pass.
 - Staging/production client build: pass; chỉ còn cảnh báo bundle `api` lớn hơn 500 kB.
 - Chưa chạy staging smoke cho PRO-010A trong lượt này; chưa đóng `COMPLETE` theo Definition of Done.
 
@@ -79,8 +79,8 @@ Trạng thái production tại lần kiểm tra 2026-08-20:
 | Auth và device           | `COMPLETE`    | Owner/SUPER_ADMIN OTP, Employee PIN, activation/revoke/reissue                                                        | Duy trì policy email và smoke định kỳ                                   |
 | Access bridge            | `COMPLETE`    | Worker riêng, one-time code, replay protection, D1 chung, Access                                                      | Theo dõi Access logs và đồng bộ exact-email policy                      |
 | SUPER_ADMIN              | `COMPLETE`    | Bootstrap, login, dashboard, list/create/lock store + Owner                                                           | Pagination/search/audit UX nếu dữ liệu tăng                             |
-| Owner backend            | `PARTIAL`     | Settings, staff/roles, catalog CRUD baseline, tables, pricing, audit                                                  | Pricing read/edit đầy đủ, media, pagination/search, contract hoàn chỉnh |
-| Owner portal UI          | `IN_PROGRESS` | Shell, settings, area/table, staff/roles, catalog, đơn vị, special-hours/media and restore flows                      | Pricing editor nâng cao, visual approval và data states                 |
+| Owner backend            | `PARTIAL`     | Settings, staff/roles, catalog CRUD, table pricing assignment, pricing, audit                                         | Pricing read/edit đầy đủ, media, pagination/search, contract hoàn chỉnh |
+| Owner portal UI          | `IN_PROGRESS` | Shell, settings, area/table, table pricing, staff/roles, catalog, đơn vị, special-hours/media and restore flows       | Pricing editor nâng cao, visual approval và data states                 |
 | Pricing engine           | `COMPLETE`    | Actual time/block, first period, special window, pause, rounding                                                      | UI editor/preview và E2E với dữ liệu thật                               |
 | POS backend              | `PARTIAL`     | Tables, open, quote, items, pause/resume, transfer/cancel, checkout                                                   | Contract đầy đủ, edge cases, UI và E2E                                  |
 | POS portal UI            | `BLOCKED`     | Route placeholder                                                                                                     | UI reference, table board, order workspace, auth guard                  |
@@ -89,7 +89,7 @@ Trạng thái production tại lần kiểm tra 2026-08-20:
 | Media/R2                 | `PARTIAL`     | Private upload/read/delete service và binding                                                                         | Owner UI, validation/limits, orphan cleanup, production smoke           |
 | OpenAPI                  | `PARTIAL`     | Auth và một số platform/owner/POS paths                                                                               | Đồng bộ toàn bộ routes, schemas, errors và examples                     |
 | Unit tests               | `COMPLETE`    | 18 tests Pricing Engine/state machine                                                                                 | Mở rộng theo domain mới                                                 |
-| Worker integration tests | `COMPLETE`    | 9 files, 42 tests auth/device/database/POS/security/Owner catalog/unit/pricing vertical slice                         | Bổ sung media failure/recovery và browser E2E coverage                  |
+| Worker integration tests | `COMPLETE`    | 9 files, 43 tests auth/device/database/POS/security/Owner catalog/unit/table-pricing vertical slice                   | Bổ sung media failure/recovery và browser E2E coverage                  |
 | Browser E2E              | `PLANNED`     | Có script/dependency Playwright                                                                                       | Chưa có test suite/config/happy path                                    |
 | Observability            | `PARTIAL`     | Structured logs, request ID, Worker observability                                                                     | Alert, dashboard, retention, runbook truy vấn                           |
 | Backup/rollback/incident | `PARTIAL`     | Có runbook                                                                                                            | Chưa ghi nhận restore/rollback/incident drill                           |
@@ -98,7 +98,7 @@ Trạng thái production tại lần kiểm tra 2026-08-20:
 Quality evidence tại lần cập nhật:
 
 - Unit: 2 files, 18 tests pass.
-- Worker integration: 9 files, 42 tests pass; migration `0005 → 0009` upgrade script cũng pass.
+- Worker integration: 9 files, 43 tests pass; migration `0005 → 0009` upgrade script cũng pass.
 - CI có format, lint, type generation cho main/auth, typecheck, unit, integration và build.
 - Chưa có browser E2E được triển khai.
 
@@ -189,7 +189,7 @@ Quality evidence tại lần cập nhật:
 
 ### 5.3 API/backend
 
-- [x] Update/disable categories, products/variants và units; area/table đã có CRUD baseline.
+- [x] Update/disable categories, products/variants và units; area/table và table pricing đã có CRUD baseline.
 - [ ] GET pricing config để edit an toàn; xác định optimistic concurrency/versioning.
 - [ ] Chuẩn hóa permission catalog dùng khi tạo/sửa Employee.
 - [x] Pagination/search cho danh sách đơn vị và mặt hàng thuộc đơn vị; các list lớn khác tiếp tục mở rộng.
@@ -270,8 +270,9 @@ Work breakdown đã thống nhất:
 4. **PRO-013 — Catalog items và categories MVP**.
 5. **PRO-014 — Unit settings**.
 6. **PRO-015 — Product special hours và media completion**.
-7. **PRO-016 — POS table board, order workspace và checkout**.
-8. **PRO-017 — Owner E2E và staging hardening**.
+7. **PRO-016 — Table pricing assignment**.
+8. **PRO-017 — POS table board, order workspace và checkout**.
+9. **PRO-018 — Owner E2E và staging hardening**.
 
 Checklist:
 

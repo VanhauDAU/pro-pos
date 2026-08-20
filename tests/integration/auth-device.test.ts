@@ -2,6 +2,8 @@ import { env } from 'cloudflare:workers';
 import { SELF } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
 
+import { hashExchangeCode, randomOpaqueToken } from '@server/lib/crypto';
+import { AccessAuthRepository } from '@server/repositories/access-auth-repository';
 import { PlatformService } from '@server/services/platform-service';
 import { StaffService } from '@server/services/staff-service';
 import { AccessAuthService } from '@server/services/access-auth-service';
@@ -35,6 +37,19 @@ async function jsonData<T>(response: Response) {
   return payload.data;
 }
 
+async function authorizeBridge(requestId: string, email: string) {
+  const code = randomOpaqueToken();
+  const result = await new AccessAuthRepository(env.DB).authorizeRequest({
+    id: requestId,
+    email,
+    subject: `access-${email}`,
+    codeHash: await hashExchangeCode(code),
+    now: Date.now(),
+  });
+  expect(result.meta.changes).toBe(1);
+  return code;
+}
+
 async function completeAccess(
   purpose: 'OWNER_LOGIN' | 'PLATFORM_LOGIN' | 'DEVICE_ACTIVATION',
   email = OWNER_EMAIL,
@@ -52,11 +67,12 @@ async function completeAccess(
   expect(start.headers.get('Set-Cookie')).not.toContain('Domain=');
   const accessCookie = cookieValue(start, '__Host-propos-access')!;
   const rawState = accessCookie.slice(accessCookie.indexOf('=') + 1);
-  return new AccessAuthService(env).complete({
-    rawState,
-    email,
-    subject: `access-${email}`,
-  });
+  const startData = await jsonData<{ loginUrl: string }>(start);
+  const requestId = new URL(startData.loginUrl).searchParams.get('request');
+  expect(requestId).toBeTruthy();
+  const service = new AccessAuthService(env);
+  const rawCode = await authorizeBridge(requestId!, email);
+  return service.exchange({ rawState, rawCode });
 }
 
 describe('Owner and POS activation invariants', () => {
@@ -79,6 +95,31 @@ describe('Owner and POS activation invariants', () => {
     if (result.purpose !== 'PLATFORM_LOGIN') throw new Error('Expected platform session.');
     const context = await new AuthService(env).context(result.rawSession);
     expect(context.actor?.kind).toBe('SUPER_ADMIN');
+  });
+
+  it('returns a failed SUPER_ADMIN callback to the platform login page', async () => {
+    const start = await SELF.fetch(`${ORIGIN}/api/v1/auth/access/start`, {
+      method: 'POST',
+      headers: { Origin: ORIGIN, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ purpose: 'PLATFORM_LOGIN' }),
+    });
+    const accessCookie = cookieValue(start, '__Host-propos-access')!;
+    const startData = await jsonData<{ loginUrl: string }>(start);
+    const requestId = new URL(startData.loginUrl).searchParams.get('request')!;
+    const code = await authorizeBridge(requestId, 'not-an-admin@example.com');
+
+    const callback = await SELF.fetch(
+      `${ORIGIN}/api/v1/auth/access/complete?code=${encodeURIComponent(code)}`,
+      {
+        redirect: 'manual',
+        headers: { Cookie: accessCookie },
+      },
+    );
+
+    expect(callback.status).toBe(303);
+    expect(callback.headers.get('Location')).toBe(
+      `${ORIGIN}/platform/login?authError=ACCESS_IDENTITY_DENIED`,
+    );
   });
 
   it('lets SUPER_ADMIN create and lock a store through the protected API', async () => {

@@ -2,5 +2,6 @@ dist
 coverage
 node_modules
 worker-configuration.d.ts
+worker-configuration.access.d.ts
 pnpm-lock.yaml
 .docx_review

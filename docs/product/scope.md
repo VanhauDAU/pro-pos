@@ -1,4 +1,14 @@
-# Scope giai đoạn đầu
+# Scope MVP
+
+## Trạng thái triển khai
+
+- Foundation, D1 schema, pricing/POS vertical slice: hoàn thành baseline và regression tests.
+- Identity/device: hoàn thành Owner/SUPER_ADMIN Access OTP qua auth bridge, Employee PIN và POS
+  activation.
+- SUPER_ADMIN portal: đã có màn hình quản lý store/Owner tối giản.
+- Owner portal và POS portal: backend/contract đã có một phần; UI cuối đang chờ reference.
+
+Theo dõi chi tiết tại [trạng thái và roadmap](../project/status-roadmap.md).
 
 ## Luồng pilot
 

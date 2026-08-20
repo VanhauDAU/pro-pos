@@ -1,6 +1,8 @@
 # Mục lục tài liệu
 
 - [Scope MVP](product/scope.md)
+- [Trạng thái và roadmap](project/status-roadmap.md)
+- [Kế hoạch Owner Operations Portal](product/owner-portal-plan.md)
 - [Đặc tả Pricing Engine](product/pricing.md)
 - [Kiến trúc hệ thống](architecture/system.md)
 - [OpenAPI](api/openapi.yaml)
@@ -13,5 +15,8 @@
 - Runbooks: [deploy](runbooks/deploy.md), [rollback](runbooks/rollback.md),
   [backup/restore](runbooks/backup-restore.md), [incident](runbooks/incident.md),
   [secret rotation](runbooks/secret-rotation.md)
-- ADR: [single Worker](adr/0001-single-worker-d1-r2.md),
-  [activation flow](adr/0002-owner-driven-device-activation.md)
+- ADR: [single Worker ban đầu](adr/0001-single-worker-d1-r2.md),
+  [activation flow](adr/0002-owner-driven-device-activation.md),
+  [Workers PBKDF2](adr/0003-workers-pbkdf2-node-crypto.md),
+  [portable PBKDF2](adr/0004-portable-pbkdf2-and-paid-cpu.md),
+  [Access OTP trên Workers Free](adr/0005-cloudflare-access-otp-free.md)

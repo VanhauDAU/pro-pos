@@ -1,0 +1,63 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "pro-pos-auth",
+  "main": "./src/access-worker/index.ts",
+  "compatibility_date": "2026-08-20",
+  "access": {
+    "dev": {
+      "aud": "pro-pos-auth-local",
+      "identity": {
+        "email": "system.admin@example.com",
+        "user_uuid": "access-system-admin-test",
+      },
+    },
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "pro-pos-local-db",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "./migrations",
+    },
+  ],
+  "vars": {
+    "ENVIRONMENT": "local",
+    "MAIN_APP_ORIGIN": "http://127.0.0.1:5173",
+  },
+  "env": {
+    "staging": {
+      "name": "pro-pos-auth-staging",
+      "vars": {
+        "ENVIRONMENT": "staging",
+        "MAIN_APP_ORIGIN": "https://pro-pos-staging.vanhau-laravel.workers.dev",
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "pro-pos-staging-db",
+          "database_id": "7ec0c566-2bf4-48b9-a9e6-fd5b75b6dc31",
+          "migrations_dir": "./migrations",
+        },
+      ],
+    },
+    "production": {
+      "name": "pro-pos-auth-production",
+      "vars": {
+        "ENVIRONMENT": "production",
+        "MAIN_APP_ORIGIN": "https://pro-pos-production.vanhau-laravel.workers.dev",
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "pro-pos-production-db",
+          "database_id": "651d7ec6-a2c8-4fa1-82d5-679b6e90c8ca",
+          "migrations_dir": "./migrations",
+        },
+      ],
+    },
+  },
+}

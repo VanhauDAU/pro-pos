@@ -6,6 +6,9 @@ export interface AccessAuthRequestRow {
   target_device_id: string | null;
   status: 'PENDING' | 'CONSUMED' | 'EXPIRED' | 'CANCELLED';
   expires_at: number;
+  access_email: string | null;
+  access_subject: string | null;
+  authorization_code_hash: string | null;
 }
 
 export interface AccessIdentityRow {
@@ -53,11 +56,41 @@ export class AccessAuthRepository {
   findRequestByHash(tokenHash: string) {
     return this.db
       .prepare(
-        `SELECT id, purpose, target_device_id, status, expires_at
+        `SELECT id, purpose, target_device_id, status, expires_at,
+                access_email, access_subject, authorization_code_hash
          FROM access_auth_requests WHERE token_hash = ? LIMIT 1`,
       )
       .bind(tokenHash)
       .first<AccessAuthRequestRow>();
+  }
+
+  findRequestById(id: string) {
+    return this.db
+      .prepare(
+        `SELECT id, purpose, target_device_id, status, expires_at,
+                access_email, access_subject, authorization_code_hash
+         FROM access_auth_requests WHERE id = ? LIMIT 1`,
+      )
+      .bind(id)
+      .first<AccessAuthRequestRow>();
+  }
+
+  async authorizeRequest(input: {
+    id: string;
+    email: string;
+    subject: string | null;
+    codeHash: string;
+    now: number;
+  }) {
+    return this.db
+      .prepare(
+        `UPDATE access_auth_requests
+         SET access_email = ?, access_subject = ?, authorization_code_hash = ?, authorized_at = ?
+         WHERE id = ? AND status = 'PENDING' AND expires_at > ?
+           AND authorization_code_hash IS NULL`,
+      )
+      .bind(input.email, input.subject, input.codeHash, input.now, input.id, input.now)
+      .run();
   }
 
   async consumeRequest(id: string, now: number) {

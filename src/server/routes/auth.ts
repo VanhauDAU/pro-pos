@@ -6,7 +6,6 @@ import {
   employeeLoginRequestSchema,
 } from '@contracts/auth';
 import { AppError } from '@server/lib/app-error';
-import { getAccessContext } from '@server/lib/cloudflare-access';
 import {
   clearCredentialCookie,
   readCredentialCookie,
@@ -50,23 +49,16 @@ authRoutes.post('/access/start', async (c) => {
 
 authRoutes.get('/access/complete', async (c) => {
   const rawState = readCredentialCookie(c, 'access');
-  const access = getAccessContext(c.executionCtx);
-  if (!rawState || !access) {
+  const rawCode = c.req.query('code');
+  if (!rawState || !rawCode) {
     clearCredentialCookie(c, 'access');
-    throw new AppError('ACCESS_AUTH_REQUIRED', 'Cloudflare Access chưa xác thực yêu cầu này.', 401);
-  }
-  const identity = await access.getIdentity();
-  if (!identity?.email) {
-    clearCredentialCookie(c, 'access');
-    throw new AppError('ACCESS_EMAIL_REQUIRED', 'Cloudflare Access không trả về email.', 403);
+    throw new AppError('ACCESS_AUTH_REQUIRED', 'Thiếu mã xác thực Access.', 401);
   }
 
+  const service = new AccessAuthService(c.env);
+  const failureRedirect = await service.failureRedirect(rawState);
   try {
-    const result = await new AccessAuthService(c.env).complete(
-      identity.user_uuid
-        ? { rawState, email: identity.email, subject: identity.user_uuid }
-        : { rawState, email: identity.email },
-    );
+    const result = await service.exchange({ rawState, rawCode });
     if (result.purpose === 'OWNER_LOGIN') {
       setCredentialCookie(c, 'session', result.rawSession, 7 * 24 * 60 * 60);
     } else if (result.purpose === 'PLATFORM_LOGIN') {
@@ -85,7 +77,7 @@ authRoutes.get('/access/complete', async (c) => {
     return c.redirect(result.redirectTo, 303);
   } catch (error) {
     clearCredentialCookie(c, 'access');
-    const target = new URL('/?tab=owner', c.req.url);
+    const target = new URL(failureRedirect, c.req.url);
     target.searchParams.set(
       'authError',
       error instanceof AppError ? error.code : 'ACCESS_AUTH_FAILED',

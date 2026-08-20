@@ -1,6 +1,11 @@
 import type { AccessAuthPurpose, AccessStartResponse } from '@contracts/auth';
 import { AppError } from '@server/lib/app-error';
-import { hashOpaqueToken, randomOpaqueToken } from '@server/lib/crypto';
+import {
+  hashExchangeCode,
+  hashOpaqueToken,
+  randomOpaqueToken,
+  safeEqualSecret,
+} from '@server/lib/crypto';
 import { requireSecret } from '@server/lib/env';
 import { AccessAuthRepository } from '@server/repositories/access-auth-repository';
 import { AuthRepository } from '@server/repositories/auth-repository';
@@ -52,8 +57,9 @@ export class AccessAuthService {
 
     const now = Date.now();
     const rawState = randomOpaqueToken();
+    const requestId = crypto.randomUUID();
     await this.repository.createRequest({
-      id: crypto.randomUUID(),
+      id: requestId,
       tokenHash: await hashOpaqueToken(rawState, this.authPepper),
       purpose: input.purpose,
       targetDeviceId: input.targetDeviceId ?? null,
@@ -63,10 +69,53 @@ export class AccessAuthService {
     return {
       rawState,
       response: {
-        loginUrl: '/api/v1/auth/access/complete',
+        loginUrl: `${this.env.ACCESS_BRIDGE_URL}/complete?request=${encodeURIComponent(requestId)}`,
         expiresInSeconds: ACCESS_REQUEST_SECONDS,
       },
     };
+  }
+
+  async exchange(input: { rawState: string; rawCode: string }) {
+    const request = await this.repository.findRequestByHash(
+      await hashOpaqueToken(input.rawState, this.authPepper),
+    );
+    if (!request || request.status !== 'PENDING') {
+      throw new AppError('ACCESS_REQUEST_REQUIRED', 'Yêu cầu đăng nhập không hợp lệ.', 401);
+    }
+    if (request.expires_at <= Date.now()) {
+      await this.repository.expireRequest(request.id);
+      throw new AppError('ACCESS_REQUEST_EXPIRED', 'Yêu cầu đăng nhập đã hết hạn.', 401);
+    }
+    if (!request.authorization_code_hash || !request.access_email) {
+      throw new AppError(
+        'ACCESS_AUTH_REQUIRED',
+        'Cloudflare Access chưa xác thực yêu cầu này.',
+        401,
+      );
+    }
+    if (
+      !(await safeEqualSecret(
+        await hashExchangeCode(input.rawCode),
+        request.authorization_code_hash,
+      ))
+    ) {
+      throw new AppError('ACCESS_CODE_INVALID', 'Mã xác thực không hợp lệ.', 401);
+    }
+    const result = await this.complete({
+      rawState: input.rawState,
+      email: request.access_email,
+      ...(request.access_subject ? { subject: request.access_subject } : {}),
+    });
+    return result;
+  }
+
+  async failureRedirect(rawState: string): Promise<string> {
+    const request = await this.repository.findRequestByHash(
+      await hashOpaqueToken(rawState, this.authPepper),
+    );
+    if (request?.purpose === 'PLATFORM_LOGIN') return '/platform/login';
+    if (request?.purpose === 'DEVICE_ACTIVATION') return '/device-activation';
+    return '/?tab=owner';
   }
 
   async complete(input: {

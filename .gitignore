@@ -8,6 +8,7 @@ playwright-report/
 test-results/
 *.cpuprofile
 worker-configuration.d.ts
+worker-configuration.access.d.ts
 .wrangler/
 .vite/
 .dev.vars

@@ -12,12 +12,17 @@ paths:
         '200': { description: Context resolved }
   /auth/access/start:
     post:
-      summary: Create one-time Access state and return the protected callback URL
+      summary: Create one-time Access state and return the protected auth bridge URL
       responses:
         '200': { description: Access request created }
   /auth/access/complete:
     get:
-      summary: Complete a Cloudflare Access email OTP flow and redirect
+      summary: Exchange a one-time auth bridge code and redirect
+      parameters:
+        - in: query
+          name: code
+          required: true
+          schema: { type: string }
       responses:
         '303': { description: Session, activation grant or device credential issued }
         '401': { description: Access authentication or state missing }

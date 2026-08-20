@@ -1,6 +1,7 @@
 import { MailOutlined } from '@ant-design/icons';
 import { Alert, Button, Typography } from 'antd';
 import { useState } from 'react';
+import { useSearchParams } from 'react-router';
 
 import type { AccessStartResponse } from '@contracts/auth';
 
@@ -8,9 +9,21 @@ import { ApiError, jsonRequest } from '@client/lib/api';
 
 import { AuthLayout } from './AuthLayout';
 
+function accessErrorMessage(code: string | null) {
+  if (!code) return null;
+  if (code === 'ACCESS_IDENTITY_DENIED') return 'Email chưa được cấp quyền SUPER_ADMIN.';
+  if (code === 'ACCESS_REQUEST_EXPIRED') {
+    return 'Yêu cầu đăng nhập đã hết hạn. Vui lòng thử lại.';
+  }
+  return 'Không thể xác thực email qua Cloudflare Access. Vui lòng thử lại.';
+}
+
 export function PlatformAccessPage() {
+  const [searchParams] = useSearchParams();
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(() =>
+    accessErrorMessage(searchParams.get('authError')),
+  );
 
   const login = async () => {
     setSubmitting(true);

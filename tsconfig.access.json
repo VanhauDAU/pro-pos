@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "tsBuildInfoFile": "./node_modules/.cache/tsconfig.access.tsbuildinfo",
+    "target": "ES2023",
+    "lib": ["ES2023", "WebWorker"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["@cloudflare/workers-types", "node"],
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "paths": {
+      "@server/*": ["./src/server/*"],
+      "@contracts/*": ["./src/contracts/*"]
+    }
+  },
+  "include": [
+    "src/access-worker",
+    "src/server/lib/crypto.ts",
+    "src/server/repositories/access-auth-repository.ts",
+    "src/contracts/auth.ts",
+    "worker-configuration.access.d.ts"
+  ]
+}

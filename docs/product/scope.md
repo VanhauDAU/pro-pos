@@ -9,7 +9,7 @@ bàn → tính giờ/thêm món → thanh toán → phiếu bán hàng`
 
 - Một `store_id` là một cửa hàng; không có chi nhánh.
 - SUPER_ADMIN tạo/khóa store và cấp Owner.
-- Owner login không yêu cầu device activation.
+- Owner/SUPER_ADMIN login bằng Cloudflare Access email OTP; Owner không yêu cầu device activation.
 - Employee PIN chỉ trên POS device `ACTIVE`.
 - Nhân viên, permissions, khu vực, bàn, đơn vị, danh mục, sản phẩm và giá giờ.
 - Mở/chuyển/hủy bàn, pause/resume, thêm món, quote và checkout.

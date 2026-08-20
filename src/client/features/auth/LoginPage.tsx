@@ -1,6 +1,6 @@
 import {
   DesktopOutlined,
-  LockOutlined,
+  MailOutlined,
   SafetyCertificateOutlined,
   UserOutlined,
 } from '@ant-design/icons';
@@ -9,16 +9,11 @@ import { Alert, Button, Form, Input, Spin, Tabs, Typography } from 'antd';
 import { useMemo, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router';
 
-import type { AuthContextResponse, LoginResponse } from '@contracts/auth';
+import type { AccessStartResponse, AuthContextResponse, LoginResponse } from '@contracts/auth';
 
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 
 import { AuthLayout } from './AuthLayout';
-
-interface OwnerFormValues {
-  username: string;
-  password: string;
-}
 
 interface EmployeeFormValues {
   username: string;
@@ -30,6 +25,14 @@ function errorMessage(error: unknown) {
   return 'Không thể đăng nhập. Vui lòng thử lại.';
 }
 
+function accessErrorMessage(code: string | null) {
+  if (!code) return null;
+  if (code === 'STORE_LOCKED') return 'Cửa hàng đang bị khóa.';
+  if (code === 'ACCESS_IDENTITY_DENIED') return 'Email chưa được cấp quyền sử dụng Pro POS.';
+  if (code === 'ACCESS_REQUEST_EXPIRED') return 'Yêu cầu đăng nhập đã hết hạn. Vui lòng thử lại.';
+  return 'Không thể xác thực email qua Cloudflare Access. Vui lòng thử lại.';
+}
+
 export function LoginPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -38,7 +41,9 @@ export function LoginPage() {
     searchParams.get('tab') === 'owner' ? 'owner' : 'employee',
   );
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(() =>
+    accessErrorMessage(searchParams.get('authError')),
+  );
   const context = useQuery({
     queryKey: ['auth-context'],
     queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
@@ -52,16 +57,16 @@ export function LoginPage() {
     setError(null);
   };
 
-  const ownerLogin = async (values: OwnerFormValues) => {
+  const ownerLogin = async () => {
     setSubmitting(true);
     setError(null);
     try {
-      await jsonRequest<LoginResponse>('/api/v1/auth/owner/login', values);
-      await queryClient.invalidateQueries({ queryKey: ['auth-context'] });
-      navigate('/owner', { replace: true });
+      const response = await jsonRequest<AccessStartResponse>('/api/v1/auth/access/start', {
+        purpose: 'OWNER_LOGIN',
+      });
+      window.location.assign(response.loginUrl);
     } catch (loginError) {
       setError(errorMessage(loginError));
-    } finally {
       setSubmitting(false);
     }
   };
@@ -86,36 +91,27 @@ export function LoginPage() {
         key: 'owner',
         label: 'Chủ cửa hàng',
         children: (
-          <Form<OwnerFormValues> layout="vertical" requiredMark={false} onFinish={ownerLogin}>
-            <Form.Item
-              name="username"
-              rules={[{ required: true, message: 'Vui lòng nhập tên đăng nhập.' }]}
+          <div className="owner-otp-login">
+            <Alert
+              type="info"
+              showIcon
+              title="Đăng nhập bảo mật bằng email OTP"
+              description="Cloudflare Access sẽ gửi mã dùng một lần đến email đã được cấp quyền. Pro POS không lưu mật khẩu Owner."
+            />
+            <Button
+              type="primary"
+              size="large"
+              block
+              icon={<MailOutlined />}
+              loading={submitting}
+              onClick={ownerLogin}
             >
-              <Input
-                size="large"
-                autoComplete="username"
-                prefix={<UserOutlined />}
-                placeholder="Tên đăng nhập"
-              />
-            </Form.Item>
-            <Form.Item
-              name="password"
-              rules={[{ required: true, message: 'Vui lòng nhập mật khẩu.' }]}
-            >
-              <Input.Password
-                size="large"
-                autoComplete="current-password"
-                prefix={<LockOutlined />}
-                placeholder="Mật khẩu"
-              />
-            </Form.Item>
-            <Button type="primary" htmlType="submit" size="large" block loading={submitting}>
-              Đăng nhập
+              Nhận mã OTP qua email
             </Button>
             <Typography.Paragraph className="login-help" type="secondary">
               Owner có thể đăng nhập trên điện thoại hoặc máy tính mà không cần thiết lập máy POS.
             </Typography.Paragraph>
-          </Form>
+          </div>
         ),
       },
       {

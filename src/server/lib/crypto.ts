@@ -1,6 +1,4 @@
-import { pbkdf2 } from '@noble/hashes/pbkdf2.js';
-import { sha256 } from '@noble/hashes/sha2.js';
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 
 const encoder = new TextEncoder();
 
@@ -10,13 +8,6 @@ function bytesToBase64Url(bytes: Uint8Array): string {
     binary += String.fromCharCode(byte);
   }
   return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '');
-}
-
-function base64UrlToBytes(value: string): Uint8Array {
-  const normalized = value.replaceAll('-', '+').replaceAll('_', '/');
-  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
-  const binary = atob(padded);
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }
 
 export function randomOpaqueToken(byteLength = 32): string {
@@ -56,41 +47,39 @@ export async function deriveCsrfToken(credential: string, pepper: string): Promi
   return bytesToBase64Url(await hmac(`csrf:${credential}`, pepper));
 }
 
-export async function derivePasswordDigest(input: {
-  secret: string;
+export async function derivePinDigest(input: {
+  pin: string;
   pepper: string;
   salt: string;
-  iterations: number;
+  userId: string;
+  storeId: string;
 }): Promise<string> {
-  const saltBytes = base64UrlToBytes(input.salt);
-  const password = encoder.encode(`${input.secret}\u0000${input.pepper}`);
-  const digest = pbkdf2(sha256, password, saltBytes, {
-    c: input.iterations,
-    dkLen: 32,
-  });
-  return bytesToBase64Url(digest);
+  const value = ['employee-pin', 'v1', input.storeId, input.userId, input.salt, input.pin].join(
+    '\u0000',
+  );
+  return bytesToBase64Url(await hmac(value, input.pepper));
 }
 
-export async function verifyPasswordDigest(input: {
-  candidate: string;
+export async function verifyPinDigest(input: {
+  pin: string;
   pepper: string;
   salt: string;
-  iterations: number;
+  userId: string;
+  storeId: string;
   expectedDigest: string;
 }): Promise<boolean> {
-  const actual = await derivePasswordDigest({
-    secret: input.candidate,
+  const actual = await derivePinDigest({
+    pin: input.pin,
     pepper: input.pepper,
     salt: input.salt,
-    iterations: input.iterations,
+    userId: input.userId,
+    storeId: input.storeId,
   });
-  const actualBytes = base64UrlToBytes(actual);
-  const expectedBytes = base64UrlToBytes(input.expectedDigest);
-  return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
+  return safeEqualSecret(actual, input.expectedDigest);
 }
 
 export function safeEqualSecret(left: string, right: string): boolean {
-  const leftBytes = new TextEncoder().encode(left);
-  const rightBytes = new TextEncoder().encode(right);
-  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
+  const leftDigest = createHash('sha256').update(left).digest();
+  const rightDigest = createHash('sha256').update(right).digest();
+  return timingSafeEqual(leftDigest, rightDigest);
 }

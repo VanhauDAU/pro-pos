@@ -10,4 +10,4 @@
 - Server-authoritative pricing and idempotent POS commands.
 - Unit/integration test foundations and CI workflow.
 - Responsive Pro POS authentication UI using the approved layout and `#0D7CFF` brand color.
-- Owner username/password login, Employee username/PIN login, and two-step POS activation UI.
+- Owner Cloudflare Access email OTP, Employee username/PIN login, and two-step POS activation UI.

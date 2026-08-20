@@ -1,29 +1,33 @@
 import { describe, expect, it } from 'vitest';
 
-import { derivePasswordDigest, randomSalt } from '@server/lib/crypto';
+import { derivePinDigest, verifyPinDigest } from '@server/lib/crypto';
 
-describe('Password credential crypto', () => {
-  it('matches an independent PBKDF2-HMAC-SHA256 test vector', async () => {
+describe('Employee PIN credential crypto', () => {
+  it('matches an independent HMAC-SHA256 test vector', async () => {
     await expect(
-      derivePasswordDigest({
-        secret: 'password',
-        pepper: 'pepper',
-        salt: 'c2FsdA',
-        iterations: 1_000,
+      derivePinDigest({
+        pin: '1234',
+        pepper: 'pepper-1',
+        salt: 'salt-1',
+        userId: 'user-1',
+        storeId: 'store-1',
       }),
-    ).resolves.toBe('JAa5pr_m0FXbO6AooDSNfIDHf-rI16G4NHqtavJIWlQ');
+    ).resolves.toBe('EXsM2Zcsr-WP9rLHFqD6MIhTa8mX6eopDic_cgTqiUA');
   });
 
-  it('supports a PBKDF2 work factor above the Workers Web Crypto limit', async () => {
-    const salt = randomSalt();
-    const iterations = 100_001;
-    const digest = await derivePasswordDigest({
-      secret: 'correct horse battery staple',
+  it('verifies the correct PIN and rejects a wrong PIN', async () => {
+    const input = {
       pepper: 'test-auth-pepper-at-least-32-bytes-long',
-      salt,
-      iterations,
+      salt: 'test-salt',
+      userId: 'employee-1',
+      storeId: 'store-1',
+    };
+    const expectedDigest = await derivePinDigest({
+      ...input,
+      pin: '1234',
     });
 
-    expect(digest).toMatch(/^[A-Za-z0-9_-]{43}$/u);
-  }, 10_000);
+    await expect(verifyPinDigest({ ...input, pin: '1234', expectedDigest })).resolves.toBe(true);
+    await expect(verifyPinDigest({ ...input, pin: '9999', expectedDigest })).resolves.toBe(false);
+  });
 });

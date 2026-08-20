@@ -1,13 +1,3 @@
-export interface SuperAdminCredentialRow {
-  user_id: string;
-  display_name: string;
-  user_status: 'ACTIVE' | 'DISABLED';
-  work_factor: number;
-  salt: string;
-  digest: string;
-  credential_version: number;
-}
-
 export class PlatformRepository {
   constructor(private readonly db: D1Database) {}
 
@@ -18,47 +8,23 @@ export class PlatformRepository {
     return row?.found === 1;
   }
 
-  async createSuperAdmin(input: {
-    id: string;
-    username: string;
-    displayName: string;
-    workFactor: number;
-    salt: string;
-    digest: string;
-    now: number;
-  }) {
+  async createSuperAdmin(input: { id: string; email: string; displayName: string; now: number }) {
     await this.db.batch([
       this.db
         .prepare(
           `INSERT INTO users (
-            id, platform_role, username, display_name, status, created_at, updated_at
-          ) VALUES (?, 'SUPER_ADMIN', ?, ?, 'ACTIVE', ?, ?)`,
+            id, platform_role, username, email, display_name, status, created_at, updated_at
+          ) VALUES (?, 'SUPER_ADMIN', ?, ?, ?, 'ACTIVE', ?, ?)`,
         )
-        .bind(input.id, input.username, input.displayName, input.now, input.now),
+        .bind(input.id, input.email, input.email, input.displayName, input.now, input.now),
       this.db
         .prepare(
-          `INSERT INTO password_credentials (
-            user_id, algorithm, work_factor, salt, digest, pepper_version,
-            credential_version, updated_at
-          ) VALUES (?, 'PBKDF2-HMAC-SHA256', ?, ?, ?, 1, 1, ?)`,
+          `INSERT INTO access_identities (
+            user_id, provider, email, credential_version, created_at, updated_at
+          ) VALUES (?, 'CLOUDFLARE_ACCESS', ?, 1, ?, ?)`,
         )
-        .bind(input.id, input.workFactor, input.salt, input.digest, input.now),
+        .bind(input.id, input.email, input.now, input.now),
     ]);
-  }
-
-  findSuperAdminByUsername(username: string) {
-    return this.db
-      .prepare(
-        `SELECT
-          u.id AS user_id, u.display_name, u.status AS user_status,
-          pc.work_factor, pc.salt, pc.digest, pc.credential_version
-        FROM users u
-        JOIN password_credentials pc ON pc.user_id = u.id
-        WHERE u.username = ? COLLATE NOCASE AND u.platform_role = 'SUPER_ADMIN'
-        LIMIT 1`,
-      )
-      .bind(username)
-      .first<SuperAdminCredentialRow>();
   }
 
   async createStoreWithOwner(input: {
@@ -69,10 +35,7 @@ export class PlatformRepository {
     ownerUserId: string;
     ownerMembershipId: string;
     ownerDisplayName: string;
-    ownerUsername: string;
-    workFactor: number;
-    salt: string;
-    digest: string;
+    ownerEmail: string;
     now: number;
   }) {
     const employeePermissions = [
@@ -125,18 +88,24 @@ export class PlatformRepository {
       this.db
         .prepare(
           `INSERT INTO users (
-            id, username, display_name, status, must_change_password, created_at, updated_at
-          ) VALUES (?, ?, ?, 'ACTIVE', 1, ?, ?)`,
+            id, username, email, display_name, status, must_change_password, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, 'ACTIVE', 0, ?, ?)`,
         )
-        .bind(input.ownerUserId, input.ownerUsername, input.ownerDisplayName, input.now, input.now),
+        .bind(
+          input.ownerUserId,
+          input.ownerEmail,
+          input.ownerEmail,
+          input.ownerDisplayName,
+          input.now,
+          input.now,
+        ),
       this.db
         .prepare(
-          `INSERT INTO password_credentials (
-            user_id, algorithm, work_factor, salt, digest, pepper_version,
-            credential_version, updated_at
-          ) VALUES (?, 'PBKDF2-HMAC-SHA256', ?, ?, ?, 1, 1, ?)`,
+          `INSERT INTO access_identities (
+            user_id, provider, email, credential_version, created_at, updated_at
+          ) VALUES (?, 'CLOUDFLARE_ACCESS', ?, 1, ?, ?)`,
         )
-        .bind(input.ownerUserId, input.workFactor, input.salt, input.digest, input.now),
+        .bind(input.ownerUserId, input.ownerEmail, input.now, input.now),
       this.db
         .prepare(
           `INSERT INTO store_memberships (

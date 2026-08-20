@@ -22,57 +22,6 @@ function parseEnvFile(content) {
   );
 }
 
-function readHidden(label) {
-  return new Promise((resolve, reject) => {
-    if (!stdin.isTTY || !stdout.isTTY || typeof stdin.setRawMode !== 'function') {
-      reject(new Error('A TTY is required for hidden password input.'));
-      return;
-    }
-
-    let value = '';
-    stdout.write(label);
-    stdin.setRawMode(true);
-    stdin.setEncoding('utf8');
-    stdin.resume();
-
-    const cleanup = () => {
-      stdin.removeListener('data', onData);
-      stdin.setRawMode(false);
-      stdin.pause();
-    };
-
-    const onData = (chunk) => {
-      for (const character of chunk) {
-        if (character === '\u0003') {
-          cleanup();
-          stdout.write('\n');
-          reject(new Error('Cancelled.'));
-          return;
-        }
-        if (character === '\r' || character === '\n') {
-          cleanup();
-          stdout.write('\n');
-          resolve(value);
-          return;
-        }
-        if (character === '\u007f') {
-          if (value.length > 0) {
-            value = value.slice(0, -1);
-            stdout.write('\b \b');
-          }
-          continue;
-        }
-        if (character >= ' ') {
-          value += character;
-          stdout.write('*');
-        }
-      }
-    };
-
-    stdin.on('data', onData);
-  });
-}
-
 const secretsPath = `.env.${environment}.secrets`;
 const secrets = parseEnvFile(await readFile(secretsPath, 'utf8'));
 const bootstrapSecret = secrets.SYSTEM_BOOTSTRAP_SECRET;
@@ -88,20 +37,14 @@ const defaultUrl =
 const baseUrl = process.env.PRO_POS_URL ?? defaultUrl;
 const origin = new URL(baseUrl).origin;
 const prompt = createInterface({ input: stdin, output: stdout });
-const username = (await prompt.question('SUPER_ADMIN username: ')).trim();
+const email = (await prompt.question('SUPER_ADMIN email allowed by Cloudflare Access: '))
+  .trim()
+  .toLowerCase();
 const displayName = (await prompt.question('Display name: ')).trim();
 prompt.close();
-const password = await readHidden('Password (minimum 12 characters): ');
-const confirmation = await readHidden('Confirm password: ');
 
-if (username.length < 3 || !displayName) {
-  throw new Error('Username or display name is invalid.');
-}
-if (password.length < 12) {
-  throw new Error('Password must contain at least 12 characters.');
-}
-if (password !== confirmation) {
-  throw new Error('Password confirmation does not match.');
+if (!email.includes('@') || !displayName) {
+  throw new Error('Email or display name is invalid.');
 }
 
 const response = await fetch(`${origin}/api/v1/platform/bootstrap`, {
@@ -111,7 +54,7 @@ const response = await fetch(`${origin}/api/v1/platform/bootstrap`, {
     'Content-Type': 'application/json',
     'X-Bootstrap-Secret': bootstrapSecret,
   },
-  body: JSON.stringify({ username, displayName, password }),
+  body: JSON.stringify({ email, displayName }),
 });
 const payload = await response.json();
 
@@ -121,4 +64,5 @@ if (!response.ok) {
   throw new Error(`${code}: ${message}`);
 }
 
-console.log(`SUPER_ADMIN created successfully in ${environment}.`);
+console.log(`SUPER_ADMIN ${email} created successfully in ${environment}.`);
+console.log('Add this exact email to the Cloudflare Access allow policy before signing in.');

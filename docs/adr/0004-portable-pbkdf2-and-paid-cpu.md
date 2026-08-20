@@ -1,6 +1,6 @@
 # ADR-0004: Portable PBKDF2 và Workers Paid cho auth
 
-Status: Accepted
+Status: Superseded by ADR-0005
 
 Supersedes: ADR-0003
 

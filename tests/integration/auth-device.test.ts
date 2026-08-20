@@ -4,24 +4,23 @@ import { beforeAll, describe, expect, it } from 'vitest';
 
 import { PlatformService } from '@server/services/platform-service';
 import { StaffService } from '@server/services/staff-service';
+import { AccessAuthService } from '@server/services/access-auth-service';
+import { AuthService } from '@server/services/auth-service';
 
 const ORIGIN = 'https://pro-pos.test';
-const OWNER_USERNAME = 'owner.test';
-const OWNER_PASSWORD = 'owner-password-long-enough';
+const OWNER_EMAIL = 'owner.test@example.com';
 
 async function seedStore() {
   const platform = new PlatformService(env);
   await platform.bootstrap({
     bootstrapSecret: env.SYSTEM_BOOTSTRAP_SECRET!,
-    username: 'system.admin',
+    email: 'system.admin@example.com',
     displayName: 'System Admin',
-    password: 'system-admin-password-long-enough',
   });
   return platform.createStore({
     name: 'Pilot Store',
     ownerDisplayName: 'Pilot Owner',
-    ownerUsername: OWNER_USERNAME,
-    ownerPassword: OWNER_PASSWORD,
+    ownerEmail: OWNER_EMAIL,
   });
 }
 
@@ -36,21 +35,97 @@ async function jsonData<T>(response: Response) {
   return payload.data;
 }
 
+async function completeAccess(
+  purpose: 'OWNER_LOGIN' | 'PLATFORM_LOGIN' | 'DEVICE_ACTIVATION',
+  email = OWNER_EMAIL,
+) {
+  const start = await SELF.fetch(`${ORIGIN}/api/v1/auth/access/start`, {
+    method: 'POST',
+    headers: { Origin: ORIGIN, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ purpose }),
+  });
+  expect(start.status).toBe(200);
+  expect(start.headers.get('Set-Cookie')).toContain('HttpOnly');
+  expect(start.headers.get('Set-Cookie')).toContain('Secure');
+  expect(start.headers.get('Set-Cookie')).toContain('SameSite=Lax');
+  expect(start.headers.get('Set-Cookie')).toContain('Path=/');
+  expect(start.headers.get('Set-Cookie')).not.toContain('Domain=');
+  const accessCookie = cookieValue(start, '__Host-propos-access')!;
+  const rawState = accessCookie.slice(accessCookie.indexOf('=') + 1);
+  return new AccessAuthService(env).complete({
+    rawState,
+    email,
+    subject: `access-${email}`,
+  });
+}
+
 describe('Owner and POS activation invariants', () => {
   beforeAll(async () => {
     await seedStore();
   });
 
-  it('allows Owner login on a fresh device without creating a POS device', async () => {
-    const response = await SELF.fetch(`${ORIGIN}/api/v1/auth/owner/login`, {
-      method: 'POST',
-      headers: { Origin: ORIGIN, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: OWNER_USERNAME, password: OWNER_PASSWORD }),
+  it('rejects an Access callback when Cloudflare did not authenticate the request', async () => {
+    const response = await SELF.fetch(`${ORIGIN}/api/v1/auth/access/complete`, {
+      redirect: 'manual',
     });
+    expect(response.status).toBe(401);
+    const payload = (await response.json()) as { error: { code: string } };
+    expect(payload.error.code).toBe('ACCESS_AUTH_REQUIRED');
+  });
 
-    expect(response.status).toBe(200);
-    expect(response.headers.get('Set-Cookie')).toContain('__Host-propos-session=');
-    expect(response.headers.get('Set-Cookie')).not.toContain('__Host-propos-device=');
+  it('creates a SUPER_ADMIN session only for the bootstrapped Access email', async () => {
+    const result = await completeAccess('PLATFORM_LOGIN', 'system.admin@example.com');
+    expect(result.purpose).toBe('PLATFORM_LOGIN');
+    if (result.purpose !== 'PLATFORM_LOGIN') throw new Error('Expected platform session.');
+    const context = await new AuthService(env).context(result.rawSession);
+    expect(context.actor?.kind).toBe('SUPER_ADMIN');
+  });
+
+  it('lets SUPER_ADMIN create and lock a store through the protected API', async () => {
+    const result = await completeAccess('PLATFORM_LOGIN', 'system.admin@example.com');
+    if (result.purpose !== 'PLATFORM_LOGIN') throw new Error('Expected platform session.');
+    const context = await new AuthService(env).context(result.rawSession);
+    const sessionCookie = `__Host-propos-session=${result.rawSession}`;
+
+    const created = await SELF.fetch(`${ORIGIN}/api/v1/platform/stores`, {
+      method: 'POST',
+      headers: {
+        Origin: ORIGIN,
+        Cookie: sessionCookie,
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': context.csrfToken!,
+      },
+      body: JSON.stringify({
+        name: 'Store From Platform UI',
+        ownerDisplayName: 'Owner From UI',
+        ownerEmail: 'owner.ui@example.com',
+      }),
+    });
+    expect(created.status).toBe(201);
+    const store = await jsonData<{ storeId: string }>(created);
+
+    const locked = await SELF.fetch(`${ORIGIN}/api/v1/platform/stores/${store.storeId}/status`, {
+      method: 'PATCH',
+      headers: {
+        Origin: ORIGIN,
+        Cookie: sessionCookie,
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': context.csrfToken!,
+      },
+      body: JSON.stringify({ status: 'LOCKED' }),
+    });
+    expect(locked.status).toBe(200);
+    const row = await env.DB.prepare('SELECT status FROM stores WHERE id = ?')
+      .bind(store.storeId)
+      .first<{ status: string }>();
+    expect(row?.status).toBe('LOCKED');
+  });
+
+  it('allows Owner login on a fresh device without creating a POS device', async () => {
+    const response = await completeAccess('OWNER_LOGIN');
+
+    expect(response.purpose).toBe('OWNER_LOGIN');
+    expect(response).toHaveProperty('rawSession');
     const count = await env.DB.prepare('SELECT COUNT(*) AS total FROM devices').first<{
       total: number;
     }>();
@@ -58,20 +133,13 @@ describe('Owner and POS activation invariants', () => {
   });
 
   it('activates a POS only after dedicated Owner authorization', async () => {
-    const authorize = await SELF.fetch(`${ORIGIN}/api/v1/device-activations/authorize`, {
-      method: 'POST',
-      headers: { Origin: ORIGIN, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: OWNER_USERNAME, password: OWNER_PASSWORD }),
+    const authorize = await completeAccess('DEVICE_ACTIVATION');
+    if (authorize.purpose !== 'DEVICE_ACTIVATION') throw new Error('Expected activation grant.');
+    const grantCookie = `__Host-propos-activation=${authorize.rawGrant}`;
+    const authorizationResponse = await SELF.fetch(`${ORIGIN}/api/v1/device-activations/context`, {
+      headers: { Cookie: grantCookie! },
     });
-    expect(authorize.status).toBe(200);
-    const grantCookie = cookieValue(authorize, '__Host-propos-activation');
-    expect(grantCookie).not.toBeNull();
-    expect(authorize.headers.get('Set-Cookie')).toContain('HttpOnly');
-    expect(authorize.headers.get('Set-Cookie')).toContain('Secure');
-    expect(authorize.headers.get('Set-Cookie')).toContain('SameSite=Lax');
-    expect(authorize.headers.get('Set-Cookie')).toContain('Path=/');
-    expect(authorize.headers.get('Set-Cookie')).not.toContain('Domain=');
-    const authorization = await jsonData<{ csrfToken: string }>(authorize);
+    const authorization = await jsonData<{ csrfToken: string }>(authorizationResponse);
 
     const confirm = await SELF.fetch(`${ORIGIN}/api/v1/device-activations/confirm`, {
       method: 'POST',
@@ -120,13 +188,13 @@ describe('Owner and POS activation invariants', () => {
       permissionKeys: [],
     });
 
-    const authorize = await SELF.fetch(`${ORIGIN}/api/v1/device-activations/authorize`, {
-      method: 'POST',
-      headers: { Origin: ORIGIN, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: OWNER_USERNAME, password: OWNER_PASSWORD }),
+    const authorize = await completeAccess('DEVICE_ACTIVATION');
+    if (authorize.purpose !== 'DEVICE_ACTIVATION') throw new Error('Expected activation grant.');
+    const grantCookie = `__Host-propos-activation=${authorize.rawGrant}`;
+    const authorizationResponse = await SELF.fetch(`${ORIGIN}/api/v1/device-activations/context`, {
+      headers: { Cookie: grantCookie! },
     });
-    const grantCookie = cookieValue(authorize, '__Host-propos-activation');
-    const authorization = await jsonData<{ csrfToken: string }>(authorize);
+    const authorization = await jsonData<{ csrfToken: string }>(authorizationResponse);
     const confirm = await SELF.fetch(`${ORIGIN}/api/v1/device-activations/confirm`, {
       method: 'POST',
       headers: {

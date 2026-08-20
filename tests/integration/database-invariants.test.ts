@@ -7,12 +7,16 @@ describe('D1 schema invariants', () => {
       `SELECT name, type FROM sqlite_master
        WHERE name IN (
          'stores', 'activation_grants', 'service_tables', 'orders',
+         'access_identities', 'access_auth_requests', 'pin_verifiers',
          'trg_open_table_validate', 'trg_checkout_validate'
        ) ORDER BY name`,
     ).all<{ name: string; type: string }>();
     expect(objects.results.map((row) => row.name)).toEqual([
+      'access_auth_requests',
+      'access_identities',
       'activation_grants',
       'orders',
+      'pin_verifiers',
       'service_tables',
       'stores',
       'trg_checkout_validate',

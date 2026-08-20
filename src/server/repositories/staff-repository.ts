@@ -10,7 +10,6 @@ export class StaffRepository {
     displayName: string;
     username: string;
     permissionKeys: string[];
-    workFactor: number;
     salt: string;
     digest: string;
     now: number;
@@ -52,12 +51,12 @@ export class StaffRepository {
         .bind(input.membershipId, input.storeId, input.userId, input.roleId, input.now, input.now),
       this.db
         .prepare(
-          `INSERT INTO pin_credentials (
-            user_id, store_id, algorithm, work_factor, salt, digest,
+          `INSERT INTO pin_verifiers (
+            user_id, store_id, algorithm, salt, digest,
             pepper_version, credential_version, updated_at
-          ) VALUES (?, ?, 'PBKDF2-HMAC-SHA256', ?, ?, ?, 1, 1, ?)`,
+          ) VALUES (?, ?, 'HMAC-SHA256-PEPPERED', ?, ?, 1, 1, ?)`,
         )
-        .bind(input.userId, input.storeId, input.workFactor, input.salt, input.digest, input.now),
+        .bind(input.userId, input.storeId, input.salt, input.digest, input.now),
     ];
     await this.db.batch(statements);
   }
@@ -114,7 +113,6 @@ export class StaffRepository {
   async resetPin(input: {
     storeId: string;
     userId: string;
-    workFactor: number;
     salt: string;
     digest: string;
     now: number;
@@ -122,12 +120,12 @@ export class StaffRepository {
     return this.db.batch([
       this.db
         .prepare(
-          `UPDATE pin_credentials
-           SET work_factor = ?, salt = ?, digest = ?,
+          `UPDATE pin_verifiers
+           SET salt = ?, digest = ?,
                credential_version = credential_version + 1, updated_at = ?
            WHERE store_id = ? AND user_id = ?`,
         )
-        .bind(input.workFactor, input.salt, input.digest, input.now, input.storeId, input.userId),
+        .bind(input.salt, input.digest, input.now, input.storeId, input.userId),
       this.db
         .prepare(
           `UPDATE auth_sessions SET status = 'REVOKED', revoked_at = ?
@@ -138,7 +136,9 @@ export class StaffRepository {
       this.db
         .prepare(
           `DELETE FROM login_attempts WHERE scope = 'EMPLOYEE_PIN'
-             AND subject_key LIKE 'pin:%:' || ?`,
+             AND subject_key LIKE 'pin:%:' || (
+               SELECT username FROM users WHERE id = ?
+             )`,
         )
         .bind(input.userId),
     ]);

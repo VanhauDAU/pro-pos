@@ -11,6 +11,7 @@
 
 ## Bootstrap lần đầu
 
-Sau khi staging Worker, D1, R2 và secrets đã sẵn sàng, chạy `pnpm bootstrap:staging`. CLI đọc
-`SYSTEM_BOOTSTRAP_SECRET` từ file ignored, hỏi username/display name và nhập password ẩn. Endpoint
-chỉ cho tạo SUPER_ADMIN khi hệ thống chưa có tài khoản platform.
+Sau khi staging Worker, D1, R2, secrets và Access application đã sẵn sàng, chạy
+`pnpm bootstrap:staging`. CLI đọc `SYSTEM_BOOTSTRAP_SECRET` từ file ignored và hỏi email/display
+name. Email phải trùng exact-email Allow policy của Cloudflare Access. Endpoint chỉ tạo SUPER_ADMIN
+khi hệ thống chưa có tài khoản platform; Pro POS không nhận password.

@@ -7,25 +7,18 @@ import { AppError } from '@server/lib/app-error';
 import {
   deriveCsrfToken,
   deriveDeterministicSecret,
-  derivePasswordDigest,
   hashOpaqueToken,
   randomOpaqueToken,
-  randomSalt,
-  verifyPasswordDigest,
+  verifyPinDigest,
 } from '@server/lib/crypto';
 import { requireSecret } from '@server/lib/env';
-import {
-  AuthRepository,
-  type DeviceContextRow,
-  type PasswordIdentityRow,
-} from '@server/repositories/auth-repository';
+import { AuthRepository, type DeviceContextRow } from '@server/repositories/auth-repository';
 
-const OWNER_ABSOLUTE_SECONDS = 7 * 24 * 60 * 60;
-const OWNER_IDLE_SECONDS = 24 * 60 * 60;
 const EMPLOYEE_ABSOLUTE_SECONDS = 12 * 60 * 60;
 const EMPLOYEE_IDLE_SECONDS = 30 * 60;
+const OWNER_IDLE_SECONDS = 24 * 60 * 60;
+const PLATFORM_IDLE_SECONDS = 60 * 60;
 const DEVICE_SECONDS = 365 * 24 * 60 * 60;
-const ACTIVATION_SECONDS = 5 * 60;
 
 export class AuthService {
   private readonly repository: AuthRepository;
@@ -53,91 +46,6 @@ export class AuthService {
         retryAfterSeconds: Math.ceil((attempt.locked_until - now) / 1000),
       });
     }
-  }
-
-  private async verifyOwnerCredentials(
-    username: string,
-    password: string,
-  ): Promise<PasswordIdentityRow> {
-    const now = Date.now();
-    const normalizedUsername = username.trim().toLocaleLowerCase('en-US');
-    const subjectKey = `owner:${normalizedUsername}`;
-    await this.assertNotLocked('OWNER_PASSWORD', subjectKey, now);
-    const identity = await this.repository.findOwnerByUsername(normalizedUsername);
-
-    const dummySalt = 'AAAAAAAAAAAAAAAAAAAAAA';
-    const valid = await verifyPasswordDigest({
-      candidate: password,
-      pepper: this.authPepper,
-      salt: identity?.salt ?? dummySalt,
-      iterations: identity?.work_factor ?? Number(this.env.AUTH_PBKDF2_ITERATIONS),
-      expectedDigest: identity?.digest ?? 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-    });
-
-    if (!identity || !valid || identity.user_status !== 'ACTIVE') {
-      await this.repository.recordFailure('OWNER_PASSWORD', subjectKey, now);
-      throw new AppError('INVALID_CREDENTIALS', 'Thông tin đăng nhập không hợp lệ.', 401);
-    }
-    if (identity.store_status !== 'ACTIVE') {
-      throw new AppError('STORE_LOCKED', 'Cửa hàng đang bị khóa.', 403);
-    }
-    await this.repository.clearFailures('OWNER_PASSWORD', subjectKey);
-    return identity;
-  }
-
-  async ownerLogin(
-    username: string,
-    password: string,
-  ): Promise<{ rawToken: string; response: LoginResponse }> {
-    const identity = await this.verifyOwnerCredentials(username, password);
-    const now = Date.now();
-    const rawToken = randomOpaqueToken();
-    const tokenHash = await hashOpaqueToken(rawToken, this.sessionTokenPepper);
-    await this.repository.createSession({
-      id: crypto.randomUUID(),
-      tokenHash,
-      userId: identity.user_id,
-      storeId: identity.store_id,
-      deviceId: null,
-      kind: 'OWNER',
-      credentialVersion: identity.credential_version,
-      expiresAt: now + OWNER_ABSOLUTE_SECONDS * 1000,
-      idleExpiresAt: now + OWNER_IDLE_SECONDS * 1000,
-      now,
-    });
-    return {
-      rawToken,
-      response: {
-        actor: {
-          id: identity.user_id,
-          displayName: identity.display_name,
-          kind: 'OWNER',
-          storeId: identity.store_id,
-        },
-        csrfToken: await deriveCsrfToken(rawToken, this.authPepper),
-      },
-    };
-  }
-
-  async authorizeActivation(username: string, password: string) {
-    const identity = await this.verifyOwnerCredentials(username, password);
-    const now = Date.now();
-    const rawGrant = randomOpaqueToken();
-    await this.repository.createActivationGrant({
-      id: crypto.randomUUID(),
-      tokenHash: await hashOpaqueToken(rawGrant, this.authPepper),
-      storeId: identity.store_id,
-      ownerUserId: identity.user_id,
-      expiresAt: now + ACTIVATION_SECONDS * 1000,
-      now,
-    });
-    return {
-      rawGrant,
-      response: {
-        expiresInSeconds: ACTIVATION_SECONDS,
-        csrfToken: await deriveCsrfToken(rawGrant, this.authPepper),
-      },
-    };
   }
 
   async confirmActivation(input: {
@@ -201,63 +109,25 @@ export class AuthService {
     return { cancelled: true };
   }
 
-  async reissueDevice(input: { deviceId: string; username: string; password: string }) {
-    const owner = await this.verifyOwnerCredentials(input.username, input.password);
-    const device = await this.repository.findDeviceById(owner.store_id, input.deviceId);
-    if (!device) throw new AppError('DEVICE_NOT_FOUND', 'Không tìm thấy thiết bị.', 404);
-    const rawDeviceSecret = randomOpaqueToken();
+  async activationContext(rawGrant: string) {
     const now = Date.now();
-    await this.repository.reissueDeviceCredential({
-      storeId: owner.store_id,
-      deviceId: device.id,
-      secretHash: await hashOpaqueToken(rawDeviceSecret, this.deviceTokenPepper),
-      now,
-      expiresAt: now + DEVICE_SECONDS * 1000,
-    });
-    return {
-      rawDeviceSecret,
-      device: {
-        id: device.id,
-        name: device.name,
-        status: 'ACTIVE' as const,
-        storeId: owner.store_id,
-      },
-    };
-  }
-
-  async changeOwnerPassword(input: {
-    userId: string;
-    storeId: string;
-    currentPassword: string;
-    newPassword: string;
-  }) {
-    const identity = await this.repository.findOwnerCredentialById(input.userId, input.storeId);
-    if (!identity) throw new AppError('AUTH_REQUIRED', 'Phiên đăng nhập không hợp lệ.', 401);
-    const valid = await verifyPasswordDigest({
-      candidate: input.currentPassword,
-      pepper: this.authPepper,
-      salt: identity.salt,
-      iterations: identity.work_factor,
-      expectedDigest: identity.digest,
-    });
-    if (!valid) {
-      throw new AppError('INVALID_CREDENTIALS', 'Mật khẩu hiện tại không đúng.', 401);
+    const grant = await this.repository.findActivationGrantByHash(
+      await hashOpaqueToken(rawGrant, this.authPepper),
+    );
+    if (!grant || grant.status !== 'PENDING') {
+      throw new AppError('ACTIVATION_GRANT_REQUIRED', 'Cần xác thực lại Chủ cửa hàng.', 401);
     }
-    const salt = randomSalt();
-    const workFactor = Number(this.env.AUTH_PBKDF2_ITERATIONS);
-    await this.repository.updatePasswordCredential({
-      userId: input.userId,
-      salt,
-      digest: await derivePasswordDigest({
-        secret: input.newPassword,
-        pepper: this.authPepper,
-        salt,
-        iterations: workFactor,
-      }),
-      workFactor,
-      now: Date.now(),
-    });
-    return { changed: true };
+    if (grant.expires_at <= now) {
+      await this.repository.markGrantExpired(grant.id);
+      throw new AppError('ACTIVATION_GRANT_EXPIRED', 'Phiên kích hoạt đã hết hạn.', 401);
+    }
+    if (grant.owner_status !== 'ACTIVE' || grant.store_status !== 'ACTIVE') {
+      throw new AppError('STORE_LOCKED', 'Không thể kích hoạt thiết bị.', 403);
+    }
+    return {
+      expiresInSeconds: Math.max(1, Math.ceil((grant.expires_at - now) / 1000)),
+      csrfToken: await deriveCsrfToken(rawGrant, this.authPepper),
+    };
   }
 
   async listDevices(storeId: string) {
@@ -296,11 +166,12 @@ export class AuthService {
       normalizedUsername,
       device.store_id,
     );
-    const valid = await verifyPasswordDigest({
-      candidate: input.pin,
+    const valid = await verifyPinDigest({
+      pin: input.pin,
       pepper: this.authPepper,
       salt: identity?.salt ?? 'AAAAAAAAAAAAAAAAAAAAAA',
-      iterations: identity?.work_factor ?? Number(this.env.AUTH_PBKDF2_ITERATIONS),
+      userId: identity?.user_id ?? '00000000-0000-0000-0000-000000000000',
+      storeId: device.store_id,
       expectedDigest: identity?.digest ?? 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
     });
     if (
@@ -358,6 +229,7 @@ export class AuthService {
       const sessionValid =
         session?.session_status === 'ACTIVE' &&
         session.user_status === 'ACTIVE' &&
+        session.current_credential_version === session.session_credential_version &&
         session.expires_at > now &&
         session.idle_expires_at > now;
       const employeeDeviceValid =
@@ -376,7 +248,11 @@ export class AuthService {
         csrfToken = await deriveCsrfToken(rawSession, this.authPepper);
         if (now - session.last_seen_at > 5 * 60_000) {
           const idleSeconds =
-            session.session_kind === 'EMPLOYEE' ? EMPLOYEE_IDLE_SECONDS : OWNER_IDLE_SECONDS;
+            session.session_kind === 'EMPLOYEE'
+              ? EMPLOYEE_IDLE_SECONDS
+              : session.session_kind === 'SUPER_ADMIN'
+                ? PLATFORM_IDLE_SECONDS
+                : OWNER_IDLE_SECONDS;
           await this.repository.touchSession(session.session_id, now, now + idleSeconds * 1000);
         }
       }

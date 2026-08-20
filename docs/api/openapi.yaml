@@ -10,23 +10,28 @@ paths:
       summary: Resolve user and device context from HttpOnly cookies
       responses:
         '200': { description: Context resolved }
-  /auth/owner/login:
+  /auth/access/start:
     post:
-      summary: Owner login without requiring POS activation
+      summary: Create one-time Access state and return the protected callback URL
       responses:
-        '200': { description: Owner session created }
-        '401': { description: Invalid credentials }
+        '200': { description: Access request created }
+  /auth/access/complete:
+    get:
+      summary: Complete a Cloudflare Access email OTP flow and redirect
+      responses:
+        '303': { description: Session, activation grant or device credential issued }
+        '401': { description: Access authentication or state missing }
   /auth/employee/login:
     post:
       summary: Employee PIN login bound to an ACTIVE POS device
       responses:
         '200': { description: Employee session created }
         '401': { description: Device or credentials invalid }
-  /device-activations/authorize:
-    post:
-      summary: Owner re-authentication for a short-lived activation grant
+  /device-activations/context:
+    get:
+      summary: Resolve the short-lived activation grant after Access authentication
       responses:
-        '200': { description: Activation grant cookie created }
+        '200': { description: Activation context and CSRF token }
   /device-activations/confirm:
     post:
       summary: Consume activation grant and create a POS device

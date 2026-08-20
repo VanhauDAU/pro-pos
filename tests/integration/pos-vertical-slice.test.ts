@@ -16,15 +16,13 @@ describe('online POS vertical slice', () => {
     const platform = new PlatformService(env);
     await platform.bootstrap({
       bootstrapSecret: env.SYSTEM_BOOTSTRAP_SECRET!,
-      username: 'system.pos',
+      email: 'system.pos@example.com',
       displayName: 'System POS',
-      password: 'system-pos-password-long-enough',
     });
     ({ storeId, ownerUserId } = await platform.createStore({
       name: 'POS Pilot Store',
       ownerDisplayName: 'POS Owner',
-      ownerUsername: 'pos.owner',
-      ownerPassword: 'pos-owner-password-long-enough',
+      ownerEmail: 'pos.owner@example.com',
     }));
 
     const catalog = new CatalogService(env);

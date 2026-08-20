@@ -2,10 +2,16 @@ import { z } from 'zod';
 
 export const actorKindSchema = z.enum(['SUPER_ADMIN', 'OWNER', 'EMPLOYEE']);
 export const deviceStatusSchema = z.enum(['ACTIVE', 'REVOKED']);
+export const accessAuthPurposeSchema = z.enum([
+  'OWNER_LOGIN',
+  'PLATFORM_LOGIN',
+  'DEVICE_ACTIVATION',
+  'DEVICE_REISSUE',
+]);
 
-export const ownerLoginRequestSchema = z.object({
-  username: z.string().trim().min(1).max(128),
-  password: z.string().min(1).max(256),
+export const accessStartRequestSchema = z.object({
+  purpose: accessAuthPurposeSchema,
+  deviceId: z.uuid().optional(),
 });
 
 export const employeeLoginRequestSchema = z.object({
@@ -17,20 +23,16 @@ export const activationConfirmRequestSchema = z.object({
   deviceName: z.string().trim().min(1).max(80),
 });
 
-export const activationReissueRequestSchema = z.object({
-  deviceId: z.uuid(),
-  username: z.string().trim().min(1).max(128),
-  password: z.string().min(1).max(256),
-});
-
-export const changePasswordSchema = z.object({
-  currentPassword: z.string().min(1).max(256),
-  newPassword: z.string().min(12).max(256),
-});
-
 export const resetPinSchema = z.object({
   pin: z.string().regex(/^\d{4}$/),
 });
+
+export type AccessAuthPurpose = z.infer<typeof accessAuthPurposeSchema>;
+
+export interface AccessStartResponse {
+  loginUrl: string;
+  expiresInSeconds: number;
+}
 
 export interface AuthContextResponse {
   actor: null | {

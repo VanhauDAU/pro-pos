@@ -1,12 +1,12 @@
 import { Hono } from 'hono';
 
 import {
+  accessStartRequestSchema,
   activationConfirmRequestSchema,
-  activationReissueRequestSchema,
   employeeLoginRequestSchema,
-  ownerLoginRequestSchema,
 } from '@contracts/auth';
 import { AppError } from '@server/lib/app-error';
+import { getAccessContext } from '@server/lib/cloudflare-access';
 import {
   clearCredentialCookie,
   readCredentialCookie,
@@ -16,6 +16,7 @@ import { assertCsrf, assertSameOrigin } from '@server/lib/security';
 import { success } from '@server/lib/response';
 import { parseJson } from '@server/lib/validation';
 import { AuthService } from '@server/services/auth-service';
+import { AccessAuthService } from '@server/services/access-auth-service';
 import type { AppEnv } from '@server/types';
 
 const authRoutes = new Hono<AppEnv>();
@@ -35,13 +36,70 @@ authRoutes.get('/context', async (c) => {
   return success(c, context);
 });
 
-authRoutes.post('/owner/login', async (c) => {
+authRoutes.post('/access/start', async (c) => {
   assertSameOrigin(c);
-  const body = await parseJson(c.req.raw, ownerLoginRequestSchema);
-  const service = new AuthService(c.env);
-  const result = await service.ownerLogin(body.username, body.password);
-  setCredentialCookie(c, 'session', result.rawToken, 7 * 24 * 60 * 60);
+  const body = await parseJson(c.req.raw, accessStartRequestSchema);
+  const result = await new AccessAuthService(c.env).begin(
+    body.deviceId
+      ? { purpose: body.purpose, targetDeviceId: body.deviceId }
+      : { purpose: body.purpose },
+  );
+  setCredentialCookie(c, 'access', result.rawState, result.response.expiresInSeconds);
   return success(c, result.response);
+});
+
+authRoutes.get('/access/complete', async (c) => {
+  const rawState = readCredentialCookie(c, 'access');
+  const access = getAccessContext(c.executionCtx);
+  if (!rawState || !access) {
+    clearCredentialCookie(c, 'access');
+    throw new AppError('ACCESS_AUTH_REQUIRED', 'Cloudflare Access chưa xác thực yêu cầu này.', 401);
+  }
+  const identity = await access.getIdentity();
+  if (!identity?.email) {
+    clearCredentialCookie(c, 'access');
+    throw new AppError('ACCESS_EMAIL_REQUIRED', 'Cloudflare Access không trả về email.', 403);
+  }
+
+  try {
+    const result = await new AccessAuthService(c.env).complete(
+      identity.user_uuid
+        ? { rawState, email: identity.email, subject: identity.user_uuid }
+        : { rawState, email: identity.email },
+    );
+    if (result.purpose === 'OWNER_LOGIN') {
+      setCredentialCookie(c, 'session', result.rawSession, 7 * 24 * 60 * 60);
+    } else if (result.purpose === 'PLATFORM_LOGIN') {
+      setCredentialCookie(c, 'session', result.rawSession, 12 * 60 * 60);
+    } else if (result.purpose === 'DEVICE_ACTIVATION') {
+      setCredentialCookie(c, 'activation', result.rawGrant, 5 * 60);
+      clearCredentialCookie(c, 'session');
+    } else if (result.purpose === 'DEVICE_REISSUE') {
+      setCredentialCookie(c, 'device', result.rawDeviceSecret, 365 * 24 * 60 * 60);
+      clearCredentialCookie(c, 'session');
+      clearCredentialCookie(c, 'activation');
+    } else {
+      throw new AppError('ACCESS_AUTH_FAILED', 'Yêu cầu đăng nhập không hợp lệ.', 500);
+    }
+    clearCredentialCookie(c, 'access');
+    return c.redirect(result.redirectTo, 303);
+  } catch (error) {
+    clearCredentialCookie(c, 'access');
+    const target = new URL('/?tab=owner', c.req.url);
+    target.searchParams.set(
+      'authError',
+      error instanceof AppError ? error.code : 'ACCESS_AUTH_FAILED',
+    );
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        requestId: c.get('requestId'),
+        route: c.req.path,
+        code: error instanceof AppError ? error.code : 'ACCESS_AUTH_FAILED',
+      }),
+    );
+    return c.redirect(target.toString(), 303);
+  }
 });
 
 authRoutes.post('/employee/login', async (c) => {
@@ -87,12 +145,12 @@ authRoutes.post('/logout', async (c) => {
 
 const activationRoutes = new Hono<AppEnv>();
 
-activationRoutes.post('/authorize', async (c) => {
-  assertSameOrigin(c);
-  const body = await parseJson(c.req.raw, ownerLoginRequestSchema);
-  const result = await new AuthService(c.env).authorizeActivation(body.username, body.password);
-  setCredentialCookie(c, 'activation', result.rawGrant, result.response.expiresInSeconds);
-  return success(c, result.response);
+activationRoutes.get('/context', async (c) => {
+  const rawGrant = readCredentialCookie(c, 'activation');
+  if (!rawGrant) {
+    throw new AppError('ACTIVATION_GRANT_REQUIRED', 'Cần xác thực lại Chủ cửa hàng.', 401);
+  }
+  return success(c, await new AuthService(c.env).activationContext(rawGrant));
 });
 
 activationRoutes.post('/confirm', async (c) => {
@@ -117,21 +175,12 @@ activationRoutes.post('/confirm', async (c) => {
   return success(c, result.response, 201);
 });
 
-activationRoutes.post('/reissue', async (c) => {
-  assertSameOrigin(c);
-  const body = await parseJson(c.req.raw, activationReissueRequestSchema);
-  const result = await new AuthService(c.env).reissueDevice(body);
-  setCredentialCookie(c, 'device', result.rawDeviceSecret, 365 * 24 * 60 * 60);
-  clearCredentialCookie(c, 'session');
-  clearCredentialCookie(c, 'activation');
-  return success(c, { device: result.device });
-});
-
 activationRoutes.delete('/current', async (c) => {
   assertSameOrigin(c);
   const rawGrant = readCredentialCookie(c, 'activation');
   if (rawGrant) await new AuthService(c.env).cancelActivation(rawGrant);
   clearCredentialCookie(c, 'activation');
+  clearCredentialCookie(c, 'access');
   return success(c, { cancelled: true });
 });
 

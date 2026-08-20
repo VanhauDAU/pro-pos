@@ -3,7 +3,7 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 
 import type { AppEnv } from '@server/types';
 
-export type CredentialCookieKind = 'device' | 'session' | 'activation';
+export type CredentialCookieKind = 'device' | 'session' | 'activation' | 'access';
 
 function cookieName(c: Context<AppEnv>, kind: CredentialCookieKind): string {
   const prefix = c.env.COOKIE_MODE === 'secure' ? '__Host-' : '';

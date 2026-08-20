@@ -1,5 +1,5 @@
 import { AppError } from '@server/lib/app-error';
-import { derivePasswordDigest, randomSalt } from '@server/lib/crypto';
+import { derivePinDigest, randomSalt } from '@server/lib/crypto';
 import { requireSecret } from '@server/lib/env';
 import { StaffRepository } from '@server/repositories/staff-repository';
 
@@ -28,14 +28,10 @@ export class StaffService {
   }) {
     const userId = crypto.randomUUID();
     const salt = randomSalt();
-    const workFactor = Number(this.env.AUTH_PBKDF2_ITERATIONS);
     const permissions =
       input.permissionKeys.length > 0
         ? Array.from(new Set(input.permissionKeys))
         : DEFAULT_EMPLOYEE_PERMISSIONS;
-    if (!Number.isInteger(workFactor) || workFactor <= 0) {
-      throw new AppError('SERVER_MISCONFIGURED', 'Invalid auth work factor.', 503);
-    }
     await this.repository.createEmployee({
       storeId: input.storeId,
       userId,
@@ -45,13 +41,13 @@ export class StaffService {
       displayName: input.displayName.trim(),
       username: input.username.trim().toLocaleLowerCase('en-US'),
       permissionKeys: permissions,
-      workFactor,
       salt,
-      digest: await derivePasswordDigest({
-        secret: input.pin,
+      digest: await derivePinDigest({
+        pin: input.pin,
         pepper: requireSecret(this.env.AUTH_PEPPER, 'AUTH_PEPPER'),
         salt,
-        iterations: workFactor,
+        userId,
+        storeId: input.storeId,
       }),
       now: Date.now(),
     });
@@ -77,17 +73,16 @@ export class StaffService {
 
   async resetPin(storeId: string, userId: string, pin: string) {
     const salt = randomSalt();
-    const workFactor = Number(this.env.AUTH_PBKDF2_ITERATIONS);
     const result = await this.repository.resetPin({
       storeId,
       userId,
-      workFactor,
       salt,
-      digest: await derivePasswordDigest({
-        secret: pin,
+      digest: await derivePinDigest({
+        pin,
         pepper: requireSecret(this.env.AUTH_PEPPER, 'AUTH_PEPPER'),
         salt,
-        iterations: workFactor,
+        userId,
+        storeId,
       }),
       now: Date.now(),
     });

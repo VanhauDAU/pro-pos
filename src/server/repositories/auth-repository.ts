@@ -1,28 +1,10 @@
-export interface PasswordIdentityRow {
-  user_id: string;
-  username: string;
-  display_name: string;
-  user_status: 'ACTIVE' | 'DISABLED';
-  store_id: string;
-  store_name: string;
-  store_status: 'ACTIVE' | 'LOCKED';
-  role_code: string;
-  algorithm: 'PBKDF2-HMAC-SHA256';
-  work_factor: number;
-  salt: string;
-  digest: string;
-  pepper_version: number;
-  credential_version: number;
-}
-
 export interface PinIdentityRow {
   user_id: string;
   display_name: string;
   user_status: 'ACTIVE' | 'DISABLED';
   store_id: string;
   membership_status: 'ACTIVE' | 'DISABLED';
-  algorithm: 'PBKDF2-HMAC-SHA256';
-  work_factor: number;
+  algorithm: 'HMAC-SHA256-PEPPERED';
   salt: string;
   digest: string;
   pepper_version: number;
@@ -51,6 +33,8 @@ export interface SessionContextRow {
   expires_at: number;
   idle_expires_at: number;
   last_seen_at: number;
+  session_credential_version: number;
+  current_credential_version: number | null;
 }
 
 export interface ActivationGrantRow {
@@ -68,85 +52,17 @@ export interface ActivationGrantRow {
 export class AuthRepository {
   constructor(private readonly db: D1Database) {}
 
-  findOwnerByUsername(username: string) {
-    return this.db
-      .prepare(
-        `SELECT
-          u.id AS user_id, u.username, u.display_name, u.status AS user_status,
-          s.id AS store_id, s.name AS store_name, s.status AS store_status,
-          r.code AS role_code, pc.algorithm, pc.work_factor, pc.salt, pc.digest,
-          pc.pepper_version, pc.credential_version
-        FROM users u
-        JOIN store_memberships sm ON sm.user_id = u.id AND sm.status = 'ACTIVE'
-        JOIN stores s ON s.id = sm.store_id
-        JOIN roles r ON r.id = sm.role_id AND r.store_id = sm.store_id
-        JOIN password_credentials pc ON pc.user_id = u.id
-        WHERE u.username = ? COLLATE NOCASE AND r.code = 'OWNER'
-        LIMIT 1`,
-      )
-      .bind(username)
-      .first<PasswordIdentityRow>();
-  }
-
-  findOwnerCredentialById(userId: string, storeId: string) {
-    return this.db
-      .prepare(
-        `SELECT
-          u.id AS user_id, u.username, u.display_name, u.status AS user_status,
-          s.id AS store_id, s.name AS store_name, s.status AS store_status,
-          r.code AS role_code, pc.algorithm, pc.work_factor, pc.salt, pc.digest,
-          pc.pepper_version, pc.credential_version
-        FROM users u
-        JOIN store_memberships sm ON sm.user_id = u.id AND sm.store_id = ? AND sm.status = 'ACTIVE'
-        JOIN stores s ON s.id = sm.store_id
-        JOIN roles r ON r.id = sm.role_id AND r.store_id = sm.store_id
-        JOIN password_credentials pc ON pc.user_id = u.id
-        WHERE u.id = ? AND r.code = 'OWNER'
-        LIMIT 1`,
-      )
-      .bind(storeId, userId)
-      .first<PasswordIdentityRow>();
-  }
-
-  async updatePasswordCredential(input: {
-    userId: string;
-    salt: string;
-    digest: string;
-    workFactor: number;
-    now: number;
-  }) {
-    await this.db.batch([
-      this.db
-        .prepare(
-          `UPDATE password_credentials
-           SET salt = ?, digest = ?, work_factor = ?,
-               credential_version = credential_version + 1, updated_at = ?
-           WHERE user_id = ?`,
-        )
-        .bind(input.salt, input.digest, input.workFactor, input.now, input.userId),
-      this.db
-        .prepare('UPDATE users SET must_change_password = 0, updated_at = ? WHERE id = ?')
-        .bind(input.now, input.userId),
-      this.db
-        .prepare(
-          `UPDATE auth_sessions SET status = 'REVOKED', revoked_at = ?
-           WHERE user_id = ? AND status = 'ACTIVE'`,
-        )
-        .bind(input.now, input.userId),
-    ]);
-  }
-
   findEmployeeByUsernameAndStore(username: string, storeId: string) {
     return this.db
       .prepare(
         `SELECT
           u.id AS user_id, u.display_name, u.status AS user_status,
           sm.store_id, sm.status AS membership_status,
-          pc.algorithm, pc.work_factor, pc.salt, pc.digest,
+          pc.algorithm, pc.salt, pc.digest,
           pc.pepper_version, pc.credential_version
         FROM users u
         JOIN store_memberships sm ON sm.user_id = u.id AND sm.store_id = ?
-        JOIN pin_credentials pc ON pc.user_id = u.id AND pc.store_id = sm.store_id
+        JOIN pin_verifiers pc ON pc.user_id = u.id AND pc.store_id = sm.store_id
         WHERE u.username = ? COLLATE NOCASE
         LIMIT 1`,
       )
@@ -195,9 +111,16 @@ export class AuthRepository {
         `SELECT
           s.id AS session_id, s.user_id, u.display_name, u.status AS user_status,
           s.store_id, s.device_id AS session_device_id, s.session_kind,
-          s.status AS session_status, s.expires_at, s.idle_expires_at, s.last_seen_at
+          s.status AS session_status, s.expires_at, s.idle_expires_at, s.last_seen_at,
+          s.credential_version AS session_credential_version,
+          CASE
+            WHEN s.session_kind = 'EMPLOYEE' THEN pv.credential_version
+            ELSE ai.credential_version
+          END AS current_credential_version
         FROM auth_sessions s
         JOIN users u ON u.id = s.user_id
+        LEFT JOIN access_identities ai ON ai.user_id = s.user_id
+        LEFT JOIN pin_verifiers pv ON pv.user_id = s.user_id
         WHERE s.token_hash = ?
         LIMIT 1`,
       )

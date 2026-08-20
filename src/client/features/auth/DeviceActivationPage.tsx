@@ -1,10 +1,11 @@
-import { DesktopOutlined, LockOutlined, UserOutlined } from '@ant-design/icons';
+import { DesktopOutlined, MailOutlined } from '@ant-design/icons';
 import { useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Form, Input, Steps, Typography } from 'antd';
-import { useState } from 'react';
-import { useNavigate } from 'react-router';
+import { useEffect, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router';
 
 import type {
+  AccessStartResponse,
   ActivationAuthorizationResponse,
   ActivationConfirmationResponse,
 } from '@contracts/auth';
@@ -12,11 +13,6 @@ import type {
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 
 import { AuthLayout } from './AuthLayout';
-
-interface AuthorizationValues {
-  username: string;
-  password: string;
-}
 
 interface DeviceValues {
   deviceName: string;
@@ -28,25 +24,35 @@ function activationError(error: unknown) {
 
 export function DeviceActivationPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const [step, setStep] = useState(0);
   const [csrfToken, setCsrfToken] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const authorize = async (values: AuthorizationValues) => {
+  useEffect(() => {
+    if (searchParams.get('authorized') !== '1') return;
+    setSubmitting(true);
+    apiRequest<ActivationAuthorizationResponse>('/api/v1/device-activations/context')
+      .then((response) => {
+        setCsrfToken(response.csrfToken);
+        setStep(1);
+      })
+      .catch((contextError: unknown) => setError(activationError(contextError)))
+      .finally(() => setSubmitting(false));
+  }, [searchParams]);
+
+  const authorize = async () => {
     setSubmitting(true);
     setError(null);
     try {
-      const response = await jsonRequest<ActivationAuthorizationResponse>(
-        '/api/v1/device-activations/authorize',
-        values,
-      );
-      setCsrfToken(response.csrfToken);
-      setStep(1);
+      const response = await jsonRequest<AccessStartResponse>('/api/v1/auth/access/start', {
+        purpose: 'DEVICE_ACTIVATION',
+      });
+      window.location.assign(response.loginUrl);
     } catch (authorizationError) {
       setError(activationError(authorizationError));
-    } finally {
       setSubmitting(false);
     }
   };
@@ -101,33 +107,24 @@ export function DeviceActivationPage() {
       {error ? <Alert className="login-error" type="error" showIcon title={error} /> : null}
 
       {step === 0 ? (
-        <Form<AuthorizationValues> layout="vertical" requiredMark={false} onFinish={authorize}>
-          <Form.Item
-            name="username"
-            rules={[{ required: true, message: 'Vui lòng nhập tên đăng nhập Owner.' }]}
+        <div className="owner-otp-login">
+          <Alert
+            type="info"
+            showIcon
+            title="Owner xác nhận bằng email OTP"
+            description="Cloudflare Access gửi mã dùng một lần đến email Owner đã được cấp quyền cho cửa hàng."
+          />
+          <Button
+            type="primary"
+            size="large"
+            block
+            icon={<MailOutlined />}
+            loading={submitting}
+            onClick={authorize}
           >
-            <Input
-              size="large"
-              autoComplete="username"
-              prefix={<UserOutlined />}
-              placeholder="Tên đăng nhập Owner"
-            />
-          </Form.Item>
-          <Form.Item
-            name="password"
-            rules={[{ required: true, message: 'Vui lòng nhập mật khẩu.' }]}
-          >
-            <Input.Password
-              size="large"
-              autoComplete="current-password"
-              prefix={<LockOutlined />}
-              placeholder="Mật khẩu"
-            />
-          </Form.Item>
-          <Button type="primary" htmlType="submit" size="large" block loading={submitting}>
-            Xác nhận Chủ cửa hàng
+            Xác thực Owner qua email
           </Button>
-        </Form>
+        </div>
       ) : (
         <Form<DeviceValues> layout="vertical" requiredMark={false} onFinish={confirm}>
           <Form.Item

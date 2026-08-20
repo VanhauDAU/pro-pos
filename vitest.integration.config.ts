@@ -17,7 +17,6 @@ export default defineConfig({
           DEVICE_TOKEN_PEPPER: 'test-device-pepper-at-least-32-bytes',
           SESSION_TOKEN_PEPPER: 'test-session-pepper-at-least-32-bytes',
           SYSTEM_BOOTSTRAP_SECRET: 'test-bootstrap-secret-at-least-32-bytes',
-          AUTH_PBKDF2_ITERATIONS: '1000',
           COOKIE_MODE: 'secure',
           ENVIRONMENT: 'staging',
           APP_VERSION: 'test',

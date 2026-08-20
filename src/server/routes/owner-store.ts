@@ -1,12 +1,9 @@
 import { Hono } from 'hono';
 
-import { changePasswordSchema } from '@contracts/auth';
 import { updateStoreSettingsSchema } from '@contracts/store';
-import { clearCredentialCookie } from '@server/lib/cookies';
 import { success } from '@server/lib/response';
 import { parseJson } from '@server/lib/validation';
 import { requireActor, requirePermission } from '@server/middleware/authorization';
-import { AuthService } from '@server/services/auth-service';
 import { StoreService } from '@server/services/store-service';
 import type { AppEnv } from '@server/types';
 
@@ -36,19 +33,6 @@ ownerStoreRoutes.put('/settings', requirePermission('store.manage'), async (c) =
 
 ownerStoreRoutes.get('/audit-logs', requirePermission('audit.view'), async (c) => {
   return success(c, await new StoreService(c.env).listAuditLogs(c.get('actor').storeId!));
-});
-
-ownerStoreRoutes.put('/account/password', async (c) => {
-  const actor = c.get('actor');
-  const body = await parseJson(c.req.raw, changePasswordSchema);
-  const result = await new AuthService(c.env).changeOwnerPassword({
-    userId: actor.id,
-    storeId: actor.storeId!,
-    currentPassword: body.currentPassword,
-    newPassword: body.newPassword,
-  });
-  clearCredentialCookie(c, 'session');
-  return success(c, result);
 });
 
 export { ownerStoreRoutes };

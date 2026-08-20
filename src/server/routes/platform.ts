@@ -3,7 +3,6 @@ import { z } from 'zod';
 
 import { bootstrapSuperAdminSchema, createStoreSchema } from '@contracts/platform';
 import { AppError } from '@server/lib/app-error';
-import { setCredentialCookie } from '@server/lib/cookies';
 import { success } from '@server/lib/response';
 import { assertSameOrigin } from '@server/lib/security';
 import { parseJson } from '@server/lib/validation';
@@ -26,17 +25,6 @@ platformRoutes.post('/bootstrap', async (c) => {
     }),
     201,
   );
-});
-
-platformRoutes.post('/auth/login', async (c) => {
-  assertSameOrigin(c);
-  const body = await parseJson(
-    c.req.raw,
-    z.object({ username: z.string().min(1), password: z.string().min(1).max(256) }),
-  );
-  const result = await new PlatformService(c.env).login(body.username, body.password);
-  setCredentialCookie(c, 'session', result.rawToken, 12 * 60 * 60);
-  return success(c, { actor: result.actor, csrfToken: result.csrfToken });
 });
 
 platformRoutes.use('/stores/*', requireActor('SUPER_ADMIN'));

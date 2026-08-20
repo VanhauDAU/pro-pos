@@ -10,8 +10,9 @@ cùng một Cloudflare Worker. Dữ liệu nghiệp vụ lưu tại D1; ảnh l�
 - Auth invariant: Owner vào `/owner` không cần kích hoạt POS; Employee PIN bắt buộc device
   `ACTIVE`.
 - Pricing Engine: ACTUAL_TIME, TIME_BLOCK, first period, special windows, pause và rounding.
-- UI auth: responsive login/activation flow theo mẫu đã duyệt; Owner dùng mật khẩu, Employee dùng
-  PIN và chỉ đăng nhập trên device `ACTIVE`.
+- UI auth: responsive login/activation flow theo mẫu đã duyệt; Owner/SUPER_ADMIN dùng Cloudflare
+  Access email OTP, Employee dùng PIN và chỉ đăng nhập trên device `ACTIVE`.
+- SUPER_ADMIN UI tối giản: thống kê, danh sách, tạo store + Owner email và khóa/mở store.
 
 ## Yêu cầu
 
@@ -67,6 +68,8 @@ Xem [CONTRIBUTING.md](CONTRIBUTING.md) và [docs/README.md](docs/README.md).
 - Không commit `.dev.vars`, `.env`, database export hoặc dữ liệu cửa hàng thật.
 - Không lưu session/device credential trong localStorage.
 - Production cookies: `__Host-propos-device`, `__Host-propos-session`,
-  `__Host-propos-activation` với `HttpOnly; Secure; SameSite=Lax; Path=/; no Domain`.
-- Không giảm PBKDF2 work factor chỉ để giữ Workers Free; xem
+  `__Host-propos-activation`, `__Host-propos-access` với
+  `HttpOnly; Secure; SameSite=Lax; Path=/; no Domain`.
+- Owner password không được Pro POS lưu hoặc xử lý; Access OTP chỉ hoàn tất khi email đã được ánh xạ
+  trong D1. Xem
   [auth-device-invariants.md](docs/security/auth-device-invariants.md).

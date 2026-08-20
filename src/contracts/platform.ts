@@ -1,3 +1,4 @@
+import { createEmployeeSchema } from './staff';
 import { z } from 'zod';
 
 export const bootstrapSuperAdminSchema = z.object({
@@ -11,12 +12,7 @@ export const createStoreSchema = z.object({
   ownerEmail: z.string().trim().email().max(254),
 });
 
-export const createEmployeeSchema = z.object({
-  displayName: z.string().trim().min(1).max(128),
-  username: z.string().trim().min(3).max(128),
-  pin: z.string().regex(/^\d{4}$/),
-  permissionKeys: z.array(z.string().min(1)).default([]),
-});
+export { createEmployeeSchema };
 
 export interface PlatformStoreSummary {
   id: string;

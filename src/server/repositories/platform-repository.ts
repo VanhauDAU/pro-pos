@@ -42,6 +42,7 @@ export class PlatformRepository {
       'table.view',
       'table.open',
       'order.manage',
+      'order.create',
       'checkout.complete',
       'invoice.view',
       'invoice.print',

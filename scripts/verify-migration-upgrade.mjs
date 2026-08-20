@@ -16,6 +16,7 @@ const migrationFiles = [
   '0006_security_tenant_financial_hardening.sql',
   '0007_owner_store_location.sql',
   '0008_area_table_setup.sql',
+  '0009_staff_roles_permissions.sql',
 ];
 
 const fixture = `
@@ -82,10 +83,10 @@ try {
   const rows = result.stdout.trim().split('\n');
   const expected = ['100000|100000|0', '100000|100000|0'];
   if (rows.at(-2) !== expected[0] || rows.at(-1) !== expected[1]) {
-    throw new Error(`Unexpected 0005 → 0008 backfill: ${rows.slice(-2).join(', ')}`);
+    throw new Error(`Unexpected 0005 → 0009 backfill: ${rows.slice(-2).join(', ')}`);
   }
   console.log(
-    '0005 → 0008 upgrade path passed: accounting, Owner location and area/table layout changes are safe.',
+    '0005 → 0009 upgrade path passed: accounting, Owner location, area/table layout and staff permissions are safe.',
   );
 } finally {
   await rm(tempDirectory, { recursive: true, force: true });

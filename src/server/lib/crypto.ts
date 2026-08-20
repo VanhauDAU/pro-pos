@@ -1,4 +1,4 @@
-import { timingSafeEqual } from 'node:crypto';
+import { pbkdf2, timingSafeEqual } from 'node:crypto';
 
 const encoder = new TextEncoder();
 
@@ -61,28 +61,17 @@ export async function derivePasswordDigest(input: {
   iterations: number;
 }): Promise<string> {
   const saltBytes = base64UrlToBytes(input.salt);
-  const salt = saltBytes.buffer.slice(
-    saltBytes.byteOffset,
-    saltBytes.byteOffset + saltBytes.byteLength,
-  ) as ArrayBuffer;
-  const keyMaterial = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(`${input.secret}\u0000${input.pepper}`),
-    'PBKDF2',
-    false,
-    ['deriveBits'],
-  );
-  const bits = await crypto.subtle.deriveBits(
-    {
-      name: 'PBKDF2',
-      hash: 'SHA-256',
-      salt,
-      iterations: input.iterations,
-    },
-    keyMaterial,
-    256,
-  );
-  return bytesToBase64Url(new Uint8Array(bits));
+  const password = encoder.encode(`${input.secret}\u0000${input.pepper}`);
+  const digest = await new Promise<Uint8Array>((resolve, reject) => {
+    pbkdf2(password, saltBytes, input.iterations, 32, 'sha256', (error, derivedKey) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(new Uint8Array(derivedKey));
+    });
+  });
+  return bytesToBase64Url(digest);
 }
 
 export async function verifyPasswordDigest(input: {

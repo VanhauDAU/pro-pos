@@ -49,6 +49,7 @@ import logo from '@client/assets/logo-white.svg';
 import { ApiError, apiRequest } from '@client/lib/api';
 
 import { OwnerStoreSettingsPage } from './OwnerStoreSettingsPage';
+import { OwnerAreaCreatePage, OwnerAreaSettingsPage } from './OwnerAreaSettingsPage';
 
 const BRAND = '#0975F7';
 
@@ -707,7 +708,7 @@ export function OwnerPortalPage() {
             closable={false}
             onClose={() => setMobileOpen(false)}
             open={mobileOpen}
-            width={280}
+            size={280}
             styles={{ body: { padding: 0 } }}
           >
             {sidebar}
@@ -776,6 +777,10 @@ export function OwnerPortalPage() {
               <OverviewDashboard settings={settings.data} />
             ) : location.pathname === '/owner/settings/store' ? (
               <OwnerStoreSettingsPage />
+            ) : location.pathname === '/owner/settings/areas' ? (
+              <OwnerAreaSettingsPage />
+            ) : location.pathname === '/owner/settings/areas/new' ? (
+              <OwnerAreaCreatePage />
             ) : selectedKey === '/owner/settings' && location.pathname === '/owner/settings' ? (
               <SettingsHub onNavigate={(path) => navigate(path)} />
             ) : (

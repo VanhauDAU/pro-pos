@@ -4,6 +4,32 @@
 
 ### Added
 
+- Area settings UI revamp: dedicated full-screen/spacious Area Detail Modal with quick-add table,
+  reordering, per-table pricing selector, table rename/delete, area rename and clean 2-column layout.
+
+- Product create/edit UI refinement: unified unit and category fields, removed redundant right-column
+  category card, added clear card margins and padding, and responsive variant rows.
+
+- PRO-017 product filters: multi-select filtering by type, status, category and unit with removable
+  filter chips and a clear-all action.
+
+- PRO-016 table pricing assignment: each available table/room can select an active time product
+  and its pricing; occupied tables are locked against pricing changes and POS snapshots the
+  selected pricing when opening a session.
+
+- PRO-015 product pricing completion: configurable special hours by time range or all-day weekday
+  rules, overlap validation through the server pricing engine, and product avatar image upload with
+  private media preview. The product list now also supports restoring a disabled product, and the
+  product form can create and select a new category directly from the category dropdown.
+
+- PRO-014 unit settings: server-paginated unit list with search, add/edit flow, product usage
+  count, product usage detail list and safe delete protection. Material and unit-conversion counts
+  from the reference are intentionally omitted from this MVP.
+
+- PRO-013 catalog MVP: responsive Owner danh sách mặt hàng, tìm kiếm/lọc, form thêm/sửa mặt hàng
+  số lượng/trọng lượng/thời gian, phiên bản giá, avatar màu, CRUD danh mục và xem mặt hàng theo
+  danh mục. Import/export, thuế, kho, kênh bán hàng và upload ảnh được deferred.
+
 - PRO-010 Owner shell: Owner auth guard, responsive sidebar accordion, dashboard overview frame,
   direct settings hub, two-column store information form with province/ward location lookup,
   store identity, logout and mobile navigation using the `#0975F7` system color.
@@ -12,7 +38,7 @@
   gross/discount/net accounting snapshots, prompt-price sales, atomic invoice numbering, tenant
   reference validation, Owner-safe staff status, atomic pause/resume commands, audit context and
   controlled PWA update prompt. Local quality gate passes with 18 unit tests, 26 Worker integration
-  tests and a 0005 → 0007 migration-upgrade check; staging smoke remains a release gate.
+  tests and a 0005 → 0009 migration-upgrade check; staging smoke remains a release gate.
 
 - React/Web Worker/PWA foundation.
 - D1 tenant, authentication, device, catalog, pricing, POS and billing schema.

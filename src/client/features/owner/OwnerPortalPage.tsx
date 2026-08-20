@@ -52,6 +52,13 @@ import { OwnerStoreSettingsPage } from './OwnerStoreSettingsPage';
 import { OwnerAreaCreatePage, OwnerAreaSettingsPage } from './OwnerAreaSettingsPage';
 import { OwnerEmployeeFormPage, OwnerStaffListPage } from './OwnerStaffPages';
 import { OwnerRoleFormPage, OwnerRolesPage } from './OwnerRolePages';
+import { OwnerUnitDetailPage, OwnerUnitSettingsPage } from './OwnerUnitSettingsPage';
+import {
+  OwnerCategoryDetailPage,
+  OwnerCategoryListPage,
+  OwnerProductFormPage,
+  OwnerProductListPage,
+} from './OwnerCatalogPages';
 
 const BRAND = '#0975F7';
 
@@ -783,6 +790,20 @@ export function OwnerPortalPage() {
               <OwnerAreaSettingsPage />
             ) : location.pathname === '/owner/settings/areas/new' ? (
               <OwnerAreaCreatePage />
+            ) : location.pathname === '/owner/settings/units' ? (
+              <OwnerUnitSettingsPage />
+            ) : location.pathname.startsWith('/owner/settings/units/') ? (
+              <OwnerUnitDetailPage unitId={location.pathname.split('/').at(-1)!} />
+            ) : location.pathname === '/owner/catalog/products' ? (
+              <OwnerProductListPage />
+            ) : location.pathname === '/owner/catalog/products/new' ? (
+              <OwnerProductFormPage />
+            ) : location.pathname.startsWith('/owner/catalog/products/') ? (
+              <OwnerProductFormPage productId={location.pathname.split('/').at(-1)!} />
+            ) : location.pathname === '/owner/catalog/categories' ? (
+              <OwnerCategoryListPage />
+            ) : location.pathname.startsWith('/owner/catalog/categories/') ? (
+              <OwnerCategoryDetailPage categoryId={location.pathname.split('/').at(-1)!} />
             ) : location.pathname === '/owner/staff' ? (
               <OwnerStaffListPage />
             ) : location.pathname === '/owner/staff/new' ? (

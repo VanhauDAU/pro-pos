@@ -5,7 +5,6 @@ import {
   ArrowUpOutlined,
   DeleteOutlined,
   EditOutlined,
-  HolderOutlined,
   MenuOutlined,
   PlusCircleOutlined,
 } from '@ant-design/icons';
@@ -19,6 +18,7 @@ import {
   Input,
   Modal,
   Popconfirm,
+  Select,
   Skeleton,
   Tag,
   Typography,
@@ -36,6 +36,15 @@ interface AreaTable {
   name: string;
   status: 'AVAILABLE' | 'OCCUPIED';
   sortOrder: number;
+  timeProductId: string | null;
+  timeProductName: string | null;
+}
+
+interface TimeProduct {
+  id: string;
+  name: string;
+  productType: 'QUANTITY' | 'WEIGHT' | 'TIME';
+  status: 'ACTIVE' | 'DISABLED';
 }
 
 interface AreaLayout {
@@ -96,14 +105,21 @@ export function OwnerAreaSettingsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [messageApi, contextHolder] = message.useMessage();
-  const [expandedAreaId, setExpandedAreaId] = useState<string | null>(null);
+  const [detailAreaId, setDetailAreaId] = useState<string | null>(null);
+  const [renamingArea, setRenamingArea] = useState<{ id: string; name: string } | null>(null);
+  const [renamingAreaSaving, setRenamingAreaSaving] = useState(false);
   const [editingTable, setEditingTable] = useState<AreaTable | null>(null);
   const [savingTable, setSavingTable] = useState(false);
+  const [newTableName, setNewTableName] = useState('');
+  const [newTableTimeProductId, setNewTableTimeProductId] = useState<string | null>(null);
+  const [addingTable, setAddingTable] = useState(false);
   const [orderingAreaId, setOrderingAreaId] = useState<string | null>(null);
+  const [pricingTableId, setPricingTableId] = useState<string | null>(null);
   const [draggedTable, setDraggedTable] = useState<{ areaId: string; tableId: string } | null>(
     null,
   );
-  const [form] = Form.useForm<TableNameValues>();
+  const [tableForm] = Form.useForm<TableNameValues>();
+  const [areaRenameForm] = Form.useForm<{ name: string }>();
 
   const layouts = useQuery({
     queryKey: AREA_LAYOUTS_QUERY,
@@ -113,15 +129,52 @@ export function OwnerAreaSettingsPage() {
     queryKey: ['auth-context'],
     queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
   });
+  const timeProducts = useQuery({
+    queryKey: ['owner-time-products'],
+    queryFn: () => apiRequest<TimeProduct[]>('/api/v1/owner/catalog/products'),
+  });
 
   const totalTables = useMemo(
     () => layouts.data?.reduce((sum, area) => sum + area.tables.length, 0) ?? 0,
     [layouts.data],
   );
 
+  const detailArea = useMemo(
+    () => layouts.data?.find((area) => area.id === detailAreaId) ?? null,
+    [layouts.data, detailAreaId],
+  );
+
   const openEdit = (table: AreaTable) => {
     setEditingTable(table);
-    form.setFieldsValue({ name: table.name });
+    tableForm.setFieldsValue({ name: table.name });
+  };
+
+  const openRenameArea = (area: { id: string; name: string }) => {
+    setRenamingArea(area);
+    areaRenameForm.setFieldsValue({ name: area.name });
+  };
+
+  const saveAreaName = async ({ name }: { name: string }) => {
+    if (!renamingArea) return;
+    setRenamingAreaSaving(true);
+    try {
+      await jsonRequest(
+        `/api/v1/owner/catalog/areas/${renamingArea.id}`,
+        { name: name.trim() },
+        {
+          method: 'PUT',
+          headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' },
+        },
+      );
+      await queryClient.invalidateQueries({ queryKey: AREA_LAYOUTS_QUERY });
+      messageApi.success('Đã đổi tên khu vực.');
+      setRenamingArea(null);
+      areaRenameForm.resetFields();
+    } catch (error) {
+      messageApi.error(errorMessage(error, 'Không thể đổi tên khu vực.'));
+    } finally {
+      setRenamingAreaSaving(false);
+    }
   };
 
   const saveTableName = async ({ name }: TableNameValues) => {
@@ -130,7 +183,7 @@ export function OwnerAreaSettingsPage() {
     try {
       await jsonRequest(
         `/api/v1/owner/catalog/tables/${editingTable.id}`,
-        { name },
+        { name: name.trim() },
         {
           method: 'PATCH',
           headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' },
@@ -139,11 +192,39 @@ export function OwnerAreaSettingsPage() {
       await queryClient.invalidateQueries({ queryKey: AREA_LAYOUTS_QUERY });
       messageApi.success('Đã cập nhật tên bàn/phòng.');
       setEditingTable(null);
-      form.resetFields();
+      tableForm.resetFields();
     } catch (error) {
       messageApi.error(errorMessage(error, 'Không thể cập nhật bàn/phòng.'));
     } finally {
       setSavingTable(false);
+    }
+  };
+
+  const createTableInArea = async () => {
+    if (!detailArea || !newTableName.trim()) return;
+    setAddingTable(true);
+    try {
+      await jsonRequest(
+        '/api/v1/owner/catalog/tables',
+        {
+          areaId: detailArea.id,
+          name: newTableName.trim(),
+          timeProductId: newTableTimeProductId || null,
+          sortOrder: detailArea.tables.length + 1,
+        },
+        {
+          method: 'POST',
+          headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' },
+        },
+      );
+      await queryClient.invalidateQueries({ queryKey: AREA_LAYOUTS_QUERY });
+      messageApi.success(`Đã thêm bàn "${newTableName.trim()}" vào khu vực ${detailArea.name}.`);
+      setNewTableName('');
+      setNewTableTimeProductId(null);
+    } catch (error) {
+      messageApi.error(errorMessage(error, 'Không thể thêm bàn/phòng mới.'));
+    } finally {
+      setAddingTable(false);
     }
   };
 
@@ -167,7 +248,9 @@ export function OwnerAreaSettingsPage() {
         headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' },
       });
       await queryClient.invalidateQueries({ queryKey: AREA_LAYOUTS_QUERY });
-      setExpandedAreaId(null);
+      if (detailAreaId === area.id) {
+        setDetailAreaId(null);
+      }
       messageApi.success('Đã xóa khu vực và các bàn/phòng thuộc khu vực.');
     } catch (error) {
       messageApi.error(errorMessage(error, 'Không thể xóa khu vực.'));
@@ -196,6 +279,40 @@ export function OwnerAreaSettingsPage() {
     }
   };
 
+  const saveTablePricing = async (table: AreaTable, timeProductId: string | null) => {
+    if (table.status === 'OCCUPIED' || timeProductId === table.timeProductId) return;
+    setPricingTableId(table.id);
+    try {
+      await jsonRequest(
+        `/api/v1/owner/catalog/tables/${table.id}/pricing`,
+        { timeProductId: timeProductId || null },
+        {
+          method: 'PATCH',
+          headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' },
+        },
+      );
+      await queryClient.invalidateQueries({ queryKey: AREA_LAYOUTS_QUERY });
+      messageApi.success('Đã cập nhật bảng giá cho bàn/phòng.');
+    } catch (error) {
+      messageApi.error(errorMessage(error, 'Không thể cập nhật bảng giá.'));
+    } finally {
+      setPricingTableId(null);
+    }
+  };
+
+  const pricingOptions = (table?: AreaTable) => {
+    const options = (timeProducts.data ?? [])
+      .filter((product) => product.productType === 'TIME' && product.status === 'ACTIVE')
+      .map((product) => ({ value: product.id, label: product.name }));
+    if (table?.timeProductId && !options.some((option) => option.value === table.timeProductId)) {
+      options.unshift({
+        value: table.timeProductId,
+        label: table.timeProductName ?? 'Bảng giá hiện tại',
+      });
+    }
+    return options;
+  };
+
   return (
     <div className="owner-area-page">
       {contextHolder}
@@ -218,24 +335,32 @@ export function OwnerAreaSettingsPage() {
         <aside className="owner-area-intro">
           <Typography.Title level={4}>Danh sách khu vực</Typography.Title>
           <Typography.Paragraph type="secondary">
-            Cho phép thiết lập, sắp xếp, chỉnh sửa các khu vực, bàn/phòng trong cửa hàng.
+            Thiết lập, sắp xếp, đổi tên và quản lý chi tiết các bàn/phòng theo từng khu vực trong
+            cửa hàng.
           </Typography.Paragraph>
-          <Typography.Text>
-            Tổng số: {totalTables} bàn/phòng / {layouts.data?.length ?? 0} khu vực
-          </Typography.Text>
+          <Card className="owner-area-stat-card" size="small">
+            <div className="owner-area-stat-item">
+              <Typography.Text type="secondary">Tổng số khu vực:</Typography.Text>
+              <Typography.Text strong>{layouts.data?.length ?? 0} khu vực</Typography.Text>
+            </div>
+            <div className="owner-area-stat-item">
+              <Typography.Text type="secondary">Tổng số bàn/phòng:</Typography.Text>
+              <Typography.Text strong>{totalTables} bàn/phòng</Typography.Text>
+            </div>
+          </Card>
         </aside>
 
         <Card className="owner-area-list-card" styles={{ body: { padding: 0 } }}>
           <div className="owner-area-list-card__tab">Tất cả khu vực</div>
           <div className="owner-area-table__header">
             <span>Tên khu vực</span>
-            <span>Số lượng bàn/phòng</span>
-            <span aria-hidden="true" />
+            <span style={{ textAlign: 'center' }}>Số lượng bàn/phòng</span>
+            <span style={{ textAlign: 'right' }}>Thao tác</span>
           </div>
 
           {layouts.isLoading ? (
             <div className="owner-area-list-card__loading">
-              <Skeleton active />
+              <Skeleton active paragraph={{ rows: 5 }} />
             </div>
           ) : layouts.isError ? (
             <Alert
@@ -246,148 +371,65 @@ export function OwnerAreaSettingsPage() {
             />
           ) : layouts.data?.length ? (
             <div className="owner-area-table">
-              {layouts.data.map((area, index) => {
-                const expanded = expandedAreaId === area.id;
-                return (
-                  <div className="owner-area-table__group" key={area.id}>
-                    <div className="owner-area-table__row">
-                      <button
-                        type="button"
-                        className="owner-area-table__name"
-                        aria-expanded={expanded}
-                        onClick={() => setExpandedAreaId(expanded ? null : area.id)}
+              {layouts.data.map((area, index) => (
+                <div className="owner-area-table__group" key={area.id}>
+                  <div className="owner-area-table__row">
+                    <button
+                      type="button"
+                      className="owner-area-table__name"
+                      title="Bấm để xem chi tiết và quản lý bàn"
+                      onClick={() => setDetailAreaId(area.id)}
+                    >
+                      <span className="owner-area-index">
+                        {String(index + 1).padStart(2, '0')}.
+                      </span>
+                      <strong className="owner-area-name-text">{area.name}</strong>
+                    </button>
+                    <div style={{ textAlign: 'center' }}>
+                      <Tag color="blue" className="owner-area-count-badge">
+                        {area.tables.length} bàn/phòng
+                      </Tag>
+                    </div>
+                    <div className="owner-area-row-actions">
+                      <Button
+                        type="primary"
+                        ghost
+                        size="small"
+                        icon={<AppstoreOutlined />}
+                        onClick={() => setDetailAreaId(area.id)}
                       >
-                        <span>{String(index + 1).padStart(2, '0')}.</span> {area.name}
-                      </button>
-                      <span className="owner-area-table__count">{area.tables.length}</span>
+                        Xem chi tiết
+                      </Button>
                       <Button
                         type="text"
-                        aria-label={`${expanded ? 'Ẩn' : 'Hiện'} bàn/phòng của ${area.name}`}
-                        icon={<HolderOutlined />}
-                        onClick={() => setExpandedAreaId(expanded ? null : area.id)}
+                        size="small"
+                        icon={<EditOutlined />}
+                        title="Đổi tên khu vực"
+                        onClick={() => openRenameArea(area)}
                       />
+                      <Popconfirm
+                        title="Xóa khu vực?"
+                        description="Khu vực và toàn bộ bàn/phòng đang trống sẽ không còn hiển thị."
+                        okText="Xóa khu vực"
+                        cancelText="Hủy"
+                        okButtonProps={{ danger: true }}
+                        onConfirm={() => deleteArea(area)}
+                      >
+                        <Button
+                          type="text"
+                          danger
+                          size="small"
+                          icon={<DeleteOutlined />}
+                          title="Xóa khu vực"
+                        />
+                      </Popconfirm>
                     </div>
-                    {expanded ? (
-                      <div className="owner-area-table__details">
-                        <div className="owner-area-detail-toolbar">
-                          {area.tables.length ? (
-                            <Typography.Text className="owner-area-order-hint" type="secondary">
-                              Kéo thả hoặc dùng nút lên/xuống để đổi thứ tự hiển thị.
-                            </Typography.Text>
-                          ) : (
-                            <span />
-                          )}
-                          <Popconfirm
-                            title="Xóa khu vực?"
-                            description="Khu vực và toàn bộ bàn/phòng đang trống sẽ không còn hiển thị."
-                            okText="Xóa khu vực"
-                            cancelText="Hủy"
-                            okButtonProps={{ danger: true }}
-                            onConfirm={() => deleteArea(area)}
-                          >
-                            <Button type="text" danger size="small" icon={<DeleteOutlined />}>
-                              Xóa khu vực
-                            </Button>
-                          </Popconfirm>
-                        </div>
-                        {area.tables.length ? (
-                          area.tables.map((table, tableIndex) => (
-                            <div
-                              className={`owner-area-existing-table${
-                                orderingAreaId === area.id
-                                  ? ' owner-area-existing-table--ordering'
-                                  : ''
-                              }`}
-                              key={table.id}
-                              draggable={orderingAreaId === null}
-                              onDragStart={() =>
-                                setDraggedTable({ areaId: area.id, tableId: table.id })
-                              }
-                              onDragEnd={() => setDraggedTable(null)}
-                              onDragOver={(event) => event.preventDefault()}
-                              onDrop={() => {
-                                if (!draggedTable || draggedTable.areaId !== area.id) return;
-                                void saveTableOrder(
-                                  area,
-                                  moveItemToTarget(area.tables, draggedTable.tableId, table.id),
-                                );
-                              }}
-                            >
-                              <span className="owner-area-drag-handle" title="Kéo để sắp xếp">
-                                <MenuOutlined />
-                              </span>
-                              <span className="owner-area-table-icon">
-                                <AppstoreOutlined />
-                              </span>
-                              <span className="owner-area-existing-table__name">{table.name}</span>
-                              {table.status === 'OCCUPIED' ? (
-                                <Tag color="processing">Đang dùng</Tag>
-                              ) : null}
-                              <Button
-                                type="text"
-                                disabled={tableIndex === 0 || orderingAreaId === area.id}
-                                aria-label={`Đưa ${table.name} lên`}
-                                icon={<ArrowUpOutlined />}
-                                onClick={() =>
-                                  void saveTableOrder(
-                                    area,
-                                    moveItem(area.tables, tableIndex, tableIndex - 1),
-                                  )
-                                }
-                              />
-                              <Button
-                                type="text"
-                                disabled={
-                                  tableIndex === area.tables.length - 1 ||
-                                  orderingAreaId === area.id
-                                }
-                                aria-label={`Đưa ${table.name} xuống`}
-                                icon={<ArrowDownOutlined />}
-                                onClick={() =>
-                                  void saveTableOrder(
-                                    area,
-                                    moveItem(area.tables, tableIndex, tableIndex + 1),
-                                  )
-                                }
-                              />
-                              <Button
-                                type="text"
-                                aria-label={`Sửa ${table.name}`}
-                                icon={<EditOutlined />}
-                                onClick={() => openEdit(table)}
-                              />
-                              <Popconfirm
-                                title="Xóa bàn/phòng?"
-                                description="Bàn/phòng sẽ không còn hiển thị trong khu vực."
-                                okText="Xóa"
-                                cancelText="Hủy"
-                                okButtonProps={{ danger: true }}
-                                disabled={table.status === 'OCCUPIED'}
-                                onConfirm={() => deleteTable(table)}
-                              >
-                                <Button
-                                  type="text"
-                                  danger
-                                  disabled={table.status === 'OCCUPIED'}
-                                  aria-label={`Xóa ${table.name}`}
-                                  icon={<DeleteOutlined />}
-                                />
-                              </Popconfirm>
-                            </div>
-                          ))
-                        ) : (
-                          <Typography.Text type="secondary">
-                            Khu vực chưa có bàn/phòng.
-                          </Typography.Text>
-                        )}
-                      </div>
-                    ) : null}
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
           ) : (
-            <Empty description="Chưa có khu vực" className="owner-area-empty">
+            <Empty description="Chưa có khu vực nào" className="owner-area-empty">
               <Button type="primary" onClick={() => navigate('/owner/settings/areas/new')}>
                 Thêm khu vực đầu tiên
               </Button>
@@ -396,25 +438,280 @@ export function OwnerAreaSettingsPage() {
         </Card>
       </div>
 
+      {/* POPUP MODAL: CHI TIẾT KHU VỰC VÀ QUẢN LÝ DANH SÁCH BÀN */}
       <Modal
-        title="Sửa bàn/phòng"
+        title={
+          detailArea ? (
+            <div className="owner-area-modal-title">
+              <span className="owner-area-modal-title__icon">
+                <AppstoreOutlined />
+              </span>
+              <span>
+                Khu vực: <strong>{detailArea.name}</strong>
+              </span>
+              <Tag color="blue">{detailArea.tables.length} bàn/phòng</Tag>
+              <Button
+                type="link"
+                size="small"
+                icon={<EditOutlined />}
+                onClick={() => openRenameArea(detailArea)}
+              >
+                Đổi tên
+              </Button>
+            </div>
+          ) : (
+            'Chi tiết khu vực'
+          )
+        }
+        open={detailArea !== null}
+        width={860}
+        footer={[
+          detailArea ? (
+            <Popconfirm
+              key="delete-area"
+              title="Xóa toàn bộ khu vực?"
+              description="Khu vực và các bàn/phòng trong khu vực này sẽ bị xóa."
+              okText="Xóa khu vực"
+              cancelText="Hủy"
+              okButtonProps={{ danger: true }}
+              onConfirm={() => deleteArea(detailArea)}
+            >
+              <Button danger type="text" icon={<DeleteOutlined />} style={{ float: 'left' }}>
+                Xóa khu vực này
+              </Button>
+            </Popconfirm>
+          ) : null,
+          <Button key="close" type="primary" onClick={() => setDetailAreaId(null)}>
+            Đóng
+          </Button>,
+        ]}
+        onCancel={() => setDetailAreaId(null)}
+      >
+        {detailArea ? (
+          <div className="owner-area-modal-content">
+            {/* Thanh thêm bàn nhanh vào khu vực */}
+            <div className="owner-area-add-table-bar">
+              <Typography.Text strong className="owner-area-add-table-bar__title">
+                Thêm bàn vào khu vực:
+              </Typography.Text>
+              <div className="owner-area-add-table-bar__form">
+                <Input
+                  placeholder="Ví dụ: Bàn 01, Bàn VIP 2..."
+                  value={newTableName}
+                  maxLength={120}
+                  style={{ width: 220 }}
+                  onChange={(e) => setNewTableName(e.target.value)}
+                  onPressEnter={() => void createTableInArea()}
+                />
+                <Select
+                  placeholder="Chọn bảng giá (tùy chọn)"
+                  allowClear
+                  style={{ width: 220 }}
+                  value={newTableTimeProductId}
+                  onChange={(value) => setNewTableTimeProductId(value ?? null)}
+                  options={pricingOptions()}
+                  notFoundContent="Chưa có bảng giá tính giờ"
+                />
+                <Button
+                  type="primary"
+                  icon={<PlusCircleOutlined />}
+                  loading={addingTable}
+                  disabled={!newTableName.trim()}
+                  onClick={() => void createTableInArea()}
+                >
+                  Thêm bàn
+                </Button>
+              </div>
+            </div>
+
+            {/* Hướng dẫn sắp xếp */}
+            <div className="owner-area-table-list-header">
+              <Typography.Text type="secondary" className="owner-area-order-hint">
+                💡 Dùng nút Lên / Xuống hoặc kéo biểu tượng ☰ để thay đổi thứ tự bàn hiển thị trên
+                POS.
+              </Typography.Text>
+            </div>
+
+            {/* Danh sách bàn chi tiết, rộng rãi */}
+            {detailArea.tables.length ? (
+              <div className="owner-area-modal-table-list">
+                {detailArea.tables.map((table, tableIndex) => (
+                  <div
+                    className={`owner-area-modal-table-row${
+                      orderingAreaId === detailArea.id
+                        ? ' owner-area-modal-table-row--ordering'
+                        : ''
+                    }`}
+                    key={table.id}
+                    draggable={orderingAreaId === null}
+                    onDragStart={() =>
+                      setDraggedTable({ areaId: detailArea.id, tableId: table.id })
+                    }
+                    onDragEnd={() => setDraggedTable(null)}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={() => {
+                      if (!draggedTable || draggedTable.areaId !== detailArea.id) return;
+                      void saveTableOrder(
+                        detailArea,
+                        moveItemToTarget(detailArea.tables, draggedTable.tableId, table.id),
+                      );
+                    }}
+                  >
+                    <div className="owner-area-modal-table-col owner-area-modal-table-col--order">
+                      <span className="owner-area-drag-handle" title="Kéo để sắp xếp thứ tự">
+                        <MenuOutlined />
+                      </span>
+                      <span className="owner-area-order-number">#{tableIndex + 1}</span>
+                    </div>
+
+                    <div className="owner-area-modal-table-col owner-area-modal-table-col--name">
+                      <span className="owner-area-table-icon">
+                        <AppstoreOutlined />
+                      </span>
+                      <strong className="owner-area-table-title">{table.name}</strong>
+                    </div>
+
+                    <div className="owner-area-modal-table-col owner-area-modal-table-col--pricing">
+                      <span className="owner-area-pricing-label">Bảng giá:</span>
+                      <Select
+                        className="owner-area-table-pricing-select"
+                        allowClear
+                        placeholder="Chọn bảng giá giờ"
+                        value={table.timeProductId ?? null}
+                        loading={timeProducts.isLoading || pricingTableId === table.id}
+                        disabled={table.status === 'OCCUPIED' || pricingTableId === table.id}
+                        options={pricingOptions(table)}
+                        onChange={(value: string | null) => void saveTablePricing(table, value)}
+                        notFoundContent="Chưa có bảng giá tính giờ"
+                      />
+                    </div>
+
+                    <div className="owner-area-modal-table-col owner-area-modal-table-col--status">
+                      {table.status === 'OCCUPIED' ? (
+                        <Tag color="orange">Đang phục vụ</Tag>
+                      ) : (
+                        <Tag color="green">Sẵn sàng</Tag>
+                      )}
+                    </div>
+
+                    <div className="owner-area-modal-table-col owner-area-modal-table-col--actions">
+                      <Button
+                        type="text"
+                        size="small"
+                        disabled={tableIndex === 0 || orderingAreaId === detailArea.id}
+                        aria-label={`Đưa ${table.name} lên`}
+                        icon={<ArrowUpOutlined />}
+                        title="Đưa lên trên"
+                        onClick={() =>
+                          void saveTableOrder(
+                            detailArea,
+                            moveItem(detailArea.tables, tableIndex, tableIndex - 1),
+                          )
+                        }
+                      />
+                      <Button
+                        type="text"
+                        size="small"
+                        disabled={
+                          tableIndex === detailArea.tables.length - 1 ||
+                          orderingAreaId === detailArea.id
+                        }
+                        aria-label={`Đưa ${table.name} xuống`}
+                        icon={<ArrowDownOutlined />}
+                        title="Đưa xuống dưới"
+                        onClick={() =>
+                          void saveTableOrder(
+                            detailArea,
+                            moveItem(detailArea.tables, tableIndex, tableIndex + 1),
+                          )
+                        }
+                      />
+                      <Button
+                        type="text"
+                        size="small"
+                        aria-label={`Sửa ${table.name}`}
+                        icon={<EditOutlined />}
+                        title="Sửa tên bàn"
+                        onClick={() => openEdit(table)}
+                      />
+                      <Popconfirm
+                        title="Xóa bàn/phòng?"
+                        description="Bàn/phòng sẽ không còn hiển thị trong khu vực."
+                        okText="Xóa"
+                        cancelText="Hủy"
+                        okButtonProps={{ danger: true }}
+                        disabled={table.status === 'OCCUPIED'}
+                        onConfirm={() => deleteTable(table)}
+                      >
+                        <Button
+                          type="text"
+                          danger
+                          size="small"
+                          disabled={table.status === 'OCCUPIED'}
+                          aria-label={`Xóa ${table.name}`}
+                          icon={<DeleteOutlined />}
+                          title="Xóa bàn"
+                        />
+                      </Popconfirm>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="Khu vực này hiện chưa có bàn/phòng nào"
+                style={{ margin: '30px 0' }}
+              />
+            )}
+          </div>
+        ) : null}
+      </Modal>
+
+      {/* MODAL: SỬA TÊN BÀN */}
+      <Modal
+        title="Sửa tên bàn/phòng"
         open={editingTable !== null}
-        okText="Lưu"
+        okText="Lưu tên bàn"
         cancelText="Hủy"
         confirmLoading={savingTable}
-        onOk={() => form.submit()}
+        onOk={() => tableForm.submit()}
         onCancel={() => {
           setEditingTable(null);
-          form.resetFields();
+          tableForm.resetFields();
         }}
       >
-        <Form form={form} layout="vertical" requiredMark={false} onFinish={saveTableName}>
+        <Form form={tableForm} layout="vertical" requiredMark={false} onFinish={saveTableName}>
           <Form.Item
             name="name"
             label="Tên bàn/phòng"
             rules={[{ required: true, whitespace: true, message: 'Vui lòng nhập tên bàn/phòng.' }]}
           >
-            <Input autoFocus maxLength={120} placeholder="Ví dụ: Bàn 01" />
+            <Input autoFocus maxLength={120} placeholder="Ví dụ: Bàn 01 hoặc Bàn VIP" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* MODAL: ĐỔI TÊN KHU VỰC */}
+      <Modal
+        title="Đổi tên khu vực"
+        open={renamingArea !== null}
+        okText="Lưu tên khu vực"
+        cancelText="Hủy"
+        confirmLoading={renamingAreaSaving}
+        onOk={() => areaRenameForm.submit()}
+        onCancel={() => {
+          setRenamingArea(null);
+          areaRenameForm.resetFields();
+        }}
+      >
+        <Form form={areaRenameForm} layout="vertical" requiredMark={false} onFinish={saveAreaName}>
+          <Form.Item
+            name="name"
+            label="Tên khu vực"
+            rules={[{ required: true, whitespace: true, message: 'Vui lòng nhập tên khu vực.' }]}
+          >
+            <Input autoFocus maxLength={160} placeholder="Ví dụ: Tầng 1, Tầng 2, Khu VIP" />
           </Form.Item>
         </Form>
       </Modal>

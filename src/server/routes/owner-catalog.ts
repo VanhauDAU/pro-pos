@@ -7,7 +7,9 @@ import {
   namedResourceSchema,
   pricingConfigSchema,
   reorderServiceTablesSchema,
+  updateProductSchema,
   updateServiceTableSchema,
+  updateServiceTablePricingSchema,
 } from '@contracts/catalog';
 import { success } from '@server/lib/response';
 import { parseJson } from '@server/lib/validation';
@@ -29,6 +31,16 @@ function auditContext(c: Parameters<typeof success>[0]) {
 
 for (const table of ['areas', 'categories', 'units'] as const) {
   ownerCatalogRoutes.get(`/${table}`, requirePermission('catalog.manage'), async (c) => {
+    if (table === 'units' && (c.req.query('page') || c.req.query('q'))) {
+      return success(
+        c,
+        await new CatalogService(c.env).listUnits(c.get('actor').storeId!, {
+          page: Number(c.req.query('page') ?? 1),
+          pageSize: Number(c.req.query('pageSize') ?? 10),
+          search: c.req.query('q') ?? '',
+        }),
+      );
+    }
     const result = await new CatalogService(c.env).listNamed(c.get('actor').storeId!, table);
     return success(c, result.results);
   });
@@ -46,6 +58,112 @@ for (const table of ['areas', 'categories', 'units'] as const) {
     );
   });
 }
+
+ownerCatalogRoutes.get('/units/:unitId/products', requirePermission('catalog.manage'), async (c) =>
+  success(
+    c,
+    (
+      await new CatalogService(c.env).getUnit(c.get('actor').storeId!, c.req.param('unitId'), {
+        page: Number(c.req.query('page') ?? 1),
+        pageSize: Number(c.req.query('pageSize') ?? 10),
+        search: c.req.query('q') ?? '',
+      })
+    ).products,
+  ),
+);
+
+ownerCatalogRoutes.get('/units/:unitId', requirePermission('catalog.manage'), async (c) =>
+  success(
+    c,
+    await new CatalogService(c.env).getUnit(c.get('actor').storeId!, c.req.param('unitId')),
+  ),
+);
+
+ownerCatalogRoutes.put('/units/:unitId', requirePermission('catalog.manage'), async (c) => {
+  const body = await parseJson(c.req.raw, namedResourceSchema);
+  return success(
+    c,
+    await new CatalogService(c.env).updateUnit(
+      c.get('actor').storeId!,
+      c.req.param('unitId'),
+      body.name,
+      auditContext(c),
+    ),
+  );
+});
+
+ownerCatalogRoutes.delete('/units/:unitId', requirePermission('catalog.manage'), async (c) =>
+  success(
+    c,
+    await new CatalogService(c.env).deleteUnit(
+      c.get('actor').storeId!,
+      c.req.param('unitId'),
+      auditContext(c),
+    ),
+  ),
+);
+
+ownerCatalogRoutes.put(
+  '/categories/:categoryId',
+  requirePermission('catalog.manage'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, namedResourceSchema);
+    return success(
+      c,
+      await new CatalogService(c.env).updateNamed(
+        c.get('actor').storeId!,
+        'categories',
+        c.req.param('categoryId'),
+        body.name,
+        auditContext(c),
+      ),
+    );
+  },
+);
+
+ownerCatalogRoutes.delete(
+  '/categories/:categoryId',
+  requirePermission('catalog.manage'),
+  async (c) =>
+    success(
+      c,
+      await new CatalogService(c.env).deleteCategory(
+        c.get('actor').storeId!,
+        c.req.param('categoryId'),
+        auditContext(c),
+      ),
+    ),
+);
+
+ownerCatalogRoutes.get(
+  '/categories/:categoryId/products',
+  requirePermission('catalog.manage'),
+  async (c) =>
+    success(
+      c,
+      (
+        await new CatalogService(c.env).listCategoryProducts(
+          c.get('actor').storeId!,
+          c.req.param('categoryId'),
+          c.req.query('q'),
+        )
+      ).results,
+    ),
+);
+
+ownerCatalogRoutes.put('/areas/:areaId', requirePermission('table.manage'), async (c) => {
+  const body = await parseJson(c.req.raw, namedResourceSchema);
+  return success(
+    c,
+    await new CatalogService(c.env).updateNamed(
+      c.get('actor').storeId!,
+      'areas',
+      c.req.param('areaId'),
+      body.name,
+      auditContext(c),
+    ),
+  );
+});
 
 ownerCatalogRoutes.get('/area-layouts', requirePermission('table.manage'), async (c) =>
   success(c, await new CatalogService(c.env).listAreaLayouts(c.get('actor').storeId!)),
@@ -111,6 +229,51 @@ ownerCatalogRoutes.post('/products', requirePermission('catalog.manage'), async 
   );
 });
 
+ownerCatalogRoutes.get('/products/:productId', requirePermission('catalog.manage'), async (c) =>
+  success(
+    c,
+    await new CatalogService(c.env).getProduct(c.get('actor').storeId!, c.req.param('productId')),
+  ),
+);
+
+ownerCatalogRoutes.put('/products/:productId', requirePermission('catalog.manage'), async (c) => {
+  const body = await parseJson(c.req.raw, updateProductSchema);
+  return success(
+    c,
+    await new CatalogService(c.env).updateProduct(
+      c.get('actor').storeId!,
+      c.req.param('productId'),
+      body,
+      auditContext(c),
+    ),
+  );
+});
+
+ownerCatalogRoutes.delete('/products/:productId', requirePermission('catalog.manage'), async (c) =>
+  success(
+    c,
+    await new CatalogService(c.env).deleteProduct(
+      c.get('actor').storeId!,
+      c.req.param('productId'),
+      auditContext(c),
+    ),
+  ),
+);
+
+ownerCatalogRoutes.post(
+  '/products/:productId/restore',
+  requirePermission('catalog.manage'),
+  async (c) =>
+    success(
+      c,
+      await new CatalogService(c.env).restoreProduct(
+        c.get('actor').storeId!,
+        c.req.param('productId'),
+        auditContext(c),
+      ),
+    ),
+);
+
 ownerCatalogRoutes.put('/pricing', requirePermission('pricing.manage'), async (c) => {
   const body = await parseJson(c.req.raw, pricingConfigSchema);
   return success(
@@ -136,7 +299,7 @@ ownerCatalogRoutes.post('/tables', requirePermission('table.manage'), async (c) 
     await new CatalogService(c.env).createTable({
       storeId: c.get('actor').storeId!,
       areaId: body.areaId,
-      timeProductId: body.timeProductId,
+      timeProductId: body.timeProductId ?? null,
       name: body.name,
       sortOrder: body.sortOrder,
       auditContext: {
@@ -162,6 +325,23 @@ ownerCatalogRoutes.patch('/tables/:tableId', requirePermission('table.manage'), 
     ),
   );
 });
+
+ownerCatalogRoutes.patch(
+  '/tables/:tableId/pricing',
+  requirePermission('table.manage'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, updateServiceTablePricingSchema);
+    return success(
+      c,
+      await new CatalogService(c.env).updateTablePricing(
+        c.get('actor').storeId!,
+        c.req.param('tableId'),
+        body.timeProductId,
+        auditContext(c),
+      ),
+    );
+  },
+);
 
 ownerCatalogRoutes.delete('/tables/:tableId', requirePermission('table.manage'), async (c) =>
   success(

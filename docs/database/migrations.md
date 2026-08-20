@@ -13,6 +13,8 @@
   discount theo gross để không làm phình dữ liệu tài chính lịch sử.
 - `0007_owner_store_location.sql`: thêm mã/tên tỉnh và phường/xã để lưu địa chỉ hành chính mới
   của Owner settings.
+- `0008_area_table_setup.sql`: bổ sung layout khu vực/bàn phòng và các ràng buộc trạng thái cho POS.
+- `0009_staff_roles_permissions.sql`: bổ sung vai trò tùy chỉnh, quyền nhân viên và liên kết user-role.
 
 Quy tắc:
 

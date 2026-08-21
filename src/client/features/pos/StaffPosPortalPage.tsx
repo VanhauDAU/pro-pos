@@ -1,5 +1,6 @@
 import {
   AppstoreOutlined,
+  CheckCircleOutlined,
   CheckOutlined,
   ClockCircleOutlined,
   CloseCircleOutlined,
@@ -55,11 +56,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
-import { calculateTimePrice } from '@domain/pricing/engine';
-import type { PricingConfigSnapshot, PricingResult } from '@domain/pricing/types';
+import type { PricingConfigSnapshot } from '@domain/pricing/types';
 
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
-import { playClickSound } from '@client/lib/sound';
 
 const BRAND = '#0975f7';
 
@@ -94,6 +93,10 @@ interface PosTable {
   areaName: string;
   areaSortOrder: number;
   sortOrder: number;
+  timeProductId?: string | null;
+  timeProductName?: string | null;
+  defaultPriceVnd?: number | null;
+  defaultDurationSeconds?: number | null;
   activeOrderId: string | null;
   occupiedSince: number | null;
 }
@@ -108,7 +111,7 @@ interface CatalogVariant {
 interface CatalogProduct {
   productId: string;
   productName: string;
-  productType: 'QUANTITY' | 'WEIGHT' | 'TIME';
+  productType: 'QUANTITY' | 'WEIGHT';
   avatarType: 'COLOR' | 'IMAGE';
   avatarColor: string | null;
   mediaId: string | null;
@@ -116,7 +119,6 @@ interface CatalogProduct {
   categoryName: string | null;
   unitName: string | null;
   variants: CatalogVariant[];
-  timePricingConfig?: PricingConfigSnapshot | null;
 }
 
 interface OrderQuote {
@@ -137,7 +139,7 @@ interface OrderQuote {
     id: string;
     productId: string;
     variantId: string | null;
-    productType: 'QUANTITY' | 'WEIGHT' | 'TIME';
+    productType: 'QUANTITY' | 'WEIGHT';
     productName: string;
     variantName: string | null;
     unitName: string | null;
@@ -149,9 +151,6 @@ interface OrderQuote {
     grossLineTotalVnd: number;
     discountAmountVnd: number;
     netLineTotalVnd: number;
-    timeStartedAtMs: number | null;
-    timeEndedAtMs: number | null;
-    timePricing?: (PricingResult & { pricingConfig: PricingConfigSnapshot }) | null;
   }>;
   time: null | {
     status: 'RUNNING' | 'PAUSED' | 'ENDED';
@@ -171,6 +170,16 @@ interface OrderQuote {
       amountBeforeRoundingVnd: number;
     }>;
     pricingConfig: PricingConfigSnapshot;
+    tableSegments?: Array<{
+      tableId: string;
+      tableName: string;
+      startedAtMs: number;
+      endedAtMs: number | null;
+      elapsedSeconds: number;
+      amountBeforeRoundingVnd: number;
+      amountAfterRoundingVnd: number;
+      pricingConfig: PricingConfigSnapshot;
+    }>;
   };
   subtotalVnd: number;
   discountTotalVnd: number;
@@ -185,8 +194,6 @@ interface DraftLine {
   note: string | null;
   discountType: 'FIXED' | 'PERCENT' | null;
   discountInputValue: number | null;
-  timeStartedAtMs?: number | undefined;
-  timeEndedAtMs?: number | undefined;
 }
 
 interface EditingOrderItem {
@@ -194,7 +201,7 @@ interface EditingOrderItem {
   id: string;
   productId: string;
   variantId: string | null;
-  productType: 'QUANTITY' | 'WEIGHT' | 'TIME';
+  productType: 'QUANTITY' | 'WEIGHT';
   productName: string;
   variantName: string | null;
   unitName: string | null;
@@ -206,9 +213,6 @@ interface EditingOrderItem {
   discountType: 'FIXED' | 'PERCENT' | null;
   discountInputValue: number | null;
   netLineTotalVnd: number;
-  timeStartedAtMs?: number | null | undefined;
-  timeEndedAtMs?: number | null | undefined;
-  timePricing?: (PricingResult & { pricingConfig: PricingConfigSnapshot }) | null | undefined;
   discardOnCancel?: boolean | undefined;
 }
 
@@ -248,17 +252,17 @@ interface InvoiceDetail {
   snapshot: Record<string, unknown> | null;
 }
 
-function formatMoney(value: number) {
-  return `${new Intl.NumberFormat('vi-VN').format(value)}đ`;
+function calculateLineTotal(unitPriceVnd: number, quantityMilli: number) {
+  return Math.round((unitPriceVnd * quantityMilli) / 1000);
 }
 
-function calculateLineTotal(unitPriceVnd: number, quantityMilli: number) {
-  return Math.floor((unitPriceVnd * quantityMilli + 500) / 1000);
+function formatMoney(value: number) {
+  return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(value);
 }
 
 function calculateDiscountAmount(
   grossLineTotalVnd: number,
-  type: 'FIXED' | 'PERCENT' | null,
+  type: 'FIXED' | 'PERCENT' | null | undefined,
   inputValue: number | null,
 ) {
   if (!type || inputValue === null) return 0;
@@ -291,16 +295,13 @@ function getProductInitials(name: string): string {
 }
 
 function formatItemQuantity(
-  productType: 'QUANTITY' | 'WEIGHT' | 'TIME',
+  productType: 'QUANTITY' | 'WEIGHT',
   quantityMilli: number,
   unitName: string | null,
 ) {
   const value = formatDecimal(quantityMilli / 1000);
   if (productType === 'WEIGHT') {
     return `${value} ${getWeightUnit(unitName)}`;
-  }
-  if (productType === 'TIME') {
-    return `${value} ${unitName || 'giờ'}`;
   }
   return `${value}x`;
 }
@@ -395,16 +396,25 @@ function StaffHeader({
       title: 'Xác nhận đăng xuất',
       content: 'Bạn có chắc chắn muốn đăng xuất khỏi hệ thống POS?',
       okText: 'Đăng xuất',
-      okButtonProps: { danger: true },
+      okButtonProps: { danger: true, loading: loggingOut },
       cancelText: 'Hủy',
       onOk: async () => {
         try {
           setLoggingOut(true);
-          await apiRequest('/api/v1/auth/logout', { method: 'POST' });
+          const csrfToken = context?.csrfToken;
+          if (csrfToken) {
+            await apiRequest('/api/v1/auth/logout', {
+              method: 'POST',
+              headers: { 'X-CSRF-Token': csrfToken },
+            });
+          }
+          await queryClient.invalidateQueries({ queryKey: ['auth-context'] });
           queryClient.clear();
-          navigate('/login');
+          navigate('/?tab=employee', { replace: true });
         } catch {
-          // ignore
+          await queryClient.invalidateQueries({ queryKey: ['auth-context'] });
+          queryClient.clear();
+          navigate('/?tab=employee', { replace: true });
         } finally {
           setLoggingOut(false);
         }
@@ -961,6 +971,289 @@ function StaffTablePickerModal({
   );
 }
 
+interface StaffTableTransferModalProps {
+  open: boolean;
+  currentTable: PosTable | null;
+  currentQuote: OrderQuote | null;
+  tables: PosTable[];
+  confirmLoading?: boolean;
+  onCancel: () => void;
+  onConfirm: (targetTable: PosTable) => Promise<void>;
+}
+
+function StaffTableTransferModal({
+  open,
+  currentTable,
+  currentQuote,
+  tables,
+  confirmLoading = false,
+  onCancel,
+  onConfirm,
+}: StaffTableTransferModalProps) {
+  const [selectedAreaId, setSelectedAreaId] = useState<string | null>(null);
+  const [confirmTargetTable, setConfirmTargetTable] = useState<PosTable | null>(null);
+  const [isTransferring, setIsTransferring] = useState(false);
+
+  useEffect(() => {
+    if (!open) {
+      setConfirmTargetTable(null);
+      setIsTransferring(false);
+    }
+  }, [open]);
+
+  const areas = useMemo(() => {
+    const map = new Map<
+      string,
+      { id: string; name: string; sortOrder: number; tables: PosTable[] }
+    >();
+    for (const table of tables) {
+      const existing = map.get(table.areaId);
+      if (existing) {
+        existing.tables.push(table);
+      } else {
+        map.set(table.areaId, {
+          id: table.areaId,
+          name: table.areaName,
+          sortOrder: table.areaSortOrder,
+          tables: [table],
+        });
+      }
+    }
+    return [...map.values()].toSorted(
+      (a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'vi'),
+    );
+  }, [tables]);
+
+  const activeArea = areas.find((item) => item.id === selectedAreaId) ?? areas[0];
+
+  const sortedTables = useMemo(() => {
+    return (activeArea?.tables ?? []).toSorted(
+      (a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'vi', { numeric: true }),
+    );
+  }, [activeArea]);
+
+  const availableCount = sortedTables.filter(
+    (table) => table.status === 'AVAILABLE' && table.id !== currentTable?.id,
+  ).length;
+  const totalCount = sortedTables.length;
+
+  const currentPriceText = useMemo(() => {
+    if (currentQuote?.time?.pricingConfig) {
+      const cfg = currentQuote.time.pricingConfig;
+      const productName = currentTable?.timeProductName ? `${currentTable.timeProductName} · ` : '';
+      return `${productName}${formatMoney(cfg.basePriceVnd)}/giờ`;
+    }
+    if (currentTable?.defaultPriceVnd) {
+      const productName = currentTable.timeProductName ? `${currentTable.timeProductName} · ` : '';
+      return `${productName}${formatMoney(currentTable.defaultPriceVnd)}/giờ`;
+    }
+    return 'Chưa có cấu hình giá';
+  }, [currentQuote, currentTable]);
+
+  const handleExecuteTransfer = async () => {
+    if (!confirmTargetTable) return;
+    setIsTransferring(true);
+    try {
+      await onConfirm(confirmTargetTable);
+      setConfirmTargetTable(null);
+    } finally {
+      setIsTransferring(false);
+    }
+  };
+
+  return (
+    <>
+      <Modal
+        open={open && !confirmTargetTable}
+        title={
+          <div className="staff-transfer-modal__title">
+            <SwapOutlined />
+            <span>Chuyển bàn</span>
+          </div>
+        }
+        footer={null}
+        width={920}
+        centered
+        destroyOnHidden
+        onCancel={onCancel}
+        className="staff-transfer-picker-modal"
+        styles={{
+          body: { padding: 0 },
+        }}
+      >
+        <div className="staff-transfer-modal__container">
+          {/* Current Table Card */}
+          {currentTable ? (
+            <div className="staff-transfer-source-card">
+              <div className="staff-transfer-source-card__left">
+                <span className="staff-transfer-source-card__badge">Bàn hiện tại</span>
+                <strong className="staff-transfer-source-card__name">{currentTable.name}</strong>
+                <span className="staff-transfer-source-card__area">{currentTable.areaName}</span>
+              </div>
+              <div className="staff-transfer-source-card__right">
+                <span className="staff-transfer-source-card__label">Giá hiện tại</span>
+                <span className="staff-transfer-source-card__price">{currentPriceText}</span>
+              </div>
+            </div>
+          ) : null}
+
+          <div className="staff-transfer-modal__layout">
+            <aside className="staff-transfer-modal__sidebar">
+              {areas.map((areaItem) => {
+                const isActive = areaItem.id === activeArea?.id;
+                return (
+                  <button
+                    key={areaItem.id}
+                    type="button"
+                    className={`staff-transfer-modal__tab ${isActive ? 'is-active' : ''}`}
+                    onClick={() => setSelectedAreaId(areaItem.id)}
+                  >
+                    {areaItem.name}
+                  </button>
+                );
+              })}
+            </aside>
+
+            <main className="staff-transfer-modal__content">
+              <div className="staff-transfer-modal__summary">
+                <span>Chọn bàn đích:</span>
+                <span className="staff-transfer-modal__count">
+                  Bàn trống khả dụng:{' '}
+                  <strong>
+                    {availableCount}/{totalCount}
+                  </strong>
+                </span>
+              </div>
+
+              {sortedTables.length === 0 ? (
+                <Empty description="Khu vực chưa có bàn" style={{ padding: '60px 0' }} />
+              ) : (
+                <div className="staff-transfer-modal__grid">
+                  {sortedTables.map((table) => {
+                    const isCurrent = table.id === currentTable?.id;
+                    const isOccupied = table.status === 'OCCUPIED';
+                    const isAvailable = table.status === 'AVAILABLE' && !isCurrent;
+                    const isDisabled = table.status === 'DISABLED' || isCurrent || isOccupied;
+
+                    const priceText = table.defaultPriceVnd
+                      ? `${table.timeProductName ? `${table.timeProductName} · ` : ''}${formatMoney(table.defaultPriceVnd)}/giờ`
+                      : 'Mặc định';
+
+                    return (
+                      <button
+                        key={table.id}
+                        type="button"
+                        disabled={isDisabled}
+                        className={[
+                          'staff-transfer-card',
+                          isAvailable && 'staff-transfer-card--available',
+                          isOccupied && 'staff-transfer-card--occupied',
+                          isCurrent && 'staff-transfer-card--current',
+                          isDisabled && 'staff-transfer-card--disabled',
+                        ]
+                          .filter(Boolean)
+                          .join(' ')}
+                        onClick={() => {
+                          if (isAvailable) {
+                            setConfirmTargetTable(table);
+                          }
+                        }}
+                      >
+                        <div className="staff-transfer-card__header">
+                          <strong className="staff-transfer-card__name">{table.name}</strong>
+                          <span
+                            className={`staff-transfer-card__status-badge ${
+                              isCurrent ? 'is-current' : isOccupied ? 'is-occupied' : 'is-available'
+                            }`}
+                          >
+                            {isCurrent ? 'Bàn hiện tại' : isOccupied ? 'Đang chơi' : 'Bàn trống'}
+                          </span>
+                        </div>
+                        <div className="staff-transfer-card__price">{priceText}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </main>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Confirmation Modal */}
+      <Modal
+        open={Boolean(confirmTargetTable)}
+        title={
+          <div className="staff-transfer-confirm-title">
+            <SwapOutlined />
+            <span>
+              Chuyển {currentTable?.name ?? 'Bàn'} → {confirmTargetTable?.name ?? 'Bàn mới'}?
+            </span>
+          </div>
+        }
+        okText="Xác nhận chuyển bàn"
+        cancelText="Hủy"
+        okButtonProps={{
+          size: 'large',
+          className: 'staff-transfer-confirm-ok-btn',
+        }}
+        cancelButtonProps={{
+          size: 'large',
+        }}
+        confirmLoading={isTransferring || confirmLoading}
+        onOk={() => void handleExecuteTransfer()}
+        onCancel={() => {
+          if (!isTransferring) setConfirmTargetTable(null);
+        }}
+        centered
+        width={480}
+        destroyOnHidden
+      >
+        {confirmTargetTable && currentTable ? (
+          <div className="staff-transfer-confirm-body">
+            <div className="staff-transfer-comparison">
+              <div className="staff-transfer-comparison__item">
+                <span className="staff-transfer-comparison__tag">Bàn hiện tại</span>
+                <strong className="staff-transfer-comparison__name">{currentTable.name}</strong>
+                <span className="staff-transfer-comparison__rate">{currentPriceText}</span>
+              </div>
+
+              <div className="staff-transfer-comparison__arrow">
+                <SwapOutlined />
+              </div>
+
+              <div className="staff-transfer-comparison__item staff-transfer-comparison__item--target">
+                <span className="staff-transfer-comparison__tag staff-transfer-comparison__tag--target">
+                  Bàn mới
+                </span>
+                <strong className="staff-transfer-comparison__name">
+                  {confirmTargetTable.name}
+                </strong>
+                <span className="staff-transfer-comparison__rate">
+                  {confirmTargetTable.defaultPriceVnd
+                    ? `${confirmTargetTable.timeProductName ? `${confirmTargetTable.timeProductName} · ` : ''}${formatMoney(confirmTargetTable.defaultPriceVnd)}/giờ`
+                    : 'Theo cấu hình bàn mới'}
+                </span>
+              </div>
+            </div>
+
+            <div className="staff-transfer-confirm-notes">
+              <div className="staff-transfer-confirm-note-item">
+                <span className="staff-transfer-dot">•</span>
+                <span>Giá mới sẽ áp dụng từ thời điểm chuyển.</span>
+              </div>
+              <div className="staff-transfer-confirm-note-item">
+                <span className="staff-transfer-dot">•</span>
+                <span>Thời gian đã chơi, món đã gọi và hóa đơn hiện tại được giữ nguyên.</span>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
+    </>
+  );
+}
+
 interface StaffItemDetailModalProps {
   item: EditingOrderItem | null;
   catalog: CatalogProduct[];
@@ -980,6 +1273,7 @@ function StaffItemDetailModal({
 
   const product = catalog.find(
     (p) =>
+      p.productId === item.productId ||
       p.productName === item.productName ||
       (item.variantId && p.variants.some((v) => v.id === item.variantId)),
   );
@@ -997,7 +1291,7 @@ function StaffItemDetailModal({
         ];
 
   return (
-    <StaffItemDetailModalContent
+    <OrderItemDetailModal
       key={item.id}
       item={item}
       product={product}
@@ -1009,7 +1303,7 @@ function StaffItemDetailModal({
   );
 }
 
-function StaffItemDetailModalContent({
+function OrderItemDetailModal({
   item,
   product,
   variants,
@@ -1038,107 +1332,16 @@ function StaffItemDetailModalContent({
     Boolean(item.discountType && item.discountInputValue),
   );
 
-  const [timeStartedAt, setTimeStartedAt] = useState<string>(() =>
-    formatDateTimeInput(item.timeStartedAtMs ?? Date.now()),
-  );
-  const [timeEndedAt, setTimeEndedAt] = useState<string>(() =>
-    item.timeEndedAtMs ? formatDateTimeInput(item.timeEndedAtMs) : '',
-  );
-  const [modalClockNow, setModalClockNow] = useState(Date.now());
-
-  useEffect(() => {
-    if (item.productType !== 'TIME' || timeEndedAt) return;
-    const timer = setInterval(() => {
-      setModalClockNow(Date.now());
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [item.productType, timeEndedAt]);
-
   const currentVariant = variants.find((v) => v.id === selectedVariantId) ?? variants[0];
   const unitPriceVnd = currentVariant?.salePriceVnd ?? item.unitPriceVnd;
 
-  const pricingConfig: PricingConfigSnapshot = useMemo(() => {
-    if (product?.timePricingConfig) return product.timePricingConfig;
-    if (item.timePricing?.pricingConfig) return item.timePricing.pricingConfig;
-    return {
-      version: 1,
-      timezone: 'Asia/Ho_Chi_Minh',
-      basePriceVnd: unitPriceVnd,
-      baseDurationSeconds: 3600,
-      calculationMode: 'ACTUAL_TIME',
-      roundingUnitVnd: 1000,
-      firstPeriod: { enabled: false },
-      specialWindows: [],
-    };
-  }, [product, item.timePricing?.pricingConfig, unitPriceVnd]);
-
-  const startedMs = timeStartedAt ? new Date(timeStartedAt).getTime() : Date.now();
-  const endedMs = timeEndedAt ? new Date(timeEndedAt).getTime() : modalClockNow;
-  const effectiveEndMs = Math.max(startedMs + 1000, endedMs);
-
-  const livePricingResult = useMemo(() => {
-    if (item.productType !== 'TIME') return null;
-    try {
-      return calculateTimePrice({
-        startedAtMs: startedMs,
-        endedAtMs: effectiveEndMs,
-        config: pricingConfig,
-      });
-    } catch {
-      return null;
-    }
-  }, [item.productType, startedMs, effectiveEndMs, pricingConfig]);
-
-  const handleTimeRangeChange = (startStr: string, endStr: string) => {
-    setTimeStartedAt(startStr);
-    setTimeEndedAt(endStr);
-    if (!startStr) return;
-    const sMs = new Date(startStr).getTime();
-    const eMs = endStr ? new Date(endStr).getTime() : Date.now();
-    if (Number.isFinite(sMs) && Number.isFinite(eMs) && eMs >= sMs) {
-      const diffMinutes = Math.max(1, Math.round((eMs - sMs) / 60000));
-      const hours = Math.round((diffMinutes / 60) * 100) / 100;
-      setItemQuantityMilli(Math.max(1, Math.round(hours * 1000)));
-      if (!itemNote || itemNote.startsWith('Giờ chơi:')) {
-        const startText = new Date(sMs).toLocaleTimeString('vi-VN', {
-          hour: '2-digit',
-          minute: '2-digit',
-        });
-        const endText = endStr
-          ? new Date(eMs).toLocaleTimeString('vi-VN', {
-              hour: '2-digit',
-              minute: '2-digit',
-            })
-          : 'Hiện tại';
-        setItemNote(`Giờ chơi: ${startText} - ${endText} (${diffMinutes} phút)`);
-      }
-    }
-  };
-
-  const grossTotal =
-    item.productType === 'TIME' && livePricingResult
-      ? livePricingResult.amountAfterRoundingVnd
-      : calculateLineTotal(unitPriceVnd, itemQuantityMilli);
+  const grossTotal = calculateLineTotal(unitPriceVnd, itemQuantityMilli);
   const discountAmount = calculateDiscountAmount(grossTotal, discountType, discountValue);
   const netTotal = grossTotal - discountAmount;
 
   const handleSave = () => {
-    const sMs = timeStartedAt ? new Date(timeStartedAt).getTime() : Date.now();
-    const eMs = timeEndedAt ? new Date(timeEndedAt).getTime() : null;
-
-    if (item.productType === 'TIME' && eMs !== null && eMs <= sMs) {
-      message.error('Giờ ra phải sau giờ vào.');
-      return;
-    }
-
-    let saveQtyMilli = itemQuantityMilli;
-    let saveGrossTotal = grossTotal;
-    if (item.productType === 'TIME' && livePricingResult) {
-      saveQtyMilli = Math.max(1, Math.round((livePricingResult.elapsedSeconds / 3600) * 1000));
-      saveGrossTotal = livePricingResult.amountAfterRoundingVnd;
-    }
-    const saveDiscountAmount = calculateDiscountAmount(saveGrossTotal, discountType, discountValue);
-    const saveNetTotal = saveGrossTotal - saveDiscountAmount;
+    const saveDiscountAmount = calculateDiscountAmount(grossTotal, discountType, discountValue);
+    const saveNetTotal = grossTotal - saveDiscountAmount;
 
     onSave(
       {
@@ -1150,20 +1353,13 @@ function StaffItemDetailModalContent({
         variantName:
           currentVariant?.id !== 'default' ? (currentVariant?.name ?? null) : item.variantName,
         unitPriceVnd,
-        quantityMilli: saveQtyMilli,
+        quantityMilli: itemQuantityMilli,
         note: itemNote.trim(),
-        grossLineTotalVnd: saveGrossTotal,
+        grossLineTotalVnd: grossTotal,
         discountAmountVnd: saveDiscountAmount,
         discountType,
         discountInputValue: discountValue,
         netLineTotalVnd: saveNetTotal,
-        ...(item.productType === 'TIME'
-          ? {
-              timeStartedAtMs: sMs,
-              timeEndedAtMs: eMs ?? undefined,
-              timePricing: livePricingResult ? { ...livePricingResult, pricingConfig } : undefined,
-            }
-          : {}),
       },
       currentVariant,
     );
@@ -1172,489 +1368,194 @@ function StaffItemDetailModalContent({
   return (
     <Modal
       open
-      title={
-        <div className="staff-item-modal__header-title">
-          {item.productType === 'TIME'
-            ? `Chi tiết tính giờ - ${item.productName}`
-            : item.productName}
-        </div>
-      }
-      width={item.productType === 'TIME' ? 760 : 540}
+      title={<div className="staff-item-modal__header-title">{item.productName}</div>}
+      width={540}
       centered
       destroyOnHidden
       onCancel={onCancel}
       footer={null}
-      className={
-        item.productType === 'TIME' ? 'staff-item-detail-modal-time' : 'staff-item-detail-modal-v2'
-      }
+      className="staff-item-detail-modal-v2"
     >
       <div className="staff-item-modal__body">
-        {item.productType === 'TIME' ? (
-          <div className="staff-time-detail-modal">
-            <section>
-              <Typography.Title level={5}>Bảng giá áp dụng</Typography.Title>
-              {pricingConfig.firstPeriod.enabled ? (
-                <div className="staff-time-detail-row">
-                  <span>
-                    <strong>Giá đầu tiên</strong>
-                    <small>{formatElapsed(pricingConfig.firstPeriod.durationSeconds)} đầu</small>
-                  </span>
-                  <b>
-                    {formatPriceRate(
-                      pricingConfig.firstPeriod.priceVnd,
-                      pricingConfig.firstPeriod.durationSeconds,
-                    )}
-                  </b>
-                </div>
-              ) : null}
-              {pricingConfig.specialWindows.map((window) => (
-                <div key={window.id} className="staff-time-detail-row">
-                  <span>
-                    <strong>{window.name}</strong>
-                    <small>
-                      {formatMinuteOfDay(window.startMinute)}–{formatMinuteOfDay(window.endMinute)}{' '}
-                      · {formatWeekdays(window.weekdaysMask)}
-                    </small>
-                  </span>
-                  <b>{formatPriceRate(window.priceVnd, pricingConfig.baseDurationSeconds)}</b>
-                </div>
-              ))}
-              <div className="staff-time-detail-row">
-                <span>
-                  <strong>Giá thường</strong>
-                  <small>
-                    {pricingConfig.calculationMode === 'ACTUAL_TIME'
-                      ? 'Tính theo thời gian thực'
-                      : 'Tính tròn theo block'}
-                    {pricingConfig.roundingUnitVnd > 0
-                      ? ` · Làm tròn ${formatMoney(pricingConfig.roundingUnitVnd)}`
-                      : ''}
-                  </small>
-                </span>
-                <b>
-                  {formatPriceRate(pricingConfig.basePriceVnd, pricingConfig.baseDurationSeconds)}
-                </b>
-              </div>
-            </section>
-            <section>
-              <Typography.Title level={5}>Thời gian sử dụng</Typography.Title>
-              <div className="staff-time-range-fields">
-                <label htmlFor="staff-time-started-at-item">
-                  <span>Giờ vào</span>
-                  <Input
-                    id="staff-time-started-at-item"
-                    type="datetime-local"
-                    step={1}
-                    max={formatDateTimeInput(Date.now())}
-                    value={timeStartedAt}
-                    onChange={(event) => handleTimeRangeChange(event.target.value, timeEndedAt)}
-                  />
-                </label>
-                <label htmlFor="staff-time-ended-at-item">
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      marginBottom: 4,
-                    }}
-                  >
-                    <span>Giờ ra</span>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      {timeEndedAt ? (
-                        <button
-                          type="button"
-                          className="staff-item-modal__now-btn"
-                          style={{ color: '#ff4d4f' }}
-                          onClick={() => handleTimeRangeChange(timeStartedAt, '')}
-                        >
-                          Đang chạy
-                        </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        className="staff-item-modal__now-btn"
-                        onClick={() =>
-                          handleTimeRangeChange(timeStartedAt, formatDateTimeInput(Date.now()))
-                        }
-                      >
-                        Lấy giờ hiện tại
-                      </button>
-                    </div>
-                  </div>
-                  <Input
-                    id="staff-time-ended-at-item"
-                    type="datetime-local"
-                    step={1}
-                    min={timeStartedAt}
-                    max={formatDateTimeInput(Date.now())}
-                    placeholder="Chưa kết thúc (đang chạy)"
-                    value={timeEndedAt}
-                    onChange={(event) => handleTimeRangeChange(timeStartedAt, event.target.value)}
-                  />
-                  <small>
-                    Điền giờ ra và bấm Lưu thay đổi để tạm dừng/chốt giờ. Để trống để tiếp tục tính
-                    đến hiện tại.
-                  </small>
-                </label>
-              </div>
-              <div className="staff-time-detail-row">
-                <span>Tổng thời gian tính tiền</span>
-                <b>
-                  {formatElapsed(
-                    livePricingResult?.elapsedSeconds ??
-                      Math.max(
-                        0,
-                        Math.floor(
-                          ((timeEndedAt ? new Date(timeEndedAt).getTime() : modalClockNow) -
-                            new Date(timeStartedAt).getTime()) /
-                            1000,
-                        ),
-                      ),
-                  )}
-                </b>
-              </div>
-            </section>
-            <section>
-              <Typography.Title level={5}>Thành tiền tạm tính</Typography.Title>
-              {livePricingResult?.segments.map((segment, index) => (
-                <div
-                  key={`${segment.type}-${segment.startedAtMs}-${index}`}
-                  className="staff-time-detail-row"
-                >
-                  <span>
-                    <strong>{segment.name}</strong>
-                    <small>
-                      {formatClock(segment.startedAtMs)}–{formatClock(segment.endedAtMs)} ·{' '}
-                      {formatElapsed(segment.elapsedSeconds)}
-                    </small>
-                  </span>
-                  <b>{formatMoney(segment.amountBeforeRoundingVnd)}</b>
-                </div>
-              ))}
-              <div className="staff-time-detail-row staff-time-detail-row--total">
-                <span>Tổng tiền giờ</span>
-                <b>{formatMoney(grossTotal)}</b>
-              </div>
-            </section>
-            <section>
-              <Typography.Title level={5}>Ghi chú</Typography.Title>
-              <Input.TextArea
-                rows={2}
-                placeholder="Nhập ghi chú"
-                value={itemNote}
-                onChange={(e) => setItemNote(e.target.value)}
-                className="staff-item-modal__note-input"
+        <div className="staff-item-modal__avatar-wrap">
+          <div
+            className="staff-item-modal__avatar-box"
+            style={{ background: product?.avatarColor ?? '#0877ee' }}
+          >
+            {product?.avatarType === 'IMAGE' && product?.mediaId ? (
+              <img
+                src={`/api/v1/media/${product.mediaId}`}
+                alt={item.productName}
+                className="staff-item-modal__avatar-img"
               />
-            </section>
-            <section>
-              <Typography.Title level={5}>Giảm giá sản phẩm</Typography.Title>
-              {item.source === 'SAVED' ? (
-                <div className="staff-item-modal__discount-preview">
-                  {discountAmount > 0
-                    ? `Đã giảm ${formatMoney(discountAmount)} · Còn ${formatMoney(netTotal)}`
-                    : 'Không có giảm giá'}
-                </div>
-              ) : !showDiscountInput && discountAmount === 0 ? (
-                <button
-                  type="button"
-                  className="staff-item-modal__discount-toggle"
-                  onClick={() => {
-                    setShowDiscountInput(true);
-                    setDiscountType('FIXED');
-                  }}
-                >
-                  <span>Giảm giá thủ công</span>
-                  <PlusCircleOutlined className="staff-item-modal__plus-icon" />
-                </button>
-              ) : (
-                <div className="staff-item-modal__discount-box">
-                  <div className="staff-item-modal__discount-row">
-                    <Radio.Group
-                      value={discountType}
-                      onChange={(e) => setDiscountType(e.target.value as 'FIXED' | 'PERCENT')}
-                      size="middle"
-                      buttonStyle="solid"
-                    >
-                      <Radio.Button value="FIXED">VNĐ</Radio.Button>
-                      <Radio.Button value="PERCENT">%</Radio.Button>
-                    </Radio.Group>
-                    <InputNumber
-                      min={0}
-                      max={discountType === 'PERCENT' ? 100 : grossTotal}
-                      value={discountValue}
-                      onChange={(val) => setDiscountValue(val === null ? null : Number(val))}
-                      placeholder="0"
-                      suffix={discountType === 'PERCENT' ? '%' : 'đ'}
-                      formatter={(val) => `${val ?? ''}`.replace(/\B(?=(\d{3})+(?!\d))/gu, '.')}
-                      parser={(val) => Number((val ?? '').replaceAll('.', ''))}
-                      style={{ flex: 1 }}
-                    />
-                    <Button
-                      type="text"
-                      danger
-                      icon={<DeleteOutlined />}
-                      className="staff-item-modal__discount-delete-btn"
-                      onClick={() => {
-                        setDiscountType(null);
-                        setDiscountValue(null);
-                        setShowDiscountInput(false);
-                      }}
-                    />
-                  </div>
-                  {discountAmount > 0 ? (
-                    <div className="staff-item-modal__discount-preview">
-                      Giảm: -{formatMoney(discountAmount)} (Còn {formatMoney(netTotal)})
-                    </div>
-                  ) : null}
-                </div>
-              )}
-            </section>
+            ) : (
+              <span className="staff-item-modal__avatar-letter">
+                {getProductInitials(item.productName)}
+              </span>
+            )}
           </div>
-        ) : (
-          <>
-            <div className="staff-item-modal__avatar-wrap">
-              <div
-                className="staff-item-modal__avatar-box"
-                style={{ background: product?.avatarColor ?? '#0877ee' }}
-              >
-                {product?.avatarType === 'IMAGE' && product?.mediaId ? (
-                  <img
-                    src={`/api/v1/media/${product.mediaId}`}
-                    alt={item.productName}
-                    className="staff-item-modal__avatar-img"
-                  />
-                ) : (
-                  <span className="staff-item-modal__avatar-letter">
-                    {getProductInitials(item.productName)}
-                  </span>
-                )}
-              </div>
-            </div>
+        </div>
 
-            <div className="staff-item-modal__section">
-              <div className="staff-item-modal__section-title">Phiên bản giá</div>
-              <div className="staff-item-modal__section-subtitle">
-                {item.source === 'DRAFT' ? 'Chọn một phiên bản giá' : 'Giá đã lưu theo đơn'}
-              </div>
-              <div className="staff-item-modal__variants">
-                {variants.map((v) => {
-                  const isChecked = v.id === selectedVariantId;
-                  return (
-                    <div
-                      key={v.id}
-                      className={`staff-item-modal__variant-row ${isChecked ? 'is-selected' : ''}`}
-                      onClick={() => {
-                        if (item.source === 'DRAFT') setSelectedVariantId(v.id);
-                      }}
-                    >
-                      <div className="staff-item-modal__variant-left">
-                        <div className={`staff-item-modal__radio ${isChecked ? 'is-checked' : ''}`}>
-                          {isChecked ? <div className="staff-item-modal__radio-inner" /> : null}
-                        </div>
-                        <span className="staff-item-modal__variant-name">{v.name}</span>
-                      </div>
-                      <strong className="staff-item-modal__variant-price">
-                        {formatMoney(v.salePriceVnd ?? unitPriceVnd)}
-                        {item.productType === 'WEIGHT' ? `/${getWeightUnit(item.unitName)}` : ''}
-                      </strong>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="staff-item-modal__section">
-              <div className="staff-item-modal__section-title">Ghi chú</div>
-              <Input.TextArea
-                rows={3}
-                placeholder="Nhập ghi chú"
-                value={itemNote}
-                onChange={(e) => setItemNote(e.target.value)}
-                className="staff-item-modal__note-input"
-              />
-            </div>
-
-            <div className="staff-item-modal__section">
-              <div className="staff-item-modal__section-title">Giảm giá sản phẩm</div>
-              {item.source === 'SAVED' ? (
-                <div className="staff-item-modal__discount-preview">
-                  {discountAmount > 0
-                    ? `Đã giảm ${formatMoney(discountAmount)} · Còn ${formatMoney(netTotal)}`
-                    : 'Không có giảm giá'}
-                </div>
-              ) : !showDiscountInput && discountAmount === 0 ? (
-                <button
-                  type="button"
-                  className="staff-item-modal__discount-toggle"
+        <div className="staff-item-modal__section">
+          <div className="staff-item-modal__section-title">Phiên bản giá</div>
+          <div className="staff-item-modal__section-subtitle">Chọn một phiên bản giá</div>
+          <div className="staff-item-modal__variants">
+            {variants.map((v) => {
+              const isChecked = v.id === selectedVariantId;
+              return (
+                <div
+                  key={v.id}
+                  className={`staff-item-modal__variant-row ${isChecked ? 'is-selected' : ''}`}
                   onClick={() => {
-                    setShowDiscountInput(true);
-                    setDiscountType('FIXED');
+                    setSelectedVariantId(v.id);
                   }}
                 >
-                  <span>Giảm giá thủ công</span>
-                  <PlusCircleOutlined className="staff-item-modal__plus-icon" />
-                </button>
-              ) : (
-                <div className="staff-item-modal__discount-box">
-                  <div className="staff-item-modal__discount-row">
-                    <Radio.Group
-                      value={discountType}
-                      onChange={(e) => setDiscountType(e.target.value as 'FIXED' | 'PERCENT')}
-                      size="middle"
-                      buttonStyle="solid"
-                    >
-                      <Radio.Button value="FIXED">VNĐ</Radio.Button>
-                      <Radio.Button value="PERCENT">%</Radio.Button>
-                    </Radio.Group>
-                    <InputNumber
-                      min={0}
-                      max={discountType === 'PERCENT' ? 100 : grossTotal}
-                      value={discountValue}
-                      onChange={(val) => setDiscountValue(val === null ? null : Number(val))}
-                      placeholder="0"
-                      suffix={discountType === 'PERCENT' ? '%' : 'đ'}
-                      formatter={(val) => `${val ?? ''}`.replace(/\B(?=(\d{3})+(?!\d))/gu, '.')}
-                      parser={(val) => Number((val ?? '').replaceAll('.', ''))}
-                      style={{ flex: 1 }}
-                    />
-                    <Button
-                      type="text"
-                      danger
-                      icon={<DeleteOutlined />}
-                      className="staff-item-modal__discount-delete-btn"
-                      onClick={() => {
-                        setDiscountType(null);
-                        setDiscountValue(null);
-                        setShowDiscountInput(false);
-                      }}
-                    />
-                  </div>
-                  {discountAmount > 0 ? (
-                    <div className="staff-item-modal__discount-preview">
-                      Giảm: -{formatMoney(discountAmount)} (Còn {formatMoney(netTotal)})
+                  <div className="staff-item-modal__variant-left">
+                    <div className={`staff-item-modal__radio ${isChecked ? 'is-checked' : ''}`}>
+                      {isChecked ? <div className="staff-item-modal__radio-inner" /> : null}
                     </div>
-                  ) : null}
+                    <span className="staff-item-modal__variant-name">{v.name}</span>
+                  </div>
+                  <strong className="staff-item-modal__variant-price">
+                    {formatMoney(v.salePriceVnd ?? unitPriceVnd)}
+                    {item.productType === 'WEIGHT' ? `/${getWeightUnit(item.unitName)}` : ''}
+                  </strong>
                 </div>
-              )}
-            </div>
-          </>
-        )}
+              );
+            })}
+          </div>
+        </div>
 
-        <div className="staff-item-modal__footer">
-          {item.productType === 'TIME' ? (
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                flexWrap: 'wrap',
-                gap: 12,
-                width: '100%',
+        <div className="staff-item-modal__section">
+          <div className="staff-item-modal__section-title">Ghi chú</div>
+          <Input.TextArea
+            rows={3}
+            placeholder="Nhập ghi chú"
+            value={itemNote}
+            onChange={(e) => setItemNote(e.target.value)}
+            className="staff-item-modal__note-input"
+          />
+        </div>
+
+        <div className="staff-item-modal__section">
+          <div className="staff-item-modal__section-title">Giảm giá sản phẩm</div>
+          {!showDiscountInput && discountAmount === 0 ? (
+            <button
+              type="button"
+              className="staff-item-modal__discount-toggle"
+              onClick={() => {
+                setShowDiscountInput(true);
+                setDiscountType('FIXED');
               }}
             >
-              <Button
-                icon={timeEndedAt ? <PlayCircleOutlined /> : <PauseCircleOutlined />}
-                size="large"
-                onClick={() => {
-                  if (timeEndedAt) {
-                    handleTimeRangeChange(timeStartedAt, '');
-                    message.info('Đã xóa giờ ra để tiếp tục tính giờ.');
-                  } else {
-                    const nowStr = formatDateTimeInput(Date.now());
-                    handleTimeRangeChange(timeStartedAt, nowStr);
-                    message.info('Đã tạm dừng giờ (điền giờ hiện tại vào ô Giờ ra).');
-                  }
-                }}
-              >
-                {timeEndedAt ? 'Tiếp tục tính giờ (Xóa giờ ra)' : 'Tạm dừng giờ'}
-              </Button>
-              <div style={{ display: 'flex', gap: 12 }}>
-                <Button
-                  danger
-                  size="large"
-                  icon={<DeleteOutlined />}
-                  className="staff-item-modal__delete-action-btn"
-                  onClick={onDelete}
-                >
-                  Xóa
-                </Button>
-                <Button
-                  type="primary"
-                  size="large"
-                  className="staff-item-modal__save-btn"
-                  onClick={handleSave}
-                >
-                  Lưu thay đổi
-                </Button>
-              </div>
-            </div>
+              <span>Giảm giá thủ công</span>
+              <PlusCircleOutlined className="staff-item-modal__plus-icon" />
+            </button>
           ) : (
-            <>
-              <div className="staff-item-modal__qty-row">
-                <span className="staff-item-modal__qty-label">
-                  {item.productType === 'WEIGHT'
-                    ? `Trọng lượng (${getWeightUnit(item.unitName)})`
-                    : 'Số lượng'}
-                </span>
-                {item.productType === 'WEIGHT' ? (
-                  <InputNumber
-                    min={0.001}
-                    step={0.001}
-                    precision={3}
-                    decimalSeparator=","
-                    value={itemQuantityMilli / 1000}
-                    onChange={(val) =>
-                      setItemQuantityMilli(Math.max(1, Math.round(Number(val ?? 0) * 1000)))
-                    }
-                    suffix={getWeightUnit(item.unitName)}
-                    style={{ width: 140 }}
-                  />
-                ) : (
-                  <div className="staff-item-modal__stepper">
-                    <button
-                      type="button"
-                      className="staff-item-modal__stepper-btn"
-                      disabled={itemQuantityMilli <= 1000}
-                      onClick={() => setItemQuantityMilli((prev) => Math.max(1000, prev - 1000))}
-                    >
-                      <MinusOutlined />
-                    </button>
-                    <span className="staff-item-modal__stepper-val">
-                      {itemQuantityMilli / 1000}
-                    </span>
-                    <button
-                      type="button"
-                      className="staff-item-modal__stepper-btn"
-                      onClick={() => setItemQuantityMilli((prev) => prev + 1000)}
-                    >
-                      <PlusOutlined />
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              <div className="staff-item-modal__actions">
+            <div className="staff-item-modal__discount-box">
+              <div className="staff-item-modal__discount-row">
+                <Radio.Group
+                  value={discountType}
+                  onChange={(e) => setDiscountType(e.target.value as 'FIXED' | 'PERCENT')}
+                  size="middle"
+                  buttonStyle="solid"
+                >
+                  <Radio.Button value="FIXED">VNĐ</Radio.Button>
+                  <Radio.Button value="PERCENT">%</Radio.Button>
+                </Radio.Group>
+                <InputNumber
+                  min={0}
+                  max={discountType === 'PERCENT' ? 100 : grossTotal}
+                  value={discountValue}
+                  onChange={(val) => setDiscountValue(val === null ? null : Number(val))}
+                  placeholder="0"
+                  suffix={discountType === 'PERCENT' ? '%' : 'đ'}
+                  formatter={(val) => `${val ?? ''}`.replace(/\B(?=(\d{3})+(?!\d))/gu, '.')}
+                  parser={(val) => Number((val ?? '').replaceAll('.', ''))}
+                  style={{ flex: 1 }}
+                />
                 <Button
+                  type="text"
                   danger
-                  size="large"
                   icon={<DeleteOutlined />}
-                  className="staff-item-modal__delete-action-btn"
-                  onClick={onDelete}
-                >
-                  Xóa
-                </Button>
-                <Button
-                  type="primary"
-                  size="large"
-                  className="staff-item-modal__save-btn"
-                  onClick={handleSave}
-                >
-                  Lưu
-                </Button>
+                  className="staff-item-modal__discount-delete-btn"
+                  onClick={() => {
+                    setDiscountType(null);
+                    setDiscountValue(null);
+                    setShowDiscountInput(false);
+                  }}
+                />
               </div>
-            </>
+              {discountAmount > 0 ? (
+                <div className="staff-item-modal__discount-preview">
+                  Giảm: -{formatMoney(discountAmount)} (Còn {formatMoney(netTotal)})
+                </div>
+              ) : null}
+            </div>
           )}
+        </div>
+
+        <div className="staff-item-modal__footer">
+          <div className="staff-item-modal__qty-row">
+            <span className="staff-item-modal__qty-label">
+              {item.productType === 'WEIGHT'
+                ? `Trọng lượng (${getWeightUnit(item.unitName)})`
+                : 'Số lượng'}
+            </span>
+            {item.productType === 'WEIGHT' ? (
+              <InputNumber
+                min={0.001}
+                step={0.001}
+                precision={3}
+                decimalSeparator=","
+                value={itemQuantityMilli / 1000}
+                onChange={(val) =>
+                  setItemQuantityMilli(Math.max(1, Math.round(Number(val ?? 0) * 1000)))
+                }
+                suffix={getWeightUnit(item.unitName)}
+                style={{ width: 140 }}
+              />
+            ) : (
+              <div className="staff-item-modal__stepper">
+                <button
+                  type="button"
+                  className="staff-item-modal__stepper-btn"
+                  disabled={itemQuantityMilli <= 1000}
+                  onClick={() => setItemQuantityMilli((prev) => Math.max(1000, prev - 1000))}
+                >
+                  <MinusOutlined />
+                </button>
+                <span className="staff-item-modal__stepper-val">{itemQuantityMilli / 1000}</span>
+                <button
+                  type="button"
+                  className="staff-item-modal__stepper-btn"
+                  onClick={() => setItemQuantityMilli((prev) => prev + 1000)}
+                >
+                  <PlusOutlined />
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="staff-item-modal__actions">
+            <Button
+              danger
+              size="large"
+              icon={<DeleteOutlined />}
+              className="staff-item-modal__delete-action-btn"
+              onClick={onDelete}
+            >
+              Xóa
+            </Button>
+            <Button
+              type="primary"
+              size="large"
+              className="staff-item-modal__save-btn"
+              onClick={handleSave}
+            >
+              Lưu
+            </Button>
+          </div>
         </div>
       </div>
     </Modal>
@@ -1705,6 +1606,10 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const [orderedItemsCollapsed, setOrderedItemsCollapsed] = useState(false);
   const [cartTab, setCartTab] = useState<'DETAILS' | 'CUSTOMER' | 'ACTIONS'>('DETAILS');
   const [discardModalOpen, setDiscardModalOpen] = useState(false);
+  const [provisionalBillOpen, setProvisionalBillOpen] = useState(false);
+  const [resumeModalOpen, setResumeModalOpen] = useState(false);
+  const [resuming, setResuming] = useState(false);
+  const [stoppingTime, setStoppingTime] = useState(false);
   const [clockNow, setClockNow] = useState(() => Date.now());
   const [cartWidth, setCartWidth] = useState<number>(() => {
     try {
@@ -1769,15 +1674,17 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     refetchInterval: 5_000,
   });
 
+  const selectedTable = useMemo(
+    () => tables.data?.find((item) => item.id === preselectedTableId),
+    [tables.data, preselectedTableId],
+  );
+
   useEffect(() => {
-    const hasRunningTime =
-      quote.data?.time?.status === 'RUNNING' ||
-      draftLines.some((l) => l.product.productType === 'TIME' && !l.timeEndedAtMs) ||
-      (quote.data?.items ?? []).some((i) => i.productType === 'TIME' && !i.timeEndedAtMs);
+    const hasRunningTime = quote.data?.time?.status === 'RUNNING';
     if (!hasRunningTime) return undefined;
     const timer = window.setInterval(() => setClockNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [quote.data?.time?.status, quote.data?.items, draftLines]);
+  }, [quote.data?.time?.status]);
 
   useEffect(() => {
     if (!isNew && quote.data && searchParams.get('checkout') === '1') {
@@ -1805,32 +1712,22 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       .includes(catalogSearch.trim().toLocaleLowerCase('vi-VN'));
     return matchesSearch && (selectedCategory === 'ALL' || product.categoryId === selectedCategory);
   });
+  const isPaymentPending = !isNew && quote.data?.order.status === 'PAYMENT_PENDING';
 
   const addDraftVariant = (
     product: CatalogProduct,
     variant: CatalogVariant,
     enteredPrice?: number,
   ) => {
+    if (isPaymentPending) {
+      messageApi.warning(
+        'Đơn hàng đang chờ thanh toán (đã dừng giờ). Bấm "Tiếp tục chơi" để thêm món.',
+      );
+      return;
+    }
     const effectiveVariant =
       variant.promptPrice === 1 ? { ...variant, salePriceVnd: enteredPrice ?? null } : variant;
     if (effectiveVariant.salePriceVnd === null) return;
-    if (product.productType === 'TIME') {
-      const id = crypto.randomUUID();
-      const line: DraftLine = {
-        id,
-        product,
-        variant: effectiveVariant,
-        quantityMilli: 1000,
-        note: null,
-        discountType: null,
-        discountInputValue: null,
-        timeStartedAtMs: Date.now(),
-        timeEndedAtMs: undefined,
-      };
-      setDraftLines((lines) => [...lines, line]);
-      messageApi.success(`Đã thêm ${product.productName} vào đơn.`);
-      return;
-    }
     if (product.productType === 'WEIGHT') {
       const id = crypto.randomUUID();
       const line: DraftLine = {
@@ -1899,7 +1796,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   };
 
   const chooseProduct = (product: CatalogProduct) => {
-    playClickSound();
     if (product.variants.length > 1) {
       setVariantProduct(product);
       return;
@@ -1910,7 +1806,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   };
 
   const chooseVariant = (product: CatalogProduct, variant: CatalogVariant) => {
-    playClickSound();
     setVariantProduct(null);
     if (variant.promptPrice === 1 || variant.salePriceVnd === null) {
       setPromptTarget({ product, variant });
@@ -1938,8 +1833,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           enteredUnitPriceVnd:
             line.variant.promptPrice === 1 ? line.variant.salePriceVnd : undefined,
           quantityMilli: line.quantityMilli,
-          timeStartedAtMs: line.timeStartedAtMs,
-          timeEndedAtMs: line.timeEndedAtMs,
           expectedOrderVersion: version,
           note: line.note,
           discount:
@@ -2051,12 +1944,85 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     }
   };
 
+  const handleResumeCheckout = async () => {
+    if (!quote.data || resuming) return;
+    setResuming(true);
+    try {
+      const result = await jsonRequest<{
+        orderId: string;
+        status: 'OPEN';
+        resumedAt: number;
+        quote: OrderQuote;
+      }>(
+        `/api/v1/pos/orders/${quote.data.order.id}/resume-checkout`,
+        { expectedOrderVersion: quote.data.order.version },
+        { headers: mutationHeaders(csrf) },
+      );
+      const openQuote: OrderQuote = {
+        ...result.quote,
+        order: {
+          ...result.quote.order,
+          status: 'OPEN',
+        },
+      };
+      queryClient.setQueryData(['pos-order-quote', orderId], openQuote);
+      void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
+      void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
+      messageApi.success(`Đã tiếp tục tính giờ cho ${quote.data.order.tableName}`);
+      setResumeModalOpen(false);
+    } catch (error) {
+      messageApi.error(errorText(error));
+    } finally {
+      setResuming(false);
+    }
+  };
+
   const beginCheckout = async () => {
     if (isNew && orderType === 'TAKEAWAY' && draftLines.length === 0) {
       messageApi.warning('Vui lòng chọn ít nhất một mặt hàng cho đơn mang đi.');
       return;
     }
     if (!isNew) {
+      if (isPaymentPending) {
+        navigate(`/pos/orders/${quote.data!.order.id}/payment`);
+        return;
+      }
+      if (quote.data?.time) {
+        setStoppingTime(true);
+        try {
+          let currentVersion = quote.data.order.version;
+          if (draftLines.length > 0) {
+            currentVersion = await persistLines(quote.data.order.id, currentVersion);
+            setDraftLines([]);
+          }
+          const result = await jsonRequest<{
+            orderId: string;
+            status: 'PAYMENT_PENDING';
+            stoppedAt: number;
+            quote: OrderQuote;
+          }>(
+            `/api/v1/pos/orders/${quote.data.order.id}/stop-time`,
+            { expectedOrderVersion: currentVersion },
+            { headers: mutationHeaders(csrf) },
+          );
+          const pendingQuote: OrderQuote = {
+            ...result.quote,
+            order: {
+              ...result.quote.order,
+              status: 'PAYMENT_PENDING',
+            },
+          };
+          queryClient.setQueryData(['pos-order-quote', quote.data.order.id], pendingQuote);
+          void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
+          void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
+          navigate(`/pos/orders/${quote.data.order.id}/payment`);
+        } catch (error) {
+          messageApi.error(errorText(error));
+        } finally {
+          setStoppingTime(false);
+        }
+        return;
+      }
       await saveAdditionalItems(true);
       return;
     }
@@ -2089,9 +2055,9 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const updateExistingItem = async (input: {
     id: string;
     quantityMilli: number;
+    variantId?: string | null | undefined;
+    discount?: null | { type: 'FIXED' | 'PERCENT'; value: number } | undefined;
     note: string | null;
-    timeStartedAtMs?: number | null | undefined;
-    timeEndedAtMs?: number | null | undefined;
   }) => {
     if (!quote.data) return;
     try {
@@ -2100,9 +2066,9 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         {
           expectedOrderVersion: quote.data.order.version,
           quantityMilli: input.quantityMilli,
+          variantId: input.variantId,
+          discount: input.discount,
           note: input.note,
-          timeStartedAtMs: input.timeStartedAtMs,
-          timeEndedAtMs: input.timeEndedAtMs,
         },
         { method: 'PATCH', headers: mutationHeaders(csrf) },
       );
@@ -2266,9 +2232,15 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         { headers: mutationHeaders(csrf) },
       );
       setTransferOpen(false);
-      await refreshOrder();
+      messageApi.success(`Đã chuyển ${source.name} → ${table.name}`);
+      await Promise.all([
+        refreshOrder(),
+        queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
+      ]);
     } catch (error) {
       messageApi.error(errorText(error));
+      throw error;
     }
   };
 
@@ -2288,41 +2260,9 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   };
 
   const draftDisplayItems = draftLines.map((line) => {
-    let quantityMilli = line.quantityMilli;
+    const quantityMilli = line.quantityMilli;
     const unitPriceVnd = line.variant.salePriceVnd ?? 0;
-    let gross = 0;
-    let timePricing: (PricingResult & { pricingConfig: PricingConfigSnapshot }) | undefined;
-
-    if (line.product.productType === 'TIME') {
-      const pricingConfig: PricingConfigSnapshot = line.product.timePricingConfig ?? {
-        version: 1,
-        timezone: 'Asia/Ho_Chi_Minh',
-        basePriceVnd: unitPriceVnd,
-        baseDurationSeconds: 3600,
-        calculationMode: 'ACTUAL_TIME',
-        roundingUnitVnd: 1000,
-        firstPeriod: { enabled: false },
-        specialWindows: [],
-      };
-      const startMs = line.timeStartedAtMs ?? clockNow;
-      const endMs = line.timeEndedAtMs ?? clockNow;
-      try {
-        const timeCalc = calculateTimePrice({
-          startedAtMs: startMs,
-          endedAtMs: Math.max(startMs + 1000, endMs),
-          config: pricingConfig,
-        });
-        quantityMilli = Math.max(1, Math.round((timeCalc.elapsedSeconds / 3600) * 1000));
-        gross = timeCalc.amountAfterRoundingVnd;
-        timePricing = { ...timeCalc, pricingConfig };
-      } catch {
-        const diffMs = Math.max(0, endMs - startMs);
-        quantityMilli = Math.max(1, Math.round((diffMs / 3_600_000) * 1000));
-        gross = calculateLineTotal(unitPriceVnd, quantityMilli);
-      }
-    } else {
-      gross = calculateLineTotal(unitPriceVnd, quantityMilli);
-    }
+    const gross = calculateLineTotal(unitPriceVnd, quantityMilli);
     const discount = calculateDiscountAmount(gross, line.discountType, line.discountInputValue);
     const net = gross - discount;
     return {
@@ -2335,9 +2275,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       unitName: line.product.unitName,
       unitPriceVnd,
       quantityMilli,
-      timeStartedAtMs: line.timeStartedAtMs ?? null,
-      timeEndedAtMs: line.timeEndedAtMs ?? null,
-      timePricing,
       grossLineTotalVnd: gross,
       discountAmountVnd: discount,
       discountType: line.discountType,
@@ -2351,30 +2288,22 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     : [...(quote.data?.items ?? []), ...draftDisplayItems];
   const displayedItems = isNew ? draftDisplayItems : (quote.data?.items ?? []);
 
-  // 1. Tiền hàng (chỉ tính mặt hàng số lượng và trọng lượng thông thường)
-  const regularProductItems = allCurrentItems.filter((i) => i.productType !== 'TIME');
-  const regularProductGross = regularProductItems.reduce(
+  // 1. Tiền hàng (mặt hàng số lượng và trọng lượng)
+  const regularProductGross = allCurrentItems.reduce(
     (sum, item) => sum + item.grossLineTotalVnd,
     0,
   );
-  const regularProductDiscount = regularProductItems.reduce(
+  const regularProductDiscount = allCurrentItems.reduce(
     (sum, item) => sum + item.discountAmountVnd,
     0,
   );
-  const regularProductCount = regularProductItems.length;
+  const regularProductCount = allCurrentItems.length;
 
-  // 2. Tiền giờ (phiên tính giờ của bàn + các mặt hàng tính thời gian gọi thêm)
-  const tableTimeGross = quote.data?.time ? quote.data.time.amountAfterRoundingVnd : 0;
-  const timeProductItems = allCurrentItems.filter((i) => i.productType === 'TIME');
-  const timeProductsGross = timeProductItems.reduce((sum, item) => sum + item.grossLineTotalVnd, 0);
-  const timeProductsDiscount = timeProductItems.reduce(
-    (sum, item) => sum + item.discountAmountVnd,
-    0,
-  );
-  const totalTimeGross = tableTimeGross + timeProductsGross;
+  // 2. Tiền giờ (phiên tính giờ của bàn)
+  const totalTimeGross = quote.data?.time ? quote.data.time.amountAfterRoundingVnd : 0;
 
   // 3. Giảm giá và Tổng khách phải trả
-  const totalDiscount = regularProductDiscount + timeProductsDiscount;
+  const totalDiscount = regularProductDiscount;
   const pendingTotal = draftDisplayItems.reduce((sum, item) => sum + item.netLineTotalVnd, 0);
   const displayedTotal = isNew ? pendingTotal : (quote.data?.totalVnd ?? 0) + pendingTotal;
   const liveElapsedSeconds = quote.data?.time
@@ -2402,8 +2331,14 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           {!isNew && quote.data ? (
             <Typography.Text type="secondary">
               {quote.data.order.orderType === 'DINE_IN'
-                ? `${quote.data.order.areaName} - ${quote.data.order.tableName}`
+                ? [quote.data.order.areaName, quote.data.order.tableName]
+                    .filter(Boolean)
+                    .join(' - ')
                 : quote.data.order.displayCode}
+            </Typography.Text>
+          ) : isNew && orderType === 'DINE_IN' && selectedTable ? (
+            <Typography.Text type="secondary">
+              {[selectedTable.areaName, selectedTable.name].filter(Boolean).join(' - ')}
             </Typography.Text>
           ) : null}
         </div>
@@ -2509,8 +2444,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       {minPrice === null
                         ? 'Nhập giá'
                         : minPrice === maxPrice
-                          ? `${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : product.productType === 'TIME' ? `/${product.unitName || 'giờ'}` : ''}`
-                          : `Từ ${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : product.productType === 'TIME' ? `/${product.unitName || 'giờ'}` : ''}`}
+                          ? `${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`
+                          : `Từ ${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`}
                     </b>
                   </button>
                 );
@@ -2528,6 +2463,19 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           <div className="staff-order-editor__resizer-handle" />
         </div>
         <aside className="staff-cart-panel" style={{ width: cartWidth }}>
+          {isPaymentPending ? (
+            <div className="staff-order-pending-banner">
+              <div className="staff-order-pending-banner__badge">
+                <CheckCircleOutlined /> ĐÃ DỪNG TÍNH GIỜ
+              </div>
+              <div className="staff-order-pending-banner__text">
+                {quote.data?.time?.endedAtMs
+                  ? `Đã dừng lúc ${formatClock(quote.data.time.endedAtMs)}`
+                  : 'Đã dừng giờ'}{' '}
+                · Đang chờ thanh toán
+              </div>
+            </div>
+          ) : null}
           <div className="staff-cart-tabs">
             <button
               type="button"
@@ -2565,77 +2513,29 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                     />
                   </div>
                   <div className="staff-compact-order-list">
-                    {draftDisplayItems.map((item) =>
-                      item.productType === 'TIME' ? (
-                        <button
-                          type="button"
-                          key={item.id}
-                          className="staff-time-line staff-time-line--editable"
-                          onClick={() =>
-                            setEditingItem({
-                              source: 'DRAFT',
-                              ...item,
-                              note: item.note ?? '',
-                            })
-                          }
-                        >
-                          <div className="staff-time-line__heading">
-                            <span className="staff-order-quantity">1x</span>
-                            <span className="staff-order-item-name">
-                              <strong>Giờ</strong>
-                              <small>{item.productName}</small>
-                            </span>
-                            <b>{formatMoney(item.netLineTotalVnd)}</b>
-                          </div>
-                          <div className="staff-time-line__details">
-                            <span>Từ: {formatDateTime(item.timeStartedAtMs ?? Date.now())}</span>
-                            <span>
-                              Tới:{' '}
-                              {item.timeEndedAtMs ? formatDateTime(item.timeEndedAtMs) : 'Hiện tại'}
-                            </span>
-                            <span>
-                              Tổng thời gian tạm tính:{' '}
-                              {formatElapsed(
-                                Math.max(
-                                  1,
-                                  Math.floor(
-                                    ((item.timeEndedAtMs ?? clockNow) -
-                                      (item.timeStartedAtMs ?? item.timeEndedAtMs ?? clockNow)) /
-                                      1000,
-                                  ),
-                                ),
-                              )}
-                            </span>
-                          </div>
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          key={item.id}
-                          className="staff-compact-order-row staff-compact-order-row--editable"
-                          onClick={() =>
-                            setEditingItem({
-                              source: 'DRAFT',
-                              ...item,
-                              note: item.note ?? '',
-                            })
-                          }
-                        >
-                          <span className="staff-order-quantity">
-                            {formatItemQuantity(
-                              item.productType,
-                              item.quantityMilli,
-                              item.unitName,
-                            )}
-                          </span>
-                          <span className="staff-order-item-name">
-                            <strong>{item.productName}</strong>
-                            <small>{item.variantName}</small>
-                          </span>
-                          <b>{formatMoney(item.netLineTotalVnd)}</b>
-                        </button>
-                      ),
-                    )}
+                    {draftDisplayItems.map((item) => (
+                      <button
+                        type="button"
+                        key={item.id}
+                        className="staff-compact-order-row staff-compact-order-row--editable"
+                        onClick={() =>
+                          setEditingItem({
+                            source: 'DRAFT',
+                            ...item,
+                            note: item.note ?? '',
+                          })
+                        }
+                      >
+                        <span className="staff-order-quantity">
+                          {formatItemQuantity(item.productType, item.quantityMilli, item.unitName)}
+                        </span>
+                        <span className="staff-order-item-name">
+                          <strong>{item.productName}</strong>
+                          <small>{item.variantName}</small>
+                        </span>
+                        <b>{formatMoney(item.netLineTotalVnd)}</b>
+                      </button>
+                    ))}
                   </div>
                 </section>
               ) : null}
@@ -2657,35 +2557,98 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
               {!orderedItemsCollapsed ? (
                 <>
                   {quote.data?.time ? (
-                    <button
-                      type="button"
-                      className="staff-time-line staff-time-line--editable"
-                      onClick={openTimeDetails}
-                    >
-                      <div className="staff-time-line__heading">
-                        <span className="staff-order-quantity">1x</span>
-                        <span className="staff-order-item-name">
-                          <strong>Giờ</strong>
-                          <small>{quote.data.order.tableName}</small>
-                        </span>
-                        <b>{formatMoney(quote.data.time.amountAfterRoundingVnd)}</b>
-                      </div>
-                      <div className="staff-time-line__details">
-                        <span>Từ: {formatDateTime(quote.data.time.startedAtMs)}</span>
-                        <span>
-                          Tới:{' '}
-                          {quote.data.time.endedAtMs
-                            ? formatDateTime(quote.data.time.endedAtMs)
-                            : quote.data.time.status === 'PAUSED'
-                              ? formatDateTime(
-                                  quote.data.time.startedAtMs +
-                                    quote.data.time.elapsedSeconds * 1000,
-                                )
-                              : 'Hiện tại'}
-                        </span>
-                        <span>Tổng thời gian tạm tính: {formatElapsed(liveElapsedSeconds)}</span>
-                      </div>
-                    </button>
+                    quote.data.time.tableSegments && quote.data.time.tableSegments.length > 1 ? (
+                      <button
+                        type="button"
+                        className="staff-time-line staff-time-line--editable staff-time-line--transfer"
+                        onClick={openTimeDetails}
+                      >
+                        <div className="staff-time-line__heading">
+                          <span className="staff-order-quantity">1x</span>
+                          <span className="staff-order-item-name">
+                            <div className="staff-time-line__title-row">
+                              <strong>Tiền giờ</strong>
+                              <span className="staff-time-transfer-badge">
+                                <SwapOutlined /> Chuyển bàn
+                              </span>
+                            </div>
+                            <small className="staff-time-transfer-chain">
+                              {quote.data.time.tableSegments.map((s) => s.tableName).join(' → ')}
+                            </small>
+                          </span>
+                          <b className="staff-time-line__price">
+                            {formatMoney(quote.data.time.amountAfterRoundingVnd)}
+                          </b>
+                        </div>
+
+                        {/* Detailed transfer breakdown in Cart */}
+                        <div className="staff-time-cart-breakdown">
+                          {quote.data.time.tableSegments.map((tSeg, idx) => (
+                            <div
+                              key={`${tSeg.tableId}-${tSeg.startedAtMs}-${idx}`}
+                              className="staff-time-cart-row"
+                            >
+                              <div className="staff-time-cart-row__left">
+                                <span className="staff-time-cart-dot">•</span>
+                                <strong className="staff-time-cart-tbl-name">
+                                  {tSeg.tableName}
+                                </strong>
+                                <span className="staff-time-cart-tbl-time">
+                                  {formatClock(tSeg.startedAtMs)}–
+                                  {tSeg.endedAtMs ? formatClock(tSeg.endedAtMs) : 'Hiện tại'} (
+                                  {formatElapsed(tSeg.elapsedSeconds)})
+                                </span>
+                                <span className="staff-time-cart-tbl-rate">
+                                  {formatMoney(tSeg.pricingConfig.basePriceVnd)}/h
+                                </span>
+                              </div>
+                              <b className="staff-time-cart-row__amount">
+                                {formatMoney(tSeg.amountAfterRoundingVnd)}
+                              </b>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="staff-time-line__summary">
+                          <span>
+                            Tổng thời gian: <strong>{formatElapsed(liveElapsedSeconds)}</strong>
+                          </span>
+                        </div>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="staff-time-line staff-time-line--editable"
+                        onClick={openTimeDetails}
+                      >
+                        <div className="staff-time-line__heading">
+                          <span className="staff-order-quantity">1x</span>
+                          <span className="staff-order-item-name">
+                            <strong>Tiền giờ · {quote.data.order.tableName}</strong>
+                            <small>
+                              {quote.data.time.pricingConfig
+                                ? `${formatMoney(quote.data.time.pricingConfig.basePriceVnd)}/giờ`
+                                : ''}
+                            </small>
+                          </span>
+                          <b>{formatMoney(quote.data.time.amountAfterRoundingVnd)}</b>
+                        </div>
+                        <div className="staff-time-line__details">
+                          <span>
+                            {formatClock(quote.data.time.startedAtMs)}–
+                            {quote.data.time.endedAtMs
+                              ? formatClock(quote.data.time.endedAtMs)
+                              : quote.data.time.status === 'PAUSED'
+                                ? formatClock(
+                                    quote.data.time.startedAtMs +
+                                      quote.data.time.elapsedSeconds * 1000,
+                                  )
+                                : 'Hiện tại'}{' '}
+                            · Tổng: <strong>{formatElapsed(liveElapsedSeconds)}</strong>
+                          </span>
+                        </div>
+                      </button>
+                    )
                   ) : isNew && orderType === 'DINE_IN' ? (
                     <Alert
                       type="info"
@@ -2700,111 +2663,47 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                     <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Chưa có mặt hàng" />
                   ) : (
                     <div className="staff-compact-order-list">
-                      {displayedItems.map((item) =>
-                        item.productType === 'TIME' ? (
-                          <button
-                            type="button"
-                            key={item.id}
-                            className="staff-time-line staff-time-line--editable"
-                            onClick={() =>
-                              setEditingItem({
-                                source: 'SAVED',
-                                id: item.id,
-                                productId: item.productId,
-                                variantId: item.variantId,
-                                productType: item.productType,
-                                productName: item.productName,
-                                variantName: item.variantName,
-                                unitName: item.unitName,
-                                unitPriceVnd: item.unitPriceVnd,
-                                quantityMilli: item.quantityMilli,
-                                note: item.note ?? '',
-                                grossLineTotalVnd: item.grossLineTotalVnd,
-                                discountAmountVnd: item.discountAmountVnd,
-                                discountType: item.discountType,
-                                discountInputValue: item.discountInputValue,
-                                netLineTotalVnd: item.netLineTotalVnd,
-                                timeStartedAtMs: item.timeStartedAtMs,
-                                timeEndedAtMs: item.timeEndedAtMs,
-                                timePricing: item.timePricing,
-                              })
-                            }
-                          >
-                            <div className="staff-time-line__heading">
-                              <span className="staff-order-quantity">1x</span>
-                              <span className="staff-order-item-name">
-                                <strong>Giờ</strong>
-                                <small>{item.productName}</small>
-                              </span>
-                              <b>{formatMoney(item.netLineTotalVnd)}</b>
-                            </div>
-                            <div className="staff-time-line__details">
-                              <span>Từ: {formatDateTime(item.timeStartedAtMs ?? Date.now())}</span>
-                              <span>
-                                Tới:{' '}
-                                {item.timeEndedAtMs
-                                  ? formatDateTime(item.timeEndedAtMs)
-                                  : 'Hiện tại'}
-                              </span>
-                              <span>
-                                Tổng thời gian tạm tính:{' '}
-                                {formatElapsed(
-                                  Math.max(
-                                    1,
-                                    Math.floor(
-                                      ((item.timeEndedAtMs ?? clockNow) -
-                                        (item.timeStartedAtMs ?? item.timeEndedAtMs ?? clockNow)) /
-                                        1000,
-                                    ),
-                                  ),
-                                )}
-                              </span>
-                            </div>
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            key={item.id}
-                            className="staff-compact-order-row staff-compact-order-row--editable"
-                            onClick={() =>
-                              setEditingItem({
-                                source: 'SAVED',
-                                id: item.id,
-                                productId: item.productId,
-                                variantId: item.variantId,
-                                productType: item.productType,
-                                productName: item.productName,
-                                variantName: item.variantName,
-                                unitName: item.unitName,
-                                unitPriceVnd: item.unitPriceVnd,
-                                quantityMilli: item.quantityMilli,
-                                note: item.note ?? '',
-                                grossLineTotalVnd: item.grossLineTotalVnd,
-                                discountAmountVnd: item.discountAmountVnd,
-                                discountType: item.discountType,
-                                discountInputValue: item.discountInputValue,
-                                netLineTotalVnd: item.netLineTotalVnd,
-                                timeStartedAtMs: item.timeStartedAtMs,
-                                timeEndedAtMs: item.timeEndedAtMs,
-                              })
-                            }
-                          >
-                            <span className="staff-order-quantity">
-                              {formatItemQuantity(
-                                item.productType,
-                                item.quantityMilli,
-                                item.unitName,
-                              )}
-                            </span>
-                            <span className="staff-order-item-name">
-                              <strong>{item.productName}</strong>
-                              <small>{item.variantName}</small>
-                              {item.note ? <small>Ghi chú: {item.note}</small> : null}
-                            </span>
-                            <b>{formatMoney(item.netLineTotalVnd)}</b>
-                          </button>
-                        ),
-                      )}
+                      {displayedItems.map((item) => (
+                        <button
+                          type="button"
+                          key={item.id}
+                          className="staff-compact-order-row staff-compact-order-row--editable"
+                          onClick={() =>
+                            setEditingItem({
+                              source: 'SAVED',
+                              id: item.id,
+                              productId: item.productId,
+                              variantId: item.variantId,
+                              productType: item.productType,
+                              productName: item.productName,
+                              variantName: item.variantName,
+                              unitName: item.unitName,
+                              unitPriceVnd: item.unitPriceVnd,
+                              quantityMilli: item.quantityMilli,
+                              note: item.note ?? '',
+                              grossLineTotalVnd: item.grossLineTotalVnd,
+                              discountAmountVnd: item.discountAmountVnd,
+                              discountType: item.discountType,
+                              discountInputValue: item.discountInputValue,
+                              netLineTotalVnd: item.netLineTotalVnd,
+                            })
+                          }
+                        >
+                          <span className="staff-order-quantity">
+                            {formatItemQuantity(
+                              item.productType,
+                              item.quantityMilli,
+                              item.unitName,
+                            )}
+                          </span>
+                          <span className="staff-order-item-name">
+                            <strong>{item.productName}</strong>
+                            <small>{item.variantName}</small>
+                            {item.note ? <small>Ghi chú: {item.note}</small> : null}
+                          </span>
+                          <b>{formatMoney(item.netLineTotalVnd)}</b>
+                        </button>
+                      ))}
                     </div>
                   )}
                 </>
@@ -2867,7 +2766,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                     </span>
                     <strong className="staff-order-info-value">
                       {orderType === 'DINE_IN'
-                        ? `Tại chỗ ${quote.data?.order.tableName ? `· ${quote.data.order.tableName}` : ''}`
+                        ? `Tại chỗ · ${quote.data?.order.tableName ?? selectedTable?.name ?? 'Chưa chọn bàn'}`
                         : 'Mang đi'}
                     </strong>
                   </div>
@@ -2884,10 +2783,19 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
 
               <div className="staff-order-action-buttons">
                 <Typography.Title level={5} style={{ marginBottom: 12 }}>
-                  Thao tác đơn
+                  Thao tác khác
                 </Typography.Title>
                 {!isNew ? (
                   <div className="staff-action-buttons-group">
+                    <Button
+                      size="large"
+                      block
+                      icon={<PrinterOutlined />}
+                      onClick={() => setProvisionalBillOpen(true)}
+                      className="staff-action-provisional-btn"
+                    >
+                      In phiếu tạm tính
+                    </Button>
                     {quote.data?.order.orderType === 'DINE_IN' ? (
                       <Button
                         size="large"
@@ -2914,7 +2822,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   <Alert
                     type="info"
                     showIcon
-                    description="Chuyển bàn và Hủy đơn sẽ khả dụng sau khi đơn hàng được lưu."
+                    description="In phiếu tạm tính, Chuyển bàn và Hủy đơn sẽ khả dụng sau khi đơn hàng được lưu."
                   />
                 )}
               </div>
@@ -2942,30 +2850,54 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
             </div>
           </div>
           <div className="staff-cart-actions">
-            <Button
-              size="large"
-              disabled={isNew && orderType === 'TAKEAWAY' && draftLines.length === 0}
-              loading={saving}
-              onClick={isNew ? saveOrder : () => void saveAdditionalItems(false)}
-            >
-              Lưu đơn
-            </Button>
-            <Button
-              type="primary"
-              size="large"
-              disabled={
-                isNew
-                  ? orderType === 'TAKEAWAY' && draftLines.length === 0
-                  : displayedItems.length === 0 && !quote.data?.time
-              }
-              loading={saving}
-              onClick={() => {
-                playClickSound();
-                void beginCheckout();
-              }}
-            >
-              Thanh toán
-            </Button>
+            {isPaymentPending ? (
+              <>
+                <Button
+                  size="large"
+                  icon={<PlayCircleOutlined />}
+                  loading={resuming}
+                  onClick={() => setResumeModalOpen(true)}
+                  className="staff-payment-resume-btn"
+                >
+                  Tiếp tục chơi
+                </Button>
+                <Button
+                  type="primary"
+                  size="large"
+                  onClick={() => {
+                    navigate(`/pos/orders/${quote.data!.order.id}/payment`);
+                  }}
+                >
+                  Tiếp tục thanh toán
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  size="large"
+                  disabled={isNew && orderType === 'TAKEAWAY' && draftLines.length === 0}
+                  loading={saving}
+                  onClick={isNew ? saveOrder : () => void saveAdditionalItems(false)}
+                >
+                  Lưu đơn
+                </Button>
+                <Button
+                  type="primary"
+                  size="large"
+                  disabled={
+                    isNew
+                      ? orderType === 'TAKEAWAY' && draftLines.length === 0
+                      : displayedItems.length === 0 && !quote.data?.time
+                  }
+                  loading={saving || stoppingTime}
+                  onClick={() => {
+                    void beginCheckout();
+                  }}
+                >
+                  Thanh toán
+                </Button>
+              </>
+            )}
           </div>
         </aside>
       </div>
@@ -3061,8 +2993,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   note: updated.note.trim() || null,
                   discountType: updated.discountType,
                   discountInputValue: updated.discountInputValue,
-                  timeStartedAtMs: updated.timeStartedAtMs ?? undefined,
-                  timeEndedAtMs: updated.timeEndedAtMs ?? undefined,
                 };
               }),
             );
@@ -3071,9 +3001,17 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
             void updateExistingItem({
               id: editingItem.id,
               quantityMilli: updated.quantityMilli,
+              variantId:
+                selectedVariant && selectedVariant.id !== 'default'
+                  ? selectedVariant.id
+                  : (updated.variantId ?? null),
+              discount:
+                updated.discountType &&
+                updated.discountInputValue !== null &&
+                updated.discountInputValue !== undefined
+                  ? { type: updated.discountType, value: updated.discountInputValue }
+                  : null,
               note: updated.note.trim() || null,
-              timeStartedAtMs: updated.timeStartedAtMs,
-              timeEndedAtMs: updated.timeEndedAtMs,
             });
           }
         }}
@@ -3091,8 +3029,16 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       />
       <Modal
         open={timeDetailOpen && Boolean(quote.data?.time)}
-        title="Chi tiết tính giờ"
-        width={760}
+        title={
+          <div className="staff-time-modal-header">
+            <ClockCircleOutlined />
+            <span>Chi tiết tính giờ</span>
+          </div>
+        }
+        width={620}
+        centered
+        destroyOnHidden
+        className="staff-time-detail-dialog"
         onCancel={() => setTimeDetailOpen(false)}
         footer={
           quote.data?.time
@@ -3103,8 +3049,9 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   onClick={
                     timeRangeDraft.endedAt ? handleResumeTimeInModal : handlePauseTimeInModal
                   }
+                  className="staff-time-footer-btn"
                 >
-                  {timeRangeDraft.endedAt ? 'Tiếp tục tính giờ (Xóa giờ ra)' : 'Tạm dừng giờ'}
+                  {timeRangeDraft.endedAt ? 'Tiếp tục tính giờ' : 'Tạm dừng giờ'}
                 </Button>,
                 <Button
                   key="delete-time"
@@ -3114,10 +3061,17 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                     setDeleteTimeReason('');
                     setDeleteTimeModalOpen(true);
                   }}
+                  className="staff-time-footer-btn"
                 >
                   Xóa tiền giờ
                 </Button>,
-                <Button key="save" type="primary" loading={saving} onClick={saveTimeRange}>
+                <Button
+                  key="save"
+                  type="primary"
+                  loading={saving}
+                  onClick={saveTimeRange}
+                  className="staff-time-footer-btn staff-time-footer-btn--primary"
+                >
                   Lưu thay đổi
                 </Button>,
               ]
@@ -3126,63 +3080,51 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       >
         {quote.data?.time ? (
           <div className="staff-time-detail-modal">
-            <section>
-              <Typography.Title level={5}>Bảng giá áp dụng</Typography.Title>
-              {quote.data.time.pricingConfig.firstPeriod.enabled ? (
-                <div className="staff-time-detail-row">
-                  <span>
-                    <strong>Giá đầu tiên</strong>
-                    <small>
-                      {formatElapsed(quote.data.time.pricingConfig.firstPeriod.durationSeconds)} đầu
-                    </small>
-                  </span>
-                  <b>
-                    {formatPriceRate(
-                      quote.data.time.pricingConfig.firstPeriod.priceVnd,
-                      quote.data.time.pricingConfig.firstPeriod.durationSeconds,
-                    )}
-                  </b>
+            {/* Phân đoạn chuyển bàn nếu có */}
+            {quote.data.time.tableSegments && quote.data.time.tableSegments.length > 1 ? (
+              <section className="staff-time-detail-card staff-time-detail-card--segments">
+                <Typography.Title level={5} className="staff-time-card-title">
+                  <SwapOutlined /> Lịch sử chuyển bàn
+                </Typography.Title>
+                <div className="staff-time-segments-list">
+                  {quote.data.time.tableSegments.map((tSeg, index) => (
+                    <div
+                      key={`${tSeg.tableId}-${tSeg.startedAtMs}-${index}`}
+                      className="staff-time-segment-row"
+                    >
+                      <div className="staff-time-segment-info">
+                        <div className="staff-time-segment-name-wrap">
+                          <strong className="staff-time-segment-name">{tSeg.tableName}</strong>
+                          <span className="staff-time-segment-rate-pill">
+                            {formatMoney(tSeg.pricingConfig.basePriceVnd)}/giờ
+                          </span>
+                        </div>
+                        <div className="staff-time-segment-timing">
+                          <span>
+                            {formatClock(tSeg.startedAtMs)}–
+                            {tSeg.endedAtMs ? formatClock(tSeg.endedAtMs) : 'Hiện tại'}
+                          </span>
+                          <span className="staff-time-segment-dot">•</span>
+                          <span>{formatElapsed(tSeg.elapsedSeconds)}</span>
+                        </div>
+                      </div>
+                      <b className="staff-time-segment-amount">
+                        {formatMoney(tSeg.amountAfterRoundingVnd)}
+                      </b>
+                    </div>
+                  ))}
                 </div>
-              ) : null}
-              {quote.data.time.pricingConfig.specialWindows.map((window) => (
-                <div key={window.id} className="staff-time-detail-row">
-                  <span>
-                    <strong>{window.name}</strong>
-                    <small>
-                      {formatMinuteOfDay(window.startMinute)}–{formatMinuteOfDay(window.endMinute)}{' '}
-                      · {formatWeekdays(window.weekdaysMask)}
-                    </small>
-                  </span>
-                  <b>
-                    {formatPriceRate(
-                      window.priceVnd,
-                      quote.data!.time!.pricingConfig.baseDurationSeconds,
-                    )}
-                  </b>
-                </div>
-              ))}
-              <div className="staff-time-detail-row">
-                <span>
-                  <strong>Giá thường</strong>
-                  <small>
-                    {quote.data.time.pricingConfig.calculationMode === 'ACTUAL_TIME'
-                      ? 'Tính theo thời gian thực'
-                      : 'Tính tròn theo block'}
-                  </small>
-                </span>
-                <b>
-                  {formatPriceRate(
-                    quote.data.time.pricingConfig.basePriceVnd,
-                    quote.data.time.pricingConfig.baseDurationSeconds,
-                  )}
-                </b>
-              </div>
-            </section>
-            <section>
-              <Typography.Title level={5}>Thời gian sử dụng</Typography.Title>
+              </section>
+            ) : null}
+
+            {/* Thời gian sử dụng */}
+            <section className="staff-time-detail-card">
+              <Typography.Title level={5} className="staff-time-card-title">
+                Thời gian sử dụng
+              </Typography.Title>
               <div className="staff-time-range-fields">
-                <label htmlFor="staff-time-started-at">
-                  <span>Giờ vào</span>
+                <label htmlFor="staff-time-started-at" className="staff-time-field">
+                  <span className="staff-time-field__label">Giờ vào</span>
                   <Input
                     id="staff-time-started-at"
                     type="datetime-local"
@@ -3192,21 +3134,15 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                     onChange={(event) =>
                       setTimeRangeDraft((value) => ({ ...value, startedAt: event.target.value }))
                     }
+                    className="staff-time-field__input"
                   />
                 </label>
-                <label htmlFor="staff-time-ended-at">
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      marginBottom: 4,
-                    }}
-                  >
-                    <span>Giờ ra</span>
+                <label htmlFor="staff-time-ended-at" className="staff-time-field">
+                  <div className="staff-time-field__header">
+                    <span className="staff-time-field__label">Giờ ra</span>
                     <button
                       type="button"
-                      className="staff-item-modal__now-btn"
+                      className="staff-time-now-btn"
                       onClick={() =>
                         setTimeRangeDraft((prev) => ({
                           ...prev,
@@ -3227,35 +3163,101 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                     onChange={(event) =>
                       setTimeRangeDraft((value) => ({ ...value, endedAt: event.target.value }))
                     }
+                    className="staff-time-field__input"
                   />
-                  <small>
-                    Điền giờ ra và bấm Lưu thay đổi để tạm dừng/chốt giờ. Để trống để tiếp tục tính
-                    đến hiện tại.
+                  <small className="staff-time-field__hint">
+                    Điền giờ ra và bấm Lưu thay đổi để chốt/dừng giờ. Để trống để tính đến hiện tại.
                   </small>
                 </label>
               </div>
-              <div className="staff-time-detail-row">
+              <div className="staff-time-detail-row staff-time-detail-row--highlight">
                 <span>Tổng thời gian tính tiền</span>
                 <b>{formatElapsed(liveElapsedSeconds)}</b>
               </div>
             </section>
-            <section>
-              <Typography.Title level={5}>Thành tiền tạm tính</Typography.Title>
-              {quote.data.time.segments.map((segment, index) => (
-                <div
-                  key={`${segment.type}-${segment.startedAtMs}-${index}`}
-                  className="staff-time-detail-row"
-                >
+
+            {/* Bảng giá áp dụng */}
+            <section className="staff-time-detail-card">
+              <Typography.Title level={5} className="staff-time-card-title">
+                Bảng giá áp dụng
+              </Typography.Title>
+              <div className="staff-time-rates-list">
+                {quote.data.time.pricingConfig.firstPeriod.enabled ? (
+                  <div className="staff-time-detail-row">
+                    <span>
+                      <strong>Giá đầu tiên</strong>
+                      <small>
+                        {formatElapsed(quote.data.time.pricingConfig.firstPeriod.durationSeconds)}{' '}
+                        đầu
+                      </small>
+                    </span>
+                    <b>
+                      {formatPriceRate(
+                        quote.data.time.pricingConfig.firstPeriod.priceVnd,
+                        quote.data.time.pricingConfig.firstPeriod.durationSeconds,
+                      )}
+                    </b>
+                  </div>
+                ) : null}
+                {quote.data.time.pricingConfig.specialWindows.map((window) => (
+                  <div key={window.id} className="staff-time-detail-row">
+                    <span>
+                      <strong>{window.name}</strong>
+                      <small>
+                        {formatMinuteOfDay(window.startMinute)}–
+                        {formatMinuteOfDay(window.endMinute)} ·{' '}
+                        {formatWeekdays(window.weekdaysMask)}
+                      </small>
+                    </span>
+                    <b>
+                      {formatPriceRate(
+                        window.priceVnd,
+                        quote.data!.time!.pricingConfig.baseDurationSeconds,
+                      )}
+                    </b>
+                  </div>
+                ))}
+                <div className="staff-time-detail-row">
                   <span>
-                    <strong>{segment.name}</strong>
+                    <strong>Giá thường</strong>
                     <small>
-                      {formatClock(segment.startedAtMs)}–{formatClock(segment.endedAtMs)} ·{' '}
-                      {formatElapsed(segment.elapsedSeconds)}
+                      {quote.data.time.pricingConfig.calculationMode === 'ACTUAL_TIME'
+                        ? 'Tính theo thời gian thực'
+                        : 'Tính tròn theo block'}
                     </small>
                   </span>
-                  <b>{formatMoney(segment.amountBeforeRoundingVnd)}</b>
+                  <b>
+                    {formatPriceRate(
+                      quote.data.time.pricingConfig.basePriceVnd,
+                      quote.data.time.pricingConfig.baseDurationSeconds,
+                    )}
+                  </b>
                 </div>
-              ))}
+              </div>
+            </section>
+
+            {/* Thành tiền tạm tính */}
+            <section className="staff-time-detail-card staff-time-detail-card--totals">
+              <Typography.Title level={5} className="staff-time-card-title">
+                Thành tiền tạm tính
+              </Typography.Title>
+              <div className="staff-time-rates-list">
+                {quote.data.time.segments.map((segment, index) => (
+                  <div
+                    key={`${segment.type}-${segment.startedAtMs}-${index}`}
+                    className="staff-time-detail-row"
+                  >
+                    <span>
+                      <strong>{segment.name}</strong>
+                      <small>
+                        {formatClock(segment.startedAtMs)}–{formatClock(segment.endedAtMs)} ·{' '}
+                        {formatElapsed(segment.elapsedSeconds)}
+                      </small>
+                    </span>
+                    <b>{formatMoney(segment.amountBeforeRoundingVnd)}</b>
+                  </div>
+                ))}
+              </div>
               <div className="staff-time-detail-row staff-time-detail-row--total">
                 <span>Tổng tiền giờ</span>
                 <b>{formatMoney(quote.data.time.amountAfterRoundingVnd)}</b>
@@ -3264,14 +3266,119 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           </div>
         ) : null}
       </Modal>
-      <StaffTablePickerModal
+      <StaffTableTransferModal
         open={transferOpen}
-        title="Chuyển bàn/phòng"
+        currentTable={tables.data?.find((item) => item.id === quote.data?.order.tableId) ?? null}
+        currentQuote={quote.data ?? null}
         tables={tables.data ?? []}
         confirmLoading={saving}
         onCancel={() => setTransferOpen(false)}
-        onConfirm={(table) => void transferTo(table)}
+        onConfirm={(table) => transferTo(table)}
       />
+      <Modal
+        open={provisionalBillOpen && Boolean(quote.data)}
+        title={
+          <div className="staff-provisional-modal-header">
+            <FileTextOutlined />
+            <span>Phiếu tạm tính · {quote.data?.order.tableName}</span>
+          </div>
+        }
+        width={500}
+        centered
+        onCancel={() => setProvisionalBillOpen(false)}
+        footer={[
+          <Button key="close" onClick={() => setProvisionalBillOpen(false)}>
+            Đóng
+          </Button>,
+          <Button
+            key="print"
+            icon={<PrinterOutlined />}
+            onClick={() => {
+              window.print();
+            }}
+          >
+            In tạm tính
+          </Button>,
+          <Button
+            key="checkout"
+            type="primary"
+            loading={stoppingTime}
+            onClick={() => {
+              setProvisionalBillOpen(false);
+              void beginCheckout();
+            }}
+          >
+            Dừng giờ & Thanh toán
+          </Button>,
+        ]}
+      >
+        {quote.data ? (
+          <div className="staff-provisional-bill-content">
+            <Alert
+              type="info"
+              showIcon
+              message="Số tiền có thể tiếp tục thay đổi do bàn vẫn đang tính giờ."
+              style={{ marginBottom: 14 }}
+            />
+            <div className="staff-provisional-info-card">
+              <div className="staff-provisional-row">
+                <span>Bàn</span>
+                <strong>{quote.data.order.tableName}</strong>
+              </div>
+              {quote.data.time ? (
+                <>
+                  <div className="staff-provisional-row">
+                    <span>Giờ vào</span>
+                    <span>{formatDateTime(quote.data.time.startedAtMs)}</span>
+                  </div>
+                  <div className="staff-provisional-row">
+                    <span>Thời gian hiện tại</span>
+                    <strong>{formatElapsed(liveElapsedSeconds)}</strong>
+                  </div>
+                  <div className="staff-provisional-row">
+                    <span>Tiền giờ tạm tính</span>
+                    <b>{formatMoney(quote.data.time.amountAfterRoundingVnd)}</b>
+                  </div>
+                </>
+              ) : null}
+            </div>
+
+            <div className="staff-provisional-items-list">
+              {displayedItems.map((item) => (
+                <div key={item.id} className="staff-provisional-item-row">
+                  <span>
+                    {item.productName} ({item.quantityMilli / 1000} {item.unitName ?? ''})
+                  </span>
+                  <b>{formatMoney(item.netLineTotalVnd)}</b>
+                </div>
+              ))}
+            </div>
+
+            <div className="staff-provisional-totals-card">
+              <div className="staff-provisional-row">
+                <span>Tổng tiền hàng</span>
+                <span>{formatMoney(regularProductGross)}</span>
+              </div>
+              {totalTimeGross > 0 ? (
+                <div className="staff-provisional-row">
+                  <span>Tiền giờ</span>
+                  <span>{formatMoney(totalTimeGross)}</span>
+                </div>
+              ) : null}
+              {totalDiscount > 0 ? (
+                <div className="staff-provisional-row">
+                  <span>Giảm giá</span>
+                  <span>-{formatMoney(totalDiscount)}</span>
+                </div>
+              ) : null}
+              <div className="staff-provisional-row staff-provisional-row--total">
+                <span>TỔNG TẠM TÍNH</span>
+                <b>{formatMoney(displayedTotal)}</b>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
       <Modal
         open={deleteItemModalOpen && Boolean(deleteItemTarget)}
         title={
@@ -3491,6 +3598,32 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           </div>
         </div>
       </Modal>
+      <Modal
+        open={resumeModalOpen}
+        title="Tiếp tục tính giờ?"
+        okText="Tiếp tục chơi"
+        cancelText="Hủy"
+        okButtonProps={{ loading: resuming }}
+        onCancel={() => !resuming && setResumeModalOpen(false)}
+        onOk={() => void handleResumeCheckout()}
+      >
+        <div
+          className="staff-confirm-resume-body"
+          style={{ display: 'grid', gap: 10, paddingTop: 6 }}
+        >
+          <p style={{ margin: 0 }}>
+            Bàn đã dừng tính giờ lúc{' '}
+            <strong>
+              {quote.data?.time?.endedAtMs ? formatClock(quote.data.time.endedAtMs) : 'trước đó'}
+            </strong>
+            .
+          </p>
+          <p style={{ margin: 0, color: '#475569' }}>
+            Một khoảng tính giờ mới sẽ bắt đầu từ thời điểm xác nhận tiếp tục. Khoảng thời gian chờ
+            thanh toán sẽ <strong>không được tính tiền</strong>.
+          </p>
+        </div>
+      </Modal>
     </div>
   );
 }
@@ -3548,8 +3681,69 @@ function InvoicePage() {
                 elapsedSeconds: number;
                 amountBeforeRoundingVnd: number;
               }>;
+              tableSegments?: Array<{
+                tableName: string;
+                startedAtMs: number;
+                endedAtMs: number | null;
+                elapsedSeconds: number;
+                amountAfterRoundingVnd: number;
+                pricingConfig?: { basePriceVnd: number };
+              }>;
             };
             const isTimeLine = line.lineType === 'TIME' || snapshot.productType === 'TIME';
+            const hasTableTransfer = Boolean(
+              snapshot.tableSegments && snapshot.tableSegments.length > 1,
+            );
+
+            if (isTimeLine && hasTableTransfer) {
+              return (
+                <div key={line.id} className="is-time staff-invoice-transfer-block">
+                  <div className="staff-invoice-transfer-header">
+                    <div className="staff-invoice-transfer-title">
+                      <strong>Tiền giờ (Chuyển bàn)</strong>
+                      <small className="staff-invoice-transfer-subtitle">
+                        {snapshot.tableSegments!.map((s) => s.tableName).join(' → ')}
+                      </small>
+                    </div>
+                    <b className="staff-invoice-transfer-total">{formatMoney(line.lineTotal)}</b>
+                  </div>
+
+                  <div className="staff-invoice-transfer-segments-table">
+                    {snapshot.tableSegments!.map((tSeg, idx) => (
+                      <div key={idx} className="staff-invoice-transfer-row">
+                        <div className="staff-invoice-transfer-row__left">
+                          <span className="staff-invoice-transfer-row__dot">•</span>
+                          <strong className="staff-invoice-transfer-row__name">
+                            {tSeg.tableName}:
+                          </strong>{' '}
+                          <span className="staff-invoice-transfer-row__time">
+                            {formatClock(tSeg.startedAtMs)}–
+                            {tSeg.endedAtMs ? formatClock(tSeg.endedAtMs) : 'Hiện tại'} (
+                            {formatElapsed(tSeg.elapsedSeconds)}
+                            {tSeg.pricingConfig
+                              ? ` @ ${formatMoney(tSeg.pricingConfig.basePriceVnd)}/h`
+                              : ''}
+                            )
+                          </span>
+                        </div>
+                        <span className="staff-invoice-transfer-row__amount">
+                          {formatMoney(tSeg.amountAfterRoundingVnd)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="staff-invoice-transfer-summary-line">
+                    <small>
+                      Tổng thời gian: {formatElapsed(snapshot.elapsedSeconds ?? 0)} (
+                      {formatDateTime(snapshot.startedAtMs!)} –{' '}
+                      {formatDateTime(snapshot.endedAtMs ?? data.invoice.issuedAt)})
+                    </small>
+                  </div>
+                </div>
+              );
+            }
+
             return (
               <div key={line.id} className={isTimeLine ? 'is-time' : ''}>
                 <span>
@@ -3764,6 +3958,8 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
     name: string;
     phone?: string | undefined;
   } | null>(null);
+  const [resumeModalOpen, setResumeModalOpen] = useState(false);
+  const [resuming, setResuming] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const csrf = auth.csrfToken!;
 
@@ -3786,8 +3982,42 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
 
   const changeVnd = selectedMethod === 'CASH' ? Math.max(0, (cashReceived ?? 0) - totalVnd) : 0;
 
+  const handleResumeCheckout = async () => {
+    if (!quote.data || resuming) return;
+    setResuming(true);
+    try {
+      const result = await jsonRequest<{
+        orderId: string;
+        status: 'OPEN';
+        resumedAt: number;
+        quote: OrderQuote;
+      }>(
+        `/api/v1/pos/orders/${quote.data.order.id}/resume-checkout`,
+        { expectedOrderVersion: quote.data.order.version },
+        { headers: mutationHeaders(csrf) },
+      );
+      const openQuote: OrderQuote = {
+        ...result.quote,
+        order: {
+          ...result.quote.order,
+          status: 'OPEN',
+        },
+      };
+      queryClient.setQueryData(['pos-order-quote', orderId], openQuote);
+      void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
+      void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
+      messageApi.success(`Đã tiếp tục tính giờ cho ${quote.data.order.tableName}`);
+      setResumeModalOpen(false);
+      navigate(`/pos/orders/${orderId}`, { replace: true });
+    } catch (error) {
+      messageApi.error(errorText(error));
+    } finally {
+      setResuming(false);
+    }
+  };
+
   const handleConfirmPayment = async () => {
-    if (!quote.data) return;
+    if (!quote.data || submitting) return;
     if (selectedMethod === 'CASH' && (cashReceived === null || cashReceived < totalVnd)) {
       messageApi.warning('Số tiền khách đưa chưa đủ để thanh toán.');
       return;
@@ -3803,8 +4033,8 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
         },
         { headers: mutationHeaders(csrf) },
       );
-      await queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
-      await queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
+      void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
+      void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
       messageApi.success('Thanh toán đơn hàng thành công!');
       navigate(`/pos/invoices/${result.invoiceId}`, { replace: true });
     } catch (error) {
@@ -3864,6 +4094,42 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
       ) : (
         <div className="staff-payment-page__body">
           <div className="staff-payment-page__left">
+            {quote.data.time ? (
+              <section className="staff-payment-session-card">
+                <div className="staff-payment-session-info">
+                  <div className="staff-payment-session-title-row">
+                    <strong className="staff-payment-session-table-name">
+                      {quote.data.order.tableName}
+                    </strong>
+                    <span className="staff-payment-frozen-badge">
+                      <CheckCircleOutlined /> ĐÃ DỪNG TÍNH GIỜ
+                    </span>
+                  </div>
+                  <div className="staff-payment-session-meta">
+                    <span>
+                      Thời gian chơi:{' '}
+                      <strong>{formatElapsed(quote.data.time.elapsedSeconds)}</strong>
+                    </span>
+                    {quote.data.time.endedAtMs ? (
+                      <>
+                        <span className="staff-payment-session-dot">•</span>
+                        <span>
+                          Đã dừng lúc: <strong>{formatClock(quote.data.time.endedAtMs)}</strong>
+                        </span>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+                <Button
+                  icon={<PlayCircleOutlined />}
+                  onClick={() => setResumeModalOpen(true)}
+                  className="staff-payment-resume-btn"
+                >
+                  Tiếp tục chơi
+                </Button>
+              </section>
+            ) : null}
+
             <section className="staff-payment-page__section">
               <div className="staff-payment-page__section-title">Khách hàng</div>
               {attachedCustomer ? (
@@ -3991,7 +4257,6 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
                   !quote.data || (selectedMethod === 'CASH' && (cashReceived ?? 0) < totalVnd)
                 }
                 onClick={() => {
-                  playClickSound();
                   void handleConfirmPayment();
                 }}
               >
@@ -4031,6 +4296,32 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
               onChange={(e) => setCustomerPhone(e.target.value)}
             />
           </label>
+        </div>
+      </Modal>
+      <Modal
+        open={resumeModalOpen}
+        title="Tiếp tục tính giờ?"
+        okText="Tiếp tục chơi"
+        cancelText="Hủy"
+        okButtonProps={{ loading: resuming }}
+        onCancel={() => !resuming && setResumeModalOpen(false)}
+        onOk={() => void handleResumeCheckout()}
+      >
+        <div
+          className="staff-confirm-resume-body"
+          style={{ display: 'grid', gap: 10, paddingTop: 6 }}
+        >
+          <p style={{ margin: 0 }}>
+            Bàn đã dừng tính giờ lúc{' '}
+            <strong>
+              {quote.data?.time?.endedAtMs ? formatClock(quote.data.time.endedAtMs) : 'trước đó'}
+            </strong>
+            .
+          </p>
+          <p style={{ margin: 0, color: '#475569' }}>
+            Một khoảng tính giờ mới sẽ bắt đầu từ thời điểm xác nhận tiếp tục. Khoảng thời gian chờ
+            thanh toán sẽ <strong>không được tính tiền</strong>.
+          </p>
         </div>
       </Modal>
     </div>

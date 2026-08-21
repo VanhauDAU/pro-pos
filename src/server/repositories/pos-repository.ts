@@ -28,6 +28,7 @@ export interface OrderRow {
   area_id: string | null;
   area_name: string | null;
   opened_at: number;
+  updated_at: number;
   opened_by_name: string | null;
   note: string | null;
 }
@@ -82,8 +83,29 @@ export interface PosTableRecord {
   areaName: string;
   areaSortOrder: number;
   sortOrder: number;
+  timeProductId?: string | null;
+  timeProductName?: string | null;
+  defaultPriceVnd?: number | null;
+  defaultDurationSeconds?: number | null;
   activeOrderId: string | null;
   occupiedSince: number | null;
+}
+
+export interface TableTimeSegmentRow {
+  id: string;
+  store_id: string;
+  order_id: string;
+  time_session_id: string;
+  table_id: string;
+  time_product_id: string;
+  table_name_snapshot: string;
+  started_at: number;
+  ended_at: number | null;
+  pricing_snapshot_json: string;
+  pricing_version: number;
+  unit_price_snapshot: number;
+  created_at: number;
+  updated_at: number;
 }
 
 export interface OrderItemRow {
@@ -118,9 +140,15 @@ export class PosRepository {
           st.area_id AS areaId,
           a.name AS areaName, a.sort_order AS areaSortOrder,
           st.sort_order AS sortOrder,
+          st.time_product_id AS timeProductId,
+          p.name AS timeProductName,
+          tpc.base_price AS defaultPriceVnd,
+          tpc.base_duration_seconds AS defaultDurationSeconds,
           o.id AS activeOrderId, o.opened_at AS occupiedSince
         FROM service_tables st
         JOIN areas a ON a.id = st.area_id AND a.store_id = st.store_id
+        LEFT JOIN products p ON p.id = st.time_product_id AND p.store_id = st.store_id
+        LEFT JOIN time_price_configs tpc ON tpc.product_id = p.id AND tpc.store_id = p.store_id
         LEFT JOIN orders o ON o.table_id = st.id AND o.store_id = st.store_id
           AND o.order_type = 'DINE_IN' AND o.status IN ('OPEN', 'PAYMENT_PENDING')
         WHERE st.store_id = ?
@@ -130,6 +158,21 @@ export class PosRepository {
       )
       .bind(storeId)
       .all<PosTableRecord>();
+  }
+
+  async listTableTimeSegments(storeId: string, timeSessionId: string) {
+    return this.db
+      .prepare(
+        `SELECT
+          id, store_id, order_id, time_session_id, table_id, time_product_id,
+          table_name_snapshot, started_at, ended_at, pricing_snapshot_json,
+          pricing_version, unit_price_snapshot, created_at, updated_at
+        FROM table_time_segments
+        WHERE store_id = ? AND time_session_id = ?
+        ORDER BY started_at ASC`,
+      )
+      .bind(storeId, timeSessionId)
+      .all<TableTimeSegmentRow>();
   }
 
   findTablePricing(storeId: string, tableId: string) {
@@ -257,7 +300,7 @@ export class PosRepository {
     return this.db
       .prepare(
         `SELECT o.id, o.store_id, o.table_id, o.order_type, o.display_code,
-                o.status, o.version, o.opened_at, o.note,
+                o.status, o.version, o.opened_at, COALESCE(o.updated_at, o.opened_at) AS updated_at, o.note,
                 COALESCE(st.display_name, st.name) AS table_name,
                 a.id AS area_id, a.name AS area_name,
                 COALESCE(u.display_name, 'Nhân viên') AS opened_by_name
@@ -275,7 +318,7 @@ export class PosRepository {
     return this.db
       .prepare(
         `SELECT o.id, o.store_id, o.table_id, o.order_type, o.display_code,
-                o.status, o.version, o.opened_at, o.note,
+                o.status, o.version, o.opened_at, COALESCE(o.updated_at, o.opened_at) AS updated_at, o.note,
                 COALESCE(st.display_name, st.name) AS table_name,
                 a.id AS area_id, a.name AS area_name,
                 COALESCE(u.display_name, 'Nhân viên') AS opened_by_name
@@ -286,7 +329,7 @@ export class PosRepository {
          WHERE o.store_id = ? AND o.status IN ('OPEN', 'PAYMENT_PENDING')
          UNION ALL
          SELECT t.id, t.store_id, NULL AS table_id, 'TAKEAWAY' AS order_type,
-                t.display_code, t.status, t.version, t.opened_at, t.note,
+                t.display_code, t.status, t.version, t.opened_at, COALESCE(t.updated_at, t.opened_at) AS updated_at, t.note,
                 NULL AS table_name, NULL AS area_id, NULL AS area_name,
                 COALESCE(u.display_name, 'Nhân viên') AS opened_by_name
          FROM takeaway_orders t
@@ -302,7 +345,7 @@ export class PosRepository {
     return this.db
       .prepare(
         `SELECT t.id, t.store_id, NULL AS table_id, 'TAKEAWAY' AS order_type,
-                t.display_code, t.status, t.version, t.opened_at, t.note,
+                t.display_code, t.status, t.version, t.opened_at, COALESCE(t.updated_at, t.opened_at) AS updated_at, t.note,
                 NULL AS table_name, NULL AS area_id, NULL AS area_name,
                 COALESCE(u.display_name, 'Nhân viên') AS opened_by_name
          FROM takeaway_orders t
@@ -468,7 +511,7 @@ export class PosRepository {
          LEFT JOIN categories c ON c.id = p.category_id AND c.store_id = p.store_id
          LEFT JOIN units u ON u.id = p.unit_id AND u.store_id = p.store_id
          WHERE p.store_id = ? AND p.status = 'ACTIVE' AND p.is_system = 0
-           AND p.product_type IN ('QUANTITY', 'WEIGHT', 'TIME')
+           AND p.product_type IN ('QUANTITY', 'WEIGHT')
          ORDER BY c.sort_order, p.name COLLATE NOCASE, pv.name COLLATE NOCASE`,
       )
       .bind(storeId)
@@ -546,13 +589,35 @@ export class PosRepository {
         : 'NULL AS timeStartedAtMs, NULL AS timeEndedAtMs';
     return this.db
       .prepare(
-        `SELECT product_id AS productId, product_type AS productType, ${timeCols} FROM ${table}
+        `SELECT
+          id,
+          product_id AS productId,
+          variant_id AS variantId,
+          variant_name_snapshot AS variantNameSnapshot,
+          product_type AS productType,
+          unit_price_snapshot AS unitPriceSnapshot,
+          discount_type AS discountType,
+          discount_input_value AS discountInputValue,
+          discount_amount AS discountAmount,
+          gross_line_total AS grossLineTotal,
+          net_line_total AS netLineTotal,
+          ${timeCols}
+         FROM ${table}
          WHERE store_id = ? AND order_id = ? AND id = ? LIMIT 1`,
       )
       .bind(storeId, orderId, itemId)
       .first<{
+        id: string;
         productId: string;
+        variantId: string | null;
+        variantNameSnapshot: string | null;
         productType: 'QUANTITY' | 'WEIGHT' | 'TIME';
+        unitPriceSnapshot: number;
+        discountType: 'FIXED' | 'PERCENT' | null;
+        discountInputValue: number | null;
+        discountAmount: number;
+        grossLineTotal: number;
+        netLineTotal: number;
         timeStartedAtMs: number | null;
         timeEndedAtMs: number | null;
       }>();
@@ -679,6 +744,14 @@ export class PosRepository {
     itemId: string;
     expectedOrderVersion: number;
     quantityMilli: number;
+    variantId?: string | null | undefined;
+    variantName?: string | null | undefined;
+    unitPriceVnd?: number | null | undefined;
+    discountType?: string | null | undefined;
+    discountInputValue?: number | null | undefined;
+    discountAmountVnd?: number | null | undefined;
+    grossLineTotalVnd?: number | null | undefined;
+    netLineTotalVnd?: number | null | undefined;
     timeStartedAtMs?: number | null | undefined;
     timeEndedAtMs?: number | null | undefined;
     note: string | null;
@@ -691,8 +764,11 @@ export class PosRepository {
         `INSERT INTO update_order_item_commands (
           id, store_id, order_type, order_id, item_id, expected_order_version,
           quantity_milli, note, time_started_at, time_ended_at,
-          actor_user_id, request_id, issued_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          actor_user_id, request_id, issued_at,
+          variant_id, variant_name_snapshot, unit_price_snapshot,
+          discount_type, discount_input_value, discount_amount,
+          gross_line_total, net_line_total
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         input.commandId,
@@ -708,6 +784,14 @@ export class PosRepository {
         input.actorId,
         input.requestId,
         input.issuedAt,
+        input.variantId ?? null,
+        input.variantName ?? null,
+        input.unitPriceVnd ?? null,
+        input.discountType ?? null,
+        input.discountInputValue ?? null,
+        input.discountAmountVnd ?? null,
+        input.grossLineTotalVnd ?? null,
+        input.netLineTotalVnd ?? null,
       )
       .run();
   }
@@ -767,6 +851,9 @@ export class PosRepository {
     await this.db.batch([
       this.db
         .prepare(`DELETE FROM time_pauses WHERE store_id = ? AND time_session_id = ?`)
+        .bind(input.storeId, input.sessionId),
+      this.db
+        .prepare(`DELETE FROM table_time_segments WHERE store_id = ? AND time_session_id = ?`)
         .bind(input.storeId, input.sessionId),
       this.db
         .prepare(`DELETE FROM time_sessions WHERE store_id = ? AND id = ? AND order_id = ?`)
@@ -976,6 +1063,90 @@ export class PosRepository {
       .run();
   }
 
+  findStopTimeCommand(storeId: string, commandId: string) {
+    return this.db
+      .prepare(
+        `SELECT order_id AS orderId, issued_at AS stoppedAt
+         FROM stop_time_commands WHERE store_id = ? AND id = ? LIMIT 1`,
+      )
+      .bind(storeId, commandId)
+      .first<{ orderId: string; stoppedAt: number }>();
+  }
+
+  async stopTimeForCheckout(input: {
+    commandId: string;
+    storeId: string;
+    orderId: string;
+    expectedOrderVersion: number;
+    actorId: string;
+    actorSessionId?: string | null;
+    deviceId?: string | null;
+    requestId: string;
+    issuedAt: number;
+  }) {
+    return this.db
+      .prepare(
+        `INSERT INTO stop_time_commands (
+          id, store_id, order_id, expected_order_version,
+          actor_user_id, actor_session_id, device_id, request_id, issued_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        input.commandId,
+        input.storeId,
+        input.orderId,
+        input.expectedOrderVersion,
+        input.actorId,
+        input.actorSessionId ?? null,
+        input.deviceId ?? null,
+        input.requestId,
+        input.issuedAt,
+      )
+      .run();
+  }
+
+  findResumeCheckoutCommand(storeId: string, commandId: string) {
+    return this.db
+      .prepare(
+        `SELECT order_id AS orderId, issued_at AS resumedAt
+         FROM resume_checkout_commands WHERE store_id = ? AND id = ? LIMIT 1`,
+      )
+      .bind(storeId, commandId)
+      .first<{ orderId: string; resumedAt: number }>();
+  }
+
+  async resumeCheckout(input: {
+    commandId: string;
+    storeId: string;
+    orderId: string;
+    expectedOrderVersion: number;
+    actorId: string;
+    actorSessionId?: string | null;
+    deviceId?: string | null;
+    requestId: string;
+    issuedAt: number;
+  }) {
+    return this.db
+      .prepare(
+        `INSERT INTO resume_checkout_commands (
+          id, store_id, order_id, expected_order_version,
+          actor_user_id, actor_session_id, device_id, request_id, issued_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        input.commandId,
+        input.storeId,
+        input.orderId,
+        input.expectedOrderVersion,
+        input.actorId,
+        input.actorSessionId ?? null,
+        input.deviceId ?? null,
+        input.requestId,
+        input.issuedAt,
+      )
+      .run();
+  }
+
   findCheckoutCommand(storeId: string, idempotencyKey: string) {
     return this.db
       .prepare(
@@ -1154,6 +1325,8 @@ export class PosRepository {
     expectedOrderVersion: number;
     expectedSourceVersion: number;
     expectedTargetVersion: number;
+    targetPricingSnapshotJson: string;
+    targetPricingVersion: number;
     actorId: string;
     requestId: string;
     now: number;
@@ -1163,8 +1336,9 @@ export class PosRepository {
         `INSERT INTO transfer_table_commands (
           id, store_id, order_id, source_table_id, target_table_id,
           expected_order_version, expected_source_version, expected_target_version,
+          target_pricing_snapshot_json, target_pricing_version,
           actor_user_id, request_id, issued_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         input.commandId,
@@ -1175,6 +1349,8 @@ export class PosRepository {
         input.expectedOrderVersion,
         input.expectedSourceVersion,
         input.expectedTargetVersion,
+        input.targetPricingSnapshotJson,
+        input.targetPricingVersion,
         input.actorId,
         input.requestId,
         input.now,

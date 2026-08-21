@@ -74,7 +74,17 @@ app.onError((error, c) => {
       message: error instanceof Error ? error.message : 'Unknown error',
     }),
   );
-  return failure(c, { code: 'INTERNAL_ERROR', message: 'Hệ thống gặp lỗi.' }, 500);
+  return failure(
+    c,
+    {
+      code: 'INTERNAL_ERROR',
+      message: 'Hệ thống gặp lỗi.',
+      ...(c.env.ENVIRONMENT === 'local' && error instanceof Error
+        ? { details: { message: error.message } }
+        : {}),
+    },
+    500,
+  );
 });
 
 export default app;

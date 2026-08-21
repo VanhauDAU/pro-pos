@@ -1902,10 +1902,7 @@ function OrderItemDetailModal({
           <div
             className={`staff-item-modal__avatar-box ${product?.avatarType === 'IMAGE' && product?.mediaId ? 'has-image' : 'has-color'}`}
             style={{
-              background:
-                product?.avatarType === 'IMAGE' && product?.mediaId
-                  ? '#ffffff'
-                  : (product?.avatarColor ?? '#0877ee'),
+              background: product?.avatarColor || '#f8fafc',
             }}
           >
             {product?.avatarType === 'IMAGE' && product?.mediaId ? (
@@ -3191,10 +3188,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                           <div
                             className={`staff-product-mobile-card__visual ${product.avatarType === 'IMAGE' && product.mediaId ? 'has-image' : 'has-color'}`}
                             style={{
-                              background:
-                                product.avatarType === 'IMAGE' && product.mediaId
-                                  ? '#ffffff'
-                                  : (product.avatarColor ?? '#facc15'),
+                              background: product.avatarColor || '#f8fafc',
                             }}
                           >
                             {product.avatarType === 'IMAGE' && product.mediaId ? (
@@ -3914,10 +3908,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                         <span
                           className={`staff-product-card__visual ${product.avatarType === 'IMAGE' && product.mediaId ? 'has-image' : 'has-color'}`}
                           style={{
-                            background:
-                              product.avatarType === 'IMAGE' && product.mediaId
-                                ? '#ffffff'
-                                : (product.avatarColor ?? '#0877ee'),
+                            background: product.avatarColor || '#f8fafc',
                           }}
                         >
                           {product.avatarType === 'IMAGE' && product.mediaId ? (

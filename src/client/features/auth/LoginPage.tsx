@@ -1,5 +1,6 @@
 import {
   ArrowLeftOutlined,
+  CheckCircleOutlined,
   DeleteOutlined,
   DesktopOutlined,
   EyeInvisibleOutlined,
@@ -336,22 +337,24 @@ export function LoginPage() {
         key: 'owner',
         label: 'Chủ cửa hàng',
         children: (
-          <div className="owner-otp-login">
+          <div className="owner-login-clean">
             {searchParams.get('loggedOut') === '1' ? (
-              <Alert
-                type="success"
-                showIcon
-                message="Đã đăng xuất tài khoản Owner"
-                description="Phiên Cloudflare Access đã được xóa. Bạn có thể nhập email mới khi nhận mã OTP."
-                style={{ marginBottom: 14 }}
-              />
+              <div className="owner-logout-badge">
+                <CheckCircleOutlined style={{ color: '#10b981' }} />
+                <span>Đã xóa phiên cũ. Sẵn sàng nhập email mới.</span>
+              </div>
             ) : null}
-            <Alert
-              type="info"
-              showIcon
-              title="Đăng nhập bảo mật bằng email OTP"
-              description="Cloudflare Access sẽ gửi mã dùng một lần đến email đã được cấp quyền. Pro POS không lưu mật khẩu Owner."
-            />
+
+            <div className="owner-login-card-inner">
+              <div className="owner-login-icon">
+                <MailOutlined />
+              </div>
+              <div className="owner-login-title">Đăng nhập Chủ cửa hàng</div>
+              <div className="owner-login-subtitle">
+                Mã xác thực OTP dùng một lần sẽ được gửi trực tiếp đến email của bạn
+              </div>
+            </div>
+
             <Button
               type="primary"
               size="large"
@@ -359,23 +362,20 @@ export function LoginPage() {
               icon={<MailOutlined />}
               loading={submitting}
               onClick={ownerLogin}
+              className="owner-login-btn"
             >
               Nhận mã OTP qua email
             </Button>
-            <Button
-              type="dashed"
-              block
-              icon={<SwapOutlined />}
+
+            <button
+              type="button"
+              className="owner-switch-account-btn"
               onClick={() => {
                 window.location.assign('/api/v1/auth/access/logout');
               }}
-              style={{ marginTop: 10 }}
             >
-              Đổi tài khoản Owner khác (Xóa phiên cũ)
-            </Button>
-            <Typography.Paragraph className="login-help" type="secondary">
-              Owner có thể đăng nhập trên điện thoại hoặc máy tính mà không cần thiết lập máy POS.
-            </Typography.Paragraph>
+              <SwapOutlined /> Đổi tài khoản Owner khác
+            </button>
           </div>
         ),
       },
@@ -529,25 +529,27 @@ export function LoginPage() {
             </Form>
           )
         ) : (
-          <div className="activation-required">
-            <Alert
-              type={context.data?.device?.status === 'REVOKED' ? 'warning' : 'info'}
-              showIcon
-              title={
-                context.data?.device?.status === 'REVOKED'
-                  ? 'Thiết bị POS đã bị thu hồi'
-                  : 'Máy này chưa được thiết lập làm POS'
-              }
-              description="Owner cần xác nhận máy tại quầy trước khi nhân viên có thể đăng nhập bằng PIN."
-            />
+          <div className="activation-clean-box">
+            <div className="activation-icon-wrap">
+              <DesktopOutlined />
+            </div>
+            <div className="activation-title">
+              {context.data?.device?.status === 'REVOKED'
+                ? 'Thiết bị POS đã bị thu hồi'
+                : 'Thiết bị chưa liên kết POS'}
+            </div>
+            <div className="activation-subtitle">
+              Chủ cửa hàng cần kích hoạt thiết bị tại quầy để nhân viên vào ca.
+            </div>
             <Button
               type="primary"
               size="large"
               block
               icon={<DesktopOutlined />}
               onClick={() => navigate('/device-activation')}
+              className="activation-primary-btn"
             >
-              Thiết lập máy POS
+              Kích hoạt máy POS
             </Button>
           </div>
         ),

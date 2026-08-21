@@ -3992,20 +3992,135 @@ body {
   line-height: 1.55;
 }
 
-.owner-otp-login {
+/* Clean Minimal Owner Login */
+.owner-login-clean {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  align-items: center;
+  text-align: center;
+  padding: 10px 4px 4px;
 }
 
-.owner-otp-login .login-help {
-  margin-top: 0 !important;
+.owner-logout-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  color: #065f46;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 9999px;
+  margin-bottom: 16px;
 }
 
-.activation-required {
+.owner-login-card-inner {
+  margin-bottom: 20px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  align-items: center;
+}
+
+.owner-login-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: #eff6ff;
+  color: #0975f7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  margin-bottom: 12px;
+}
+
+.owner-login-title {
+  font-size: 16.5px;
+  font-weight: 750;
+  color: #0f172a;
+  margin-bottom: 4px;
+}
+
+.owner-login-subtitle {
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.4;
+  max-width: 270px;
+}
+
+.owner-login-btn {
+  height: 46px !important;
+  font-size: 14.5px !important;
+  font-weight: 700 !important;
+  border-radius: 10px !important;
+  background: #0975f7 !important;
+  box-shadow: 0 4px 12px rgba(9, 117, 247, 0.2) !important;
+  margin-bottom: 12px;
+}
+
+.owner-switch-account-btn {
+  background: none;
+  border: none;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+}
+
+.owner-switch-account-btn:hover {
+  color: #0975f7;
+  background: #f1f5f9;
+}
+
+/* Clean Activation Box */
+.activation-clean-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 10px 4px 4px;
+}
+
+.activation-icon-wrap {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: #fef3c7;
+  color: #d97706;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  margin-bottom: 12px;
+}
+
+.activation-title {
+  font-size: 16px;
+  font-weight: 750;
+  color: #0f172a;
+  margin-bottom: 4px;
+}
+
+.activation-subtitle {
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.4;
+  max-width: 270px;
+  margin-bottom: 18px;
+}
+
+.activation-primary-btn {
+  height: 46px !important;
+  font-size: 14.5px !important;
+  font-weight: 700 !important;
+  border-radius: 10px !important;
 }
 
 .device-caption {

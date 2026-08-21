@@ -1,11 +1,15 @@
 import {
   AppstoreOutlined,
   ArrowLeftOutlined,
+  CameraOutlined,
+  CheckOutlined,
   DeleteOutlined,
   EditOutlined,
+  PictureOutlined,
   PlusOutlined,
-  SearchOutlined,
   SaveOutlined,
+  ScissorOutlined,
+  SearchOutlined,
   TagsOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
@@ -37,11 +41,13 @@ import {
   message,
 } from 'antd';
 import type { TableColumnsType } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
+import { CameraCaptureModal } from '@client/components/CameraCaptureModal';
+import { ImageCropperModal } from '@client/components/ImageCropperModal';
 
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 
@@ -126,7 +132,7 @@ interface ProductFormValues {
   unitId?: string;
   avatarType: AvatarType;
   avatarColor: string;
-  mediaId?: string;
+  mediaId?: string | null;
   variants: Array<{
     id?: string;
     name: string;
@@ -578,6 +584,10 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
   const [productType, setProductType] = useState<ProductType>('QUANTITY');
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [cameraModalOpen, setCameraModalOpen] = useState(false);
+  const [cropperModalOpen, setCropperModalOpen] = useState(false);
+  const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [categoryModalOpen, setCategoryModalOpen] = useState(false);
   const [categorySearch, setCategorySearch] = useState('');
   const [categoryForm] = Form.useForm<{ name: string }>();
@@ -669,7 +679,7 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
       productType: product.productType,
       avatarType: product.avatarType,
       avatarColor: product.avatarColor || avatarColors[0] || '#facc15',
-      ...(product.mediaId ? { mediaId: product.mediaId } : {}),
+      mediaId: product.mediaId ?? null,
       variants: product.variants.map((variant) => ({
         ...variant,
         promptPrice: Boolean(variant.promptPrice),
@@ -743,7 +753,7 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
         throw new Error(payload.error?.message ?? 'Không thể tải ảnh.');
       form.setFieldValue('mediaId', payload.data.id);
       form.setFieldValue('avatarType', 'IMAGE');
-      messageApi.success('Đã tải ảnh đại diện.');
+      messageApi.success('Đã tải ảnh đại diện lên Cloudflare R2.');
     } catch (error) {
       messageApi.error(errorMessage(error, 'Không thể tải ảnh đại diện.'));
     } finally {
@@ -751,9 +761,16 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
     }
   };
 
+  const removeImage = () => {
+    form.setFieldValue('mediaId', null);
+    form.setFieldValue('avatarType', 'COLOR');
+    messageApi.info('Đã gỡ ảnh sản phẩm.');
+  };
+
   const save = async (values: ProductFormValues) => {
     setSaving(true);
     try {
+      const currentMediaId = values.mediaId || form.getFieldValue('mediaId') || null;
       const payload = {
         name: values.name,
         description: values.description || null,
@@ -762,7 +779,7 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
         unitId: values.productType === 'TIME' ? null : values.unitId || null,
         avatarType: values.avatarType,
         avatarColor: values.avatarType === 'COLOR' ? values.avatarColor : null,
-        mediaId: values.avatarType === 'IMAGE' ? values.mediaId || null : null,
+        mediaId: values.avatarType === 'IMAGE' ? currentMediaId : null,
         variants:
           values.productType === 'TIME'
             ? []
@@ -826,7 +843,11 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
           { method: 'PUT', headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' } },
         );
       }
-      await queryClient.invalidateQueries({ queryKey: PRODUCT_QUERY });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: PRODUCT_QUERY }),
+        queryClient.invalidateQueries({ queryKey: ['owner-product'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-catalog'] }),
+      ]);
       messageApi.success(isEdit ? 'Đã cập nhật mặt hàng.' : 'Đã thêm mặt hàng.');
       navigate('/owner/catalog/products');
     } catch (error) {
@@ -1310,6 +1331,9 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
           </Col>
           <Col xs={24} xl={8}>
             <Card title="Hình đại diện" className="owner-catalog-form-card">
+              <Form.Item name="mediaId" hidden>
+                <Input />
+              </Form.Item>
               <Form.Item name="avatarType">
                 <Radio.Group
                   options={[
@@ -1326,32 +1350,139 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
               >
                 {({ getFieldValue }) =>
                   getFieldValue('avatarType') === 'IMAGE' ? (
-                    <div className="owner-image-upload-box">
+                    <div className="owner-image-single-container">
                       {getFieldValue('mediaId') ? (
-                        <img
-                          src={`/api/v1/media/${getFieldValue('mediaId')}`}
-                          alt="Ảnh đại diện mặt hàng"
-                          className="owner-product-image-preview"
-                        />
+                        <div className="owner-product-single-image-card">
+                          <div className="owner-product-image-preview-wrap">
+                            <img
+                              src={`/api/v1/media/${getFieldValue('mediaId')}`}
+                              alt="Ảnh đại diện mặt hàng"
+                              className="owner-product-image-preview"
+                            />
+                            <div className="owner-product-image-badge">
+                              <CheckOutlined /> 1 ảnh duy nhất
+                            </div>
+                          </div>
+                          <div className="owner-product-image-actions">
+                            <Button
+                              icon={<ScissorOutlined />}
+                              disabled={uploading}
+                              onClick={() => {
+                                const currentMediaId = form.getFieldValue('mediaId');
+                                if (currentMediaId) {
+                                  setCropImageSrc(`/api/v1/media/${currentMediaId}`);
+                                  setCropperModalOpen(true);
+                                }
+                              }}
+                            >
+                              Căn chỉnh khung
+                            </Button>
+                            <Button
+                              icon={<CameraOutlined />}
+                              disabled={uploading}
+                              onClick={() => setCameraModalOpen(true)}
+                            >
+                              Chụp ảnh mới
+                            </Button>
+                            <Button
+                              icon={<UploadOutlined />}
+                              disabled={uploading}
+                              onClick={() => fileInputRef.current?.click()}
+                            >
+                              Đổi ảnh khác
+                            </Button>
+                            <Popconfirm
+                              title="Gỡ ảnh này?"
+                              description="Mặt hàng sẽ chuyển về sử dụng màu sắc đại diện."
+                              onConfirm={removeImage}
+                              okText="Gỡ ảnh"
+                              cancelText="Hủy"
+                            >
+                              <Button danger icon={<DeleteOutlined />} disabled={uploading}>
+                                Xóa ảnh
+                              </Button>
+                            </Popconfirm>
+                          </div>
+                        </div>
                       ) : (
-                        <div className="owner-product-image-placeholder">Chưa có ảnh</div>
+                        <div className="owner-product-empty-image-box">
+                          <div className="owner-product-image-placeholder-icon">
+                            <PictureOutlined style={{ fontSize: 36, color: '#94a3b8' }} />
+                          </div>
+                          <div className="owner-product-empty-image-title">
+                            Chưa có ảnh đại diện
+                          </div>
+                          <Typography.Text
+                            type="secondary"
+                            style={{ fontSize: 13, display: 'block', marginBottom: 12 }}
+                          >
+                            Chỉ lưu 1 ảnh duy nhất. Bạn có thể chụp trực tiếp từ camera hoặc tải ảnh
+                            từ máy.
+                          </Typography.Text>
+                          <div className="owner-image-upload-cta-row">
+                            <Button
+                              type="primary"
+                              icon={<CameraOutlined />}
+                              disabled={uploading}
+                              onClick={() => setCameraModalOpen(true)}
+                            >
+                              Chụp từ Camera
+                            </Button>
+                            <Button
+                              icon={<UploadOutlined />}
+                              loading={uploading}
+                              onClick={() => fileInputRef.current?.click()}
+                            >
+                              {uploading ? 'Đang tải...' : 'Tải tệp từ máy'}
+                            </Button>
+                          </div>
+                        </div>
                       )}
-                      <label className="ant-btn ant-btn-default owner-image-upload-button">
-                        <UploadOutlined /> {uploading ? 'Đang tải...' : 'Tải ảnh lên'}
-                        <input
-                          type="file"
-                          accept="image/png,image/jpeg,image/webp"
-                          hidden
-                          disabled={uploading}
-                          onChange={(event) => {
-                            const file = event.target.files?.[0];
-                            if (file) void uploadImage(file);
-                            event.currentTarget.value = '';
-                          }}
-                        />
-                      </label>
-                      <Typography.Text type="secondary">
-                        PNG, JPEG hoặc WebP, tối đa 5 MB.
+
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        hidden
+                        disabled={uploading}
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          if (file) {
+                            if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+                              messageApi.error('Chỉ hỗ trợ PNG, JPEG hoặc WebP.');
+                              return;
+                            }
+                            if (file.size > 10 * 1024 * 1024) {
+                              messageApi.error('Ảnh không được vượt quá 10 MB.');
+                              return;
+                            }
+                            const reader = new FileReader();
+                            reader.addEventListener(
+                              'load',
+                              (e) => {
+                                if (typeof e.target?.result === 'string') {
+                                  setCropImageSrc(e.target.result);
+                                  setCropperModalOpen(true);
+                                }
+                              },
+                              { once: true },
+                            );
+                            reader.readAsDataURL(file);
+                          }
+                          event.currentTarget.value = '';
+                        }}
+                      />
+
+                      <Typography.Text
+                        type="secondary"
+                        style={{
+                          fontSize: 12,
+                          display: 'block',
+                          textAlign: 'center',
+                          marginTop: 10,
+                        }}
+                      >
+                        Lưu lên Cloudflare R2 · PNG, JPEG hoặc WebP (tối đa 5 MB).
                       </Typography.Text>
                     </div>
                   ) : (
@@ -1373,6 +1504,29 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
                 }
               </Form.Item>
             </Card>
+            <CameraCaptureModal
+              open={cameraModalOpen}
+              onClose={() => setCameraModalOpen(false)}
+              onSnap={(dataUrl) => {
+                setCropImageSrc(dataUrl);
+                setCameraModalOpen(false);
+                setCropperModalOpen(true);
+              }}
+              onCapture={uploadImage}
+            />
+            <ImageCropperModal
+              open={cropperModalOpen}
+              imageSrc={cropImageSrc}
+              onClose={() => {
+                setCropperModalOpen(false);
+                setCropImageSrc(null);
+              }}
+              onConfirm={async (file) => {
+                await uploadImage(file);
+                setCropperModalOpen(false);
+                setCropImageSrc(null);
+              }}
+            />
             <Card title="Thông tin hệ thống" className="owner-catalog-form-card">
               <Typography.Paragraph type="secondary" style={{ margin: 0 }}>
                 Mã mặt hàng (SKU) và các biến thể giá sẽ được hệ thống tự động sinh và quản lý theo

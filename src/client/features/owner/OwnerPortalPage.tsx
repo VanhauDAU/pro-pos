@@ -2,7 +2,6 @@ import {
   AppstoreOutlined,
   BarChartOutlined,
   BellOutlined,
-  CheckCircleFilled,
   ClockCircleOutlined,
   CreditCardOutlined,
   DashboardOutlined,
@@ -10,6 +9,8 @@ import {
   LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  MessageOutlined,
+  PhoneOutlined,
   PrinterOutlined,
   QuestionCircleOutlined,
   SettingOutlined,
@@ -31,10 +32,7 @@ import {
   Grid,
   Layout,
   Menu,
-  Select,
-  Skeleton,
   Spin,
-  Tag,
   Typography,
   message,
 } from 'antd';
@@ -60,6 +58,7 @@ import {
   OwnerProductListPage,
 } from './OwnerCatalogPages';
 import { OwnerInvoicesPage } from './OwnerInvoicesPage';
+import { OwnerDashboardPage } from './OwnerDashboardPage';
 
 const BRAND = '#0975F7';
 
@@ -156,10 +155,6 @@ function toAntMenuItems(items: OwnerMenuItem[]): NonNullable<MenuProps['items']>
   }));
 }
 
-function formatMoney(value: number) {
-  return new Intl.NumberFormat('vi-VN').format(value);
-}
-
 function OwnerSidebar({
   collapsed,
   selectedKey,
@@ -225,156 +220,6 @@ function OwnerSidebar({
         />
       </div>
     </aside>
-  );
-}
-
-function OverviewDashboard({ settings }: { settings: StoreSettings | undefined }) {
-  const bars = [20, 35, 26, 48, 32, 68, 44];
-  const metrics = [
-    { label: 'Tiền hàng', value: 2_805_000, icon: <ShoppingOutlined />, color: '#0975F7' },
-    { label: 'Hoàn hủy', value: 0, icon: <FileTextOutlined />, color: '#8b95a5' },
-    { label: 'Giảm giá', value: 0, icon: <TagsOutlined />, color: '#8b5cf6' },
-    {
-      label: 'Doanh thu gồm thuế',
-      value: 2_805_000,
-      icon: <CreditCardOutlined />,
-      color: '#f04f76',
-    },
-  ];
-
-  return (
-    <div className="owner-overview">
-      <div className="owner-page-heading">
-        <div>
-          <Typography.Title level={2}>Tổng quan kinh doanh</Typography.Title>
-          <Typography.Text type="secondary">
-            Theo dõi nhanh hoạt động cửa hàng và các việc cần hoàn tất.
-          </Typography.Text>
-        </div>
-        <Tag color="blue">BẢN KHUNG UI</Tag>
-      </div>
-
-      <div className="owner-filter-row">
-        <Select
-          aria-label="Khoảng thời gian báo cáo"
-          defaultValue="week"
-          options={[
-            { value: 'today', label: 'Hôm nay' },
-            { value: 'yesterday', label: 'Hôm qua' },
-            { value: 'week', label: 'Tuần này' },
-            { value: 'month', label: 'Tháng này' },
-            { value: 'year', label: 'Năm nay' },
-          ]}
-        />
-        <Select
-          aria-label="So sánh báo cáo"
-          defaultValue="none"
-          options={[{ value: 'none', label: 'Không so sánh' }]}
-        />
-        <Typography.Text className="owner-filter-note">
-          Múi giờ cửa hàng: {settings?.timezone ?? 'Asia/Ho_Chi_Minh'}
-        </Typography.Text>
-      </div>
-
-      <div className="owner-metric-grid">
-        {metrics.map((metric) => (
-          <Card className="owner-metric-card" key={metric.label}>
-            <div className="owner-metric-card__label" style={{ color: metric.color }}>
-              <span className="owner-metric-card__icon">{metric.icon}</span>
-              {metric.label}
-            </div>
-            <Typography.Title level={3}>{formatMoney(metric.value)} đ</Typography.Title>
-          </Card>
-        ))}
-      </div>
-
-      <div className="owner-stat-grid">
-        <Card className="owner-stat-card owner-stat-card--orange">
-          <Typography.Text>Số khách hàng</Typography.Text>
-          <Typography.Title level={3}>4</Typography.Title>
-        </Card>
-        <Card className="owner-stat-card owner-stat-card--teal">
-          <Typography.Text>Số hóa đơn</Typography.Text>
-          <Typography.Title level={3}>6</Typography.Title>
-        </Card>
-        <Card className="owner-stat-card owner-stat-card--purple">
-          <Typography.Text>TB mặt hàng / hóa đơn</Typography.Text>
-          <Typography.Title level={3}>2.5</Typography.Title>
-        </Card>
-        <Card className="owner-stat-card owner-stat-card--pink">
-          <Typography.Text>TB doanh thu / hóa đơn</Typography.Text>
-          <Typography.Title level={3}>467,500 đ</Typography.Title>
-        </Card>
-      </div>
-
-      <Card className="owner-chart-card" title="Doanh thu tổng hợp">
-        <div className="owner-chart-card__legend">
-          <span className="owner-chart-card__dot" /> Tổng doanh thu gồm thuế: 2,805,000 đ
-        </div>
-        <div className="owner-bar-chart" role="img" aria-label="Biểu đồ doanh thu 7 ngày">
-          <div className="owner-bar-chart__axis">
-            <span>3,000,000 đ</span>
-            <span>2,000,000 đ</span>
-            <span>1,000,000 đ</span>
-            <span>0 đ</span>
-          </div>
-          <div className="owner-bar-chart__plot">
-            <div className="owner-bar-chart__grid owner-bar-chart__grid--top" />
-            <div className="owner-bar-chart__grid owner-bar-chart__grid--middle" />
-            <div className="owner-bar-chart__grid owner-bar-chart__grid--bottom" />
-            <div className="owner-bar-chart__bars">
-              {bars.map((height, index) => (
-                <div className="owner-bar-chart__column" key={index}>
-                  <div className="owner-bar-chart__bar" style={{ height: `${height}%` }} />
-                  <span>{17 + index}/08</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </Card>
-
-      <div className="owner-bottom-grid">
-        <Card title="Cấu hình sẵn sàng">
-          <div className="owner-checklist">
-            <div>
-              <CheckCircleFilled /> <span>Thông tin cửa hàng</span>
-              <Tag color="success">Đã có</Tag>
-            </div>
-            <div>
-              <CheckCircleFilled /> <span>Nhân viên & phân quyền</span>
-              <Tag color="processing">Đang chuẩn bị</Tag>
-            </div>
-            <div>
-              <CheckCircleFilled /> <span>Mặt hàng & bảng giá</span>
-              <Tag color="processing">Đang chuẩn bị</Tag>
-            </div>
-            <div>
-              <ClockCircleOutlined /> <span>Khu vực & bàn</span>
-              <Tag>Tiếp theo</Tag>
-            </div>
-          </div>
-        </Card>
-        <Card title="Cửa hàng hiện tại">
-          {settings ? (
-            <div className="owner-store-summary">
-              <Avatar size={44} style={{ background: BRAND }} icon={<ShopOutlined />} />
-              <div>
-                <Typography.Text strong>{settings.name}</Typography.Text>
-                <Typography.Text type="secondary">
-                  {settings.address || 'Chưa cập nhật địa chỉ'}
-                </Typography.Text>
-              </div>
-              <Tag color={settings.status === 'ACTIVE' ? 'success' : 'error'}>
-                {settings.status === 'ACTIVE' ? 'Đang hoạt động' : 'Đang khóa'}
-              </Tag>
-            </div>
-          ) : (
-            <Skeleton active paragraph={{ rows: 2 }} />
-          )}
-        </Card>
-      </div>
-    </div>
   );
 }
 
@@ -740,13 +585,83 @@ export function OwnerPortalPage() {
               </Typography.Text>
             </div>
             <div className="owner-header__actions">
-              <Button
-                type="text"
-                icon={<QuestionCircleOutlined />}
-                className="owner-header__utility"
+              <Dropdown
+                trigger={['click']}
+                placement="bottomRight"
+                menu={{
+                  items: [
+                    {
+                      key: 'help-title',
+                      label: (
+                        <div
+                          style={{
+                            padding: '2px 4px',
+                            fontSize: 11.5,
+                            fontWeight: 700,
+                            color: '#64748b',
+                          }}
+                        >
+                          LIÊN HỆ HỖ TRỢ KỸ THUẬT
+                        </div>
+                      ),
+                      disabled: true,
+                    },
+                    {
+                      type: 'divider',
+                    },
+                    {
+                      key: 'call',
+                      icon: <PhoneOutlined style={{ color: '#10b981', fontSize: 16 }} />,
+                      label: (
+                        <a
+                          href="tel:0777464347"
+                          style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 2,
+                            padding: '4px 0',
+                          }}
+                        >
+                          <span style={{ fontSize: 12, color: '#64748b', fontWeight: 500 }}>
+                            Gọi điện thoại trực tiếp:
+                          </span>
+                          <strong style={{ color: '#10b981', fontSize: 14 }}>0777 464 347</strong>
+                        </a>
+                      ),
+                    },
+                    {
+                      key: 'zalo',
+                      icon: <MessageOutlined style={{ color: '#0975F7', fontSize: 16 }} />,
+                      label: (
+                        <a
+                          href="https://zalo.me/0816548150"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 2,
+                            padding: '4px 0',
+                          }}
+                        >
+                          <span style={{ fontSize: 12, color: '#64748b', fontWeight: 500 }}>
+                            Nhắn tin tư vấn Zalo:
+                          </span>
+                          <strong style={{ color: '#0975F7', fontSize: 14 }}>0816 548 150</strong>
+                        </a>
+                      ),
+                    },
+                  ],
+                }}
               >
-                Trợ giúp
-              </Button>
+                <Button
+                  type="text"
+                  icon={<QuestionCircleOutlined />}
+                  className="owner-header__utility"
+                >
+                  Trợ giúp
+                </Button>
+              </Dropdown>
               <Button type="text" icon={<BellOutlined />} aria-label="Thông báo" />
               <Dropdown
                 trigger={['click']}
@@ -784,7 +699,7 @@ export function OwnerPortalPage() {
               />
             ) : null}
             {selectedKey === '/owner' ? (
-              <OverviewDashboard settings={settings.data} />
+              <OwnerDashboardPage settings={settings.data} />
             ) : location.pathname === '/owner/settings/store' ? (
               <OwnerStoreSettingsPage />
             ) : location.pathname === '/owner/settings/areas' ? (

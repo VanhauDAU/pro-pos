@@ -15,6 +15,7 @@ import {
   transferTableSchema,
   updateOrderItemSchema,
   updateOrderNoteSchema,
+  updateOrderGuestSchema,
 } from '@contracts/pos';
 import { AppError } from '@server/lib/app-error';
 import { success } from '@server/lib/response';
@@ -92,6 +93,13 @@ posRoutes.post('/tables/open', requirePermission('table.open'), async (c) => {
 
 posRoutes.get('/orders/:orderId/quote', requirePermission('table.view'), async (c) =>
   success(c, await new PosService(c.env).quote(c.get('actor').storeId!, c.req.param('orderId'))),
+);
+
+posRoutes.get('/orders/:orderId/detail', requirePermission('table.view'), async (c) =>
+  success(
+    c,
+    await new PosService(c.env).getOrderDetail(c.get('actor').storeId!, c.req.param('orderId')),
+  ),
 );
 
 posRoutes.post('/orders/:orderId/items', requirePermission('order.manage'), async (c) => {
@@ -195,6 +203,25 @@ posRoutes.patch('/orders/:orderId/note', requirePermission('order.manage'), asyn
       orderId: c.req.param('orderId'),
       expectedOrderVersion: body.expectedOrderVersion,
       note: body.note,
+    }),
+  );
+});
+
+posRoutes.patch('/orders/:orderId/guest', requirePermission('order.manage'), async (c) => {
+  const body = await parseJson(c.req.raw, updateOrderGuestSchema);
+  const actor = c.get('actor');
+  return success(
+    c,
+    await new PosService(c.env).updateGuest({
+      storeId: actor.storeId!,
+      actorId: actor.id,
+      requestId: c.get('requestId'),
+      idempotencyKey: idempotencyKey(c),
+      orderId: c.req.param('orderId'),
+      expectedOrderVersion: body.expectedOrderVersion,
+      guestCount: body.guestCount,
+      customerName: body.customerName ?? null,
+      customerPhone: body.customerPhone ?? null,
     }),
   );
 });

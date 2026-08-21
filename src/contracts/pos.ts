@@ -93,3 +93,10 @@ export const stopTimeSchema = z.object({
 export const resumeCheckoutSchema = z.object({
   expectedOrderVersion: z.number().int().positive(),
 });
+
+export const updateOrderGuestSchema = z.object({
+  expectedOrderVersion: z.number().int().positive(),
+  guestCount: z.number().int().positive().min(1).max(999),
+  customerName: z.string().trim().max(100).nullable().optional(),
+  customerPhone: z.string().trim().max(30).nullable().optional(),
+});

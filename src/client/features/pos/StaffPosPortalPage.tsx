@@ -9,12 +9,15 @@ import {
   DeleteOutlined,
   DownOutlined,
   EditOutlined,
+  EllipsisOutlined,
   FileTextOutlined,
   HistoryOutlined,
   LeftOutlined,
   LogoutOutlined,
+  MessageOutlined,
   MinusOutlined,
   PauseCircleOutlined,
+  PhoneOutlined,
   PlayCircleOutlined,
   PlusCircleOutlined,
   PlusOutlined,
@@ -57,6 +60,7 @@ import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-route
 
 import type { AuthContextResponse } from '@contracts/auth';
 import type { PricingConfigSnapshot } from '@domain/pricing/types';
+import { OrderDetailPage } from './OrderDetailPage';
 
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 
@@ -134,6 +138,9 @@ interface OrderQuote {
     openedByName?: string | null;
     status: 'OPEN' | 'PAYMENT_PENDING';
     note: string | null;
+    guestCount?: number;
+    customerName?: string | null;
+    customerPhone?: string | null;
   };
   items: Array<{
     id: string;
@@ -338,6 +345,18 @@ function formatElapsed(totalSeconds: number) {
   return [hours, minutes, remainder].map((value) => String(value).padStart(2, '0')).join(':');
 }
 
+function formatDurationVietnamese(seconds: number | null | undefined) {
+  if (!seconds || seconds <= 0) return '0 giây';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  const parts: string[] = [];
+  if (h > 0) parts.push(`${h} giờ`);
+  if (m > 0) parts.push(`${m} phút`);
+  if (s > 0 || parts.length === 0) parts.push(`${s} giây`);
+  return parts.join(' ');
+}
+
 function formatClock(timestamp: number) {
   return new Intl.DateTimeFormat('vi-VN', {
     hour: '2-digit',
@@ -435,6 +454,27 @@ function StaffHeader({
         </div>
       ),
       disabled: true,
+    },
+    {
+      type: 'divider',
+    },
+    {
+      key: 'help-phone',
+      icon: <PhoneOutlined style={{ color: '#10b981' }} />,
+      label: (
+        <a href="tel:0777464347">
+          Gọi hỗ trợ: <strong>0777 464 347</strong>
+        </a>
+      ),
+    },
+    {
+      key: 'help-zalo',
+      icon: <MessageOutlined style={{ color: '#0975F7' }} />,
+      label: (
+        <a href="https://zalo.me/0816548150" target="_blank" rel="noopener noreferrer">
+          Chat Zalo: <strong>0816 548 150</strong>
+        </a>
+      ),
     },
     {
       type: 'divider',
@@ -786,6 +826,7 @@ function MorePage({ auth }: { auth: AuthContextResponse }) {
 interface StaffTablePickerModalProps {
   open: boolean;
   title?: string;
+  initialTableId?: string | null;
   tables: PosTable[];
   confirmLoading?: boolean;
   onCancel: () => void;
@@ -807,6 +848,7 @@ function formatTableElapsed(occupiedSince: number | null, now: number) {
 function StaffTablePickerModal({
   open,
   title = 'Chọn khu vực',
+  initialTableId,
   tables,
   confirmLoading = false,
   onCancel,
@@ -818,12 +860,18 @@ function StaffTablePickerModal({
 
   useEffect(() => {
     if (!open) return;
-    setSelectedTableId(null);
+    setSelectedTableId(initialTableId ?? null);
+    if (initialTableId) {
+      const match = tables.find((t) => t.id === initialTableId);
+      if (match) {
+        setSelectedAreaId(match.areaId);
+      }
+    }
     const timer = setInterval(() => {
       setNow(Date.now());
     }, 1000);
     return () => clearInterval(timer);
-  }, [open]);
+  }, [open, initialTableId, tables]);
 
   const areas = useMemo(() => {
     const map = new Map<
@@ -1379,8 +1427,13 @@ function OrderItemDetailModal({
       <div className="staff-item-modal__body">
         <div className="staff-item-modal__avatar-wrap">
           <div
-            className="staff-item-modal__avatar-box"
-            style={{ background: product?.avatarColor ?? '#0877ee' }}
+            className={`staff-item-modal__avatar-box ${product?.avatarType === 'IMAGE' && product?.mediaId ? 'has-image' : 'has-color'}`}
+            style={{
+              background:
+                product?.avatarType === 'IMAGE' && product?.mediaId
+                  ? '#ffffff'
+                  : (product?.avatarColor ?? '#0877ee'),
+            }}
           >
             {product?.avatarType === 'IMAGE' && product?.mediaId ? (
               <img
@@ -1566,7 +1619,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const location = useLocation();
   const orderId = location.pathname.match(/^\/pos\/orders\/([^/]+)$/u)?.[1];
   const isNew = !orderId || orderId === 'new';
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [messageApi, holder] = message.useMessage();
@@ -1574,7 +1627,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const [orderType, setOrderType] = useState<'DINE_IN' | 'TAKEAWAY'>('DINE_IN');
   const [draftLines, setDraftLines] = useState<DraftLine[]>([]);
   const [tableModalOpen, setTableModalOpen] = useState(false);
-  const [tableAction, setTableAction] = useState<'SAVE' | 'CHECKOUT'>('SAVE');
+  const [tableAction, setTableAction] = useState<'SELECT' | 'SAVE' | 'CHECKOUT'>('SELECT');
   const [saving, setSaving] = useState(false);
   const [catalogSearch, setCatalogSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
@@ -1603,6 +1656,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const [deleteTimeModalOpen, setDeleteTimeModalOpen] = useState(false);
   const [deleteTimeReason, setDeleteTimeReason] = useState('');
   const [deletingTime, setDeletingTime] = useState(false);
+  const [timeRestoringDraft, setTimeRestoringDraft] = useState(false);
+  const [timeRemoved, setTimeRemoved] = useState(false);
   const [orderedItemsCollapsed, setOrderedItemsCollapsed] = useState(false);
   const [cartTab, setCartTab] = useState<'DETAILS' | 'CUSTOMER' | 'ACTIONS'>('DETAILS');
   const [discardModalOpen, setDiscardModalOpen] = useState(false);
@@ -1611,6 +1666,16 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const [resuming, setResuming] = useState(false);
   const [stoppingTime, setStoppingTime] = useState(false);
   const [clockNow, setClockNow] = useState(() => Date.now());
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth <= 900 : false,
+  );
+  const [mobileView, setMobileView] = useState<'CART' | 'PRODUCTS'>('CART');
+  const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
+  const [guestCount, setGuestCount] = useState<number>(1);
+  const [guestModalOpen, setGuestModalOpen] = useState(false);
+  const [customerModalOpen, setCustomerModalOpen] = useState(false);
+  const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
   const [cartWidth, setCartWidth] = useState<number>(() => {
     try {
       const saved = localStorage.getItem('pos_cart_width');
@@ -1621,6 +1686,12 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   });
   const [isResizing, setIsResizing] = useState(false);
   const csrf = auth.csrfToken!;
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 900);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const handleMouseDownResizer = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -1693,8 +1764,65 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   }, [isNew, quote.data, searchParams, navigate]);
 
   useEffect(() => {
-    if (!isNew && quote.data) setOrderNote(quote.data.order.note ?? '');
+    if (!isNew && quote.data) {
+      setOrderNote(quote.data.order.note ?? '');
+      if (quote.data.order.guestCount !== undefined) {
+        setGuestCount(quote.data.order.guestCount);
+      }
+      if (quote.data.order.customerName !== undefined) {
+        setCustomerName(quote.data.order.customerName ?? '');
+      }
+      if (quote.data.order.customerPhone !== undefined) {
+        setCustomerPhone(quote.data.order.customerPhone ?? '');
+      }
+    }
   }, [isNew, quote.data]);
+
+  const saveGuestCount = async (count: number) => {
+    setGuestCount(count);
+    if (!isNew && orderId && quote.data) {
+      try {
+        await jsonRequest(
+          `/api/v1/pos/orders/${orderId}/guest`,
+          {
+            expectedOrderVersion: quote.data.order.version,
+            guestCount: Math.max(1, count),
+            customerName: customerName.trim() || null,
+            customerPhone: customerPhone.trim() || null,
+          },
+          { method: 'PATCH', headers: mutationHeaders(csrf) },
+        );
+        void queryClient.invalidateQueries({ queryKey: ['pos-order-quote', orderId] });
+        void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
+      } catch (err) {
+        messageApi.error(errorText(err));
+      }
+    }
+  };
+
+  const saveCustomerInfo = async (name: string, phone: string) => {
+    setCustomerName(name);
+    setCustomerPhone(phone);
+    if (!isNew && orderId && quote.data) {
+      try {
+        await jsonRequest(
+          `/api/v1/pos/orders/${orderId}/guest`,
+          {
+            expectedOrderVersion: quote.data.order.version,
+            guestCount: Math.max(1, guestCount),
+            customerName: name.trim() || null,
+            customerPhone: phone.trim() || null,
+          },
+          { method: 'PATCH', headers: mutationHeaders(csrf) },
+        );
+        void queryClient.invalidateQueries({ queryKey: ['pos-order-quote', orderId] });
+        void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
+        messageApi.success('Đã lưu thông tin khách hàng.');
+      } catch (err) {
+        messageApi.error(errorText(err));
+      }
+    }
+  };
 
   const categories = useMemo(() => {
     const map = new Map<string, string>();
@@ -1705,6 +1833,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     }
     return [...map].map(([id, name]) => ({ id, name }));
   }, [catalog.data]);
+
   const visibleCatalog = (catalog.data ?? []).filter((product) => {
     const haystack = `${product.productName} ${product.variants.map((variant) => variant.name).join(' ')}`;
     const matchesSearch = haystack
@@ -1876,6 +2005,19 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         );
         version += 1;
       }
+      if (guestCount > 1 || customerName.trim() || customerPhone.trim()) {
+        await jsonRequest(
+          `/api/v1/pos/orders/${opened.orderId}/guest`,
+          {
+            expectedOrderVersion: version,
+            guestCount: Math.max(1, guestCount),
+            customerName: customerName.trim() || null,
+            customerPhone: customerPhone.trim() || null,
+          },
+          { method: 'PATCH', headers: mutationHeaders(csrf) },
+        );
+        version += 1;
+      }
       await completeCreatedOrder(opened.orderId, checkoutAfterSave);
     } catch (error) {
       messageApi.error(errorText(error));
@@ -1891,7 +2033,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       return;
     }
     if (orderType === 'DINE_IN') {
-      const table = tables.data?.find((item) => item.id === preselectedTableId);
+      const table = selectedTable ?? tables.data?.find((item) => item.id === preselectedTableId);
       if (table?.status === 'AVAILABLE') return saveWithTable(table, false);
       setTableAction('SAVE');
       setTableModalOpen(true);
@@ -1904,7 +2046,20 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         { note: orderNote.trim() || null },
         { headers: mutationHeaders(csrf) },
       );
-      await persistLines(created.orderId, 1);
+      let version = await persistLines(created.orderId, 1);
+      if (guestCount > 1 || customerName.trim() || customerPhone.trim()) {
+        await jsonRequest(
+          `/api/v1/pos/orders/${created.orderId}/guest`,
+          {
+            expectedOrderVersion: version,
+            guestCount: Math.max(1, guestCount),
+            customerName: customerName.trim() || null,
+            customerPhone: customerPhone.trim() || null,
+          },
+          { method: 'PATCH', headers: mutationHeaders(csrf) },
+        );
+        version += 1;
+      }
       await completeCreatedOrder(created.orderId, false);
     } catch (error) {
       messageApi.error(errorText(error));
@@ -2027,7 +2182,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       return;
     }
     if (orderType === 'DINE_IN') {
-      const table = tables.data?.find((item) => item.id === preselectedTableId);
+      const table = selectedTable ?? tables.data?.find((item) => item.id === preselectedTableId);
       if (table?.status === 'AVAILABLE') {
         await saveWithTable(table, true);
         return;
@@ -2125,6 +2280,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       setDeleteTimeModalOpen(false);
       setDeleteTimeReason('');
       setTimeDetailOpen(false);
+      setTimeRemoved(true);
       return;
     }
     try {
@@ -2137,6 +2293,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       setDeleteTimeModalOpen(false);
       setDeleteTimeReason('');
       setTimeDetailOpen(false);
+      setTimeRestoringDraft(false);
       messageApi.success('Đã xóa tiền giờ mặc định của bàn.');
       await refreshOrder();
     } catch (error) {
@@ -2176,16 +2333,23 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   };
 
   const openTimeDetails = () => {
-    if (!quote.data?.time) return;
-    setTimeRangeDraft({
-      startedAt: formatDateTimeInput(quote.data.time.startedAtMs),
-      endedAt: quote.data.time.endedAtMs ? formatDateTimeInput(quote.data.time.endedAtMs) : '',
-    });
-    setTimeDetailOpen(true);
+    if (quote.data?.time) {
+      setTimeRangeDraft({
+        startedAt: formatDateTimeInput(quote.data.time.startedAtMs),
+        endedAt: quote.data.time.endedAtMs ? formatDateTimeInput(quote.data.time.endedAtMs) : '',
+      });
+      setTimeDetailOpen(true);
+    } else if (timeRestoringDraft) {
+      setTimeDetailOpen(true);
+    }
   };
 
   const saveTimeRange = async () => {
-    if (!quote.data?.time) return;
+    if (!quote.data) return;
+    if (!timeRangeDraft.startedAt) {
+      messageApi.warning('Vui lòng chọn giờ vào.');
+      return;
+    }
     const startedAtMs = new Date(timeRangeDraft.startedAt).getTime();
     const endedAtMs = timeRangeDraft.endedAt ? new Date(timeRangeDraft.endedAt).getTime() : null;
     if (
@@ -2208,7 +2372,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       );
       await refreshOrder();
       setTimeDetailOpen(false);
-      messageApi.success('Đã cập nhật giờ vào/giờ ra và tính lại tiền giờ.');
+      setTimeRestoringDraft(false);
+      messageApi.success('Đã lưu thông tin tính giờ thành công.');
     } catch (error) {
       messageApi.error(errorText(error));
     } finally {
@@ -2316,591 +2481,1328 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   return (
     <div className="staff-order-editor">
       {holder}
-      <header className="staff-order-editor__header">
-        <Button
-          type="text"
-          size="large"
-          aria-label="Đóng trang tạo đơn"
-          icon={<CloseOutlined />}
-          onClick={handleExit}
-        />
-        <div className="staff-order-editor__heading">
-          <Typography.Title level={3}>
-            {isNew ? 'Tạo đơn mới' : 'Chi tiết đơn hàng'}
-          </Typography.Title>
-          {!isNew && quote.data ? (
-            <Typography.Text type="secondary">
-              {quote.data.order.orderType === 'DINE_IN'
-                ? [quote.data.order.areaName, quote.data.order.tableName]
-                    .filter(Boolean)
-                    .join(' - ')
-                : quote.data.order.displayCode}
-            </Typography.Text>
-          ) : isNew && orderType === 'DINE_IN' && selectedTable ? (
-            <Typography.Text type="secondary">
-              {[selectedTable.areaName, selectedTable.name].filter(Boolean).join(' - ')}
-            </Typography.Text>
-          ) : null}
-        </div>
-        <Input
-          size="large"
-          allowClear
-          prefix={<SearchOutlined />}
-          placeholder="Tìm kiếm sản phẩm"
-          value={catalogSearch}
-          onChange={(event) => setCatalogSearch(event.target.value)}
-        />
-        <div className="staff-order-header-meta">
-          <Select
-            size="large"
-            value={isNew ? orderType : quote.data?.order.orderType}
-            options={[
-              { value: 'DINE_IN', label: 'Tại chỗ' },
-              { value: 'TAKEAWAY', label: 'Mang đi' },
-            ]}
-            disabled={!isNew}
-            onChange={(value) => setOrderType(value as 'DINE_IN' | 'TAKEAWAY')}
-            aria-label="Loại đơn"
-            title={
-              isNew
-                ? 'Chọn loại đơn'
-                : 'Chưa cho phép đổi loại khi đơn đã chạy để tránh sai tiền giờ'
-            }
-          />
-          <div className="staff-order-code">
-            <small>Mã đơn</small>
-            <strong>{isNew ? 'Sinh khi lưu' : (quote.data?.order.displayCode ?? '—')}</strong>
-          </div>
-        </div>
-      </header>
-      <div
-        className={`staff-order-editor__body ${isResizing ? 'is-resizing' : ''}`}
-        style={{
-          gridTemplateColumns: `205px minmax(0, 1fr) auto ${cartWidth}px`,
-        }}
-      >
-        <aside className="staff-category-sidebar">
-          <button
-            type="button"
-            className={selectedCategory === 'ALL' ? 'is-active' : ''}
-            onClick={() => setSelectedCategory('ALL')}
-          >
-            <AppstoreOutlined />
-            <span>Tất cả</span>
-          </button>
-          {categories.map((category) => (
-            <button
-              type="button"
-              key={category.id}
-              className={selectedCategory === category.id ? 'is-active' : ''}
-              onClick={() => setSelectedCategory(category.id)}
-            >
-              <AppstoreOutlined />
-              <span>{category.name}</span>
-            </button>
-          ))}
-        </aside>
-        <section className="staff-product-picker">
-          <Typography.Title level={3}>
-            {selectedCategory === 'ALL'
-              ? 'Tất cả sản phẩm'
-              : categories.find((category) => category.id === selectedCategory)?.name}
-          </Typography.Title>
-          {catalog.isLoading ? (
-            <Skeleton active />
-          ) : visibleCatalog.length === 0 ? (
-            <Empty description="Không có sản phẩm phù hợp" />
-          ) : (
-            <div className="staff-product-grid">
-              {visibleCatalog.map((product) => {
-                const prices = product.variants
-                  .map((variant) => variant.salePriceVnd)
-                  .filter((price): price is number => price !== null);
-                const minPrice = prices.length > 0 ? Math.min(...prices) : null;
-                const maxPrice = prices.length > 0 ? Math.max(...prices) : null;
-                return (
-                  <button
-                    type="button"
-                    key={product.productId}
-                    onClick={() => chooseProduct(product)}
-                  >
-                    <span
-                      className="staff-product-card__visual"
-                      style={{ background: product.avatarColor ?? '#eaf4ff' }}
-                    >
-                      {product.avatarType === 'IMAGE' && product.mediaId ? (
-                        <img src={`/api/v1/media/${product.mediaId}`} alt="" />
-                      ) : (
-                        getProductInitials(product.productName)
-                      )}
-                    </span>
-                    <strong>{product.productName}</strong>
-                    <small>
-                      {product.variants.length > 1
-                        ? `${product.variants.length} phiên bản`
-                        : '\u00a0'}
-                    </small>
-                    <b>
-                      {minPrice === null
-                        ? 'Nhập giá'
-                        : minPrice === maxPrice
-                          ? `${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`
-                          : `Từ ${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`}
-                    </b>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </section>
-        <div
-          className="staff-order-editor__resizer"
-          onMouseDown={handleMouseDownResizer}
-          title="Kéo thả để thay đổi độ rộng cột chi tiết đơn"
-          role="separator"
-          aria-orientation="vertical"
-        >
-          <div className="staff-order-editor__resizer-handle" />
-        </div>
-        <aside className="staff-cart-panel" style={{ width: cartWidth }}>
-          {isPaymentPending ? (
-            <div className="staff-order-pending-banner">
-              <div className="staff-order-pending-banner__badge">
-                <CheckCircleOutlined /> ĐÃ DỪNG TÍNH GIỜ
-              </div>
-              <div className="staff-order-pending-banner__text">
-                {quote.data?.time?.endedAtMs
-                  ? `Đã dừng lúc ${formatClock(quote.data.time.endedAtMs)}`
-                  : 'Đã dừng giờ'}{' '}
-                · Đang chờ thanh toán
-              </div>
-            </div>
-          ) : null}
-          <div className="staff-cart-tabs">
-            <button
-              type="button"
-              className={cartTab === 'DETAILS' ? 'is-active' : ''}
-              onClick={() => setCartTab('DETAILS')}
-            >
-              Chi tiết đơn
-            </button>
-            <button
-              type="button"
-              className={cartTab === 'CUSTOMER' ? 'is-active' : ''}
-              onClick={() => setCartTab('CUSTOMER')}
-            >
-              Khách hàng
-            </button>
-            <button
-              type="button"
-              className={cartTab === 'ACTIONS' ? 'is-active' : ''}
-              onClick={() => setCartTab('ACTIONS')}
-            >
-              Thao tác khác
-            </button>
-          </div>
-          {cartTab === 'DETAILS' ? (
-            <div className="staff-cart-tab-content">
-              {!isNew && draftDisplayItems.length > 0 ? (
-                <section className="staff-additional-products">
-                  <div className="staff-order-section-heading">
-                    <Typography.Title level={4}>Sản phẩm gọi thêm</Typography.Title>
-                    <Button
-                      type="text"
-                      icon={<DeleteOutlined />}
-                      aria-label="Xóa tất cả sản phẩm gọi thêm"
-                      onClick={() => setDraftLines([])}
-                    />
-                  </div>
-                  <div className="staff-compact-order-list">
-                    {draftDisplayItems.map((item) => (
-                      <button
-                        type="button"
-                        key={item.id}
-                        className="staff-compact-order-row staff-compact-order-row--editable"
-                        onClick={() =>
-                          setEditingItem({
-                            source: 'DRAFT',
-                            ...item,
-                            note: item.note ?? '',
-                          })
-                        }
-                      >
-                        <span className="staff-order-quantity">
-                          {formatItemQuantity(item.productType, item.quantityMilli, item.unitName)}
-                        </span>
-                        <span className="staff-order-item-name">
-                          <strong>{item.productName}</strong>
-                          <small>{item.variantName}</small>
-                        </span>
-                        <b>{formatMoney(item.netLineTotalVnd)}</b>
-                      </button>
-                    ))}
-                  </div>
-                </section>
-              ) : null}
-              <div className="staff-cart-section-header">
-                <Typography.Title level={4} style={{ margin: 0 }}>
-                  Sản phẩm đã gọi ({displayedItems.length + (quote.data?.time ? 1 : 0)})
-                </Typography.Title>
-                <Button
-                  type="text"
-                  size="small"
-                  className="staff-cart-collapse-btn"
-                  icon={orderedItemsCollapsed ? <DownOutlined /> : <UpOutlined />}
-                  aria-label={
-                    orderedItemsCollapsed ? 'Mở rộng sản phẩm đã gọi' : 'Thu gọn sản phẩm đã gọi'
-                  }
-                  onClick={() => setOrderedItemsCollapsed((prev) => !prev)}
-                />
-              </div>
-              {!orderedItemsCollapsed ? (
-                <>
-                  {quote.data?.time ? (
-                    quote.data.time.tableSegments && quote.data.time.tableSegments.length > 1 ? (
-                      <button
-                        type="button"
-                        className="staff-time-line staff-time-line--editable staff-time-line--transfer"
-                        onClick={openTimeDetails}
-                      >
-                        <div className="staff-time-line__heading">
-                          <span className="staff-order-quantity">1x</span>
-                          <span className="staff-order-item-name">
-                            <div className="staff-time-line__title-row">
-                              <strong>Tiền giờ</strong>
-                              <span className="staff-time-transfer-badge">
-                                <SwapOutlined /> Chuyển bàn
-                              </span>
-                            </div>
-                            <small className="staff-time-transfer-chain">
-                              {quote.data.time.tableSegments.map((s) => s.tableName).join(' → ')}
-                            </small>
-                          </span>
-                          <b className="staff-time-line__price">
-                            {formatMoney(quote.data.time.amountAfterRoundingVnd)}
-                          </b>
-                        </div>
 
-                        {/* Detailed transfer breakdown in Cart */}
-                        <div className="staff-time-cart-breakdown">
-                          {quote.data.time.tableSegments.map((tSeg, idx) => (
-                            <div
-                              key={`${tSeg.tableId}-${tSeg.startedAtMs}-${idx}`}
-                              className="staff-time-cart-row"
-                            >
-                              <div className="staff-time-cart-row__left">
-                                <span className="staff-time-cart-dot">•</span>
-                                <strong className="staff-time-cart-tbl-name">
-                                  {tSeg.tableName}
-                                </strong>
-                                <span className="staff-time-cart-tbl-time">
-                                  {formatClock(tSeg.startedAtMs)}–
-                                  {tSeg.endedAtMs ? formatClock(tSeg.endedAtMs) : 'Hiện tại'} (
-                                  {formatElapsed(tSeg.elapsedSeconds)})
-                                </span>
-                                <span className="staff-time-cart-tbl-rate">
-                                  {formatMoney(tSeg.pricingConfig.basePriceVnd)}/h
-                                </span>
-                              </div>
-                              <b className="staff-time-cart-row__amount">
-                                {formatMoney(tSeg.amountAfterRoundingVnd)}
-                              </b>
-                            </div>
-                          ))}
-                        </div>
-
-                        <div className="staff-time-line__summary">
-                          <span>
-                            Tổng thời gian: <strong>{formatElapsed(liveElapsedSeconds)}</strong>
-                          </span>
-                        </div>
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        className="staff-time-line staff-time-line--editable"
-                        onClick={openTimeDetails}
-                      >
-                        <div className="staff-time-line__heading">
-                          <span className="staff-order-quantity">1x</span>
-                          <span className="staff-order-item-name">
-                            <strong>Tiền giờ · {quote.data.order.tableName}</strong>
-                            <small>
-                              {quote.data.time.pricingConfig
-                                ? `${formatMoney(quote.data.time.pricingConfig.basePriceVnd)}/giờ`
-                                : ''}
-                            </small>
-                          </span>
-                          <b>{formatMoney(quote.data.time.amountAfterRoundingVnd)}</b>
-                        </div>
-                        <div className="staff-time-line__details">
-                          <span>
-                            {formatClock(quote.data.time.startedAtMs)}–
-                            {quote.data.time.endedAtMs
-                              ? formatClock(quote.data.time.endedAtMs)
-                              : quote.data.time.status === 'PAUSED'
-                                ? formatClock(
-                                    quote.data.time.startedAtMs +
-                                      quote.data.time.elapsedSeconds * 1000,
-                                  )
-                                : 'Hiện tại'}{' '}
-                            · Tổng: <strong>{formatElapsed(liveElapsedSeconds)}</strong>
-                          </span>
-                        </div>
-                      </button>
-                    )
-                  ) : isNew && orderType === 'DINE_IN' ? (
-                    <Alert
-                      type="info"
-                      showIcon
-                      title="Giờ bắt đầu khi lưu đơn và chọn bàn/phòng"
-                      className="staff-time-placeholder"
-                    />
-                  ) : null}
-                  {quote.isLoading && !isNew ? (
-                    <Skeleton active />
-                  ) : displayedItems.length === 0 ? (
-                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Chưa có mặt hàng" />
-                  ) : (
-                    <div className="staff-compact-order-list">
-                      {displayedItems.map((item) => (
-                        <button
-                          type="button"
-                          key={item.id}
-                          className="staff-compact-order-row staff-compact-order-row--editable"
-                          onClick={() =>
-                            setEditingItem({
-                              source: 'SAVED',
-                              id: item.id,
-                              productId: item.productId,
-                              variantId: item.variantId,
-                              productType: item.productType,
-                              productName: item.productName,
-                              variantName: item.variantName,
-                              unitName: item.unitName,
-                              unitPriceVnd: item.unitPriceVnd,
-                              quantityMilli: item.quantityMilli,
-                              note: item.note ?? '',
-                              grossLineTotalVnd: item.grossLineTotalVnd,
-                              discountAmountVnd: item.discountAmountVnd,
-                              discountType: item.discountType,
-                              discountInputValue: item.discountInputValue,
-                              netLineTotalVnd: item.netLineTotalVnd,
-                            })
-                          }
-                        >
-                          <span className="staff-order-quantity">
-                            {formatItemQuantity(
-                              item.productType,
-                              item.quantityMilli,
-                              item.unitName,
-                            )}
-                          </span>
-                          <span className="staff-order-item-name">
-                            <strong>{item.productName}</strong>
-                            <small>{item.variantName}</small>
-                            {item.note ? <small>Ghi chú: {item.note}</small> : null}
-                          </span>
-                          <b>{formatMoney(item.netLineTotalVnd)}</b>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </>
-              ) : null}
+      {isMobile ? (
+        mobileView === 'PRODUCTS' ? (
+          <div className="staff-product-picker-mobile">
+            {/* Header with Back Button */}
+            <header className="staff-product-picker-mobile__header">
               <button
                 type="button"
-                className="staff-cart-note"
-                onClick={() => setOrderNoteOpen(true)}
+                className="staff-product-picker-mobile__back-btn"
+                onClick={() => setMobileView('CART')}
               >
+                <LeftOutlined />
+                <span>Quay lại</span>
+              </button>
+              <div className="staff-product-picker-mobile__title">Chọn mặt hàng</div>
+              <div
+                className="staff-product-picker-mobile__cart-badge"
+                onClick={() => setMobileView('CART')}
+              >
+                <ShoppingCartOutlined />
+                <span>{allCurrentItems.length}</span>
+              </div>
+            </header>
+
+            {/* Search Bar */}
+            <div className="staff-product-picker-mobile__search">
+              <Input
+                size="large"
+                allowClear
+                prefix={<SearchOutlined />}
+                placeholder="Tìm kiếm món ăn, đồ uống..."
+                value={catalogSearch}
+                onChange={(e) => setCatalogSearch(e.target.value)}
+              />
+            </div>
+
+            {/* Categories Horizontal Scroll */}
+            <div className="staff-product-picker-mobile__categories">
+              <button
+                type="button"
+                className={`staff-product-cat-chip ${selectedCategory === 'ALL' ? 'is-active' : ''}`}
+                onClick={() => setSelectedCategory('ALL')}
+              >
+                Tất cả
+              </button>
+              {categories.map((cat) => (
+                <button
+                  type="button"
+                  key={cat.id}
+                  className={`staff-product-cat-chip ${selectedCategory === cat.id ? 'is-active' : ''}`}
+                  onClick={() => setSelectedCategory(cat.id)}
+                >
+                  {cat.name}
+                </button>
+              ))}
+            </div>
+
+            {/* Product Grid */}
+            <div className="staff-product-picker-mobile__grid-wrap">
+              {catalog.isLoading ? (
+                <Skeleton active />
+              ) : visibleCatalog.length === 0 ? (
+                <Empty description="Không tìm thấy sản phẩm" />
+              ) : (
+                <div className="staff-product-picker-mobile__grid">
+                  {visibleCatalog.map((product) => {
+                    const prices = product.variants
+                      .map((v) => v.salePriceVnd)
+                      .filter((p): p is number => p !== null);
+                    const minPrice = prices.length > 0 ? Math.min(...prices) : null;
+                    const maxPrice = prices.length > 0 ? Math.max(...prices) : null;
+                    return (
+                      <button
+                        type="button"
+                        key={product.productId}
+                        className="staff-product-mobile-card"
+                        onClick={() => chooseProduct(product)}
+                      >
+                        <div
+                          className={`staff-product-mobile-card__visual ${product.avatarType === 'IMAGE' && product.mediaId ? 'has-image' : 'has-color'}`}
+                          style={{
+                            background:
+                              product.avatarType === 'IMAGE' && product.mediaId
+                                ? '#ffffff'
+                                : (product.avatarColor ?? '#0877ee'),
+                          }}
+                        >
+                          {product.avatarType === 'IMAGE' && product.mediaId ? (
+                            <img src={`/api/v1/media/${product.mediaId}`} alt="" />
+                          ) : (
+                            getProductInitials(product.productName)
+                          )}
+                        </div>
+                        <strong className="staff-product-mobile-card__name">
+                          {product.productName}
+                        </strong>
+                        <small className="staff-product-mobile-card__variant">
+                          {product.variants.length > 1
+                            ? `${product.variants.length} phiên bản`
+                            : '\u00a0'}
+                        </small>
+                        <b className="staff-product-mobile-card__price">
+                          {minPrice === null
+                            ? 'Nhập giá'
+                            : minPrice === maxPrice
+                              ? `${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`
+                              : `Từ ${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`}
+                        </b>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Bottom Bar: See order / done */}
+            <div className="staff-product-picker-mobile__bottom-bar">
+              <div className="staff-product-picker-mobile__bottom-info">
                 <span>
-                  <strong>Ghi chú đơn hàng</strong>
-                  {orderNote ? <small>{orderNote}</small> : null}
+                  Đã gọi <strong>{allCurrentItems.length} món</strong>
                 </span>
-                <EditOutlined />
+                <b>{formatMoney(displayedTotal)}</b>
+              </div>
+              <Button
+                type="primary"
+                size="large"
+                onClick={() => setMobileView('CART')}
+                className="staff-product-picker-mobile__done-btn"
+              >
+                Xem đơn hàng ({allCurrentItems.length})
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="staff-order-mobile-view">
+            {/* Mobile Header */}
+            <header className="staff-order-mobile-header">
+              <button
+                type="button"
+                className="staff-order-mobile-back-btn"
+                onClick={handleExit}
+                aria-label="Quay lại danh sách"
+              >
+                <LeftOutlined />
+              </button>
+              <div className="staff-order-mobile-title-wrap">
+                <div className="staff-order-mobile-code">
+                  {isNew
+                    ? orderType === 'DINE_IN' && selectedTable
+                      ? selectedTable.name
+                      : 'Tạo đơn mới'
+                    : quote.data?.order.displayCode ||
+                      (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
+                </div>
+                <div className="staff-order-mobile-sub">
+                  <span className="staff-order-mobile-type-icon">
+                    <ShopOutlined />
+                  </span>
+                  <span>
+                    {orderType === 'DINE_IN' ? 'Tại chỗ' : 'Mang đi'} -{' '}
+                    {formatDateTime(isNew ? clockNow : (quote.data?.order.openedAt ?? clockNow))}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="staff-order-mobile-dots-btn"
+                onClick={() => setMobileActionsOpen(true)}
+                aria-label="Thao tác khác"
+              >
+                <EllipsisOutlined />
+              </button>
+            </header>
+
+            {/* Mobile Quick Pills Row: Area/Table & Guest Count */}
+            <div className="staff-order-mobile-pills">
+              <button
+                type="button"
+                className="staff-order-pill"
+                onClick={() => {
+                  if (isNew) {
+                    setTableAction('SELECT');
+                    setTableModalOpen(true);
+                  }
+                }}
+              >
+                <span className="staff-order-pill__label">
+                  {orderType === 'DINE_IN'
+                    ? quote.data?.order.tableName
+                      ? `${quote.data.order.areaName ? `${quote.data.order.areaName} - ` : ''}${quote.data.order.tableName}`
+                      : selectedTable
+                        ? `${selectedTable.areaName ? `${selectedTable.areaName} - ` : ''}${selectedTable.name}`
+                        : 'Chọn bàn / khu vực'
+                    : 'Đơn mang đi'}
+                </span>
+                {orderType === 'DINE_IN' && <span className="staff-order-pill__tag">+1</span>}
+                <DownOutlined className="staff-order-pill__arrow" />
+              </button>
+
+              <button
+                type="button"
+                className="staff-order-pill staff-order-pill--guest"
+                onClick={() => setGuestModalOpen(true)}
+              >
+                <span>{guestCount} khách</span>
+                <DownOutlined className="staff-order-pill__arrow" />
               </button>
             </div>
-          ) : cartTab === 'CUSTOMER' ? (
-            <div className="staff-cart-tab-content staff-customer-tab">
-              <div className="staff-info-card">
-                <strong>Khách lẻ</strong>
-                <span>Chưa liên kết thông tin thành viên</span>
+
+            {/* Mobile Customer Row */}
+            <div className="staff-order-mobile-customer" onClick={() => setCustomerModalOpen(true)}>
+              <div className="staff-order-mobile-customer__info">
+                {customerName ? (
+                  <>
+                    <strong>{customerName}</strong>
+                    {customerPhone && <small>{customerPhone}</small>}
+                  </>
+                ) : (
+                  <span>Thêm khách hàng</span>
+                )}
               </div>
-              <Typography.Text
-                type="secondary"
-                style={{ fontSize: 13, textAlign: 'center', display: 'block', margin: '20px 0' }}
-              >
-                Tính năng tích điểm và thông tin thành viên sẽ ra mắt ở giai đoạn tiếp theo.
-              </Typography.Text>
+              <PlusCircleOutlined className="staff-order-mobile-customer__icon" />
             </div>
-          ) : (
-            <div className="staff-cart-tab-content staff-actions-tab">
-              <div className="staff-order-info-section">
-                <Typography.Title level={5} style={{ marginBottom: 12 }}>
-                  Thông tin đơn hàng
-                </Typography.Title>
-                <div className="staff-order-info-grid">
-                  <div className="staff-order-info-item">
-                    <span className="staff-order-info-label">
-                      <ClockCircleOutlined /> Thời gian tạo đơn
-                    </span>
-                    <strong className="staff-order-info-value">
-                      {isNew ? 'Chưa tạo' : formatDateTime(quote.data?.order.openedAt ?? 0)}
-                    </strong>
+
+            {/* Mobile Ordered Items Section */}
+            <div className="staff-order-mobile-items-section">
+              <div
+                className="staff-order-mobile-section-header"
+                onClick={() => setOrderedItemsCollapsed((prev) => !prev)}
+              >
+                <span className="staff-order-mobile-section-title">
+                  Mặt hàng đã gọi (
+                  {allCurrentItems.length +
+                    (quote.data?.time ||
+                    (isNew &&
+                      orderType === 'DINE_IN' &&
+                      selectedTable?.timeProductId &&
+                      !timeRemoved) ||
+                    timeRestoringDraft
+                      ? 1
+                      : 0)}
+                  )
+                </span>
+                <button
+                  type="button"
+                  className="staff-order-mobile-collapse-btn"
+                  aria-label="Thu gọn/Mở rộng"
+                >
+                  {orderedItemsCollapsed ? <DownOutlined /> : <UpOutlined />}
+                </button>
+              </div>
+
+              {!orderedItemsCollapsed && (
+                <div className="staff-order-mobile-items-list">
+                  {/* Small restore button if default time was deleted */}
+                  {(!isNew &&
+                    quote.data?.order.orderType === 'DINE_IN' &&
+                    !quote.data?.time &&
+                    !timeRestoringDraft) ||
+                  (isNew &&
+                    orderType === 'DINE_IN' &&
+                    selectedTable?.timeProductId &&
+                    timeRemoved) ? (
+                    <div style={{ padding: '8px 16px 4px' }}>
+                      <Button
+                        size="small"
+                        type="dashed"
+                        icon={<PlusOutlined />}
+                        onClick={() => {
+                          if (isNew) {
+                            setTimeRemoved(false);
+                          } else {
+                            setTimeRestoringDraft(true);
+                            setTimeRangeDraft({ startedAt: '', endedAt: '' });
+                            setTimeDetailOpen(true);
+                          }
+                        }}
+                        style={{
+                          fontSize: 12.5,
+                          color: '#0975F7',
+                          borderColor: '#91caff',
+                          borderRadius: 6,
+                          fontWeight: 500,
+                        }}
+                      >
+                        Khôi phục tính giờ
+                      </Button>
+                    </div>
+                  ) : null}
+
+                  {/* 1. Time line item (if present or new dine-in table with pricing configured or restoring) */}
+                  {quote.data?.time ? (
+                    <div
+                      className="staff-order-mobile-item staff-order-mobile-item--time"
+                      onClick={openTimeDetails}
+                    >
+                      <div className="staff-order-mobile-item__top">
+                        <span className="staff-order-mobile-qty-badge">1 x</span>
+                        <span className="staff-order-mobile-item__name">
+                          <strong>
+                            {quote.data.time.tableSegments &&
+                            quote.data.time.tableSegments.length > 1
+                              ? 'Tiền giờ (Chuyển bàn)'
+                              : 'Giờ'}
+                          </strong>
+                        </span>
+                        <span className="staff-order-mobile-item__price">
+                          {formatMoney(quote.data.time.amountAfterRoundingVnd)}
+                        </span>
+                      </div>
+                      <div className="staff-order-mobile-item__time-sub">
+                        <div>Từ: {formatDateTime(quote.data.time.startedAtMs)}</div>
+                        <div>
+                          Tới:{' '}
+                          {quote.data.time.endedAtMs
+                            ? formatDateTime(quote.data.time.endedAtMs)
+                            : 'Hiện tại'}
+                        </div>
+                        <div>
+                          Tổng thời gian tạm tính: {formatDurationVietnamese(liveElapsedSeconds)}
+                        </div>
+                        {quote.data.time.tableSegments &&
+                          quote.data.time.tableSegments.length > 1 && (
+                            <div className="staff-order-mobile-item__chain">
+                              Bàn:{' '}
+                              {quote.data.time.tableSegments.map((s) => s.tableName).join(' → ')}
+                            </div>
+                          )}
+                      </div>
+                    </div>
+                  ) : isNew &&
+                    orderType === 'DINE_IN' &&
+                    selectedTable?.timeProductId &&
+                    !timeRemoved ? (
+                    <div
+                      className="staff-order-mobile-item staff-order-mobile-item--time"
+                      onClick={() => {
+                        setTableAction('SELECT');
+                        setTableModalOpen(true);
+                      }}
+                    >
+                      <div className="staff-order-mobile-item__top">
+                        <span className="staff-order-mobile-qty-badge">1 x</span>
+                        <span className="staff-order-mobile-item__name">
+                          <strong>Giờ</strong>
+                        </span>
+                        <span className="staff-order-mobile-item__price">0 đ</span>
+                      </div>
+                      <div className="staff-order-mobile-item__time-sub">
+                        <div>Từ: --:--:--</div>
+                        <div>Tới: --:--:--</div>
+                        <div>Tổng thời gian tạm tính: --:--:--</div>
+                      </div>
+                    </div>
+                  ) : timeRestoringDraft ? (
+                    <div
+                      className="staff-order-mobile-item staff-order-mobile-item--time"
+                      onClick={openTimeDetails}
+                    >
+                      <div className="staff-order-mobile-item__top">
+                        <span className="staff-order-mobile-qty-badge">1 x</span>
+                        <span className="staff-order-mobile-item__name">
+                          <strong>Giờ</strong>
+                        </span>
+                        <span className="staff-order-mobile-item__price">0 đ</span>
+                      </div>
+                      <div className="staff-order-mobile-item__time-sub">
+                        <div>Từ: --:--:--</div>
+                        <div>Tới: --:--:--</div>
+                        <div>Tổng thời gian tạm tính: --:--:--</div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* 2. Draft items (Sản phẩm gọi thêm) */}
+                  {draftDisplayItems.map((item) => (
+                    <div
+                      key={item.id}
+                      className="staff-order-mobile-item staff-order-mobile-item--draft"
+                      onClick={() =>
+                        setEditingItem({
+                          source: 'DRAFT',
+                          ...item,
+                          note: item.note ?? '',
+                        })
+                      }
+                    >
+                      <div className="staff-order-mobile-item__top">
+                        <span className="staff-order-mobile-qty-badge">
+                          {formatItemQuantity(item.productType, item.quantityMilli, item.unitName)}
+                        </span>
+                        <span className="staff-order-mobile-item__name">
+                          <strong>{item.productName}</strong>
+                          {item.variantName && item.variantName !== 'Mặc định' && (
+                            <small> · {item.variantName}</small>
+                          )}
+                          <span className="staff-order-mobile-draft-tag">Mới gọi</span>
+                          {item.note && (
+                            <div className="staff-order-mobile-item__note">
+                              Ghi chú: {item.note}
+                            </div>
+                          )}
+                        </span>
+                        <span className="staff-order-mobile-item__price">
+                          {formatMoney(item.netLineTotalVnd)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* 3. Saved items */}
+                  {(quote.data?.items ?? []).map((item) => (
+                    <div
+                      key={item.id}
+                      className="staff-order-mobile-item"
+                      onClick={() =>
+                        setEditingItem({
+                          source: 'SAVED',
+                          id: item.id,
+                          productId: item.productId,
+                          variantId: item.variantId,
+                          productType: item.productType,
+                          productName: item.productName,
+                          variantName: item.variantName,
+                          unitName: item.unitName,
+                          unitPriceVnd: item.unitPriceVnd,
+                          quantityMilli: item.quantityMilli,
+                          note: item.note ?? '',
+                          grossLineTotalVnd: item.grossLineTotalVnd,
+                          discountAmountVnd: item.discountAmountVnd,
+                          discountType: item.discountType,
+                          discountInputValue: item.discountInputValue,
+                          netLineTotalVnd: item.netLineTotalVnd,
+                        })
+                      }
+                    >
+                      <div className="staff-order-mobile-item__top">
+                        <span className="staff-order-mobile-qty-badge">
+                          {formatItemQuantity(item.productType, item.quantityMilli, item.unitName)}
+                        </span>
+                        <span className="staff-order-mobile-item__name">
+                          <strong>{item.productName}</strong>
+                          {item.variantName && item.variantName !== 'Mặc định' && (
+                            <small> · {item.variantName}</small>
+                          )}
+                          {item.note && (
+                            <div className="staff-order-mobile-item__note">
+                              Ghi chú: {item.note}
+                            </div>
+                          )}
+                        </span>
+                        <span className="staff-order-mobile-item__price">
+                          {formatMoney(item.netLineTotalVnd)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+
+                  {allCurrentItems.length === 0 &&
+                    !(
+                      isNew &&
+                      orderType === 'DINE_IN' &&
+                      selectedTable?.timeProductId &&
+                      !timeRemoved
+                    ) &&
+                    !quote.data?.time &&
+                    !timeRestoringDraft && (
+                      <div className="staff-order-mobile-empty">
+                        <p>Chưa có mặt hàng nào trong đơn</p>
+                        <Button
+                          type="dashed"
+                          icon={<PlusOutlined />}
+                          onClick={() => setMobileView('PRODUCTS')}
+                        >
+                          Chọn món ngay
+                        </Button>
+                      </div>
+                    )}
+                </div>
+              )}
+            </div>
+
+            {/* Mobile Order Note Row */}
+            <div className="staff-order-mobile-note" onClick={() => setOrderNoteOpen(true)}>
+              <div className="staff-order-mobile-note__content">
+                <strong>Ghi chú đơn hàng</strong>
+                {orderNote ? (
+                  <div className="staff-order-mobile-note__text">{orderNote}</div>
+                ) : null}
+              </div>
+              <EditOutlined className="staff-order-mobile-note__icon" />
+            </div>
+
+            {/* Floating "+ Thêm món" Button */}
+            <button
+              type="button"
+              className="staff-order-mobile-fab"
+              onClick={() => setMobileView('PRODUCTS')}
+            >
+              <PlusOutlined />
+              <span>Thêm món</span>
+            </button>
+
+            {/* Sticky Bottom Billing Summary & Actions */}
+            <div className="staff-order-mobile-footer">
+              <div className="staff-order-mobile-summary">
+                <div className="staff-order-mobile-summary__title">Tổng tiền</div>
+                <div className="staff-order-mobile-summary__row">
+                  <span>Tổng tiền hàng ({regularProductCount} món)</span>
+                  <span>{formatMoney(regularProductGross)}</span>
+                </div>
+                {totalTimeGross > 0 && (
+                  <div className="staff-order-mobile-summary__row">
+                    <span>Tiền giờ</span>
+                    <span>{formatMoney(totalTimeGross)}</span>
                   </div>
-                  <div className="staff-order-info-item">
-                    <span className="staff-order-info-label">
-                      <UserOutlined /> Người tạo đơn
-                    </span>
-                    <strong className="staff-order-info-value">
-                      {isNew
-                        ? (auth.actor?.displayName ?? 'Nhân viên')
-                        : (quote.data?.order.openedByName ??
-                          auth.actor?.displayName ??
-                          'Nhân viên')}
-                    </strong>
+                )}
+                {totalDiscount > 0 && (
+                  <div className="staff-order-mobile-summary__row">
+                    <span>Giảm giá</span>
+                    <span className="text-danger">-{formatMoney(totalDiscount)}</span>
                   </div>
-                  <div className="staff-order-info-item">
-                    <span className="staff-order-info-label">
-                      <ShopOutlined /> Loại đơn
-                    </span>
-                    <strong className="staff-order-info-value">
-                      {orderType === 'DINE_IN'
-                        ? `Tại chỗ · ${quote.data?.order.tableName ?? selectedTable?.name ?? 'Chưa chọn bàn'}`
-                        : 'Mang đi'}
-                    </strong>
-                  </div>
-                  <div className="staff-order-info-item">
-                    <span className="staff-order-info-label">
-                      <FileTextOutlined /> Mã đơn
-                    </span>
-                    <strong className="staff-order-info-value">
-                      {isNew ? 'Sinh khi lưu' : (quote.data?.order.displayCode ?? '—')}
-                    </strong>
-                  </div>
+                )}
+                <div className="staff-order-mobile-summary__total-row">
+                  <strong>Khách phải trả</strong>
+                  <strong>{formatMoney(displayedTotal)}</strong>
                 </div>
               </div>
 
-              <div className="staff-order-action-buttons">
-                <Typography.Title level={5} style={{ marginBottom: 12 }}>
-                  Thao tác khác
-                </Typography.Title>
-                {!isNew ? (
-                  <div className="staff-action-buttons-group">
+              <div className="staff-order-mobile-actions">
+                {isPaymentPending ? (
+                  <>
                     <Button
                       size="large"
-                      block
-                      icon={<PrinterOutlined />}
-                      onClick={() => setProvisionalBillOpen(true)}
-                      className="staff-action-provisional-btn"
+                      icon={<PlayCircleOutlined />}
+                      loading={resuming}
+                      onClick={() => setResumeModalOpen(true)}
+                      className="staff-order-mobile-btn-resume"
                     >
-                      In phiếu tạm tính
+                      Tiếp tục chơi
                     </Button>
-                    {quote.data?.order.orderType === 'DINE_IN' ? (
-                      <Button
-                        size="large"
-                        block
-                        icon={<SwapOutlined />}
-                        onClick={() => setTransferOpen(true)}
-                        className="staff-action-transfer-btn"
-                      >
-                        Chuyển bàn/phòng
-                      </Button>
-                    ) : null}
                     <Button
-                      danger
+                      type="primary"
                       size="large"
-                      block
-                      icon={<StopOutlined />}
-                      onClick={() => setCancelOpen(true)}
-                      className="staff-action-cancel-btn"
+                      onClick={() => navigate(`/pos/orders/${quote.data!.order.id}/payment`)}
+                      className="staff-order-mobile-btn-pay"
                     >
-                      Hủy đơn hàng
+                      Thanh toán
                     </Button>
-                  </div>
+                  </>
                 ) : (
-                  <Alert
-                    type="info"
-                    showIcon
-                    description="In phiếu tạm tính, Chuyển bàn và Hủy đơn sẽ khả dụng sau khi đơn hàng được lưu."
-                  />
+                  <>
+                    <Button
+                      size="large"
+                      disabled={isNew && orderType === 'TAKEAWAY' && draftLines.length === 0}
+                      loading={saving}
+                      onClick={isNew ? saveOrder : () => void saveAdditionalItems(false)}
+                      className="staff-order-mobile-btn-save"
+                    >
+                      Lưu đơn
+                    </Button>
+                    <Button
+                      type="primary"
+                      size="large"
+                      disabled={
+                        isNew
+                          ? orderType === 'TAKEAWAY' && draftLines.length === 0
+                          : displayedItems.length === 0 && !quote.data?.time
+                      }
+                      loading={saving || stoppingTime}
+                      onClick={() => void beginCheckout()}
+                      className="staff-order-mobile-btn-pay"
+                    >
+                      Thanh toán
+                    </Button>
+                  </>
                 )}
               </div>
             </div>
-          )}
-          <div className="staff-cart-summary">
-            <Typography.Title level={4}>Tổng tiền</Typography.Title>
-            <div>
-              <span>Tổng tiền hàng ({regularProductCount} món)</span>
-              <b>{formatMoney(regularProductGross)}</b>
+          </div>
+        )
+      ) : (
+        <>
+          <header className="staff-order-editor__header">
+            <Button
+              type="text"
+              size="large"
+              aria-label="Đóng trang tạo đơn"
+              icon={<CloseOutlined />}
+              onClick={handleExit}
+            />
+            <div className="staff-order-editor__heading">
+              <Typography.Title level={3}>
+                {isNew ? 'Tạo đơn mới' : 'Chi tiết đơn hàng'}
+              </Typography.Title>
+              {!isNew && quote.data ? (
+                <Typography.Text type="secondary">
+                  {[
+                    quote.data.order.orderType === 'DINE_IN'
+                      ? [quote.data.order.areaName, quote.data.order.tableName]
+                          .filter(Boolean)
+                          .join(' - ')
+                      : 'Mang đi',
+                    quote.data.order.displayCode ||
+                      (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : null),
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </Typography.Text>
+              ) : isNew && orderType === 'DINE_IN' && selectedTable ? (
+                <Typography.Text type="secondary">
+                  {[selectedTable.areaName, selectedTable.name].filter(Boolean).join(' - ')}
+                </Typography.Text>
+              ) : null}
             </div>
-            {totalTimeGross > 0 ? (
-              <div>
-                <span>Tiền giờ</span>
-                <b>{formatMoney(totalTimeGross)}</b>
+            <Input
+              size="large"
+              allowClear
+              prefix={<SearchOutlined />}
+              placeholder="Tìm kiếm sản phẩm"
+              value={catalogSearch}
+              onChange={(event) => setCatalogSearch(event.target.value)}
+            />
+            <div className="staff-order-header-meta">
+              <Select
+                size="large"
+                value={isNew ? orderType : quote.data?.order.orderType}
+                options={[
+                  { value: 'DINE_IN', label: 'Tại chỗ' },
+                  { value: 'TAKEAWAY', label: 'Mang đi' },
+                ]}
+                disabled={!isNew}
+                onChange={(value) => setOrderType(value as 'DINE_IN' | 'TAKEAWAY')}
+                aria-label="Loại đơn"
+                title={
+                  isNew
+                    ? 'Chọn loại đơn'
+                    : 'Chưa cho phép đổi loại khi đơn đã chạy để tránh sai tiền giờ'
+                }
+              />
+              <div className="staff-order-code">
+                <small>Mã đơn</small>
+                <strong style={{ color: '#0975F7', fontFamily: 'monospace' }}>
+                  {isNew
+                    ? 'Sinh khi lưu'
+                    : quote.data?.order.displayCode ||
+                      (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
+                </strong>
               </div>
-            ) : null}
-            <div>
-              <span>Giảm giá</span>
-              <b>{totalDiscount > 0 ? `-${formatMoney(totalDiscount)}` : '0đ'}</b>
+              {!isNew && orderId && (
+                <Button
+                  icon={<HistoryOutlined />}
+                  onClick={() => navigate(`/pos/orders/${orderId}/detail`)}
+                  title="Xem chi tiết và lịch sử đơn hàng"
+                  className="staff-order-detail-btn"
+                >
+                  Chi tiết
+                </Button>
+              )}
             </div>
-            <div className="staff-cart-total">
-              <span>Khách phải trả</span>
-              <b>{formatMoney(displayedTotal)}</b>
+          </header>
+          <div
+            className={`staff-order-editor__body ${isResizing ? 'is-resizing' : ''}`}
+            style={{
+              gridTemplateColumns: `205px minmax(0, 1fr) auto ${cartWidth}px`,
+            }}
+          >
+            <aside className="staff-category-sidebar">
+              <button
+                type="button"
+                className={selectedCategory === 'ALL' ? 'is-active' : ''}
+                onClick={() => setSelectedCategory('ALL')}
+              >
+                <AppstoreOutlined />
+                <span>Tất cả</span>
+              </button>
+              {categories.map((category) => (
+                <button
+                  type="button"
+                  key={category.id}
+                  className={selectedCategory === category.id ? 'is-active' : ''}
+                  onClick={() => setSelectedCategory(category.id)}
+                >
+                  <AppstoreOutlined />
+                  <span>{category.name}</span>
+                </button>
+              ))}
+            </aside>
+            <section className="staff-product-picker">
+              <Typography.Title level={3}>
+                {selectedCategory === 'ALL'
+                  ? 'Tất cả sản phẩm'
+                  : categories.find((category) => category.id === selectedCategory)?.name}
+              </Typography.Title>
+              {catalog.isLoading ? (
+                <Skeleton active />
+              ) : visibleCatalog.length === 0 ? (
+                <Empty description="Không có sản phẩm phù hợp" />
+              ) : (
+                <div className="staff-product-grid">
+                  {visibleCatalog.map((product) => {
+                    const prices = product.variants
+                      .map((variant) => variant.salePriceVnd)
+                      .filter((price): price is number => price !== null);
+                    const minPrice = prices.length > 0 ? Math.min(...prices) : null;
+                    const maxPrice = prices.length > 0 ? Math.max(...prices) : null;
+                    return (
+                      <button
+                        type="button"
+                        key={product.productId}
+                        onClick={() => chooseProduct(product)}
+                      >
+                        <span
+                          className={`staff-product-card__visual ${product.avatarType === 'IMAGE' && product.mediaId ? 'has-image' : 'has-color'}`}
+                          style={{
+                            background:
+                              product.avatarType === 'IMAGE' && product.mediaId
+                                ? '#ffffff'
+                                : (product.avatarColor ?? '#0877ee'),
+                          }}
+                        >
+                          {product.avatarType === 'IMAGE' && product.mediaId ? (
+                            <img src={`/api/v1/media/${product.mediaId}`} alt="" />
+                          ) : (
+                            getProductInitials(product.productName)
+                          )}
+                        </span>
+                        <strong>{product.productName}</strong>
+                        <small>
+                          {product.variants.length > 1
+                            ? `${product.variants.length} phiên bản`
+                            : '\u00a0'}
+                        </small>
+                        <b>
+                          {minPrice === null
+                            ? 'Nhập giá'
+                            : minPrice === maxPrice
+                              ? `${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`
+                              : `Từ ${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`}
+                        </b>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+            <div
+              className="staff-order-editor__resizer"
+              onMouseDown={handleMouseDownResizer}
+              title="Kéo thả để thay đổi độ rộng cột chi tiết đơn"
+              role="separator"
+              aria-orientation="vertical"
+            >
+              <div className="staff-order-editor__resizer-handle" />
             </div>
+            <aside className="staff-cart-panel" style={{ width: cartWidth }}>
+              {isPaymentPending ? (
+                <div className="staff-order-pending-banner">
+                  <div className="staff-order-pending-banner__badge">
+                    <CheckCircleOutlined /> ĐÃ DỪNG TÍNH GIỜ
+                  </div>
+                  <div className="staff-order-pending-banner__text">
+                    {quote.data?.time?.endedAtMs
+                      ? `Đã dừng lúc ${formatClock(quote.data.time.endedAtMs)}`
+                      : 'Đã dừng giờ'}{' '}
+                    · Đang chờ thanh toán
+                  </div>
+                </div>
+              ) : null}
+              <div className="staff-cart-tabs">
+                <button
+                  type="button"
+                  className={cartTab === 'DETAILS' ? 'is-active' : ''}
+                  onClick={() => setCartTab('DETAILS')}
+                >
+                  Chi tiết đơn
+                </button>
+                <button
+                  type="button"
+                  className={cartTab === 'CUSTOMER' ? 'is-active' : ''}
+                  onClick={() => setCartTab('CUSTOMER')}
+                >
+                  Khách hàng
+                </button>
+                <button
+                  type="button"
+                  className={cartTab === 'ACTIONS' ? 'is-active' : ''}
+                  onClick={() => setCartTab('ACTIONS')}
+                >
+                  Thao tác khác
+                </button>
+              </div>
+              {cartTab === 'DETAILS' ? (
+                <div className="staff-cart-tab-content">
+                  {!isNew && draftDisplayItems.length > 0 ? (
+                    <section className="staff-additional-products">
+                      <div className="staff-order-section-heading">
+                        <Typography.Title level={4}>Sản phẩm gọi thêm</Typography.Title>
+                        <Button
+                          type="text"
+                          icon={<DeleteOutlined />}
+                          aria-label="Xóa tất cả sản phẩm gọi thêm"
+                          onClick={() => setDraftLines([])}
+                        />
+                      </div>
+                      <div className="staff-compact-order-list">
+                        {draftDisplayItems.map((item) => (
+                          <button
+                            type="button"
+                            key={item.id}
+                            className="staff-compact-order-row staff-compact-order-row--editable"
+                            onClick={() =>
+                              setEditingItem({
+                                source: 'DRAFT',
+                                ...item,
+                                note: item.note ?? '',
+                              })
+                            }
+                          >
+                            <span className="staff-order-quantity">
+                              {formatItemQuantity(
+                                item.productType,
+                                item.quantityMilli,
+                                item.unitName,
+                              )}
+                            </span>
+                            <span className="staff-order-item-name">
+                              <strong>{item.productName}</strong>
+                              <small>{item.variantName}</small>
+                            </span>
+                            <b>{formatMoney(item.netLineTotalVnd)}</b>
+                          </button>
+                        ))}
+                      </div>
+                    </section>
+                  ) : null}
+                  <div className="staff-cart-section-header">
+                    <Typography.Title level={4} style={{ margin: 0 }}>
+                      Sản phẩm đã gọi (
+                      {displayedItems.length +
+                        (quote.data?.time ||
+                        (isNew &&
+                          orderType === 'DINE_IN' &&
+                          selectedTable?.timeProductId &&
+                          !timeRemoved) ||
+                        timeRestoringDraft
+                          ? 1
+                          : 0)}
+                      )
+                    </Typography.Title>
+                    <Button
+                      type="text"
+                      size="small"
+                      className="staff-cart-collapse-btn"
+                      icon={orderedItemsCollapsed ? <DownOutlined /> : <UpOutlined />}
+                      aria-label={
+                        orderedItemsCollapsed
+                          ? 'Mở rộng sản phẩm đã gọi'
+                          : 'Thu gọn sản phẩm đã gọi'
+                      }
+                      onClick={() => setOrderedItemsCollapsed((prev) => !prev)}
+                    />
+                  </div>
+                  {!orderedItemsCollapsed ? (
+                    <>
+                      {/* Small restore button if default time was deleted */}
+                      {(!isNew &&
+                        quote.data?.order.orderType === 'DINE_IN' &&
+                        !quote.data?.time &&
+                        !timeRestoringDraft) ||
+                      (isNew &&
+                        orderType === 'DINE_IN' &&
+                        selectedTable?.timeProductId &&
+                        timeRemoved) ? (
+                        <div style={{ margin: '0 0 14px' }}>
+                          <Button
+                            size="small"
+                            type="dashed"
+                            icon={<PlusOutlined />}
+                            onClick={() => {
+                              if (isNew) {
+                                setTimeRemoved(false);
+                              } else {
+                                setTimeRestoringDraft(true);
+                                setTimeRangeDraft({ startedAt: '', endedAt: '' });
+                                setTimeDetailOpen(true);
+                              }
+                            }}
+                            style={{
+                              fontSize: 12.5,
+                              color: '#0975F7',
+                              borderColor: '#91caff',
+                              borderRadius: 6,
+                              fontWeight: 500,
+                            }}
+                          >
+                            Khôi phục tính giờ
+                          </Button>
+                        </div>
+                      ) : null}
+
+                      {quote.data?.time ? (
+                        quote.data.time.tableSegments &&
+                        quote.data.time.tableSegments.length > 1 ? (
+                          <button
+                            type="button"
+                            className="staff-time-line staff-time-line--editable staff-time-line--transfer"
+                            onClick={openTimeDetails}
+                          >
+                            <div className="staff-time-line__heading">
+                              <span className="staff-order-quantity">1x</span>
+                              <span className="staff-order-item-name">
+                                <div className="staff-time-line__title-row">
+                                  <strong>Tiền giờ</strong>
+                                  <span className="staff-time-transfer-badge">
+                                    <SwapOutlined /> Chuyển bàn
+                                  </span>
+                                </div>
+                                <small className="staff-time-transfer-chain">
+                                  {quote.data.time.tableSegments
+                                    .map((s) => s.tableName)
+                                    .join(' → ')}
+                                </small>
+                              </span>
+                              <b className="staff-time-line__price">
+                                {formatMoney(quote.data.time.amountAfterRoundingVnd)}
+                              </b>
+                            </div>
+
+                            {/* Detailed transfer breakdown in Cart */}
+                            <div className="staff-time-cart-breakdown">
+                              {quote.data.time.tableSegments.map((tSeg, idx) => (
+                                <div
+                                  key={`${tSeg.tableId}-${tSeg.startedAtMs}-${idx}`}
+                                  className="staff-time-cart-row"
+                                >
+                                  <div className="staff-time-cart-row__left">
+                                    <span className="staff-time-cart-dot">•</span>
+                                    <strong className="staff-time-cart-tbl-name">
+                                      {tSeg.tableName}
+                                    </strong>
+                                    <span className="staff-time-cart-tbl-time">
+                                      {formatClock(tSeg.startedAtMs)}–
+                                      {tSeg.endedAtMs ? formatClock(tSeg.endedAtMs) : 'Hiện tại'} (
+                                      {formatElapsed(tSeg.elapsedSeconds)})
+                                    </span>
+                                    <span className="staff-time-cart-tbl-rate">
+                                      {formatMoney(tSeg.pricingConfig.basePriceVnd)}/h
+                                    </span>
+                                  </div>
+                                  <b className="staff-time-cart-row__amount">
+                                    {formatMoney(tSeg.amountAfterRoundingVnd)}
+                                  </b>
+                                </div>
+                              ))}
+                            </div>
+
+                            <div className="staff-time-line__summary">
+                              <span>
+                                Tổng thời gian: <strong>{formatElapsed(liveElapsedSeconds)}</strong>
+                              </span>
+                            </div>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="staff-time-line staff-time-line--editable"
+                            onClick={openTimeDetails}
+                          >
+                            <div className="staff-time-line__heading">
+                              <span className="staff-order-quantity">1x</span>
+                              <span className="staff-order-item-name">
+                                <strong>Tiền giờ · {quote.data.order.tableName}</strong>
+                                <small>
+                                  {quote.data.time.pricingConfig
+                                    ? `${formatMoney(quote.data.time.pricingConfig.basePriceVnd)}/giờ`
+                                    : ''}
+                                </small>
+                              </span>
+                              <b>{formatMoney(quote.data.time.amountAfterRoundingVnd)}</b>
+                            </div>
+                            <div className="staff-time-line__details">
+                              <span>
+                                {formatClock(quote.data.time.startedAtMs)}–
+                                {quote.data.time.endedAtMs
+                                  ? formatClock(quote.data.time.endedAtMs)
+                                  : quote.data.time.status === 'PAUSED'
+                                    ? formatClock(
+                                        quote.data.time.startedAtMs +
+                                          quote.data.time.elapsedSeconds * 1000,
+                                      )
+                                    : 'Hiện tại'}{' '}
+                                · Tổng: <strong>{formatElapsed(liveElapsedSeconds)}</strong>
+                              </span>
+                            </div>
+                          </button>
+                        )
+                      ) : isNew &&
+                        orderType === 'DINE_IN' &&
+                        selectedTable?.timeProductId &&
+                        !timeRemoved ? (
+                        <button
+                          type="button"
+                          className="staff-time-line staff-time-line--editable"
+                          onClick={() => {
+                            setTableAction('SELECT');
+                            setTableModalOpen(true);
+                          }}
+                        >
+                          <div className="staff-time-line__heading">
+                            <span className="staff-order-quantity">1x</span>
+                            <span className="staff-order-item-name">
+                              <strong>Tiền giờ · {selectedTable.name}</strong>
+                              <small>
+                                {selectedTable.defaultPriceVnd
+                                  ? `${formatMoney(selectedTable.defaultPriceVnd)}/giờ`
+                                  : (selectedTable.timeProductName ?? '')}
+                              </small>
+                            </span>
+                            <b>0 đ</b>
+                          </div>
+                          <div className="staff-time-line__details">
+                            <span>
+                              --:--:--–--:--:-- · Tổng: <strong>--:--:--</strong>
+                            </span>
+                          </div>
+                        </button>
+                      ) : timeRestoringDraft ? (
+                        <button
+                          type="button"
+                          className="staff-time-line staff-time-line--editable"
+                          onClick={openTimeDetails}
+                        >
+                          <div className="staff-time-line__heading">
+                            <span className="staff-order-quantity">1x</span>
+                            <span className="staff-order-item-name">
+                              <strong>
+                                Tiền giờ ·{' '}
+                                {quote.data?.order.tableName ?? selectedTable?.name ?? 'Bàn'}
+                              </strong>
+                              <small>
+                                {selectedTable?.defaultPriceVnd
+                                  ? `${formatMoney(selectedTable.defaultPriceVnd)}/giờ`
+                                  : (selectedTable?.timeProductName ?? '')}
+                              </small>
+                            </span>
+                            <b>0 đ</b>
+                          </div>
+                          <div className="staff-time-line__details">
+                            <span>
+                              --:--:--–--:--:-- · Tổng: <strong>--:--:--</strong>
+                            </span>
+                          </div>
+                        </button>
+                      ) : null}
+                      {quote.isLoading && !isNew ? (
+                        <Skeleton active />
+                      ) : displayedItems.length === 0 &&
+                        !(
+                          isNew &&
+                          orderType === 'DINE_IN' &&
+                          selectedTable?.timeProductId &&
+                          !timeRemoved
+                        ) &&
+                        !timeRestoringDraft ? (
+                        <Empty
+                          image={Empty.PRESENTED_IMAGE_SIMPLE}
+                          description="Chưa có mặt hàng"
+                        />
+                      ) : (
+                        <div className="staff-compact-order-list">
+                          {displayedItems.map((item) => (
+                            <button
+                              type="button"
+                              key={item.id}
+                              className="staff-compact-order-row staff-compact-order-row--editable"
+                              onClick={() =>
+                                setEditingItem({
+                                  source: 'SAVED',
+                                  id: item.id,
+                                  productId: item.productId,
+                                  variantId: item.variantId,
+                                  productType: item.productType,
+                                  productName: item.productName,
+                                  variantName: item.variantName,
+                                  unitName: item.unitName,
+                                  unitPriceVnd: item.unitPriceVnd,
+                                  quantityMilli: item.quantityMilli,
+                                  note: item.note ?? '',
+                                  grossLineTotalVnd: item.grossLineTotalVnd,
+                                  discountAmountVnd: item.discountAmountVnd,
+                                  discountType: item.discountType,
+                                  discountInputValue: item.discountInputValue,
+                                  netLineTotalVnd: item.netLineTotalVnd,
+                                })
+                              }
+                            >
+                              <span className="staff-order-quantity">
+                                {formatItemQuantity(
+                                  item.productType,
+                                  item.quantityMilli,
+                                  item.unitName,
+                                )}
+                              </span>
+                              <span className="staff-order-item-name">
+                                <strong>{item.productName}</strong>
+                                <small>{item.variantName}</small>
+                                {item.note ? <small>Ghi chú: {item.note}</small> : null}
+                              </span>
+                              <b>{formatMoney(item.netLineTotalVnd)}</b>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="staff-cart-note"
+                    onClick={() => setOrderNoteOpen(true)}
+                  >
+                    <span>
+                      <strong>Ghi chú đơn hàng</strong>
+                      {orderNote ? <small>{orderNote}</small> : null}
+                    </span>
+                    <EditOutlined />
+                  </button>
+                </div>
+              ) : cartTab === 'CUSTOMER' ? (
+                <div className="staff-cart-tab-content staff-customer-tab">
+                  <div className="staff-info-card">
+                    <strong>Khách lẻ</strong>
+                    <span>Chưa liên kết thông tin thành viên</span>
+                  </div>
+                  <Typography.Text
+                    type="secondary"
+                    style={{
+                      fontSize: 13,
+                      textAlign: 'center',
+                      display: 'block',
+                      margin: '20px 0',
+                    }}
+                  >
+                    Tính năng tích điểm và thông tin thành viên sẽ ra mắt ở giai đoạn tiếp theo.
+                  </Typography.Text>
+                </div>
+              ) : (
+                <div className="staff-cart-tab-content staff-actions-tab">
+                  <div className="staff-order-info-section">
+                    <Typography.Title level={5} style={{ marginBottom: 12 }}>
+                      Thông tin đơn hàng
+                    </Typography.Title>
+                    <div className="staff-order-info-grid">
+                      <div className="staff-order-info-item">
+                        <span className="staff-order-info-label">
+                          <ClockCircleOutlined /> Thời gian tạo đơn
+                        </span>
+                        <strong className="staff-order-info-value">
+                          {isNew ? 'Chưa tạo' : formatDateTime(quote.data?.order.openedAt ?? 0)}
+                        </strong>
+                      </div>
+                      <div className="staff-order-info-item">
+                        <span className="staff-order-info-label">
+                          <UserOutlined /> Người tạo đơn
+                        </span>
+                        <strong className="staff-order-info-value">
+                          {isNew
+                            ? (auth.actor?.displayName ?? 'Nhân viên')
+                            : (quote.data?.order.openedByName ??
+                              auth.actor?.displayName ??
+                              'Nhân viên')}
+                        </strong>
+                      </div>
+                      <div className="staff-order-info-item">
+                        <span className="staff-order-info-label">
+                          <ShopOutlined /> Loại đơn
+                        </span>
+                        <strong className="staff-order-info-value">
+                          {orderType === 'DINE_IN'
+                            ? `Tại chỗ · ${quote.data?.order.tableName ?? selectedTable?.name ?? 'Chưa chọn bàn'}`
+                            : 'Mang đi'}
+                        </strong>
+                      </div>
+                      <div className="staff-order-info-item">
+                        <span className="staff-order-info-label">
+                          <FileTextOutlined /> Mã đơn
+                        </span>
+                        <strong
+                          className="staff-order-info-value"
+                          style={{ color: '#0975F7', fontFamily: 'monospace' }}
+                        >
+                          {isNew
+                            ? 'Sinh khi lưu'
+                            : quote.data?.order.displayCode ||
+                              (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="staff-order-action-buttons">
+                    <Typography.Title level={5} style={{ marginBottom: 12 }}>
+                      Thao tác khác
+                    </Typography.Title>
+                    {!isNew ? (
+                      <div className="staff-action-buttons-group">
+                        <Button
+                          size="large"
+                          block
+                          icon={<PrinterOutlined />}
+                          onClick={() => setProvisionalBillOpen(true)}
+                          className="staff-action-provisional-btn"
+                        >
+                          In phiếu tạm tính
+                        </Button>
+                        {quote.data?.order.orderType === 'DINE_IN' ? (
+                          <Button
+                            size="large"
+                            block
+                            icon={<SwapOutlined />}
+                            onClick={() => setTransferOpen(true)}
+                            className="staff-action-transfer-btn"
+                          >
+                            Chuyển bàn/phòng
+                          </Button>
+                        ) : null}
+                        <Button
+                          danger
+                          size="large"
+                          block
+                          icon={<StopOutlined />}
+                          onClick={() => setCancelOpen(true)}
+                          className="staff-action-cancel-btn"
+                        >
+                          Hủy đơn hàng
+                        </Button>
+                      </div>
+                    ) : (
+                      <Alert
+                        type="info"
+                        showIcon
+                        description="In phiếu tạm tính, Chuyển bàn và Hủy đơn sẽ khả dụng sau khi đơn hàng được lưu."
+                      />
+                    )}
+                  </div>
+                </div>
+              )}
+              <div className="staff-cart-summary">
+                <Typography.Title level={4}>Tổng tiền</Typography.Title>
+                <div>
+                  <span>Tổng tiền hàng ({regularProductCount} món)</span>
+                  <b>{formatMoney(regularProductGross)}</b>
+                </div>
+                {totalTimeGross > 0 ? (
+                  <div>
+                    <span>Tiền giờ</span>
+                    <b>{formatMoney(totalTimeGross)}</b>
+                  </div>
+                ) : null}
+                <div>
+                  <span>Giảm giá</span>
+                  <b>{totalDiscount > 0 ? `-${formatMoney(totalDiscount)}` : '0đ'}</b>
+                </div>
+                <div className="staff-cart-total">
+                  <span>Khách phải trả</span>
+                  <b>{formatMoney(displayedTotal)}</b>
+                </div>
+              </div>
+              <div className="staff-cart-actions">
+                {isPaymentPending ? (
+                  <>
+                    <Button
+                      size="large"
+                      icon={<PlayCircleOutlined />}
+                      loading={resuming}
+                      onClick={() => setResumeModalOpen(true)}
+                      className="staff-payment-resume-btn"
+                    >
+                      Tiếp tục chơi
+                    </Button>
+                    <Button
+                      type="primary"
+                      size="large"
+                      onClick={() => {
+                        navigate(`/pos/orders/${quote.data!.order.id}/payment`);
+                      }}
+                    >
+                      Tiếp tục thanh toán
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button
+                      size="large"
+                      disabled={isNew && orderType === 'TAKEAWAY' && draftLines.length === 0}
+                      loading={saving}
+                      onClick={isNew ? saveOrder : () => void saveAdditionalItems(false)}
+                    >
+                      Lưu đơn
+                    </Button>
+                    <Button
+                      type="primary"
+                      size="large"
+                      disabled={
+                        isNew
+                          ? orderType === 'TAKEAWAY' && draftLines.length === 0
+                          : displayedItems.length === 0 && !quote.data?.time
+                      }
+                      loading={saving || stoppingTime}
+                      onClick={() => {
+                        void beginCheckout();
+                      }}
+                    >
+                      Thanh toán
+                    </Button>
+                  </>
+                )}
+              </div>
+            </aside>
           </div>
-          <div className="staff-cart-actions">
-            {isPaymentPending ? (
-              <>
-                <Button
-                  size="large"
-                  icon={<PlayCircleOutlined />}
-                  loading={resuming}
-                  onClick={() => setResumeModalOpen(true)}
-                  className="staff-payment-resume-btn"
-                >
-                  Tiếp tục chơi
-                </Button>
-                <Button
-                  type="primary"
-                  size="large"
-                  onClick={() => {
-                    navigate(`/pos/orders/${quote.data!.order.id}/payment`);
-                  }}
-                >
-                  Tiếp tục thanh toán
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button
-                  size="large"
-                  disabled={isNew && orderType === 'TAKEAWAY' && draftLines.length === 0}
-                  loading={saving}
-                  onClick={isNew ? saveOrder : () => void saveAdditionalItems(false)}
-                >
-                  Lưu đơn
-                </Button>
-                <Button
-                  type="primary"
-                  size="large"
-                  disabled={
-                    isNew
-                      ? orderType === 'TAKEAWAY' && draftLines.length === 0
-                      : displayedItems.length === 0 && !quote.data?.time
-                  }
-                  loading={saving || stoppingTime}
-                  onClick={() => {
-                    void beginCheckout();
-                  }}
-                >
-                  Thanh toán
-                </Button>
-              </>
-            )}
-          </div>
-        </aside>
-      </div>
+        </>
+      )}
       <Modal
         open={Boolean(variantProduct)}
         title={`Chọn phiên bản · ${variantProduct?.productName ?? ''}`}
@@ -2947,10 +3849,27 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       </Modal>
       <StaffTablePickerModal
         open={tableModalOpen}
+        initialTableId={preselectedTableId}
         tables={tables.data ?? []}
         confirmLoading={saving}
         onCancel={() => setTableModalOpen(false)}
-        onConfirm={(table) => void saveWithTable(table, tableAction === 'CHECKOUT')}
+        onConfirm={(table) => {
+          if (tableAction === 'SAVE') {
+            void saveWithTable(table, false);
+          } else if (tableAction === 'CHECKOUT') {
+            void saveWithTable(table, true);
+          } else {
+            setSearchParams(
+              (prev) => {
+                const next = new URLSearchParams(prev);
+                next.set('tableId', table.id);
+                return next;
+              },
+              { replace: true },
+            );
+            setTableModalOpen(false);
+          }
+        }}
       />
       <Modal
         open={orderNoteOpen}
@@ -3028,11 +3947,13 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         }}
       />
       <Modal
-        open={timeDetailOpen && Boolean(quote.data?.time)}
+        open={timeDetailOpen && (Boolean(quote.data?.time) || timeRestoringDraft)}
         title={
           <div className="staff-time-modal-header">
             <ClockCircleOutlined />
-            <span>Chi tiết tính giờ</span>
+            <span>
+              {timeRestoringDraft && !quote.data?.time ? 'Khôi phục tính giờ' : 'Chi tiết tính giờ'}
+            </span>
           </div>
         }
         width={620}
@@ -3075,7 +3996,36 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   Lưu thay đổi
                 </Button>,
               ]
-            : null
+            : [
+                <Button
+                  key="cancel"
+                  onClick={() => setTimeDetailOpen(false)}
+                  className="staff-time-footer-btn"
+                >
+                  Đóng
+                </Button>,
+                <Button
+                  key="discard-restore"
+                  danger
+                  icon={<DeleteOutlined />}
+                  onClick={() => {
+                    setTimeRestoringDraft(false);
+                    setTimeDetailOpen(false);
+                  }}
+                  className="staff-time-footer-btn"
+                >
+                  Hủy khôi phục
+                </Button>,
+                <Button
+                  key="save"
+                  type="primary"
+                  loading={saving}
+                  onClick={saveTimeRange}
+                  className="staff-time-footer-btn staff-time-footer-btn--primary"
+                >
+                  Lưu thay đổi
+                </Button>,
+              ]
         }
       >
         {quote.data?.time ? (
@@ -3261,6 +4211,79 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
               <div className="staff-time-detail-row staff-time-detail-row--total">
                 <span>Tổng tiền giờ</span>
                 <b>{formatMoney(quote.data.time.amountAfterRoundingVnd)}</b>
+              </div>
+            </section>
+          </div>
+        ) : timeRestoringDraft ? (
+          <div className="staff-time-detail-modal">
+            <section className="staff-time-detail-card">
+              <Typography.Title level={5} className="staff-time-card-title">
+                Thời gian sử dụng
+              </Typography.Title>
+              <div className="staff-time-range-fields">
+                <label htmlFor="staff-time-started-at" className="staff-time-field">
+                  <div className="staff-time-field__header">
+                    <span className="staff-time-field__label">Giờ vào</span>
+                    <button
+                      type="button"
+                      className="staff-time-now-btn"
+                      onClick={() =>
+                        setTimeRangeDraft((prev) => ({
+                          ...prev,
+                          startedAt: formatDateTimeInput(Date.now()),
+                        }))
+                      }
+                    >
+                      Lấy giờ hiện tại
+                    </button>
+                  </div>
+                  <Input
+                    id="staff-time-started-at"
+                    type="datetime-local"
+                    step={1}
+                    max={formatDateTimeInput(Date.now())}
+                    value={timeRangeDraft.startedAt}
+                    onChange={(event) =>
+                      setTimeRangeDraft((value) => ({ ...value, startedAt: event.target.value }))
+                    }
+                    className="staff-time-field__input"
+                  />
+                  <small className="staff-time-field__hint">
+                    Chọn thời điểm bắt đầu tính giờ cho bàn/phòng.
+                  </small>
+                </label>
+                <label htmlFor="staff-time-ended-at" className="staff-time-field">
+                  <div className="staff-time-field__header">
+                    <span className="staff-time-field__label">Giờ ra</span>
+                    <button
+                      type="button"
+                      className="staff-time-now-btn"
+                      onClick={() =>
+                        setTimeRangeDraft((prev) => ({
+                          ...prev,
+                          endedAt: formatDateTimeInput(Date.now()),
+                        }))
+                      }
+                    >
+                      Lấy giờ hiện tại
+                    </button>
+                  </div>
+                  <Input
+                    id="staff-time-ended-at"
+                    type="datetime-local"
+                    step={1}
+                    min={timeRangeDraft.startedAt}
+                    max={formatDateTimeInput(Date.now())}
+                    value={timeRangeDraft.endedAt}
+                    onChange={(event) =>
+                      setTimeRangeDraft((value) => ({ ...value, endedAt: event.target.value }))
+                    }
+                    className="staff-time-field__input"
+                  />
+                  <small className="staff-time-field__hint">
+                    Điền giờ ra nếu khách đã kết thúc. Để trống nếu bàn vẫn đang tiếp tục chơi.
+                  </small>
+                </label>
               </div>
             </section>
           </div>
@@ -3622,6 +4645,230 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
             Một khoảng tính giờ mới sẽ bắt đầu từ thời điểm xác nhận tiếp tục. Khoảng thời gian chờ
             thanh toán sẽ <strong>không được tính tiền</strong>.
           </p>
+        </div>
+      </Modal>
+      <Modal
+        open={mobileActionsOpen}
+        title="Thao tác khác"
+        footer={null}
+        onCancel={() => setMobileActionsOpen(false)}
+        className="staff-mobile-actions-modal"
+        width={420}
+      >
+        <div className="staff-mobile-actions-body">
+          <div className="staff-mobile-actions-info-card">
+            <div className="staff-mobile-actions-info-row">
+              <span>Mã đơn hàng:</span>
+              <strong style={{ color: '#0975F7', fontFamily: 'monospace' }}>
+                {isNew
+                  ? 'Chưa tạo'
+                  : quote.data?.order.displayCode ||
+                    (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
+              </strong>
+            </div>
+            <div className="staff-mobile-actions-info-row">
+              <span>Thời gian tạo:</span>
+              <strong>{isNew ? 'Bây giờ' : formatDateTime(quote.data?.order.openedAt ?? 0)}</strong>
+            </div>
+            <div className="staff-mobile-actions-info-row">
+              <span>Thu ngân:</span>
+              <strong>
+                {isNew
+                  ? (auth.actor?.displayName ?? 'Nhân viên')
+                  : (quote.data?.order.openedByName ?? auth.actor?.displayName ?? 'Nhân viên')}
+              </strong>
+            </div>
+            <div className="staff-mobile-actions-info-row">
+              <span>Bàn / Khu vực:</span>
+              <strong>
+                {orderType === 'DINE_IN'
+                  ? (quote.data?.order.tableName ?? selectedTable?.name ?? 'Chưa chọn bàn')
+                  : 'Mang đi'}
+              </strong>
+            </div>
+          </div>
+
+          <div className="staff-mobile-actions-buttons">
+            {!isNew && (
+              <>
+                <Button
+                  size="large"
+                  block
+                  icon={<PrinterOutlined />}
+                  onClick={() => {
+                    setMobileActionsOpen(false);
+                    setProvisionalBillOpen(true);
+                  }}
+                >
+                  In phiếu tạm tính
+                </Button>
+
+                {quote.data?.order.orderType === 'DINE_IN' && (
+                  <Button
+                    size="large"
+                    block
+                    icon={<SwapOutlined />}
+                    onClick={() => {
+                      setMobileActionsOpen(false);
+                      setTransferOpen(true);
+                    }}
+                  >
+                    Chuyển bàn/phòng
+                  </Button>
+                )}
+
+                {orderId && (
+                  <Button
+                    size="large"
+                    block
+                    icon={<HistoryOutlined />}
+                    onClick={() => {
+                      setMobileActionsOpen(false);
+                      navigate(`/pos/orders/${orderId}/detail`);
+                    }}
+                  >
+                    Chi tiết & Lịch sử đơn
+                  </Button>
+                )}
+
+                <Button
+                  size="large"
+                  block
+                  icon={<UserOutlined />}
+                  onClick={() => {
+                    setMobileActionsOpen(false);
+                    setGuestModalOpen(true);
+                  }}
+                >
+                  Đổi số lượng khách ({guestCount} khách)
+                </Button>
+
+                <Button
+                  size="large"
+                  block
+                  icon={<UserOutlined />}
+                  onClick={() => {
+                    setMobileActionsOpen(false);
+                    setCustomerModalOpen(true);
+                  }}
+                >
+                  {customerName ? `Khách hàng: ${customerName}` : 'Thêm / Đổi khách hàng'}
+                </Button>
+
+                <Button
+                  danger
+                  size="large"
+                  block
+                  icon={<StopOutlined />}
+                  onClick={() => {
+                    setMobileActionsOpen(false);
+                    setCancelOpen(true);
+                  }}
+                >
+                  Hủy đơn hàng
+                </Button>
+              </>
+            )}
+
+            {isNew && (
+              <Button
+                size="large"
+                block
+                icon={<CloseOutlined />}
+                onClick={() => {
+                  setMobileActionsOpen(false);
+                  handleExit();
+                }}
+              >
+                Hủy tạo đơn & Thoát
+              </Button>
+            )}
+          </div>
+        </div>
+      </Modal>
+      <Modal
+        open={guestModalOpen}
+        title="Số lượng khách"
+        okText="Xác nhận"
+        cancelText="Đóng"
+        onOk={() => {
+          void saveGuestCount(guestCount);
+          setGuestModalOpen(false);
+        }}
+        onCancel={() => setGuestModalOpen(false)}
+        width={360}
+      >
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: 8,
+            margin: '16px 0',
+          }}
+        >
+          {[1, 2, 3, 4, 5, 6, 8, 10].map((num) => (
+            <Button
+              key={num}
+              type={guestCount === num ? 'primary' : 'default'}
+              size="large"
+              onClick={() => {
+                void saveGuestCount(num);
+                setGuestModalOpen(false);
+              }}
+            >
+              {num}
+            </Button>
+          ))}
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <label style={{ display: 'block', marginBottom: 6, fontWeight: 500 }}>
+            Nhập số khách khác:
+          </label>
+          <InputNumber
+            min={1}
+            max={999}
+            value={guestCount}
+            onChange={(val) => val && setGuestCount(val)}
+            style={{ width: '100%' }}
+            size="large"
+          />
+        </div>
+      </Modal>
+      <Modal
+        open={customerModalOpen}
+        title="Thông tin khách hàng"
+        okText="Lưu thông tin"
+        cancelText="Hủy"
+        onOk={() => {
+          void saveCustomerInfo(customerName, customerPhone);
+          setCustomerModalOpen(false);
+        }}
+        onCancel={() => setCustomerModalOpen(false)}
+        width={400}
+      >
+        <div style={{ display: 'grid', gap: 14, paddingTop: 10 }}>
+          <label>
+            <span style={{ fontWeight: 600, display: 'block', marginBottom: 6 }}>
+              Tên khách hàng
+            </span>
+            <Input
+              size="large"
+              placeholder="Nhập tên khách hàng"
+              value={customerName}
+              onChange={(e) => setCustomerName(e.target.value)}
+            />
+          </label>
+          <label>
+            <span style={{ fontWeight: 600, display: 'block', marginBottom: 6 }}>
+              Số điện thoại
+            </span>
+            <Input
+              size="large"
+              placeholder="Nhập số điện thoại"
+              value={customerPhone}
+              onChange={(e) => setCustomerPhone(e.target.value)}
+            />
+          </label>
         </div>
       </Modal>
     </div>
@@ -4341,10 +5588,12 @@ export function StaffPosPortalPage() {
   }
 
   const isInvoice = location.pathname.startsWith('/pos/invoices/');
+  const isDetail =
+    location.pathname.startsWith('/pos/orders/') && location.pathname.endsWith('/detail');
   const isPayment =
     location.pathname.startsWith('/pos/orders/') && location.pathname.endsWith('/payment');
-  const isEditor = location.pathname.startsWith('/pos/orders/') && !isPayment;
-  const isFullScreen = isInvoice || isPayment || isEditor;
+  const isEditor = location.pathname.startsWith('/pos/orders/') && !isPayment && !isDetail;
+  const isFullScreen = isInvoice || isPayment || isEditor || isDetail;
   const active = location.pathname.startsWith('/pos/areas')
     ? 'areas'
     : location.pathname.startsWith('/pos/qr-order')
@@ -4353,6 +5602,7 @@ export function StaffPosPortalPage() {
         ? 'more'
         : 'orders';
 
+  const detailOrderId = isDetail ? location.pathname.split('/')[3] : undefined;
   const paymentOrderId = isPayment ? location.pathname.split('/')[3] : undefined;
 
   return (
@@ -4378,6 +5628,8 @@ export function StaffPosPortalPage() {
         <div className="staff-pos-main">
           {isInvoice ? (
             <InvoicePage />
+          ) : isDetail && detailOrderId ? (
+            <OrderDetailPage orderId={detailOrderId} />
           ) : isPayment && paymentOrderId ? (
             <PaymentPage orderId={paymentOrderId} auth={auth.data} />
           ) : isEditor ? (

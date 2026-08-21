@@ -15,7 +15,7 @@ mediaRoutes.get('/:mediaId', async (c) => {
   const headers = new Headers();
   result.object.writeHttpMetadata(headers);
   headers.set('ETag', result.object.httpEtag);
-  headers.set('Cache-Control', 'private, max-age=300');
+  headers.set('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
   return new Response(result.object.body, { headers });
 });
 

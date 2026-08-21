@@ -185,6 +185,7 @@ export function OwnerInvoicesPage() {
     mutationFn: (targetId: string) =>
       apiRequest<{ deleted: boolean }>(`/api/v1/owner/invoices/${targetId}`, {
         method: 'DELETE',
+        headers: { 'X-CSRF-Token': authQuery.data?.csrfToken ?? '' },
       }),
     onSuccess: () => {
       void messageApi.success('Đã xóa hóa đơn thành công.');

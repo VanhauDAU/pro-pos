@@ -475,5 +475,57 @@ describe('POS Order Detail & Lifecycle Audit (Acceptance Test)', () => {
       limit: 20,
     });
     expect(paidList.results.some((r) => r.orderId === openRes.orderId)).toBe(false);
+
+    await expect(
+      ownerInvoiceService.deleteInvoice({
+        storeId,
+        targetId: openRes.orderId,
+        actorUserId: ownerUserId,
+        requestId: 'req-hard-delete-cancelled-order',
+      }),
+    ).resolves.toMatchObject({ deleted: true, orderId: openRes.orderId });
+    await expect(pos.getOrderDetail(storeId, openRes.orderId)).rejects.toMatchObject({
+      code: 'ORDER_NOT_FOUND',
+    });
+
+    const leftovers = await env.DB.prepare(
+      `SELECT
+         (SELECT COUNT(*) FROM orders WHERE store_id = ? AND id = ?) AS ordersCount,
+         (SELECT COUNT(*) FROM order_items WHERE store_id = ? AND order_id = ?) AS itemsCount,
+         (SELECT COUNT(*) FROM time_sessions WHERE store_id = ? AND order_id = ?) AS sessionsCount,
+         (SELECT COUNT(*) FROM open_table_commands WHERE store_id = ? AND order_id = ?) AS openCommandsCount,
+         (SELECT COUNT(*) FROM add_item_commands WHERE store_id = ? AND order_id = ?) AS addCommandsCount,
+         (SELECT COUNT(*) FROM cancel_order_commands WHERE store_id = ? AND order_id = ?) AS cancelCommandsCount`,
+    )
+      .bind(
+        storeId,
+        openRes.orderId,
+        storeId,
+        openRes.orderId,
+        storeId,
+        openRes.orderId,
+        storeId,
+        openRes.orderId,
+        storeId,
+        openRes.orderId,
+        storeId,
+        openRes.orderId,
+      )
+      .first<Record<string, number>>();
+    expect(leftovers).toEqual({
+      ordersCount: 0,
+      itemsCount: 0,
+      sessionsCount: 0,
+      openCommandsCount: 0,
+      addCommandsCount: 0,
+      cancelCommandsCount: 0,
+    });
+    const deletionAudit = await env.DB.prepare(
+      `SELECT COUNT(*) AS count FROM audit_logs
+       WHERE store_id = ? AND action = 'INVOICE_DELETED' AND request_id = ?`,
+    )
+      .bind(storeId, 'req-hard-delete-cancelled-order')
+      .first<{ count: number }>();
+    expect(deletionAudit?.count).toBe(1);
   });
 });

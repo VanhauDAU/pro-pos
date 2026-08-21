@@ -8,8 +8,7 @@ import {
 } from '@contracts/realtime';
 import { apiRequest } from '@client/lib/api';
 
-export type RealtimeConnectionStatus =
-  'DISABLED' | 'CONNECTING' | 'CONNECTED' | 'RECONNECTING' | 'OFFLINE';
+export type RealtimeConnectionStatus = 'DISABLED' | 'CONNECTING' | 'CONNECTED' | 'RECONNECTING';
 
 const BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 15_000, 30_000];
 
@@ -42,37 +41,16 @@ export class PosRealtimeClient {
 
   start() {
     this.stopped = false;
-    window.addEventListener('online', this.handleOnline);
-    window.addEventListener('offline', this.handleOffline);
-    if (!navigator.onLine) {
-      this.onStatus('OFFLINE');
-      return;
-    }
     this.connect(false);
   }
 
   stop(status: RealtimeConnectionStatus = 'DISABLED') {
     this.stopped = true;
-    window.removeEventListener('online', this.handleOnline);
-    window.removeEventListener('offline', this.handleOffline);
     this.clearTimers();
     this.socket?.close(1000, 'Realtime client stopped');
     this.socket = null;
     this.onStatus(status);
   }
-
-  private readonly handleOnline = () => {
-    if (this.stopped) return;
-    this.reconnectAttempt = 0;
-    this.connect(true);
-  };
-
-  private readonly handleOffline = () => {
-    this.clearTimers();
-    this.socket?.close(1000, 'Browser offline');
-    this.socket = null;
-    this.onStatus('OFFLINE');
-  };
 
   private clearTimers() {
     if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer);
@@ -84,7 +62,7 @@ export class PosRealtimeClient {
   }
 
   private connect(reconnecting: boolean) {
-    if (this.stopped || !navigator.onLine) return;
+    if (this.stopped) return;
     this.clearTimers();
     this.socket?.close();
     this.onStatus(reconnecting ? 'RECONNECTING' : 'CONNECTING');
@@ -118,14 +96,14 @@ export class PosRealtimeClient {
 
     socket.addEventListener('close', (event) => {
       if (this.socket === socket) this.socket = null;
-      if (this.stopped || !navigator.onLine) return;
+      if (this.stopped) return;
       this.scheduleReconnect(event.code === 4401 ? 250 : undefined);
     });
     socket.addEventListener('error', () => socket.close());
   }
 
   private scheduleReconnect(delayOverride?: number) {
-    if (this.stopped || !navigator.onLine || this.reconnectTimer !== null) return;
+    if (this.stopped || this.reconnectTimer !== null) return;
     this.onStatus('RECONNECTING');
     const base =
       delayOverride ?? BACKOFF_MS[Math.min(this.reconnectAttempt, BACKOFF_MS.length - 1)]!;

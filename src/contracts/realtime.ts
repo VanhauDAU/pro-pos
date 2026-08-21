@@ -19,7 +19,8 @@ export type PosRealtimeReason =
   | 'CHECKOUT_RESUMED'
   | 'TABLE_TRANSFERRED'
   | 'CHECKOUT_COMPLETED'
-  | 'CANCELLED';
+  | 'CANCELLED'
+  | 'DELETED';
 
 export interface RealtimeEventV1 {
   schemaVersion: typeof REALTIME_SCHEMA_VERSION;

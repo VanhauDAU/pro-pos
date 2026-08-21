@@ -19,9 +19,6 @@ export class ApiError extends Error {
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method ?? 'GET').toUpperCase();
   const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method);
-  if (isMutation && typeof navigator !== 'undefined' && !navigator.onLine) {
-    throw new Error('Mất kết nối Internet. Thao tác chưa được gửi và không được lưu.');
-  }
   if (isMutation) beginMutation();
   try {
     const requestInit: RequestInit = {

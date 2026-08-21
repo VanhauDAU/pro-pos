@@ -7022,6 +7022,240 @@ body {
   color: #e11d48;
 }
 
+/* ── Staff Weight Input & Stepper (UX Enhanced) ─────────────────────────── */
+.staff-weight-section {
+  margin-top: 16px;
+  padding: 16px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+}
+
+.staff-weight-section__header {
+  margin-bottom: 12px;
+}
+
+.staff-weight-input-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.staff-weight-input-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: #ffffff;
+  border: 2px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 4px 12px;
+  transition: all 0.2s ease;
+}
+
+.staff-weight-input-box:focus-within {
+  border-color: #0877ee;
+  box-shadow: 0 0 0 3px rgba(8, 119, 238, 0.15);
+}
+
+.staff-weight-input-box.has-error {
+  border-color: #ef4444;
+  background: #fff5f5;
+}
+
+.staff-weight-input-field {
+  flex: 1;
+  height: 48px;
+  font-size: 24px;
+  font-weight: 700;
+  color: #0f172a;
+  border: none;
+  background: transparent;
+  outline: none;
+  width: 100%;
+}
+
+.staff-weight-input-unit-badge {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0877ee;
+  background: #eff6ff;
+  padding: 4px 10px;
+  border-radius: 6px;
+  margin-left: 8px;
+  user-select: none;
+}
+
+.staff-weight-input-clear-btn {
+  margin-left: 8px;
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 18px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  transition: color 0.15s ease;
+}
+
+.staff-weight-input-clear-btn:hover {
+  color: #64748b;
+}
+
+.staff-weight-stepper-row {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.staff-weight-adjust-btn {
+  flex: 1;
+  min-width: 52px;
+  height: 36px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.staff-weight-adjust-btn:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+.staff-weight-adjust-btn:active {
+  transform: scale(0.96);
+}
+
+.staff-weight-adjust-btn--add {
+  color: #0877ee;
+  background: #f0f7ff;
+  border-color: #bfdbfe;
+}
+
+.staff-weight-adjust-btn--add:hover {
+  background: #dbeafe;
+  border-color: #93c5fd;
+  color: #0256b6;
+}
+
+.staff-weight-error-alert {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ef4444;
+  margin-top: 6px;
+}
+
+.staff-weight-presets-wrap {
+  margin-top: 14px;
+}
+
+.staff-weight-presets-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.staff-weight-presets-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.staff-weight-preset-chip {
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #334155;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.staff-weight-preset-chip:hover {
+  border-color: #93c5fd;
+  background: #f0f9ff;
+  color: #0877ee;
+}
+
+.staff-weight-preset-chip.is-active {
+  background: #0877ee;
+  color: #ffffff;
+  border-color: #0877ee;
+  box-shadow: 0 2px 6px rgba(8, 119, 238, 0.3);
+}
+
+.staff-weight-calc-summary {
+  margin-top: 14px;
+  padding: 10px 12px;
+  background: #ffffff;
+  border-radius: 8px;
+  border: 1px dashed #cbd5e1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.staff-weight-calc-formula {
+  font-size: 13px;
+  color: #475569;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.staff-weight-calc-qty {
+  font-weight: 700;
+  color: #0877ee;
+}
+
+.staff-weight-calc-cross {
+  color: #94a3b8;
+}
+
+.staff-weight-calc-rate {
+  color: #64748b;
+}
+
+.staff-weight-calc-empty {
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.staff-weight-calc-result {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 15px;
+}
+
+.staff-weight-calc-equals {
+  color: #94a3b8;
+}
+
+.staff-weight-calc-total {
+  font-size: 16px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
 .staff-item-modal__footer {
   margin-top: 10px;
   padding-top: 18px;
@@ -7104,6 +7338,25 @@ body {
   background: #ff4d4f !important;
   color: #fff !important;
   border-color: #ff4d4f !important;
+}
+
+.staff-item-modal__cancel-action-btn {
+  height: 48px !important;
+  border-radius: 10px !important;
+  font-size: 16px !important;
+  font-weight: 600 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border: 1px solid #cbd5e1 !important;
+  background: #f8fafc !important;
+  color: #475569 !important;
+}
+
+.staff-item-modal__cancel-action-btn:hover {
+  background: #f1f5f9 !important;
+  color: #0f172a !important;
+  border-color: #94a3b8 !important;
 }
 
 .staff-item-modal__save-btn {

@@ -51,7 +51,6 @@ export function useRealtime() {
 
 export function usePosPollingInterval(fallbackMs: number): number | false {
   const { status } = useRealtime();
-  if (status === 'OFFLINE') return false;
   if (status === 'CONNECTED') return 60_000;
   return fallbackMs;
 }

@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { success } from '@server/lib/response';
 import { requireActor } from '@server/middleware/authorization';
 import { OwnerInvoiceService } from '@server/services/owner-invoice-service';
+import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
 import type { AppEnv } from '@server/types';
 
 const ownerInvoiceRoutes = new Hono<AppEnv>();
@@ -72,6 +73,10 @@ ownerInvoiceRoutes.delete('/:id', async (c) => {
     actorUserId: actor.id,
     requestId,
   });
+
+  c.executionCtx.waitUntil(
+    new RealtimeDispatcher(c.env).dispatchStore(storeId).catch(() => undefined),
+  );
 
   return success(c, result);
 });

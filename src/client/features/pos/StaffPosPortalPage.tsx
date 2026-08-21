@@ -3,6 +3,7 @@ import {
   CheckCircleOutlined,
   CheckOutlined,
   ClockCircleOutlined,
+  CloseCircleFilled,
   CloseCircleOutlined,
   CloseOutlined,
   CopyOutlined,
@@ -60,7 +61,7 @@ import {
 } from 'antd';
 import type { MenuProps } from 'antd';
 import * as React from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
@@ -529,24 +530,14 @@ function StaffHeader({
         {searchSlot ? <div className="staff-pos-header__search">{searchSlot}</div> : null}
       </div>
       <Tag
-        color={
-          status === 'CONNECTED'
-            ? 'success'
-            : status === 'OFFLINE'
-              ? 'error'
-              : status === 'DISABLED'
-                ? 'default'
-                : 'warning'
-        }
+        color={status === 'CONNECTED' ? 'success' : status === 'DISABLED' ? 'default' : 'warning'}
         style={{ marginLeft: 'auto', marginRight: 8 }}
       >
         {status === 'CONNECTED'
           ? 'Đồng bộ trực tiếp'
-          : status === 'OFFLINE'
-            ? 'Mất mạng — không thể lưu'
-            : status === 'DISABLED'
-              ? 'Cập nhật định kỳ'
-              : 'Đang kết nối lại'}
+          : status === 'DISABLED'
+            ? 'Cập nhật định kỳ'
+            : 'Đang kết nối lại'}
       </Tag>
       <Dropdown
         menu={{ items: menuItems }}
@@ -1415,6 +1406,220 @@ function StaffItemDetailModal({
   );
 }
 
+function WeightInputSection({
+  unitName,
+  unitPriceVnd,
+  quantityMilli,
+  onChangeQuantityMilli,
+  grossTotal,
+}: {
+  unitName?: string | null;
+  unitPriceVnd: number;
+  quantityMilli: number;
+  onChangeQuantityMilli: (milli: number) => void;
+  grossTotal: number;
+}) {
+  const unit = getWeightUnit(unitName);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Buffer input as text so typing "0.", "1,", "0.5" works smoothly without premature clamping or jumping
+  const [inputText, setInputText] = useState<string>(() => {
+    const qty = quantityMilli / 1000;
+    return qty > 0 ? qty.toString() : '';
+  });
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Auto focus & select text when mounted so user can immediately type without backspacing
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (inputRef.current) {
+        inputRef.current.focus();
+        inputRef.current.select();
+      }
+    }, 80);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const handleInputChange = (raw: string) => {
+    // Only allow digits, comma, period
+    const cleaned = raw.replace(/[^\d.,]/g, '');
+    setInputText(cleaned);
+
+    const normalized = cleaned.replace(',', '.');
+    if (!normalized || normalized === '.') {
+      setErrorMsg('Vui lòng nhập trọng lượng');
+      onChangeQuantityMilli(0);
+      return;
+    }
+
+    const val = parseFloat(normalized);
+    if (isNaN(val) || val <= 0) {
+      setErrorMsg('Trọng lượng phải lớn hơn 0');
+      onChangeQuantityMilli(0);
+    } else if (val > 9999.999) {
+      setErrorMsg('Trọng lượng vượt quá giới hạn (tối đa 9.999)');
+      onChangeQuantityMilli(0);
+    } else {
+      setErrorMsg(null);
+      onChangeQuantityMilli(Math.round(val * 1000));
+    }
+  };
+
+  const handleApplyPreset = (presetVal: number) => {
+    setInputText(presetVal.toString());
+    setErrorMsg(null);
+    onChangeQuantityMilli(Math.round(presetVal * 1000));
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  };
+
+  const handleAdjust = (delta: number) => {
+    const currentVal = quantityMilli / 1000;
+    const newVal = Math.max(0.001, Math.round((currentVal + delta) * 1000) / 1000);
+    setInputText(newVal.toString());
+    setErrorMsg(null);
+    onChangeQuantityMilli(Math.round(newVal * 1000));
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  };
+
+  const isKg = unit.toLowerCase() === 'kg';
+  const presets = isKg ? [0.1, 0.2, 0.5, 1, 1.5, 2, 3, 5] : [50, 100, 200, 500, 1000];
+
+  return (
+    <div className="staff-weight-section">
+      <div className="staff-weight-section__header">
+        <div className="staff-item-modal__section-title">Trọng lượng ({unit})</div>
+        <div className="staff-item-modal__section-subtitle">
+          Nhập trực tiếp hoặc bấm chọn nhanh mức cân bên dưới
+        </div>
+      </div>
+
+      {/* Main Large Input */}
+      <div className="staff-weight-input-wrapper">
+        <div className={`staff-weight-input-box ${errorMsg ? 'has-error' : ''}`}>
+          <input
+            ref={inputRef}
+            type="text"
+            inputMode="decimal"
+            className="staff-weight-input-field"
+            value={inputText}
+            placeholder="0.000"
+            onChange={(e) => handleInputChange(e.target.value)}
+            onFocus={(e) => e.target.select()}
+          />
+          <span className="staff-weight-input-unit-badge">{unit}</span>
+          {inputText ? (
+            <button
+              type="button"
+              className="staff-weight-input-clear-btn"
+              onClick={() => {
+                setInputText('');
+                setErrorMsg('Vui lòng nhập trọng lượng');
+                onChangeQuantityMilli(0);
+                inputRef.current?.focus();
+              }}
+              title="Xóa nhập lại"
+            >
+              <CloseCircleFilled />
+            </button>
+          ) : null}
+        </div>
+
+        {/* Stepper adjustment buttons */}
+        <div className="staff-weight-stepper-row">
+          <button
+            type="button"
+            className="staff-weight-adjust-btn"
+            onClick={() => handleAdjust(-0.5)}
+            title="Giảm 0.5"
+          >
+            -0.5
+          </button>
+          <button
+            type="button"
+            className="staff-weight-adjust-btn"
+            onClick={() => handleAdjust(-0.1)}
+            title="Giảm 0.1"
+          >
+            -0.1
+          </button>
+          <button
+            type="button"
+            className="staff-weight-adjust-btn staff-weight-adjust-btn--add"
+            onClick={() => handleAdjust(0.1)}
+            title="Tăng 0.1"
+          >
+            +0.1
+          </button>
+          <button
+            type="button"
+            className="staff-weight-adjust-btn staff-weight-adjust-btn--add"
+            onClick={() => handleAdjust(0.5)}
+            title="Tăng 0.5"
+          >
+            +0.5
+          </button>
+          <button
+            type="button"
+            className="staff-weight-adjust-btn staff-weight-adjust-btn--add"
+            onClick={() => handleAdjust(1.0)}
+            title="Tăng 1.0"
+          >
+            +1.0
+          </button>
+        </div>
+      </div>
+
+      {errorMsg ? <div className="staff-weight-error-alert">{errorMsg}</div> : null}
+
+      {/* Quick Presets */}
+      <div className="staff-weight-presets-wrap">
+        <div className="staff-weight-presets-label">Mức cân nhanh:</div>
+        <div className="staff-weight-presets-list">
+          {presets.map((p) => {
+            const isSelected = Math.abs(quantityMilli / 1000 - p) < 0.0001;
+            return (
+              <button
+                key={p}
+                type="button"
+                className={`staff-weight-preset-chip ${isSelected ? 'is-active' : ''}`}
+                onClick={() => handleApplyPreset(p)}
+              >
+                {p} {unit}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Live Calculation Preview Banner */}
+      <div className="staff-weight-calc-summary">
+        <div className="staff-weight-calc-formula">
+          {quantityMilli > 0 ? (
+            <>
+              <span className="staff-weight-calc-qty">
+                {(quantityMilli / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 3 })}{' '}
+                {unit}
+              </span>
+              <span className="staff-weight-calc-cross">×</span>
+              <span className="staff-weight-calc-rate">
+                {formatMoney(unitPriceVnd)}/{unit}
+              </span>
+            </>
+          ) : (
+            <span className="staff-weight-calc-empty">Chưa có trọng lượng</span>
+          )}
+        </div>
+        <div className="staff-weight-calc-result">
+          <span className="staff-weight-calc-equals">=</span>
+          <strong className="staff-weight-calc-total">{formatMoney(grossTotal)}</strong>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function OrderItemDetailModal({
   item,
   product,
@@ -1452,6 +1657,11 @@ function OrderItemDetailModal({
   const netTotal = grossTotal - discountAmount;
 
   const handleSave = () => {
+    if (item.productType === 'WEIGHT' && itemQuantityMilli <= 0) {
+      message.warning('Vui lòng nhập trọng lượng lớn hơn 0');
+      return;
+    }
+
     const saveDiscountAmount = calculateDiscountAmount(grossTotal, discountType, discountValue);
     const saveNetTotal = grossTotal - saveDiscountAmount;
 
@@ -1476,6 +1686,8 @@ function OrderItemDetailModal({
       currentVariant,
     );
   };
+
+  const isNewPick = Boolean(item.discardOnCancel);
 
   return (
     <Modal
@@ -1542,6 +1754,17 @@ function OrderItemDetailModal({
             })}
           </div>
         </div>
+
+        {/* Dedicated Weight Input Section for WEIGHT items */}
+        {item.productType === 'WEIGHT' ? (
+          <WeightInputSection
+            unitName={item.unitName}
+            unitPriceVnd={unitPriceVnd}
+            quantityMilli={itemQuantityMilli}
+            onChangeQuantityMilli={setItemQuantityMilli}
+            grossTotal={grossTotal}
+          />
+        ) : null}
 
         <div className="staff-item-modal__section">
           <div className="staff-item-modal__section-title">Ghi chú</div>
@@ -1615,23 +1838,13 @@ function OrderItemDetailModal({
         <div className="staff-item-modal__footer">
           <div className="staff-item-modal__qty-row">
             <span className="staff-item-modal__qty-label">
-              {item.productType === 'WEIGHT'
-                ? `Trọng lượng (${getWeightUnit(item.unitName)})`
-                : 'Số lượng'}
+              {item.productType === 'WEIGHT' ? `Tổng trọng lượng:` : 'Số lượng:'}
             </span>
             {item.productType === 'WEIGHT' ? (
-              <InputNumber
-                min={0.001}
-                step={0.001}
-                precision={3}
-                decimalSeparator=","
-                value={itemQuantityMilli / 1000}
-                onChange={(val) =>
-                  setItemQuantityMilli(Math.max(1, Math.round(Number(val ?? 0) * 1000)))
-                }
-                suffix={getWeightUnit(item.unitName)}
-                style={{ width: 140 }}
-              />
+              <span style={{ fontSize: 16, fontWeight: 700, color: '#0877ee' }}>
+                {(itemQuantityMilli / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 3 })}{' '}
+                {getWeightUnit(item.unitName)}
+              </span>
             ) : (
               <div className="staff-item-modal__stepper">
                 <button
@@ -1655,22 +1868,33 @@ function OrderItemDetailModal({
           </div>
 
           <div className="staff-item-modal__actions">
-            <Button
-              danger
-              size="large"
-              icon={<DeleteOutlined />}
-              className="staff-item-modal__delete-action-btn"
-              onClick={onDelete}
-            >
-              Xóa
-            </Button>
+            {isNewPick ? (
+              <Button
+                size="large"
+                className="staff-item-modal__cancel-action-btn"
+                onClick={onCancel}
+              >
+                Hủy
+              </Button>
+            ) : (
+              <Button
+                danger
+                size="large"
+                icon={<DeleteOutlined />}
+                className="staff-item-modal__delete-action-btn"
+                onClick={onDelete}
+              >
+                {item.source === 'SAVED' ? 'Xóa món' : 'Xóa khỏi giỏ'}
+              </Button>
+            )}
             <Button
               type="primary"
               size="large"
               className="staff-item-modal__save-btn"
+              disabled={item.productType === 'WEIGHT' && itemQuantityMilli <= 0}
               onClick={handleSave}
             >
-              Lưu
+              {isNewPick ? 'Thêm vào đơn' : 'Lưu'}
             </Button>
           </div>
         </div>
@@ -4137,6 +4361,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           min={0}
           step={1000}
           value={promptPrice}
+          onFocus={(e) => e.target.select()}
           formatter={(value) => `${value ?? ''}`.replace(/\B(?=(\d{3})+(?!\d))/gu, '.')}
           parser={(value) => Number((value ?? '').replaceAll('.', ''))}
           onChange={(value) => setPromptPrice(value === null ? null : Number(value))}
@@ -4234,6 +4459,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         }}
         onDelete={() => {
           if (!editingItem) return;
+          if (editingItem.discardOnCancel || editingItem.source === 'DRAFT') {
+            setDraftLines((lines) => lines.filter((line) => line.id !== editingItem.id));
+            setEditingItem(null);
+            return;
+          }
           setDeleteItemTarget({
             id: editingItem.id,
             name: editingItem.productName,

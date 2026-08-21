@@ -37,27 +37,19 @@ async function createTakeaway(commandId: string, orderId: string, now: number) {
 }
 
 describe('POS realtime outbox', () => {
-  it('keeps realtime disabled by default and emits ordered events once enabled', async () => {
+  it('enables realtime by default and emits ordered events', async () => {
     const repository = new RealtimeRepository(env.DB);
     const now = Date.now();
-    await createTakeaway('command-disabled', '20000000-0000-4000-8000-000000000001', now);
-    expect(await repository.sync(storeId, 0)).toMatchObject({ mode: 'REPLAY', toSequence: 0 });
-
-    await env.DB.prepare(
-      `INSERT INTO store_capabilities (store_id, capability, enabled, updated_at)
-       VALUES (?, 'POS_REALTIME', 1, ?)`,
-    )
-      .bind(storeId, now)
-      .run();
+    expect(await repository.isEnabled(storeId)).toBe(true);
     const orderId = '20000000-0000-4000-8000-000000000002';
-    await createTakeaway('command-create', orderId, now + 1);
+    await createTakeaway('command-create', orderId, now);
     await env.DB.prepare(
       `INSERT INTO update_order_note_commands (
         id, store_id, order_type, order_id, expected_order_version, note,
         actor_user_id, request_id, issued_at
       ) VALUES ('command-note', ?, 'TAKEAWAY', ?, 1, 'updated', ?, 'request-note', ?)`,
     )
-      .bind(storeId, orderId, userId, now + 2)
+      .bind(storeId, orderId, userId, now + 1)
       .run();
 
     const sync = await repository.sync(storeId, 0);
@@ -79,21 +71,28 @@ describe('POS realtime outbox', () => {
           actor_user_id, request_id, issued_at
         ) VALUES ('command-conflict', ?, 'TAKEAWAY', ?, 1, 'stale', ?, 'request-conflict', ?)`,
       )
-        .bind(storeId, orderId, userId, now + 3)
+        .bind(storeId, orderId, userId, now + 2)
         .run(),
     ).rejects.toThrow('ORDER_VERSION_CONFLICT');
     const afterConflict = await repository.sync(storeId, 0);
     expect(afterConflict).toMatchObject({ mode: 'REPLAY', toSequence: 2 });
   });
 
-  it('requests full sync for a cursor ahead of the store sequence', async () => {
+  it('supports explicitly disabling realtime as a kill switch', async () => {
     const repository = new RealtimeRepository(env.DB);
     await env.DB.prepare(
-      `INSERT INTO store_capabilities (store_id, capability, enabled, updated_at)
-       VALUES (?, 'POS_REALTIME', 1, ?)`,
+      `UPDATE store_capabilities SET enabled = 0, updated_at = ?
+       WHERE store_id = ? AND capability = 'POS_REALTIME'`,
     )
-      .bind(storeId, Date.now())
+      .bind(Date.now(), storeId)
       .run();
+    expect(await repository.isEnabled(storeId)).toBe(false);
+    await createTakeaway('command-disabled', '20000000-0000-4000-8000-000000000001', Date.now());
+    expect(await repository.sync(storeId, 0)).toMatchObject({ mode: 'REPLAY', toSequence: 0 });
+  });
+
+  it('requests full sync for a cursor ahead of the store sequence', async () => {
+    const repository = new RealtimeRepository(env.DB);
     await createTakeaway('command-cursor', '20000000-0000-4000-8000-000000000003', Date.now());
     await expect(repository.sync(storeId, 99)).resolves.toMatchObject({
       mode: 'FULL_SYNC',
@@ -104,12 +103,6 @@ describe('POS realtime outbox', () => {
 
   it('requests full sync when retained events no longer cover the cursor', async () => {
     const repository = new RealtimeRepository(env.DB);
-    await env.DB.prepare(
-      `INSERT INTO store_capabilities (store_id, capability, enabled, updated_at)
-       VALUES (?, 'POS_REALTIME', 1, ?)`,
-    )
-      .bind(storeId, Date.now())
-      .run();
     await createTakeaway('command-expired', '20000000-0000-4000-8000-000000000004', Date.now());
     await env.DB.prepare('DELETE FROM realtime_events WHERE store_id = ?').bind(storeId).run();
     await expect(repository.sync(storeId, 0)).resolves.toMatchObject({

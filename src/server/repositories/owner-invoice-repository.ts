@@ -34,89 +34,194 @@ export class OwnerInvoiceRepository {
   constructor(private readonly db: D1Database) {}
 
   async listInvoices(filter: InvoiceFilter) {
-    // -- Per-table WHERE conditions and params --
-    const dineInWhere: string[] = ['i.store_id = ?'];
-    const dineInParams: (string | number)[] = [filter.storeId];
+    const queries: { sql: string; params: (string | number)[] }[] = [];
 
-    const takeawayWhere: string[] = ['i.store_id = ?'];
-    const takeawayParams: (string | number)[] = [filter.storeId];
+    // Helper for date params
+    const fromMs = filter.dateFrom ? new Date(filter.dateFrom).getTime() : null;
+    const toMs = filter.dateTo ? new Date(filter.dateTo).getTime() + 86_400_000 - 1 : null;
 
-    // Status filter — DB values are 'COMPLETED' / 'CANCELLED'
-    if (filter.status === 'PAID') {
-      dineInWhere.push(`i.status = 'COMPLETED'`);
-      takeawayWhere.push(`i.status = 'COMPLETED'`);
-    } else if (filter.status === 'CANCELLED') {
-      dineInWhere.push(`i.status = 'CANCELLED'`);
-      takeawayWhere.push(`i.status = 'CANCELLED'`);
+    const includePaid = filter.status === 'PAID' || !filter.status;
+    const includeCancelled = filter.status === 'CANCELLED' || !filter.status;
+    const includeDineIn = filter.orderType === 'DINE_IN' || !filter.orderType;
+    const includeTakeaway = filter.orderType === 'TAKEAWAY' || !filter.orderType;
+
+    // 1. DINE_IN PAID Invoices
+    if (includePaid && includeDineIn) {
+      const where = ['i.store_id = ?', `i.status = 'COMPLETED'`];
+      const params: (string | number)[] = [filter.storeId];
+
+      if (fromMs !== null) {
+        where.push('i.issued_at >= ?');
+        params.push(fromMs);
+      }
+      if (toMs !== null) {
+        where.push('i.issued_at <= ?');
+        params.push(toMs);
+      }
+      if (filter.search) {
+        where.push('i.display_code LIKE ?');
+        params.push(`%${filter.search}%`);
+      }
+
+      queries.push({
+        sql: `
+          SELECT i.id, i.order_id AS orderId,
+                 COALESCE(i.display_code, o.display_code, 'H' || strftime('%y%m%d', i.issued_at / 1000, 'unixepoch') || '-' || substr(i.id, 1, 4)) AS displayCode,
+                 i.subtotal, i.discount_total AS discountTotal, i.total,
+                 i.status, i.issued_at AS issuedAt,
+                 'DINE_IN' AS orderType,
+                 p.method, p.cash_received AS cashReceived, p.cash_change AS cashChange,
+                 u.display_name AS actorName,
+                 COALESCE(st.display_name, st.name) AS tableName,
+                 a.name AS areaName
+          FROM invoices i
+          LEFT JOIN payments p ON p.store_id = i.store_id AND p.order_id = i.order_id AND p.status = 'SUCCEEDED'
+          LEFT JOIN users u ON u.id = i.issued_by
+          LEFT JOIN orders o ON o.id = i.order_id AND o.store_id = i.store_id
+          LEFT JOIN service_tables st ON st.id = o.table_id
+          LEFT JOIN areas a ON a.id = st.area_id
+          WHERE ${where.join(' AND ')}
+        `,
+        params,
+      });
     }
 
-    // Date range filter (issued_at is epoch milliseconds)
-    if (filter.dateFrom) {
-      const fromMs = new Date(filter.dateFrom).getTime();
-      dineInWhere.push('i.issued_at >= ?');
-      dineInParams.push(fromMs);
-      takeawayWhere.push('i.issued_at >= ?');
-      takeawayParams.push(fromMs);
+    // 2. TAKEAWAY PAID Invoices
+    if (includePaid && includeTakeaway) {
+      const where = ['i.store_id = ?', `i.status = 'COMPLETED'`];
+      const params: (string | number)[] = [filter.storeId];
+
+      if (fromMs !== null) {
+        where.push('i.issued_at >= ?');
+        params.push(fromMs);
+      }
+      if (toMs !== null) {
+        where.push('i.issued_at <= ?');
+        params.push(toMs);
+      }
+      if (filter.search) {
+        where.push('i.display_code LIKE ?');
+        params.push(`%${filter.search}%`);
+      }
+
+      queries.push({
+        sql: `
+          SELECT i.id, i.order_id AS orderId,
+                 COALESCE(i.display_code, 'H' || strftime('%y%m%d', i.issued_at / 1000, 'unixepoch') || '-' || substr(i.id, 1, 4)) AS displayCode,
+                 i.subtotal, i.discount_total AS discountTotal, i.total,
+                 i.status, i.issued_at AS issuedAt,
+                 'TAKEAWAY' AS orderType,
+                 p.method, p.cash_received AS cashReceived, p.cash_change AS cashChange,
+                 u.display_name AS actorName,
+                 NULL AS tableName,
+                 NULL AS areaName
+          FROM takeaway_invoices i
+          LEFT JOIN takeaway_payments p ON p.store_id = i.store_id AND p.order_id = i.order_id AND p.status = 'SUCCEEDED'
+          LEFT JOIN users u ON u.id = i.issued_by
+          WHERE ${where.join(' AND ')}
+        `,
+        params,
+      });
     }
-    if (filter.dateTo) {
-      const toMs = new Date(filter.dateTo).getTime() + 86_400_000 - 1; // end of day
-      dineInWhere.push('i.issued_at <= ?');
-      dineInParams.push(toMs);
-      takeawayWhere.push('i.issued_at <= ?');
-      takeawayParams.push(toMs);
+
+    // 3. DINE_IN CANCELLED Orders
+    if (includeCancelled && includeDineIn) {
+      const where = ['o.store_id = ?', `o.status = 'CANCELLED'`];
+      const params: (string | number)[] = [filter.storeId];
+
+      if (fromMs !== null) {
+        where.push('COALESCE(o.cancelled_at, o.updated_at, o.opened_at) >= ?');
+        params.push(fromMs);
+      }
+      if (toMs !== null) {
+        where.push('COALESCE(o.cancelled_at, o.updated_at, o.opened_at) <= ?');
+        params.push(toMs);
+      }
+      if (filter.search) {
+        where.push('o.display_code LIKE ?');
+        params.push(`%${filter.search}%`);
+      }
+
+      queries.push({
+        sql: `
+          SELECT o.id, o.id AS orderId,
+                 COALESCE(o.display_code, 'D' || strftime('%y%m%d', o.opened_at / 1000, 'unixepoch') || '-' || substr(o.id, 1, 4)) AS displayCode,
+                 COALESCE((SELECT SUM(line_total) FROM order_items WHERE store_id = o.store_id AND order_id = o.id), 0) AS subtotal,
+                 COALESCE((SELECT SUM(discount_value) FROM order_items WHERE store_id = o.store_id AND order_id = o.id), 0) AS discountTotal,
+                 COALESCE((SELECT SUM(line_total) FROM order_items WHERE store_id = o.store_id AND order_id = o.id), 0) AS total,
+                 'CANCELLED' AS status,
+                 COALESCE(o.cancelled_at, o.updated_at, o.opened_at) AS issuedAt,
+                 'DINE_IN' AS orderType,
+                 NULL AS method,
+                 NULL AS cashReceived,
+                 NULL AS cashChange,
+                 COALESCE(u_cancel.display_name, u_open.display_name) AS actorName,
+                 COALESCE(st.display_name, st.name) AS tableName,
+                 a.name AS areaName
+          FROM orders o
+          LEFT JOIN service_tables st ON st.id = o.table_id
+          LEFT JOIN areas a ON a.id = st.area_id
+          LEFT JOIN cancel_order_commands coc ON coc.store_id = o.store_id AND coc.order_id = o.id
+          LEFT JOIN users u_cancel ON u_cancel.id = coc.actor_user_id
+          LEFT JOIN users u_open ON u_open.id = o.opened_by
+          WHERE ${where.join(' AND ')}
+        `,
+        params,
+      });
     }
 
-    // Search: match displayCode
-    if (filter.search) {
-      dineInWhere.push('i.display_code LIKE ?');
-      dineInParams.push(`%${filter.search}%`);
-      takeawayWhere.push('i.display_code LIKE ?');
-      takeawayParams.push(`%${filter.search}%`);
+    // 4. TAKEAWAY CANCELLED Orders
+    if (includeCancelled && includeTakeaway) {
+      const where = ['o.store_id = ?', `o.status = 'CANCELLED'`];
+      const params: (string | number)[] = [filter.storeId];
+
+      if (fromMs !== null) {
+        where.push('COALESCE(o.cancelled_at, o.updated_at, o.opened_at) >= ?');
+        params.push(fromMs);
+      }
+      if (toMs !== null) {
+        where.push('COALESCE(o.cancelled_at, o.updated_at, o.opened_at) <= ?');
+        params.push(toMs);
+      }
+      if (filter.search) {
+        where.push('o.display_code LIKE ?');
+        params.push(`%${filter.search}%`);
+      }
+
+      queries.push({
+        sql: `
+          SELECT o.id, o.id AS orderId,
+                 COALESCE(o.display_code, 'D' || strftime('%y%m%d', o.opened_at / 1000, 'unixepoch') || '-' || substr(o.id, 1, 4)) AS displayCode,
+                 COALESCE((SELECT SUM(gross_line_total) FROM takeaway_order_items WHERE store_id = o.store_id AND order_id = o.id), 0) AS subtotal,
+                 COALESCE((SELECT SUM(discount_amount) FROM takeaway_order_items WHERE store_id = o.store_id AND order_id = o.id), 0) AS discountTotal,
+                 COALESCE((SELECT SUM(net_line_total) FROM takeaway_order_items WHERE store_id = o.store_id AND order_id = o.id), 0) AS total,
+                 'CANCELLED' AS status,
+                 COALESCE(o.cancelled_at, o.updated_at, o.opened_at) AS issuedAt,
+                 'TAKEAWAY' AS orderType,
+                 NULL AS method,
+                 NULL AS cashReceived,
+                 NULL AS cashChange,
+                 COALESCE(u_cancel.display_name, u_open.display_name) AS actorName,
+                 NULL AS tableName,
+                 NULL AS areaName
+          FROM takeaway_orders o
+          LEFT JOIN cancel_takeaway_order_commands coc ON coc.store_id = o.store_id AND coc.order_id = o.id
+          LEFT JOIN users u_cancel ON u_cancel.id = coc.actor_user_id
+          LEFT JOIN users u_open ON u_open.id = o.opened_by
+          WHERE ${where.join(' AND ')}
+        `,
+        params,
+      });
     }
 
-    const offset = (filter.page - 1) * filter.limit;
+    if (queries.length === 0) {
+      return {
+        results: [],
+        total: 0,
+      };
+    }
 
-    // -- SELECT for DINE_IN invoices --
-    // Tables: invoices, payments, users, orders, service_tables, areas
-    // issued_by column holds the user id (not actor_user_id)
-    const dineInSelect = `
-      SELECT i.id, i.order_id AS orderId,
-             i.display_code AS displayCode,
-             i.subtotal, i.discount_total AS discountTotal, i.total,
-             i.status, i.issued_at AS issuedAt,
-             'DINE_IN' AS orderType,
-             p.method, p.cash_received AS cashReceived, p.cash_change AS cashChange,
-             u.display_name AS actorName,
-             COALESCE(st.display_name, st.name) AS tableName,
-             a.name AS areaName
-      FROM invoices i
-      LEFT JOIN payments p ON p.store_id = i.store_id AND p.order_id = i.order_id AND p.status = 'SUCCEEDED'
-      LEFT JOIN users u ON u.id = i.issued_by
-      LEFT JOIN orders o ON o.id = i.order_id AND o.store_id = i.store_id
-      LEFT JOIN service_tables st ON st.id = o.table_id
-      LEFT JOIN areas a ON a.id = st.area_id
-      WHERE ${dineInWhere.join(' AND ')}
-    `;
-
-    // -- SELECT for TAKEAWAY invoices --
-    // Tables: takeaway_invoices, takeaway_payments, users
-    const takeawaySelect = `
-      SELECT i.id, i.order_id AS orderId,
-             i.display_code AS displayCode,
-             i.subtotal, i.discount_total AS discountTotal, i.total,
-             i.status, i.issued_at AS issuedAt,
-             'TAKEAWAY' AS orderType,
-             p.method, p.cash_received AS cashReceived, p.cash_change AS cashChange,
-             u.display_name AS actorName,
-             NULL AS tableName,
-             NULL AS areaName
-      FROM takeaway_invoices i
-      LEFT JOIN takeaway_payments p ON p.store_id = i.store_id AND p.order_id = i.order_id AND p.status = 'SUCCEEDED'
-      LEFT JOIN users u ON u.id = i.issued_by
-      WHERE ${takeawayWhere.join(' AND ')}
-    `;
-
-    // -- Outer WHERE for method filter (post-union) --
+    // Outer filter for method (e.g. CASH / BANK_TRANSFER)
     const outerFilters: string[] = [];
     const outerParams: (string | number)[] = [];
     if (filter.method) {
@@ -125,41 +230,17 @@ export class OwnerInvoiceRepository {
     }
     const outerWhere = outerFilters.length ? `WHERE ${outerFilters.join(' AND ')}` : '';
 
-    // -- Build final union query based on orderType filter --
-    let unionQuery: string;
-    let countQuery: string;
-    let allParams: (string | number)[];
-    let countParams: (string | number)[];
+    const combinedSql = queries.map((q) => q.sql).join(' UNION ALL ');
+    const combinedParams = queries.flatMap((q) => q.params);
 
-    if (filter.orderType === 'DINE_IN') {
-      const base = `SELECT * FROM (${dineInSelect}) sub ${outerWhere}`;
-      unionQuery = `${base} ORDER BY issuedAt DESC LIMIT ? OFFSET ?`;
-      countQuery = `SELECT COUNT(*) AS total FROM (${dineInSelect}) sub ${outerWhere}`;
-      allParams = [...dineInParams, ...outerParams, filter.limit, offset];
-      countParams = [...dineInParams, ...outerParams];
-    } else if (filter.orderType === 'TAKEAWAY') {
-      const base = `SELECT * FROM (${takeawaySelect}) sub ${outerWhere}`;
-      unionQuery = `${base} ORDER BY issuedAt DESC LIMIT ? OFFSET ?`;
-      countQuery = `SELECT COUNT(*) AS total FROM (${takeawaySelect}) sub ${outerWhere}`;
-      allParams = [...takeawayParams, ...outerParams, filter.limit, offset];
-      countParams = [...takeawayParams, ...outerParams];
-    } else {
-      const base = `
-        SELECT * FROM (
-          ${dineInSelect}
-          UNION ALL
-          ${takeawaySelect}
-        ) sub ${outerWhere}
-      `;
-      unionQuery = `${base} ORDER BY issuedAt DESC LIMIT ? OFFSET ?`;
-      countQuery = `SELECT COUNT(*) AS total FROM (
-        ${dineInSelect}
-        UNION ALL
-        ${takeawaySelect}
-      ) sub ${outerWhere}`;
-      allParams = [...dineInParams, ...takeawayParams, ...outerParams, filter.limit, offset];
-      countParams = [...dineInParams, ...takeawayParams, ...outerParams];
-    }
+    const offset = (filter.page - 1) * filter.limit;
+
+    const baseQuery = `SELECT * FROM (${combinedSql}) sub ${outerWhere}`;
+    const unionQuery = `${baseQuery} ORDER BY issuedAt DESC LIMIT ? OFFSET ?`;
+    const countQuery = `SELECT COUNT(*) AS total FROM (${combinedSql}) sub ${outerWhere}`;
+
+    const allParams = [...combinedParams, ...outerParams, filter.limit, offset];
+    const countParams = [...combinedParams, ...outerParams];
 
     const [rows, countResult] = await Promise.all([
       this.db

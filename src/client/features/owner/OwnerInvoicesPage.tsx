@@ -2,6 +2,7 @@ import {
   CheckCircleOutlined,
   CloseCircleOutlined,
   DownloadOutlined,
+  EyeOutlined,
   FilterOutlined,
   FileTextOutlined,
   ReloadOutlined,
@@ -35,6 +36,7 @@ import { useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 
 import { apiRequest } from '@client/lib/api';
+import { OrderDetailPage } from '@client/features/pos/OrderDetailPage';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -131,7 +133,7 @@ function orderTypeTag(type: OrderType) {
 const ALL_OPTIONAL_COLUMNS: ColumnConfig[] = [
   { key: 'orderType', label: 'Loại hình', visible: true },
   { key: 'tableName', label: 'Bàn / Khu vực', visible: true },
-  { key: 'actorName', label: 'Thu ngân', visible: true },
+  { key: 'actorName', label: 'Thu ngân / Người xử lý', visible: true },
   { key: 'method', label: 'Phương thức TT', visible: true },
   { key: 'subtotal', label: 'Tiền hàng', visible: false },
   { key: 'discountTotal', label: 'Giảm giá', visible: false },
@@ -150,6 +152,7 @@ export function OwnerInvoicesPage() {
   const [searchInput, setSearchInput] = useState('');
   const [page, setPage] = useState(1);
   const [limit] = useState(20);
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
 
   // Advanced filter drawer
   const [filterOpen, setFilterOpen] = useState(false);
@@ -198,15 +201,23 @@ export function OwnerInvoicesPage() {
     const cols: TableColumnsType<Invoice> = [
       {
         key: 'displayCode',
-        title: 'Mã hóa đơn',
+        title: 'Mã đơn / HĐ',
         dataIndex: 'displayCode',
         fixed: 'left',
         width: 150,
-        render: (code: string) => <span className="owner-invoice-code">{code}</span>,
+        render: (code: string, row: Invoice) => (
+          <Button
+            type="link"
+            style={{ padding: 0, height: 'auto', fontWeight: 600 }}
+            onClick={() => setSelectedOrderId(row.orderId)}
+          >
+            <span className="owner-invoice-code">{code}</span>
+          </Button>
+        ),
       },
       {
         key: 'issuedAt',
-        title: 'Thời gian TT',
+        title: 'Thời gian',
         dataIndex: 'issuedAt',
         width: 160,
         sorter: (a, b) => a.issuedAt - b.issuedAt,
@@ -256,9 +267,9 @@ export function OwnerInvoicesPage() {
     if (visibleKeys.has('actorName')) {
       cols.push({
         key: 'actorName',
-        title: 'Thu ngân',
+        title: 'Thu ngân / Người xử lý',
         dataIndex: 'actorName',
-        width: 140,
+        width: 170,
         render: (name: string | null) => name ?? <span className="owner-invoice-dim">—</span>,
       });
     }
@@ -344,6 +355,24 @@ export function OwnerInvoicesPage() {
       render: (v: number) => <strong className="owner-invoice-total">{formatMoney(v)}</strong>,
     });
 
+    cols.push({
+      key: 'actions',
+      title: 'Thao tác',
+      fixed: 'right',
+      width: 100,
+      align: 'center',
+      render: (_: unknown, row: Invoice) => (
+        <Button
+          type="link"
+          size="small"
+          icon={<EyeOutlined />}
+          onClick={() => setSelectedOrderId(row.orderId)}
+        >
+          Chi tiết
+        </Button>
+      ),
+    });
+
     return cols;
   }, [visibleKeys]);
 
@@ -354,13 +383,13 @@ export function OwnerInvoicesPage() {
       return;
     }
     const rows = data.results.map((inv) => ({
-      'Mã hóa đơn': inv.displayCode,
-      'Thời gian TT': formatDateTime(inv.issuedAt),
+      'Mã đơn / HĐ': inv.displayCode,
+      'Thời gian': formatDateTime(inv.issuedAt),
       'Trạng thái': inv.status === 'COMPLETED' ? 'Đã thanh toán' : 'Đã hủy',
       'Loại hình': inv.orderType === 'DINE_IN' ? 'Tại chỗ' : 'Mang đi',
       Bàn: inv.tableName ?? '',
       'Khu vực': inv.areaName ?? '',
-      'Thu ngân': inv.actorName ?? '',
+      'Thu ngân / Người xử lý': inv.actorName ?? '',
       'Phương thức TT': methodLabel(inv.method),
       'Tiền hàng': inv.subtotal,
       'Giảm giá': inv.discountTotal,
@@ -604,6 +633,20 @@ export function OwnerInvoicesPage() {
             />
           </Form.Item>
         </Form>
+      </Drawer>
+
+      {/* ── Order Detail Drawer ── */}
+      <Drawer
+        open={Boolean(selectedOrderId)}
+        onClose={() => setSelectedOrderId(null)}
+        width="min(1100px, 92vw)"
+        styles={{ body: { padding: 0 } }}
+        destroyOnClose
+        closable={false}
+      >
+        {selectedOrderId && (
+          <OrderDetailPage orderId={selectedOrderId} onClose={() => setSelectedOrderId(null)} />
+        )}
       </Drawer>
     </div>
   );

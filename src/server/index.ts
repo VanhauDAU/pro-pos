@@ -11,6 +11,7 @@ import { posRoutes } from '@server/routes/pos';
 import { currentDeviceRoutes, ownerDeviceRoutes } from '@server/routes/devices';
 import { ownerStoreRoutes } from '@server/routes/owner-store';
 import { ownerInvoiceRoutes } from '@server/routes/owner-invoices';
+import { ownerAnalyticsRoutes } from '@server/routes/owner-analytics';
 import type { AppEnv } from '@server/types';
 
 const app = new Hono<AppEnv>();
@@ -50,6 +51,7 @@ app.route('/api/v1/owner/devices', ownerDeviceRoutes);
 app.route('/api/v1/devices/current', currentDeviceRoutes);
 app.route('/api/v1/owner/store', ownerStoreRoutes);
 app.route('/api/v1/owner/invoices', ownerInvoiceRoutes);
+app.route('/api/v1/owner/analytics', ownerAnalyticsRoutes);
 
 app.notFound((c) => failure(c, { code: 'NOT_FOUND', message: 'Không tìm thấy tài nguyên.' }, 404));
 

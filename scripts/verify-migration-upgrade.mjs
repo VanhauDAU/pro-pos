@@ -26,6 +26,7 @@ const migrationFiles = [
   '0016_checkout_pending_lifecycle.sql',
   '0017_update_order_item_variant_discount.sql',
   '0018_fix_checkout_command_session_references.sql',
+  '0019_order_guest_count.sql',
 ];
 
 const fixture = `

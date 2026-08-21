@@ -1,5 +1,6 @@
 import {
   AppstoreOutlined,
+  BellOutlined,
   CheckCircleOutlined,
   CheckOutlined,
   ClockCircleOutlined,
@@ -52,6 +53,7 @@ import {
   Segmented,
   Select,
   Skeleton,
+  Space,
   Spin,
   Switch,
   Tag,
@@ -65,6 +67,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
+import type { GuestOrderRequestDto, ServiceRequestDto } from '@contracts/qr-order';
 import type { StorePrintSettings } from '@contracts/store';
 import type { PricingConfigSnapshot } from '@domain/pricing/types';
 import {
@@ -814,15 +817,203 @@ function AreasPage() {
 }
 
 function QrOrderPage() {
+  const queryClient = useQueryClient();
+  const [messageApi, holder] = message.useMessage();
+  const [modal, modalHolder] = Modal.useModal();
+  const previousPendingCount = React.useRef<number | null>(null);
+  const auth = useQuery({
+    queryKey: ['auth-context'],
+    queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
+  });
+  const requests = useQuery({
+    queryKey: ['guest-order-requests'],
+    queryFn: () => apiRequest<GuestOrderRequestDto[]>('/api/v1/pos/qr-orders?status=PENDING'),
+    refetchInterval: 15_000,
+  });
+  const serviceRequests = useQuery({
+    queryKey: ['service-requests'],
+    queryFn: () => apiRequest<ServiceRequestDto[]>('/api/v1/pos/qr-orders/service-requests/list'),
+    refetchInterval: 15_000,
+  });
+  useEffect(() => {
+    const count = requests.data?.length;
+    if (count === undefined) return;
+    if (previousPendingCount.current !== null && count > previousPendingCount.current) {
+      try {
+        const audio = new AudioContext();
+        const oscillator = audio.createOscillator();
+        const gain = audio.createGain();
+        oscillator.frequency.value = 880;
+        gain.gain.setValueAtTime(0.12, audio.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + 0.35);
+        oscillator.connect(gain).connect(audio.destination);
+        oscillator.addEventListener('ended', () => void audio.close(), { once: true });
+        oscillator.start();
+        oscillator.stop(audio.currentTime + 0.35);
+      } catch {
+        // Browser autoplay policy may block sound; the visual inbox still updates.
+      }
+    }
+    previousPendingCount.current = count;
+  }, [requests.data?.length]);
+  const refresh = () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['guest-order-requests'] }),
+      queryClient.invalidateQueries({ queryKey: ['service-requests'] }),
+      queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
+      queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
+    ]);
+  const accept = useMutation({
+    mutationFn: (request: GuestOrderRequestDto) =>
+      jsonRequest(
+        `/api/v1/pos/qr-orders/${request.id}/accept`,
+        { expectedOrderVersion: request.orderVersion },
+        { headers: mutationHeaders(auth.data?.csrfToken ?? '') },
+      ),
+    onSuccess: async () => {
+      messageApi.success('Đã xác nhận món vào hóa đơn.');
+      await refresh();
+    },
+    onError: (error) => messageApi.error(errorText(error)),
+  });
+  const rejectRequest = (request: GuestOrderRequestDto) => {
+    let reason = '';
+    modal.confirm({
+      title: `Từ chối yêu cầu ${request.tableName}`,
+      content: (
+        <Input.TextArea
+          autoFocus
+          placeholder="Nhập lý do để khách biết"
+          maxLength={300}
+          onChange={(event) => {
+            reason = event.target.value;
+          }}
+        />
+      ),
+      okText: 'Từ chối',
+      okButtonProps: { danger: true },
+      cancelText: 'Quay lại',
+      onOk: async () => {
+        if (!reason.trim()) throw new Error('Vui lòng nhập lý do.');
+        await jsonRequest(
+          `/api/v1/pos/qr-orders/${request.id}/reject`,
+          { reason: reason.trim() },
+          { headers: mutationHeaders(auth.data?.csrfToken ?? '') },
+        );
+        messageApi.success('Đã từ chối yêu cầu.');
+        await refresh();
+      },
+    });
+  };
+  const updateService = async (request: ServiceRequestDto, action: 'ACKNOWLEDGE' | 'COMPLETE') => {
+    try {
+      await jsonRequest(
+        `/api/v1/pos/qr-orders/service-requests/${request.id}/status`,
+        { action },
+        { headers: mutationHeaders(auth.data?.csrfToken ?? '') },
+      );
+      await refresh();
+    } catch (error) {
+      messageApi.error(errorText(error));
+    }
+  };
+
   return (
-    <div className="staff-coming-soon">
-      <div className="staff-coming-soon__art">
-        <QrcodeOutlined />
+    <div style={{ padding: 16, maxWidth: 1100, margin: '0 auto' }}>
+      {holder}
+      {modalHolder}
+      <div style={{ marginBottom: 18 }}>
+        <Typography.Title level={2} style={{ marginBottom: 2 }}>
+          QR Order
+        </Typography.Title>
+        <Typography.Text type="secondary">
+          Yêu cầu gọi món và hỗ trợ từ khách tại bàn
+        </Typography.Text>
       </div>
-      <Typography.Title level={2}>QR Order sẽ sớm ra mắt</Typography.Title>
-      <Typography.Text type="secondary">
-        Yêu cầu gọi món từ QR sẽ được phát triển ở giai đoạn tiếp theo.
-      </Typography.Text>
+
+      {(serviceRequests.data ?? []).length > 0 ? (
+        <Card title="Yêu cầu hỗ trợ" style={{ marginBottom: 16 }}>
+          <Space orientation="vertical" style={{ width: '100%' }}>
+            {(serviceRequests.data ?? []).map((request) => (
+              <Card key={request.id} size="small">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <BellOutlined style={{ color: '#fa8c16', fontSize: 20 }} />
+                  <div style={{ flex: 1 }}>
+                    <strong>
+                      {request.tableName} · {request.areaName}
+                    </strong>
+                    <div>
+                      {request.type === 'CALL_STAFF' ? 'Gọi nhân viên' : 'Yêu cầu thanh toán'}
+                    </div>
+                  </div>
+                  {request.status === 'OPEN' ? (
+                    <Button
+                      type="primary"
+                      onClick={() => void updateService(request, 'ACKNOWLEDGE')}
+                    >
+                      Đã nhận
+                    </Button>
+                  ) : (
+                    <Button onClick={() => void updateService(request, 'COMPLETE')}>
+                      Hoàn tất
+                    </Button>
+                  )}
+                </div>
+              </Card>
+            ))}
+          </Space>
+        </Card>
+      ) : null}
+
+      <Card title={`Đơn chờ xác nhận (${requests.data?.length ?? 0})`} loading={requests.isLoading}>
+        {(requests.data ?? []).length === 0 ? (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Chưa có yêu cầu gọi món mới" />
+        ) : (
+          <Space orientation="vertical" style={{ width: '100%' }} size={12}>
+            {(requests.data ?? []).map((request) => (
+              <Card
+                key={request.id}
+                size="small"
+                title={
+                  <span>
+                    {request.tableName} · {request.areaName}
+                  </span>
+                }
+                extra={<Tag color="processing">Chờ xác nhận</Tag>}
+              >
+                {request.items.map((item) => (
+                  <div
+                    key={item.id}
+                    style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0' }}
+                  >
+                    <span>
+                      <strong>{item.quantity} ×</strong> {item.productName}
+                      {item.variantName ? ` (${item.variantName})` : ''}
+                    </span>
+                    <strong>{formatMoney(item.lineTotalVnd)}</strong>
+                  </div>
+                ))}
+                {request.note ? (
+                  <Alert type="info" title={`Ghi chú: ${request.note}`} style={{ marginTop: 8 }} />
+                ) : null}
+                <Space style={{ marginTop: 12 }}>
+                  <Button danger onClick={() => rejectRequest(request)}>
+                    Từ chối
+                  </Button>
+                  <Button
+                    type="primary"
+                    icon={<CheckCircleOutlined />}
+                    loading={accept.isPending}
+                    onClick={() => accept.mutate(request)}
+                  >
+                    Xác nhận vào hóa đơn
+                  </Button>
+                </Space>
+              </Card>
+            ))}
+          </Space>
+        )}
+      </Card>
     </div>
   );
 }

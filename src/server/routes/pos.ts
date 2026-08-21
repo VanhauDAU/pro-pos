@@ -30,6 +30,7 @@ import { PosService } from '@server/services/pos-service';
 import { StoreService } from '@server/services/store-service';
 import { RealtimeRepository } from '@server/repositories/realtime-repository';
 import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
+import { qrOrderStaffRoutes } from '@server/routes/qr-order-staff';
 import type { AppEnv } from '@server/types';
 
 const posRoutes = new Hono<AppEnv>();
@@ -476,5 +477,7 @@ posRoutes.get('/invoices/:invoiceId', requirePermission('invoice.view'), async (
     await new PosService(c.env).getInvoice(c.get('actor').storeId!, c.req.param('invoiceId')),
   ),
 );
+
+posRoutes.route('/qr-orders', qrOrderStaffRoutes);
 
 export { posRoutes };

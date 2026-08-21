@@ -2,7 +2,8 @@ export const REALTIME_SUBPROTOCOL = 'propos.realtime.v1';
 export const REALTIME_SCHEMA_VERSION = 1 as const;
 export const REALTIME_REPLAY_LIMIT = 500;
 
-export type PosRealtimeTopic = 'pos.orders' | 'pos.tables' | `pos.order:${string}`;
+export type PosRealtimeTopic =
+  'pos.orders' | 'pos.tables' | 'guest.orders' | 'guest.services' | `pos.order:${string}`;
 
 export type PosRealtimeReason =
   | 'CREATED'
@@ -20,7 +21,12 @@ export type PosRealtimeReason =
   | 'TABLE_TRANSFERRED'
   | 'CHECKOUT_COMPLETED'
   | 'CANCELLED'
-  | 'DELETED';
+  | 'DELETED'
+  | 'GUEST_ORDER_CREATED'
+  | 'GUEST_ORDER_ACCEPTED'
+  | 'GUEST_ORDER_REJECTED'
+  | 'SERVICE_REQUEST_CREATED'
+  | 'SERVICE_REQUEST_UPDATED';
 
 export interface RealtimeEventV1 {
   schemaVersion: typeof REALTIME_SCHEMA_VERSION;
@@ -41,6 +47,8 @@ export interface RealtimeEventV1 {
   data: {
     reason: PosRealtimeReason;
     affectedTableIds?: string[];
+    guestRequestId?: string;
+    serviceRequestId?: string;
   };
 }
 

@@ -405,6 +405,49 @@ export class OwnerInvoiceRepository {
           .bind(storeId, invoiceId),
       );
     }
+    statements.push(
+      this.db
+        .prepare(
+          `DELETE FROM guest_order_request_items WHERE request_id IN (
+             SELECT id FROM guest_order_requests WHERE store_id = ? AND order_id = ?
+           )`,
+        )
+        .bind(storeId, orderId),
+      this.db
+        .prepare(
+          `DELETE FROM accept_guest_order_request_commands WHERE store_id = ?
+           AND guest_request_id IN (
+             SELECT id FROM guest_order_requests WHERE store_id = ? AND order_id = ?
+           )`,
+        )
+        .bind(storeId, storeId, orderId),
+      this.db
+        .prepare(
+          `DELETE FROM reject_guest_order_request_commands WHERE store_id = ?
+           AND guest_request_id IN (
+             SELECT id FROM guest_order_requests WHERE store_id = ? AND order_id = ?
+           )`,
+        )
+        .bind(storeId, storeId, orderId),
+      this.db
+        .prepare('DELETE FROM guest_order_requests WHERE store_id = ? AND order_id = ?')
+        .bind(storeId, orderId),
+      this.db
+        .prepare(
+          'DELETE FROM create_guest_order_request_commands WHERE store_id = ? AND order_id = ?',
+        )
+        .bind(storeId, orderId),
+      this.db
+        .prepare('DELETE FROM service_requests WHERE store_id = ? AND order_id = ?')
+        .bind(storeId, orderId),
+      this.db
+        .prepare(
+          `DELETE FROM guest_order_sessions WHERE store_id = ? AND time_session_id IN (
+             SELECT id FROM time_sessions WHERE store_id = ? AND order_id = ?
+           )`,
+        )
+        .bind(storeId, storeId, orderId),
+    );
     for (const table of [
       'resume_checkout_commands',
       'checkout_commands',

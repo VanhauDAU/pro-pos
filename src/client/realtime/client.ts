@@ -190,6 +190,14 @@ export class PosRealtimeClient {
     if (event.topics.includes('pos.tables')) {
       invalidations.push(this.queryClient.invalidateQueries({ queryKey: ['pos-tables'] }));
     }
+    if (event.topics.includes('guest.orders')) {
+      invalidations.push(
+        this.queryClient.invalidateQueries({ queryKey: ['guest-order-requests'] }),
+      );
+    }
+    if (event.topics.includes('guest.services')) {
+      invalidations.push(this.queryClient.invalidateQueries({ queryKey: ['service-requests'] }));
+    }
     if (event.topics.includes(`pos.order:${event.aggregate.id}`)) {
       invalidations.push(
         this.queryClient.invalidateQueries({ queryKey: ['pos-order-quote', event.aggregate.id] }),
@@ -207,7 +215,9 @@ export class PosRealtimeClient {
           root === 'pos-orders' ||
           root === 'pos-tables' ||
           root === 'pos-order-quote' ||
-          root === 'pos-order-detail'
+          root === 'pos-order-detail' ||
+          root === 'guest-order-requests' ||
+          root === 'service-requests'
         );
       },
     });

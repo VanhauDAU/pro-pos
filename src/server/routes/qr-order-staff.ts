@@ -1,0 +1,91 @@
+import { Hono } from 'hono';
+import { z } from 'zod';
+
+import { acceptGuestOrderSchema, rejectGuestOrderSchema } from '@contracts/qr-order';
+import { AppError } from '@server/lib/app-error';
+import { success } from '@server/lib/response';
+import { parseJson } from '@server/lib/validation';
+import { requirePermission } from '@server/middleware/authorization';
+import { QrOrderService } from '@server/services/qr-order-service';
+import type { AppEnv } from '@server/types';
+
+const qrOrderStaffRoutes = new Hono<AppEnv>();
+
+function idempotencyKey(c: Parameters<typeof success>[0]) {
+  const value = c.req.header('Idempotency-Key');
+  if (!value || value.length < 8 || value.length > 128) {
+    throw new AppError('IDEMPOTENCY_KEY_REQUIRED', 'Thiếu Idempotency-Key hợp lệ.', 422);
+  }
+  return value;
+}
+
+qrOrderStaffRoutes.get('/', requirePermission('table.view'), async (c) =>
+  success(
+    c,
+    await new QrOrderService(c.env).listStaffRequests(
+      c.get('actor').storeId!,
+      c.req.query('status'),
+    ),
+  ),
+);
+
+qrOrderStaffRoutes.post('/:id/accept', requirePermission('order.manage'), async (c) => {
+  const body = await parseJson(c.req.raw, acceptGuestOrderSchema);
+  return success(
+    c,
+    await new QrOrderService(c.env).accept({
+      commandId: idempotencyKey(c),
+      storeId: c.get('actor').storeId!,
+      guestRequestId: c.req.param('id'),
+      expectedOrderVersion: body.expectedOrderVersion,
+      actorId: c.get('actor').id,
+      actorSessionId: c.get('sessionId'),
+      deviceId: c.get('device')?.id ?? null,
+      requestId: c.get('requestId'),
+    }),
+  );
+});
+
+qrOrderStaffRoutes.post('/:id/reject', requirePermission('order.manage'), async (c) => {
+  const body = await parseJson(c.req.raw, rejectGuestOrderSchema);
+  return success(
+    c,
+    await new QrOrderService(c.env).reject({
+      commandId: idempotencyKey(c),
+      storeId: c.get('actor').storeId!,
+      guestRequestId: c.req.param('id'),
+      reason: body.reason,
+      actorId: c.get('actor').id,
+      actorSessionId: c.get('sessionId'),
+      deviceId: c.get('device')?.id ?? null,
+      requestId: c.get('requestId'),
+    }),
+  );
+});
+
+qrOrderStaffRoutes.get('/service-requests/list', requirePermission('table.view'), async (c) =>
+  success(c, await new QrOrderService(c.env).listServiceRequests(c.get('actor').storeId!)),
+);
+
+qrOrderStaffRoutes.post(
+  '/service-requests/:id/status',
+  requirePermission('order.manage'),
+  async (c) => {
+    const body = await parseJson(
+      c.req.raw,
+      z.object({ action: z.enum(['ACKNOWLEDGE', 'COMPLETE']) }),
+    );
+    return success(
+      c,
+      await new QrOrderService(c.env).updateService({
+        storeId: c.get('actor').storeId!,
+        id: c.req.param('id'),
+        action: body.action,
+        actorId: c.get('actor').id,
+        requestId: c.get('requestId'),
+      }),
+    );
+  },
+);
+
+export { qrOrderStaffRoutes };

@@ -15,10 +15,33 @@ import { success } from '@server/lib/response';
 import { parseJson } from '@server/lib/validation';
 import { requireActor, requirePermission } from '@server/middleware/authorization';
 import { CatalogService } from '@server/services/catalog-service';
+import { QrOrderService } from '@server/services/qr-order-service';
 import type { AppEnv } from '@server/types';
 
 const ownerCatalogRoutes = new Hono<AppEnv>();
 ownerCatalogRoutes.use('*', requireActor('OWNER'));
+
+ownerCatalogRoutes.get('/tables/:tableId/qr-code', requirePermission('table.manage'), async (c) =>
+  success(
+    c,
+    await new QrOrderService(c.env).getQrCode(c.get('actor').storeId!, c.req.param('tableId')),
+  ),
+);
+
+ownerCatalogRoutes.post(
+  '/tables/:tableId/qr-code/rotate',
+  requirePermission('table.manage'),
+  async (c) =>
+    success(
+      c,
+      await new QrOrderService(c.env).rotateQrCode(
+        c.get('actor').storeId!,
+        c.req.param('tableId'),
+        c.get('actor').id,
+      ),
+      201,
+    ),
+);
 
 function auditContext(c: Parameters<typeof success>[0]) {
   return {

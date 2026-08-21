@@ -58,15 +58,17 @@ export function PushNotificationControl({ csrfToken }: { csrfToken: string | nul
   return (
     <>
       {holder}
-      <Tooltip title={enabled ? 'Thông báo đã bật' : 'Bật thông báo QR Order'}>
+      <Tooltip title={enabled ? 'Thông báo đơn: Đã bật' : 'Bật thông báo QR Order'}>
         <Button
           type={enabled ? 'primary' : 'default'}
-          size="small"
+          size="middle"
           icon={<BellOutlined />}
           loading={loading}
           onClick={() => void enable()}
+          className={`pos-push-btn ${enabled ? 'is-enabled' : ''}`}
+          aria-label={enabled ? 'Thông báo đã bật' : 'Bật thông báo'}
         >
-          {enabled ? 'Đã bật thông báo' : 'Bật thông báo'}
+          <span className="pos-push-btn-text">{enabled ? 'Đã bật' : 'Thông báo'}</span>
         </Button>
       </Tooltip>
     </>

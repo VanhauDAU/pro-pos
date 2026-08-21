@@ -537,16 +537,29 @@ function StaffHeader({
         </div>
         {searchSlot ? <div className="staff-pos-header__search">{searchSlot}</div> : null}
       </div>
-      <Tag
-        color={status === 'CONNECTED' ? 'success' : status === 'DISABLED' ? 'default' : 'warning'}
-        style={{ marginLeft: 'auto', marginRight: 8 }}
+      <Tooltip
+        title={
+          status === 'CONNECTED'
+            ? 'Đồng bộ trực tiếp (Realtime)'
+            : status === 'DISABLED'
+              ? 'Cập nhật định kỳ'
+              : 'Đang kết nối lại...'
+        }
       >
-        {status === 'CONNECTED'
-          ? 'Đồng bộ trực tiếp'
-          : status === 'DISABLED'
-            ? 'Cập nhật định kỳ'
-            : 'Đang kết nối lại'}
-      </Tag>
+        <div
+          className={`staff-pos-sync-badge staff-pos-sync-badge--${status.toLowerCase()}`}
+          aria-label="Trạng thái kết nối"
+        >
+          <span className="staff-pos-sync-dot" />
+          <span className="staff-pos-sync-label">
+            {status === 'CONNECTED'
+              ? 'Trực tiếp'
+              : status === 'DISABLED'
+                ? 'Định kỳ'
+                : 'Kết nối lại'}
+          </span>
+        </div>
+      </Tooltip>
       <PushNotificationControl csrfToken={context?.csrfToken} />
       <Dropdown
         menu={{ items: menuItems }}

@@ -250,20 +250,19 @@ function ProductAvatar({
   product: Pick<ProductSummary, 'name' | 'avatarColor' | 'avatarType' | 'mediaId'>;
   size?: number;
 }) {
+  const isImage = product.avatarType === 'IMAGE' && Boolean(product.mediaId);
   return (
     <Avatar
       shape="square"
       size={size}
-      src={
-        product.avatarType === 'IMAGE' && product.mediaId
-          ? `/api/v1/media/${product.mediaId}`
-          : undefined
-      }
+      src={isImage ? `/api/v1/media/${product.mediaId}` : undefined}
       style={{
-        background: product.avatarColor || '#f8fafc',
+        background: product.avatarColor || (isImage ? '#ffffff' : '#f8fafc'),
         color: '#172235',
         fontWeight: 700,
-        borderRadius: 6,
+        borderRadius: 8,
+        border: '1px solid #e2e8f0',
+        overflow: 'hidden',
       }}
     >
       {initials(product.name)}

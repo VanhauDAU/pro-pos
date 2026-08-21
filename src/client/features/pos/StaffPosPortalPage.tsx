@@ -1067,7 +1067,8 @@ function MorePage({ auth }: { auth: AuthContextResponse }) {
       </section>
 
       {/* ── Feature Modules Section ─────────────────────────────────── */}
-      <div style={{ marginBottom: 16 }}>
+      {/* thêm mergin top */}
+      <div style={{ marginBottom: 16, marginTop: 20 }}>
         <Typography.Title
           level={5}
           style={{
@@ -1132,48 +1133,6 @@ function MorePage({ auth }: { auth: AuthContextResponse }) {
               <RightOutlined style={{ color: '#94a3b8', fontSize: 14 }} />
             </div>
           ) : null}
-
-          {/* QR Order fast entry */}
-          <div
-            className="staff-more-nav-item"
-            onClick={() => navigate('/pos/qr-order')}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              padding: '16px 18px',
-              cursor: 'pointer',
-              borderBottom: '1px solid #f1f5f9',
-              transition: 'background 0.15s ease',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-              <div
-                style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: 10,
-                  background: '#fef3c7',
-                  color: '#d97706',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: 22,
-                }}
-              >
-                <QrcodeOutlined />
-              </div>
-              <div>
-                <div style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>
-                  Yêu cầu gọi món qua QR
-                </div>
-                <div style={{ fontSize: 12.5, color: '#64748b', marginTop: 2 }}>
-                  Tiếp nhận và xác nhận món khách gọi từ mã QR tại bàn
-                </div>
-              </div>
-            </div>
-            <RightOutlined style={{ color: '#94a3b8', fontSize: 14 }} />
-          </div>
 
           {/* Push Notification Setup */}
           <div style={{ padding: '14px 18px' }}>
@@ -2040,7 +1999,7 @@ function OrderItemDetailModal({
       <div className="staff-item-modal__body">
         <div className="staff-item-modal__avatar-wrap">
           <div
-            className={`staff-item-modal__avatar-box ${product?.avatarType === 'IMAGE' && product?.mediaId ? 'has-image' : 'has-color'}`}
+            className={`staff-item-modal__avatar-box ${product?.avatarType === 'IMAGE' && product?.mediaId ? 'has-image' : 'has-color'} ${product?.avatarColor ? 'has-custom-color' : ''}`}
             style={{
               background: product?.avatarColor || '#f8fafc',
             }}
@@ -3326,7 +3285,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                           onClick={(e) => chooseProduct(product, e)}
                         >
                           <div
-                            className={`staff-product-mobile-card__visual ${product.avatarType === 'IMAGE' && product.mediaId ? 'has-image' : 'has-color'}`}
+                            className={`staff-product-mobile-card__visual ${product.avatarType === 'IMAGE' && product.mediaId ? 'has-image' : 'has-color'} ${product.avatarColor ? 'has-custom-color' : ''}`}
                             style={{
                               background: product.avatarColor || '#f8fafc',
                             }}
@@ -4046,7 +4005,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                         onClick={() => chooseProduct(product)}
                       >
                         <span
-                          className={`staff-product-card__visual ${product.avatarType === 'IMAGE' && product.mediaId ? 'has-image' : 'has-color'}`}
+                          className={`staff-product-card__visual ${product.avatarType === 'IMAGE' && product.mediaId ? 'has-image' : 'has-color'} ${product.avatarColor ? 'has-custom-color' : ''}`}
                           style={{
                             background: product.avatarColor || '#f8fafc',
                           }}

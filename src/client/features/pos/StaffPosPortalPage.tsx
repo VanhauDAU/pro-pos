@@ -665,7 +665,13 @@ function OrdersPage({ search }: { search: string }) {
         size="large"
         icon={<PlusOutlined />}
         className="staff-create-order-button"
-        onClick={() => navigate('/pos/orders/new')}
+        onClick={() => {
+          if (filter === 'TAKEAWAY') {
+            navigate('/pos/orders/new?type=TAKEAWAY');
+          } else {
+            navigate('/pos/orders/new');
+          }
+        }}
       >
         Tạo đơn mới
       </Button>
@@ -1637,7 +1643,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const queryClient = useQueryClient();
   const [messageApi, holder] = message.useMessage();
   const preselectedTableId = searchParams.get('tableId');
-  const [orderType, setOrderType] = useState<'DINE_IN' | 'TAKEAWAY'>('DINE_IN');
+  const typeParam = searchParams.get('type');
+  const [orderType, setOrderType] = useState<'DINE_IN' | 'TAKEAWAY'>(() => {
+    if (typeParam === 'TAKEAWAY') return 'TAKEAWAY';
+    return 'DINE_IN';
+  });
   const [draftLines, setDraftLines] = useState<DraftLine[]>([]);
   const [tableModalOpen, setTableModalOpen] = useState(false);
   const [tableAction, setTableAction] = useState<'SELECT' | 'SAVE' | 'CHECKOUT'>('SELECT');
@@ -2840,30 +2850,56 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
               </button>
             </header>
 
-            {/* Mobile Quick Pills Row: Area/Table & Guest Count */}
+            {/* Mobile Quick Pills Row: Order Type, Area/Table & Guest Count */}
             <div className="staff-order-mobile-pills">
-              <button
-                type="button"
-                className="staff-order-pill"
-                onClick={() => {
-                  if (isNew) {
-                    setTableAction('SELECT');
-                    setTableModalOpen(true);
+              <Select
+                size="middle"
+                value={isNew ? orderType : quote.data?.order.orderType}
+                options={[
+                  { value: 'DINE_IN', label: 'Tại chỗ' },
+                  { value: 'TAKEAWAY', label: 'Mang đi' },
+                ]}
+                disabled={!isNew}
+                onChange={(value) => {
+                  const nextType = value as 'DINE_IN' | 'TAKEAWAY';
+                  setOrderType(nextType);
+                  if (nextType === 'TAKEAWAY') {
+                    setSearchParams(
+                      (prev) => {
+                        const next = new URLSearchParams(prev);
+                        next.delete('tableId');
+                        return next;
+                      },
+                      { replace: true },
+                    );
                   }
                 }}
-              >
-                <span className="staff-order-pill__label">
-                  {orderType === 'DINE_IN'
-                    ? quote.data?.order.tableName
+                className="staff-order-mobile-type-select"
+                aria-label="Loại đơn"
+              />
+
+              {orderType === 'DINE_IN' && (
+                <button
+                  type="button"
+                  className="staff-order-pill"
+                  onClick={() => {
+                    if (isNew) {
+                      setTableAction('SELECT');
+                      setTableModalOpen(true);
+                    }
+                  }}
+                >
+                  <span className="staff-order-pill__label">
+                    {quote.data?.order.tableName
                       ? `${quote.data.order.areaName ? `${quote.data.order.areaName} - ` : ''}${quote.data.order.tableName}`
                       : selectedTable
                         ? `${selectedTable.areaName ? `${selectedTable.areaName} - ` : ''}${selectedTable.name}`
-                        : 'Chọn bàn / khu vực'
-                    : 'Đơn mang đi'}
-                </span>
-                {orderType === 'DINE_IN' && <span className="staff-order-pill__tag">+1</span>}
-                <DownOutlined className="staff-order-pill__arrow" />
-              </button>
+                        : 'Chọn bàn / khu vực'}
+                  </span>
+                  <span className="staff-order-pill__tag">+1</span>
+                  <DownOutlined className="staff-order-pill__arrow" />
+                </button>
+              )}
 
               <button
                 type="button"
@@ -3306,7 +3342,20 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   { value: 'TAKEAWAY', label: 'Mang đi' },
                 ]}
                 disabled={!isNew}
-                onChange={(value) => setOrderType(value as 'DINE_IN' | 'TAKEAWAY')}
+                onChange={(value) => {
+                  const nextType = value as 'DINE_IN' | 'TAKEAWAY';
+                  setOrderType(nextType);
+                  if (nextType === 'TAKEAWAY') {
+                    setSearchParams(
+                      (prev) => {
+                        const next = new URLSearchParams(prev);
+                        next.delete('tableId');
+                        return next;
+                      },
+                      { replace: true },
+                    );
+                  }
+                }}
                 aria-label="Loại đơn"
                 title={
                   isNew
@@ -4060,6 +4109,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
               },
               { replace: true },
             );
+            setOrderType('DINE_IN');
             setTableModalOpen(false);
           }
         }}

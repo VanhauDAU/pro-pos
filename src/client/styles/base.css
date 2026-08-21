@@ -4075,25 +4075,25 @@ body {
   }
 
   .brand-panel {
-    padding: 16px 20px 20px;
-    border-radius: 0 0 24px 24px;
+    padding: 14px 20px 16px;
+    border-radius: 0 0 20px 20px;
     box-shadow: none;
     flex-shrink: 0;
   }
 
   .brand-panel__logo {
-    width: 120px;
-    height: 40px;
+    width: 110px;
+    height: 36px;
   }
 
   .brand-panel__copy h1 {
-    margin-top: 8px;
-    font-size: 20px;
+    margin-top: 6px;
+    font-size: 18px;
+    line-height: 1.3;
   }
 
   .brand-panel__copy p {
-    font-size: 13px;
-    margin-bottom: 0;
+    display: none;
   }
 
   .auth-card {
@@ -4102,7 +4102,7 @@ body {
     display: flex;
     flex-direction: column;
     justify-content: center;
-    padding: 16px 20px;
+    padding: 14px 20px;
     border: 0;
     border-radius: 0;
     box-shadow: none;
@@ -8511,27 +8511,53 @@ body {
 .staff-order-mobile-pills {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 16px;
+  gap: 8px;
+  padding: 10px 16px;
   background: #ffffff;
   border-bottom: 1px solid #f1f5f9;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.staff-order-mobile-pills::-webkit-scrollbar {
+  display: none;
+}
+
+.staff-order-mobile-type-select {
+  flex-shrink: 0;
+  min-width: 100px;
+}
+
+.staff-order-mobile-type-select .ant-select-selector {
+  border-radius: 8px !important;
+  font-weight: 600 !important;
+  background: #f8fafc !important;
+  border-color: #e2e8f0 !important;
+  color: #1e293b !important;
+  height: 38px !important;
+  padding: 0 10px !important;
+  display: flex !important;
+  align-items: center !important;
 }
 
 .staff-order-pill {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
+  gap: 6px;
+  padding: 8px 12px;
   background: #f8fafc;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 600;
   color: #1e293b;
   cursor: pointer;
   white-space: nowrap;
   touch-action: manipulation;
   transition: all 0.15s ease;
+  flex-shrink: 0;
+  height: 38px;
 }
 
 .staff-order-pill:active {
@@ -8540,7 +8566,7 @@ body {
 }
 
 .staff-order-pill__label {
-  max-width: 170px;
+  max-width: 150px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

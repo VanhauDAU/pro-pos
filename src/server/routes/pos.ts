@@ -8,6 +8,8 @@ import {
   openTableSchema,
   removeOrderItemSchema,
   removeTimeSessionSchema,
+  resumeCheckoutSchema,
+  stopTimeSchema,
   timeActionSchema,
   updateTimeRangeSchema,
   transferTableSchema,
@@ -136,6 +138,8 @@ posRoutes.patch('/orders/:orderId/items/:itemId', requirePermission('order.manag
       itemId: c.req.param('itemId'),
       expectedOrderVersion: body.expectedOrderVersion,
       quantityMilli: body.quantityMilli,
+      variantId: body.variantId,
+      discount: body.discount,
       timeStartedAtMs: body.timeStartedAtMs,
       timeEndedAtMs: body.timeEndedAtMs,
       note: body.note ?? null,
@@ -250,6 +254,46 @@ posRoutes.patch('/orders/:orderId/time/range', requirePermission('time.pause'), 
     }),
   );
 });
+
+posRoutes.post('/orders/:orderId/stop-time', requirePermission('checkout.complete'), async (c) => {
+  const body = await parseJson(c.req.raw, stopTimeSchema);
+  const actor = c.get('actor');
+  return success(
+    c,
+    await new PosService(c.env).stopTimeForCheckout({
+      storeId: actor.storeId!,
+      actorId: actor.id,
+      requestId: c.get('requestId'),
+      idempotencyKey: idempotencyKey(c),
+      orderId: c.req.param('orderId'),
+      expectedOrderVersion: body.expectedOrderVersion,
+      actorSessionId: c.get('sessionId'),
+      deviceId: c.get('device')?.id ?? null,
+    }),
+  );
+});
+
+posRoutes.post(
+  '/orders/:orderId/resume-checkout',
+  requirePermission('checkout.complete'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, resumeCheckoutSchema);
+    const actor = c.get('actor');
+    return success(
+      c,
+      await new PosService(c.env).resumeCheckout({
+        storeId: actor.storeId!,
+        actorId: actor.id,
+        requestId: c.get('requestId'),
+        idempotencyKey: idempotencyKey(c),
+        orderId: c.req.param('orderId'),
+        expectedOrderVersion: body.expectedOrderVersion,
+        actorSessionId: c.get('sessionId'),
+        deviceId: c.get('device')?.id ?? null,
+      }),
+    );
+  },
+);
 
 posRoutes.post('/orders/:orderId/checkout', requirePermission('checkout.complete'), async (c) => {
   const body = await parseJson(c.req.raw, checkoutSchema);

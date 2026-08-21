@@ -21,6 +21,11 @@ const migrationFiles = [
   '0011_pos_order_lifecycle.sql',
   '0012_compact_pos_codes.sql',
   '0013_adjust_time_session.sql',
+  '0014_time_item_ranges.sql',
+  '0015_table_transfer_segments.sql',
+  '0016_checkout_pending_lifecycle.sql',
+  '0017_update_order_item_variant_discount.sql',
+  '0018_fix_checkout_command_session_references.sql',
 ];
 
 const fixture = `

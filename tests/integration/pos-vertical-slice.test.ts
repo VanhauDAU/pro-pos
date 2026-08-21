@@ -270,6 +270,95 @@ describe('online POS vertical slice', () => {
     expect(checkout).toMatchObject({ total: 37_500 });
   });
 
+  it('updates price version variant and discount on existing order items', async () => {
+    const catalog = new CatalogService(env);
+    const createdProduct = await catalog.createProduct(storeId, {
+      name: 'Trà trái cây',
+      productType: 'QUANTITY',
+      variants: [
+        { name: 'Size M', salePriceVnd: 30_000, costPriceVnd: 0, promptPrice: false },
+        { name: 'Size L', salePriceVnd: 45_000, costPriceVnd: 0, promptPrice: false },
+      ],
+    });
+
+    const variants = await env.DB.prepare(
+      'SELECT id, name FROM product_variants WHERE product_id = ? ORDER BY sale_price ASC',
+    )
+      .bind(createdProduct.id)
+      .all<{ id: string; name: string }>();
+
+    const sizeM = variants.results.find((v) => v.name === 'Size M')!;
+    const sizeL = variants.results.find((v) => v.name === 'Size L')!;
+
+    const pos = new PosService(env);
+    const order = await pos.createTakeaway({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-variant-change-order',
+      idempotencyKey: 'variant-change-order-001',
+      note: null,
+    });
+
+    const added = await pos.addItem({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-variant-change-add',
+      idempotencyKey: 'variant-change-add-001',
+      orderId: order.orderId,
+      productId: createdProduct.id,
+      variantId: sizeM.id,
+      quantityMilli: 2000,
+      expectedOrderVersion: 1,
+      discount: null,
+    });
+
+    const initialQuote = await pos.quote(storeId, order.orderId);
+    expect(initialQuote.items[0]).toMatchObject({
+      variantId: sizeM.id,
+      variantName: 'Size M',
+      unitPriceVnd: 30_000,
+      quantityMilli: 2000,
+      grossLineTotalVnd: 60_000,
+      netLineTotalVnd: 60_000,
+    });
+
+    // Update to Size L with a 10% discount
+    await pos.updateItem({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-variant-change-update',
+      idempotencyKey: 'variant-change-update-001',
+      orderId: order.orderId,
+      itemId: added.itemId,
+      expectedOrderVersion: 2,
+      quantityMilli: 2000,
+      variantId: sizeL.id,
+      discount: { type: 'PERCENT', value: 10 },
+      note: 'Ít đá',
+    });
+
+    const updatedQuote = await pos.quote(storeId, order.orderId);
+    expect(updatedQuote).toMatchObject({
+      order: { version: 3 },
+      subtotalVnd: 90_000,
+      discountTotalVnd: 9_000,
+      totalVnd: 81_000,
+      items: [
+        {
+          id: added.itemId,
+          variantId: sizeL.id,
+          variantName: 'Size L',
+          unitPriceVnd: 45_000,
+          quantityMilli: 2000,
+          grossLineTotalVnd: 90_000,
+          discountAmountVnd: 9_000,
+          netLineTotalVnd: 81_000,
+          note: 'Ít đá',
+        },
+      ],
+    });
+  });
+
   it('rejects fractional milli-units for quantity products', async () => {
     const pos = new PosService(env);
     const order = await pos.createTakeaway({
@@ -651,7 +740,7 @@ describe('online POS vertical slice', () => {
         method: 'CASH',
         cashReceivedVnd: 100_000,
       }),
-    ).rejects.toMatchObject({ code: 'ORDER_NOT_OPEN' });
+    ).rejects.toMatchObject({ code: 'ORDER_NOT_ACTIVE' });
   });
 
   it.each([
@@ -840,7 +929,7 @@ describe('online POS vertical slice', () => {
     expect(payments?.total).toBe(2);
   });
 
-  it('blocks a table transfer when the target uses a different time price', async () => {
+  it('successfully transfers a table across different price rates and computes split time segments accurately', async () => {
     const source = await openFreshTable('Bàn chuyển khác giá', 'open-transfer-different-price');
     const catalog = new CatalogService(env);
     const expensiveTimeProduct = await catalog.createProduct(storeId, {
@@ -864,23 +953,217 @@ describe('online POS vertical slice', () => {
       name: 'Phòng VIP chuyển giá',
       sortOrder: 20,
     });
-    const tables = await new PosService(env).listTables(storeId);
-    const sourceTable = tables.find((table) => table.id === source.tableId)!;
-    const targetTable = tables.find((table) => table.id === target.id)!;
+    const pos = new PosService(env);
+    const initialTables = await pos.listTables(storeId);
+    const sourceTable = initialTables.find((table) => table.id === source.tableId)!;
+    const targetTable = initialTables.find((table) => table.id === target.id)!;
 
+    expect(targetTable.defaultPriceVnd).toBe(120_000);
+    expect(targetTable.timeProductName).toBe('Giờ phòng VIP');
+
+    // 1. Perform table transfer
+    const transferResult = await pos.transfer({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-transfer-different-price',
+      idempotencyKey: 'transfer-different-price-001',
+      orderId: source.orderId,
+      targetTableId: target.id,
+      expectedOrderVersion: 1,
+      expectedSourceTableVersion: Number(sourceTable.version),
+      expectedTargetTableVersion: Number(targetTable.version),
+    });
+
+    expect(transferResult.orderId).toBe(source.orderId);
+    expect(transferResult.targetTableId).toBe(target.id);
+
+    // 2. Verify source table is now AVAILABLE and target table is OCCUPIED
+    const updatedTables = await pos.listTables(storeId);
+    const updatedSource = updatedTables.find((table) => table.id === source.tableId)!;
+    const updatedTarget = updatedTables.find((table) => table.id === target.id)!;
+    expect(updatedSource.status).toBe('AVAILABLE');
+    expect(updatedTarget.status).toBe('OCCUPIED');
+
+    // 3. Verify quote computes multi-segment table time accurately
+    const quote = await pos.quote(storeId, source.orderId);
+    expect(quote.order.tableId).toBe(target.id);
+    expect(quote.order.tableName).toBe('Phòng VIP chuyển giá');
+    expect(quote.order.version).toBe(2);
+    expect(quote.time?.tableSegments).toBeDefined();
+    expect(quote.time?.tableSegments?.length).toBe(2);
+    expect(quote.time?.tableSegments?.[0]?.tableName).toBe('Bàn chuyển khác giá');
+    expect(quote.time?.tableSegments?.[1]?.tableName).toBe('Phòng VIP chuyển giá');
+
+    // 4. Verify cannot transfer to already OCCUPIED table
+    const anotherTable = await openFreshTable('Bàn đang chơi khác', 'open-another-occupied-table');
+    const freshTables = await pos.listTables(storeId);
+    const anotherTableRecord = freshTables.find((t) => t.id === anotherTable.tableId)!;
     await expect(
-      new PosService(env).transfer({
+      pos.transfer({
         storeId,
         actorId: ownerUserId,
-        requestId: 'request-transfer-different-price',
-        idempotencyKey: 'transfer-different-price-001',
+        requestId: 'request-transfer-to-occupied',
+        idempotencyKey: 'transfer-to-occupied-001',
         orderId: source.orderId,
-        targetTableId: target.id,
-        expectedOrderVersion: 1,
-        expectedSourceTableVersion: Number(sourceTable.version),
-        expectedTargetTableVersion: Number(targetTable.version),
+        targetTableId: anotherTable.tableId,
+        expectedOrderVersion: 2,
+        expectedSourceTableVersion: Number(updatedTarget.version),
+        expectedTargetTableVersion: Number(anotherTableRecord.version),
       }),
-    ).rejects.toMatchObject({ code: 'TABLE_PRICING_CHANGE_REQUIRES_SPLIT' });
+    ).rejects.toMatchObject({ code: 'TABLE_NOT_AVAILABLE' });
+
+    // 5. Checkout order successfully
+    const checkoutResult = await pos.checkout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-checkout-transferred-order',
+      idempotencyKey: 'checkout-transferred-001',
+      orderId: source.orderId,
+      expectedOrderVersion: 2,
+      method: 'CASH',
+      cashReceivedVnd: 500_000,
+    });
+    expect(checkoutResult.orderId).toBe(source.orderId);
+  });
+
+  it('correctly calculates table transfer: 19:00 Table A (30k/h) -> 20:00 Table B (60k/h) -> 21:00 checkout = 90k, not 120k', async () => {
+    const catalog = new CatalogService(env);
+    const pos = new PosService(env);
+
+    // Bàn A: 30.000đ/giờ
+    const timeProductA = await catalog.createProduct(storeId, {
+      name: 'Giờ Bàn A',
+      productType: 'TIME',
+      variants: [],
+    });
+    await catalog.upsertPricing(storeId, {
+      productId: timeProductA.id,
+      basePriceVnd: 30_000,
+      baseDurationSeconds: 3600,
+      calculationMode: 'ACTUAL_TIME',
+      roundingUnitVnd: 1000,
+      firstPeriod: { enabled: false },
+      specialWindows: [],
+    });
+    const tableA = await catalog.createTable({
+      storeId,
+      areaId,
+      timeProductId: timeProductA.id,
+      name: 'Bàn A test chuyển',
+      sortOrder: 101,
+    });
+
+    // Bàn B: 60.000đ/giờ
+    const timeProductB = await catalog.createProduct(storeId, {
+      name: 'Giờ Bàn B',
+      productType: 'TIME',
+      variants: [],
+    });
+    await catalog.upsertPricing(storeId, {
+      productId: timeProductB.id,
+      basePriceVnd: 60_000,
+      baseDurationSeconds: 3600,
+      calculationMode: 'ACTUAL_TIME',
+      roundingUnitVnd: 1000,
+      firstPeriod: { enabled: false },
+      specialWindows: [],
+    });
+    const tableB = await catalog.createTable({
+      storeId,
+      areaId,
+      timeProductId: timeProductB.id,
+      name: 'Bàn B test chuyển',
+      sortOrder: 102,
+    });
+
+    const t19_00 = Date.parse('2026-08-20T19:00:00.000Z');
+    const t20_00 = Date.parse('2026-08-20T20:00:00.000Z');
+    const t21_00 = Date.parse('2026-08-20T21:00:00.000Z');
+
+    // 19:00 Mở Bàn A
+    const opened = await pos.openTable({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'req-open-a-1900',
+      idempotencyKey: 'open-a-1900',
+      tableId: tableA.id,
+      expectedTableVersion: 1,
+    });
+
+    // Set started_at to 19:00 for test
+    await env.DB.prepare('UPDATE time_sessions SET started_at = ? WHERE order_id = ?')
+      .bind(t19_00, opened.orderId)
+      .run();
+    await env.DB.prepare('UPDATE table_time_segments SET started_at = ? WHERE order_id = ?')
+      .bind(t19_00, opened.orderId)
+      .run();
+
+    const tablesBeforeTransfer = await pos.listTables(storeId);
+    const currentTableA = tablesBeforeTransfer.find((t) => t.id === tableA.id)!;
+    const currentTableB = tablesBeforeTransfer.find((t) => t.id === tableB.id)!;
+
+    // 20:00 Chuyển Bàn A -> Bàn B
+    await pos.transfer({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'req-transfer-a-b-2000',
+      idempotencyKey: 'transfer-a-b-2000',
+      orderId: opened.orderId,
+      targetTableId: tableB.id,
+      expectedOrderVersion: 1,
+      expectedSourceTableVersion: Number(currentTableA.version),
+      expectedTargetTableVersion: Number(currentTableB.version),
+    });
+
+    // Adjust segment 1 ended_at and segment 2 started_at to 20:00 for the time simulation
+    await env.DB.prepare(
+      'UPDATE table_time_segments SET ended_at = ? WHERE order_id = ? AND table_id = ?',
+    )
+      .bind(t20_00, opened.orderId, tableA.id)
+      .run();
+    await env.DB.prepare(
+      'UPDATE table_time_segments SET started_at = ? WHERE order_id = ? AND table_id = ?',
+    )
+      .bind(t20_00, opened.orderId, tableB.id)
+      .run();
+
+    // 21:00 Checkout / Quote
+    const quoteAt21 = await pos.quote(storeId, opened.orderId, t21_00);
+
+    expect(quoteAt21.time?.tableSegments).toHaveLength(2);
+
+    const segA = quoteAt21.time!.tableSegments![0]!;
+    expect(segA.tableName).toBe('Bàn A test chuyển');
+    expect(segA.startedAtMs).toBe(t19_00);
+    expect(segA.endedAtMs).toBe(t20_00);
+    expect(segA.pricingConfig.basePriceVnd).toBe(30_000);
+    expect(segA.amountAfterRoundingVnd).toBe(30_000);
+
+    const segB = quoteAt21.time!.tableSegments![1]!;
+    expect(segB.tableName).toBe('Bàn B test chuyển');
+    expect(segB.startedAtMs).toBe(t20_00);
+    expect(segB.pricingConfig.basePriceVnd).toBe(60_000);
+    expect(segB.amountAfterRoundingVnd).toBe(60_000);
+
+    expect(quoteAt21.totalVnd).toBe(90_000);
+    // Regression check: Must NOT be 120.000đ
+    expect(quoteAt21.totalVnd).not.toBe(120_000);
+
+    // 21:00 Checkout
+    const checkout = await pos.checkout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'req-checkout-2100',
+      idempotencyKey: 'checkout-2100',
+      orderId: opened.orderId,
+      expectedOrderVersion: 2,
+      method: 'CASH',
+      cashReceivedVnd: 100_000,
+      now: t21_00,
+    });
+
+    expect(checkout.total).toBe(90_000);
+    expect(checkout.total).not.toBe(120_000);
   });
 
   it('makes pause/resume atomic, versioned, audited and idempotent', async () => {
@@ -1099,5 +1382,271 @@ describe('online POS vertical slice', () => {
     );
     expect(quoteAfterRemovingItem.items.length).toBe(0);
     expect(quoteAfterRemovingItem.totalVnd).toBe(0);
+  });
+
+  it('supports provisional bill (tam tinh), stop-time checkout pending (dong bang tien), and resume playing (tiep tuc choi)', async () => {
+    const catalog = new CatalogService(env);
+    const stopTable = await catalog.createTable({
+      storeId,
+      areaId,
+      timeProductId,
+      name: 'Bàn Dừng Giờ',
+      sortOrder: 99,
+    });
+    const pos = new PosService(env);
+
+    // 1. Open table at 06:00:00 (60k/hr)
+    const t0 = new Date('2026-08-21T06:00:00.000Z').getTime();
+    const opened = await pos.openTable({
+      storeId,
+      tableId: stopTable.id,
+      expectedTableVersion: 1,
+      actorId: ownerUserId,
+      requestId: 'req-open-1',
+      idempotencyKey: 'idem-open-table-stop-1',
+      now: t0,
+    });
+    expect(opened.orderId).toBeDefined();
+
+    // 2. TẠM TÍNH: At 07:00:00 (1 hour played), check provisional quote
+    const t1 = t0 + 3600 * 1000;
+    const provisionalQuote1 = await pos.quote(storeId, opened.orderId, t1);
+    expect(provisionalQuote1.order.status).toBe('OPEN');
+    expect(provisionalQuote1.time?.status).toBe('RUNNING');
+    expect(provisionalQuote1.time?.endedAtMs).toBeNull();
+    expect(provisionalQuote1.time?.elapsedSeconds).toBe(3600);
+    expect(provisionalQuote1.time?.amountAfterRoundingVnd).toBe(60_000);
+
+    // Later at 07:15:00, provisional quote increases as time runs
+    const tProvisionalLater = t0 + 4500 * 1000;
+    const provisionalQuote2 = await pos.quote(storeId, opened.orderId, tProvisionalLater);
+    expect(provisionalQuote2.time?.elapsedSeconds).toBe(4500);
+    expect(provisionalQuote2.time?.amountAfterRoundingVnd).toBe(75_000);
+
+    // 3. THANH TOÁN (DỪNG GIỜ): At 07:27:15 (5235 seconds), stop time for checkout
+    const tStop = t0 + 5235 * 1000; // 07:27:15
+    const stopResult = await pos.stopTimeForCheckout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'req-stop-time-1',
+      idempotencyKey: 'idem-stop-time-1',
+      orderId: opened.orderId,
+      expectedOrderVersion: 1,
+      now: tStop,
+    });
+    expect(stopResult.status).toBe('PAYMENT_PENDING');
+    expect(stopResult.stoppedAt).toBe(tStop);
+    expect(stopResult.quote.order.status).toBe('PAYMENT_PENDING');
+    expect(stopResult.quote.time?.status).toBe('ENDED');
+    expect(stopResult.quote.time?.endedAtMs).toBe(tStop);
+    expect(stopResult.quote.time?.elapsedSeconds).toBe(5235);
+    const stoppedTimeAmount = stopResult.quote.time?.amountAfterRoundingVnd;
+    expect(stoppedTimeAmount).toBeDefined();
+
+    // 4. TIỀN ĐỨNG YÊN: At 07:32:15 (5 minutes after stop), check quote again -> exactly same frozen numbers!
+    const tLaterAfterStop = tStop + 300 * 1000;
+    const frozenQuote = await pos.quote(storeId, opened.orderId, tLaterAfterStop);
+    expect(frozenQuote.order.status).toBe('PAYMENT_PENDING');
+    expect(frozenQuote.time?.status).toBe('ENDED');
+    expect(frozenQuote.time?.endedAtMs).toBe(tStop);
+    expect(frozenQuote.time?.elapsedSeconds).toBe(5235);
+    expect(frozenQuote.time?.amountAfterRoundingVnd).toBe(stoppedTimeAmount);
+    expect(frozenQuote.totalVnd).toBe(stopResult.quote.totalVnd);
+
+    // 5. IDEMPOTENCY: Calling stopTimeForCheckout again returns identical frozen snapshot
+    const idempotentStop = await pos.stopTimeForCheckout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'req-stop-time-dup',
+      idempotencyKey: 'idem-stop-time-1',
+      orderId: opened.orderId,
+      expectedOrderVersion: 1,
+      now: tLaterAfterStop,
+    });
+    expect(idempotentStop.stoppedAt).toBe(tStop);
+    expect(idempotentStop.quote.time?.elapsedSeconds).toBe(5235);
+
+    // 5b. Back to order page & clicking Thanh toán again (already PAYMENT_PENDING with new idempotencyKey):
+    const secondStopOnPaymentPending = await pos.stopTimeForCheckout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'req-stop-time-second-click',
+      idempotencyKey: 'idem-stop-time-second-click-1',
+      orderId: opened.orderId,
+      expectedOrderVersion: 2,
+      now: tLaterAfterStop + 1000,
+    });
+    expect(secondStopOnPaymentPending.status).toBe('PAYMENT_PENDING');
+    expect(secondStopOnPaymentPending.stoppedAt).toBe(tStop);
+    expect(secondStopOnPaymentPending.quote.order.status).toBe('PAYMENT_PENDING');
+    expect(secondStopOnPaymentPending.quote.time?.status).toBe('ENDED');
+    expect(secondStopOnPaymentPending.quote.time?.elapsedSeconds).toBe(5235);
+
+    // 5c. Subsequent GET quote requests must continuously return PAYMENT_PENDING + ENDED
+    const afterQuote = await pos.quote(storeId, opened.orderId, tLaterAfterStop + 2000);
+    expect(afterQuote.order.status).toBe('PAYMENT_PENDING');
+    expect(afterQuote.time?.status).toBe('ENDED');
+    expect(afterQuote.time?.endedAtMs).toBe(tStop);
+    expect(afterQuote.time?.elapsedSeconds).toBe(5235);
+
+    // 6. TIẾP TỤC CHƠI: At 07:30:42, customer decides to play more
+    const tResume = t0 + 5442 * 1000; // 07:30:42
+    const resumeResult = await pos.resumeCheckout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'req-resume-1',
+      idempotencyKey: 'idem-resume-1',
+      orderId: opened.orderId,
+      expectedOrderVersion: 2, // version incremented on stop
+      now: tResume,
+    });
+    expect(resumeResult.status).toBe('OPEN');
+    expect(resumeResult.resumedAt).toBe(tResume);
+    expect(resumeResult.quote.order.status).toBe('OPEN');
+    expect(resumeResult.quote.time?.status).toBe('RUNNING');
+    expect(resumeResult.quote.time?.endedAtMs).toBeNull();
+    // At resume moment, elapsed seconds is exactly the previous 5235 seconds (waiting gap 07:27:15 - 07:30:42 not charged!)
+    expect(resumeResult.quote.time?.elapsedSeconds).toBe(5235);
+
+    // 6b. Immediate stop-time right after resume (same millisecond/second) - must not crash
+    const immediateStop = await pos.stopTimeForCheckout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'req-immediate-stop',
+      idempotencyKey: 'idem-immediate-stop-1',
+      orderId: opened.orderId,
+      expectedOrderVersion: 3,
+      now: tResume,
+    });
+    expect(immediateStop.status).toBe('PAYMENT_PENDING');
+    expect(immediateStop.quote.time?.elapsedSeconds).toBe(5235);
+
+    // Resume again after immediate stop
+    const resumeAgain = await pos.resumeCheckout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'req-resume-again',
+      idempotencyKey: 'idem-resume-again-1',
+      orderId: opened.orderId,
+      expectedOrderVersion: 4,
+      now: tResume + 1000,
+    });
+    expect(resumeAgain.status).toBe('OPEN');
+
+    // At 08:00:42 (30 minutes after resume): total elapsed is 5235s + 1800s = 7035s
+    const tPlayingLater = tResume + 1800 * 1000;
+    const playingQuote = await pos.quote(storeId, opened.orderId, tPlayingLater);
+    expect(playingQuote.time?.elapsedSeconds).toBe(5235 + 1799); // 1799s since resumed at tResume + 1000
+    // Table segments show distinct intervals
+    expect(playingQuote.time?.tableSegments?.length).toBe(3);
+
+    // 7. Stop time again at 08:00:42
+    const stopResult2 = await pos.stopTimeForCheckout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'req-stop-time-2',
+      idempotencyKey: 'idem-stop-time-2',
+      orderId: opened.orderId,
+      expectedOrderVersion: 5,
+      now: tPlayingLater,
+    });
+    expect(stopResult2.status).toBe('PAYMENT_PENDING');
+
+    // 8. HOÀN TẤT THANH TOÁN: Pay for order in PAYMENT_PENDING
+    const checkoutResult = await pos.checkout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'req-checkout-1',
+      idempotencyKey: 'idem-checkout-final',
+      orderId: opened.orderId,
+      expectedOrderVersion: 6,
+      method: 'CASH',
+      cashReceivedVnd: 500_000,
+      now: tPlayingLater + 60 * 1000,
+    });
+    expect(checkoutResult.invoiceId).toBeDefined();
+
+    // Verify order is PAID, table is AVAILABLE
+    const finalTables = await pos.listTables(storeId);
+    const targetTable = finalTables.find((t) => t.id === stopTable.id);
+    expect(targetTable?.status).toBe('AVAILABLE');
+  });
+
+  it('strictly preserves PAYMENT_PENDING invariant across multiple GET /quote and idempotent POST /stop-time calls', async () => {
+    const catalog = new CatalogService(env);
+    const table = await catalog.createTable({
+      storeId,
+      areaId,
+      timeProductId,
+      name: 'Bàn Test Invariant',
+      sortOrder: 100,
+    });
+    const pos = new PosService(env);
+
+    // 1. OPEN + RUNNING
+    const t0 = new Date('2026-08-21T10:00:00.000Z').getTime();
+    const opened = await pos.openTable({
+      storeId,
+      tableId: table.id,
+      expectedTableVersion: 1,
+      actorId: ownerUserId,
+      requestId: 'req-open-inv',
+      idempotencyKey: 'idem-open-inv-1',
+      now: t0,
+    });
+
+    const quoteBefore = await pos.quote(storeId, opened.orderId, t0 + 1800 * 1000);
+    expect(quoteBefore.order.status).toBe('OPEN');
+    expect(quoteBefore.time?.status).toBe('RUNNING');
+    expect(quoteBefore.time?.endedAtMs).toBeNull();
+
+    // 2. POST /stop-time -> PAYMENT_PENDING + ENDED
+    const tStop = t0 + 1800 * 1000;
+    const stopResponse = await pos.stopTimeForCheckout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'req-stop-inv-1',
+      idempotencyKey: 'idem-stop-inv-1',
+      orderId: opened.orderId,
+      expectedOrderVersion: 1,
+      now: tStop,
+    });
+    expect(stopResponse.status).toBe('PAYMENT_PENDING');
+    expect(stopResponse.quote.order.status).toBe('PAYMENT_PENDING');
+    expect(stopResponse.quote.time?.status).toBe('ENDED');
+    expect(stopResponse.quote.time?.endedAtMs).toBe(tStop);
+
+    // 3. GET /quote -> MUST BE PAYMENT_PENDING + ENDED
+    const quoteAfter1 = await pos.quote(storeId, opened.orderId, tStop + 60 * 1000);
+    expect(quoteAfter1.order.status).toBe('PAYMENT_PENDING');
+    expect(quoteAfter1.time?.status).toBe('ENDED');
+    expect(quoteAfter1.time?.endedAtMs).toBe(tStop);
+
+    // 4. GET /quote again (simulating 5s poll) -> MUST REMAIN PAYMENT_PENDING + ENDED
+    const quoteAfter2 = await pos.quote(storeId, opened.orderId, tStop + 120 * 1000);
+    expect(quoteAfter2.order.status).toBe('PAYMENT_PENDING');
+    expect(quoteAfter2.time?.status).toBe('ENDED');
+    expect(quoteAfter2.time?.endedAtMs).toBe(tStop);
+
+    // 5. POST /stop-time a second time -> IDEMPOTENT PAYMENT_PENDING + ENDED (no error, no new snapshot)
+    const stopResponse2 = await pos.stopTimeForCheckout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'req-stop-inv-2',
+      idempotencyKey: 'idem-stop-inv-2',
+      orderId: opened.orderId,
+      expectedOrderVersion: 2,
+      now: tStop + 180 * 1000,
+    });
+    expect(stopResponse2.status).toBe('PAYMENT_PENDING');
+    expect(stopResponse2.quote.order.status).toBe('PAYMENT_PENDING');
+    expect(stopResponse2.quote.time?.status).toBe('ENDED');
+    expect(stopResponse2.quote.time?.endedAtMs).toBe(tStop);
+
+    // 6. GET /quote after 2nd stop -> MUST STILL BE PAYMENT_PENDING + ENDED
+    const quoteAfter3 = await pos.quote(storeId, opened.orderId, tStop + 240 * 1000);
+    expect(quoteAfter3.order.status).toBe('PAYMENT_PENDING');
+    expect(quoteAfter3.time?.status).toBe('ENDED');
+    expect(quoteAfter3.time?.endedAtMs).toBe(tStop);
   });
 });

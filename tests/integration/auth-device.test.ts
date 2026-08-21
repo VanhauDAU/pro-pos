@@ -266,4 +266,47 @@ describe('Owner and POS activation invariants', () => {
       displayName: 'Nhân viên thử nghiệm',
     });
   });
+
+  it('handles GET /api/v1/auth/access/logout by clearing session and redirecting to Access bridge', async () => {
+    const response = await SELF.fetch(
+      `${ORIGIN}/api/v1/auth/access/logout?returnTo=${encodeURIComponent(`${ORIGIN}/?tab=owner&loggedOut=1`)}`,
+      {
+        redirect: 'manual',
+      },
+    );
+    expect(response.status).toBe(303);
+    expect(response.headers.get('Location')).toContain('/cdn-cgi/access/logout');
+    expect(response.headers.get('Location')).toContain(
+      encodeURIComponent(
+        `/logout-callback?target=${encodeURIComponent(`${ORIGIN}/?tab=owner&loggedOut=1`)}`,
+      ),
+    );
+    expect(response.headers.get('Set-Cookie')).toContain('__Host-propos-session=; Max-Age=0');
+  });
+
+  it('returns accessLogoutUrl on POST /api/v1/auth/logout for Owner session', async () => {
+    const authorize = await completeAccess('OWNER_LOGIN');
+    if (authorize.purpose !== 'OWNER_LOGIN') throw new Error('Expected owner login.');
+    const sessionCookie = `__Host-propos-session=${authorize.rawSession}`;
+    const context = await new AuthService(env).context(authorize.rawSession);
+
+    const logout = await SELF.fetch(`${ORIGIN}/api/v1/auth/logout`, {
+      method: 'POST',
+      headers: {
+        Origin: ORIGIN,
+        Cookie: sessionCookie,
+        'X-CSRF-Token': context.csrfToken!,
+      },
+    });
+    expect(logout.status).toBe(200);
+    const data = await jsonData<{ loggedOut: boolean; accessLogoutUrl: string | null }>(logout);
+    expect(data.loggedOut).toBe(true);
+    expect(data.accessLogoutUrl).toContain('/cdn-cgi/access/logout');
+    expect(data.accessLogoutUrl).toContain(
+      encodeURIComponent(
+        `/logout-callback?target=${encodeURIComponent(`${ORIGIN}/?tab=owner&loggedOut=1`)}`,
+      ),
+    );
+    expect(logout.headers.get('Set-Cookie')).toContain('__Host-propos-session=; Max-Age=0');
+  });
 });

@@ -1,4 +1,4 @@
-import { MailOutlined } from '@ant-design/icons';
+import { MailOutlined, SwapOutlined } from '@ant-design/icons';
 import { Alert, Button, Typography } from 'antd';
 import { useState } from 'react';
 import { useSearchParams } from 'react-router';
@@ -49,6 +49,15 @@ export function PlatformAccessPage() {
         <Typography.Title level={2}>Quản trị nền tảng</Typography.Title>
         <Typography.Text type="secondary">Chỉ dành cho SUPER_ADMIN Pro POS</Typography.Text>
       </div>
+      {searchParams.get('loggedOut') === '1' ? (
+        <Alert
+          type="success"
+          showIcon
+          message="Đã đăng xuất Cloudflare Access"
+          description="Phiên Cloudflare Access đã được xóa. Bạn có thể nhập email mới khi nhận mã OTP."
+          style={{ marginBottom: 14 }}
+        />
+      ) : null}
       {error ? <Alert className="login-error" type="error" showIcon title={error} /> : null}
       <div className="owner-otp-login">
         <Alert
@@ -66,6 +75,20 @@ export function PlatformAccessPage() {
           onClick={login}
         >
           Nhận mã OTP qua email
+        </Button>
+        <Button
+          type="dashed"
+          block
+          icon={<SwapOutlined />}
+          onClick={() => {
+            window.location.assign(
+              '/api/v1/auth/access/logout?returnTo=' +
+                encodeURIComponent(window.location.origin + '/platform/login?loggedOut=1'),
+            );
+          }}
+          style={{ marginTop: 10 }}
+        >
+          Đổi tài khoản khác (Xóa phiên cũ)
         </Button>
       </div>
     </AuthLayout>

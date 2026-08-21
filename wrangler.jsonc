@@ -24,9 +24,19 @@
     "head_sampling_rate": 1,
   },
   "durable_objects": {
-    "bindings": [{ "name": "STORE_REALTIME", "class_name": "StoreRealtimeRoom" }],
+    "bindings": [
+      {
+        "name": "STORE_REALTIME",
+        "class_name": "StoreRealtimeRoom",
+      },
+    ],
   },
-  "migrations": [{ "tag": "realtime-v1", "new_sqlite_classes": ["StoreRealtimeRoom"] }],
+  "migrations": [
+    {
+      "tag": "realtime-v1",
+      "new_sqlite_classes": ["StoreRealtimeRoom"],
+    },
+  ],
   "triggers": {
     "crons": ["* * * * *", "17 18 * * *"],
   },
@@ -38,6 +48,7 @@
     "STORE_TIMEZONE": "Asia/Ho_Chi_Minh",
     "COOKIE_MODE": "local",
     "ACCESS_BRIDGE_URL": "http://127.0.0.1:8788",
+    "ACCESS_TEAM_DOMAIN": "shy-mountain-5e8a.cloudflareaccess.com",
   },
   "d1_databases": [
     {
@@ -57,7 +68,12 @@
     "staging": {
       "name": "pro-pos-staging",
       "durable_objects": {
-        "bindings": [{ "name": "STORE_REALTIME", "class_name": "StoreRealtimeRoom" }],
+        "bindings": [
+          {
+            "name": "STORE_REALTIME",
+            "class_name": "StoreRealtimeRoom",
+          },
+        ],
       },
       "triggers": {
         "crons": ["* * * * *", "17 18 * * *"],
@@ -81,6 +97,7 @@
         "STORE_TIMEZONE": "Asia/Ho_Chi_Minh",
         "COOKIE_MODE": "secure",
         "ACCESS_BRIDGE_URL": "https://pro-pos-auth-staging.vanhau-laravel.workers.dev",
+        "ACCESS_TEAM_DOMAIN": "",
       },
       "d1_databases": [
         {
@@ -100,7 +117,12 @@
     "production": {
       "name": "pro-pos-production",
       "durable_objects": {
-        "bindings": [{ "name": "STORE_REALTIME", "class_name": "StoreRealtimeRoom" }],
+        "bindings": [
+          {
+            "name": "STORE_REALTIME",
+            "class_name": "StoreRealtimeRoom",
+          },
+        ],
       },
       "triggers": {
         "crons": ["* * * * *", "17 18 * * *"],
@@ -124,6 +146,7 @@
         "STORE_TIMEZONE": "Asia/Ho_Chi_Minh",
         "COOKIE_MODE": "secure",
         "ACCESS_BRIDGE_URL": "https://pro-pos-auth-production.vanhau-laravel.workers.dev",
+        "ACCESS_TEAM_DOMAIN": "",
       },
       "d1_databases": [
         {

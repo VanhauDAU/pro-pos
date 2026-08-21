@@ -3370,6 +3370,28 @@ body {
   background: #f1f7ff;
 }
 
+/* Prevent mobile browser (especially iOS Safari) unwanted auto-zoom on input / select focus */
+@media screen and (max-width: 768px) {
+  input,
+  textarea,
+  select,
+  .ant-input,
+  .ant-input-affix-wrapper,
+  .ant-input-affix-wrapper input,
+  .ant-input-number-input,
+  .ant-input-number-input-wrap,
+  .ant-select-selection-item,
+  .ant-select-selection-search-input,
+  .ant-select-selector,
+  .ant-select-item-option-content,
+  .ant-picker-input > input,
+  .ant-input-search input,
+  .ant-segmented-item-label {
+    font-size: 16px !important;
+    touch-action: manipulation;
+  }
+}
+
 .app-shell {
   width: min(100% - 32px, 560px);
   margin: 0 auto;

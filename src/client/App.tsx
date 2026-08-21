@@ -1,6 +1,6 @@
 import { Result, Spin } from 'antd';
 import { lazy, Suspense } from 'react';
-import { Navigate, Route, Routes } from 'react-router';
+import { Navigate, Route, Routes, useSearchParams } from 'react-router';
 
 import { DeviceActivationPage } from '@client/features/auth/DeviceActivationPage';
 import { LoginPage } from '@client/features/auth/LoginPage';
@@ -15,12 +15,21 @@ const SuperAdminPage = lazy(async () => {
   return { default: module.SuperAdminPage };
 });
 
+function LogoutCallbackRoute() {
+  const [searchParams] = useSearchParams();
+  const target =
+    searchParams.get('target') || searchParams.get('returnTo') || '/?tab=owner&loggedOut=1';
+  return <Navigate to={target} replace />;
+}
+
 export function App() {
   return (
     <>
       <PwaUpdatePrompt />
       <Routes>
         <Route path="/" element={<LoginPage />} />
+        <Route path="/logout-callback" element={<LogoutCallbackRoute />} />
+        <Route path="/logout" element={<Navigate to="/?tab=owner&loggedOut=1" replace />} />
         <Route path="/owner/login" element={<Navigate to="/?tab=owner" replace />} />
         <Route path="/device-activation" element={<DeviceActivationPage />} />
         <Route path="/pos/login" element={<Navigate to="/?tab=employee" replace />} />

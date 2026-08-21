@@ -5,10 +5,14 @@ import type {
 } from '@contracts/auth';
 import { AppError } from '@server/lib/app-error';
 import {
+  DEFAULT_PASSWORD_WORK_FACTOR,
   deriveCsrfToken,
   deriveDeterministicSecret,
+  derivePasswordDigest,
   hashOpaqueToken,
   randomOpaqueToken,
+  randomSalt,
+  verifyPasswordDigest,
   verifyPinDigest,
 } from '@server/lib/crypto';
 import { requireSecret } from '@server/lib/env';
@@ -18,7 +22,9 @@ import { AuditRepository, type AuditContext } from '@server/repositories/audit-r
 const EMPLOYEE_ABSOLUTE_SECONDS = 12 * 60 * 60;
 const EMPLOYEE_IDLE_SECONDS = 30 * 60;
 const OWNER_IDLE_SECONDS = 24 * 60 * 60;
+const OWNER_ABSOLUTE_SECONDS = 7 * 24 * 60 * 60;
 const PLATFORM_IDLE_SECONDS = 60 * 60;
+const PLATFORM_ABSOLUTE_SECONDS = 24 * 60 * 60;
 const DEVICE_SECONDS = 365 * 24 * 60 * 60;
 
 export class AuthService {
@@ -47,6 +53,239 @@ export class AuthService {
         retryAfterSeconds: Math.ceil((attempt.locked_until - now) / 1000),
       });
     }
+  }
+
+  async ownerLogin(input: {
+    username: string;
+    password: string;
+  }): Promise<{ rawToken: string; response: LoginResponse }> {
+    const now = Date.now();
+    const normalizedIdentifier = input.username.trim().toLocaleLowerCase('en-US');
+    const subjectKey = `owner:${normalizedIdentifier}`;
+    await this.assertNotLocked('OWNER_PASSWORD', subjectKey, now);
+
+    const identity = await this.repository.findOwnerByUsernameOrEmail(normalizedIdentifier);
+    let valid = false;
+    if (identity && identity.digest && identity.salt) {
+      valid = await verifyPasswordDigest({
+        password: input.password,
+        salt: identity.salt,
+        pepper: this.authPepper,
+        expectedDigest: identity.digest,
+        workFactor: identity.work_factor ?? DEFAULT_PASSWORD_WORK_FACTOR,
+      });
+    }
+
+    if (
+      !identity ||
+      !valid ||
+      identity.user_status !== 'ACTIVE' ||
+      identity.membership_status !== 'ACTIVE'
+    ) {
+      await this.repository.recordFailure('OWNER_PASSWORD', subjectKey, now);
+      throw new AppError(
+        'INVALID_CREDENTIALS',
+        'Tên đăng nhập hoặc mật khẩu không chính xác.',
+        401,
+      );
+    }
+    if (identity.store_status !== 'ACTIVE') {
+      throw new AppError('STORE_LOCKED', 'Cửa hàng đang bị khóa.', 403);
+    }
+
+    await this.repository.clearFailures('OWNER_PASSWORD', subjectKey);
+    const rawToken = randomOpaqueToken();
+    await this.repository.createSession({
+      id: crypto.randomUUID(),
+      tokenHash: await hashOpaqueToken(rawToken, this.sessionTokenPepper),
+      userId: identity.user_id,
+      storeId: identity.store_id,
+      deviceId: null,
+      kind: 'OWNER',
+      credentialVersion: identity.credential_version ?? 1,
+      expiresAt: now + OWNER_ABSOLUTE_SECONDS * 1000,
+      idleExpiresAt: now + OWNER_IDLE_SECONDS * 1000,
+      now,
+    });
+
+    return {
+      rawToken,
+      response: {
+        actor: {
+          id: identity.user_id,
+          displayName: identity.display_name,
+          kind: 'OWNER',
+          storeId: identity.store_id,
+        },
+        csrfToken: await deriveCsrfToken(rawToken, this.authPepper),
+      },
+    };
+  }
+
+  async platformLogin(input: {
+    username: string;
+    password: string;
+  }): Promise<{ rawToken: string; response: LoginResponse }> {
+    const now = Date.now();
+    const normalizedIdentifier = input.username.trim().toLocaleLowerCase('en-US');
+    const subjectKey = `platform:${normalizedIdentifier}`;
+    await this.assertNotLocked('PLATFORM_PASSWORD', subjectKey, now);
+
+    const identity = await this.repository.findSuperAdminByUsernameOrEmail(normalizedIdentifier);
+    let valid = false;
+    if (identity && identity.digest && identity.salt) {
+      valid = await verifyPasswordDigest({
+        password: input.password,
+        salt: identity.salt,
+        pepper: this.authPepper,
+        expectedDigest: identity.digest,
+        workFactor: identity.work_factor ?? DEFAULT_PASSWORD_WORK_FACTOR,
+      });
+    }
+
+    if (!identity || !valid || identity.user_status !== 'ACTIVE') {
+      await this.repository.recordFailure('PLATFORM_PASSWORD', subjectKey, now);
+      throw new AppError(
+        'INVALID_CREDENTIALS',
+        'Tên đăng nhập hoặc mật khẩu không chính xác.',
+        401,
+      );
+    }
+
+    await this.repository.clearFailures('PLATFORM_PASSWORD', subjectKey);
+    const rawToken = randomOpaqueToken();
+    await this.repository.createSession({
+      id: crypto.randomUUID(),
+      tokenHash: await hashOpaqueToken(rawToken, this.sessionTokenPepper),
+      userId: identity.user_id,
+      storeId: null,
+      deviceId: null,
+      kind: 'SUPER_ADMIN',
+      credentialVersion: identity.credential_version ?? 1,
+      expiresAt: now + PLATFORM_ABSOLUTE_SECONDS * 1000,
+      idleExpiresAt: now + PLATFORM_IDLE_SECONDS * 1000,
+      now,
+    });
+
+    return {
+      rawToken,
+      response: {
+        actor: {
+          id: identity.user_id,
+          displayName: identity.display_name,
+          kind: 'SUPER_ADMIN',
+          storeId: null,
+        },
+        csrfToken: await deriveCsrfToken(rawToken, this.authPepper),
+      },
+    };
+  }
+
+  async directDeviceActivation(input: {
+    username: string;
+    password: string;
+    deviceName: string;
+  }): Promise<{ rawDeviceSecret: string; response: ActivationConfirmationResponse }> {
+    const now = Date.now();
+    const normalizedIdentifier = input.username.trim().toLocaleLowerCase('en-US');
+    const subjectKey = `owner:${normalizedIdentifier}`;
+    await this.assertNotLocked('OWNER_PASSWORD', subjectKey, now);
+
+    const identity = await this.repository.findOwnerByUsernameOrEmail(normalizedIdentifier);
+    let valid = false;
+    if (identity && identity.digest && identity.salt) {
+      valid = await verifyPasswordDigest({
+        password: input.password,
+        salt: identity.salt,
+        pepper: this.authPepper,
+        expectedDigest: identity.digest,
+        workFactor: identity.work_factor ?? DEFAULT_PASSWORD_WORK_FACTOR,
+      });
+    }
+
+    if (
+      !identity ||
+      !valid ||
+      identity.user_status !== 'ACTIVE' ||
+      identity.membership_status !== 'ACTIVE'
+    ) {
+      await this.repository.recordFailure('OWNER_PASSWORD', subjectKey, now);
+      throw new AppError(
+        'INVALID_CREDENTIALS',
+        'Tài khoản hoặc mật khẩu Chủ cửa hàng không đúng.',
+        401,
+      );
+    }
+    if (identity.store_status !== 'ACTIVE') {
+      throw new AppError('STORE_LOCKED', 'Cửa hàng đang bị khóa.', 403);
+    }
+
+    await this.repository.clearFailures('OWNER_PASSWORD', subjectKey);
+    const deviceId = crypto.randomUUID();
+    const rawDeviceSecret = randomOpaqueToken();
+    const secretHash = await hashOpaqueToken(rawDeviceSecret, this.deviceTokenPepper);
+    const deviceName = input.deviceName.trim() || 'Máy POS';
+
+    await this.env.DB.batch([
+      this.env.DB.prepare(
+        `INSERT INTO devices (id, store_id, name, status, activated_by, activated_at, created_at, updated_at)
+         VALUES (?, ?, ?, 'ACTIVE', ?, ?, ?, ?)`,
+      ).bind(deviceId, identity.store_id, deviceName, identity.user_id, now, now, now),
+      this.env.DB.prepare(
+        `INSERT INTO device_credentials (device_id, secret_hash, pepper_version, credential_version, issued_at, expires_at)
+         VALUES (?, ?, 1, 1, ?, ?)`,
+      ).bind(deviceId, secretHash, now, now + DEVICE_SECONDS * 1000),
+    ]);
+
+    return {
+      rawDeviceSecret,
+      response: {
+        device: {
+          id: deviceId,
+          name: deviceName,
+          status: 'ACTIVE',
+          storeId: identity.store_id,
+        },
+      },
+    };
+  }
+
+  async changePassword(input: {
+    userId: string;
+    currentPassword?: string;
+    newPassword: string;
+  }): Promise<{ success: boolean }> {
+    const now = Date.now();
+    const cred = await this.repository.findPasswordCredential(input.userId);
+    if (cred && input.currentPassword) {
+      const valid = await verifyPasswordDigest({
+        password: input.currentPassword,
+        salt: cred.salt,
+        pepper: this.authPepper,
+        expectedDigest: cred.digest,
+        workFactor: cred.work_factor,
+      });
+      if (!valid) {
+        throw new AppError('INVALID_CREDENTIALS', 'Mật khẩu hiện tại không đúng.', 400);
+      }
+    }
+
+    const salt = randomSalt(16);
+    const digest = await derivePasswordDigest({
+      password: input.newPassword,
+      salt,
+      pepper: this.authPepper,
+      workFactor: DEFAULT_PASSWORD_WORK_FACTOR,
+    });
+    await this.repository.savePasswordCredential({
+      userId: input.userId,
+      salt,
+      digest,
+      workFactor: DEFAULT_PASSWORD_WORK_FACTOR,
+      pepperVersion: 1,
+      now,
+    });
+    return { success: true };
   }
 
   async confirmActivation(input: {

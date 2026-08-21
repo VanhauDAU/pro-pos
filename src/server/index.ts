@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 
 import { AppError } from '@server/lib/app-error';
 import { failure, success } from '@server/lib/response';
+import { clearCredentialCookie } from '@server/lib/cookies';
 import { activationRoutes, authRoutes } from '@server/routes/auth';
 import { platformRoutes } from '@server/routes/platform';
 import { ownerStaffRoutes } from '@server/routes/owner-staff';
@@ -19,6 +20,22 @@ import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
 export { StoreRealtimeRoom } from '@server/realtime/store-realtime-room';
 
 const app = new Hono<AppEnv>();
+
+app.get('/logout-callback', (c) => {
+  clearCredentialCookie(c, 'session');
+  clearCredentialCookie(c, 'activation');
+  clearCredentialCookie(c, 'access');
+  const target = c.req.query('target') || c.req.query('returnTo') || '/?tab=owner&loggedOut=1';
+  return c.redirect(target, 303);
+});
+
+app.get('/cdn-cgi/access/logout', (c) => {
+  clearCredentialCookie(c, 'session');
+  clearCredentialCookie(c, 'activation');
+  clearCredentialCookie(c, 'access');
+  const target = c.req.query('target') || c.req.query('returnTo') || '/?tab=owner&loggedOut=1';
+  return c.redirect(target, 303);
+});
 
 app.use('/api/*', async (c, next) => {
   const requestId = c.req.header('X-Request-ID') ?? crypto.randomUUID();

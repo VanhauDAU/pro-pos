@@ -1,5 +1,10 @@
 import { AppError } from '@server/lib/app-error';
-import { safeEqualSecret } from '@server/lib/crypto';
+import {
+  DEFAULT_PASSWORD_WORK_FACTOR,
+  derivePasswordDigest,
+  randomSalt,
+  safeEqualSecret,
+} from '@server/lib/crypto';
 import { requireSecret } from '@server/lib/env';
 import { PlatformRepository } from '@server/repositories/platform-repository';
 
@@ -10,7 +15,13 @@ export class PlatformService {
     this.repository = new PlatformRepository(env.DB);
   }
 
-  async bootstrap(input: { bootstrapSecret: string; email: string; displayName: string }) {
+  async bootstrap(input: {
+    bootstrapSecret: string;
+    username?: string | undefined;
+    email: string;
+    displayName: string;
+    password?: string | undefined;
+  }) {
     const expected = requireSecret(this.env.SYSTEM_BOOTSTRAP_SECRET, 'SYSTEM_BOOTSTRAP_SECRET');
     if (!safeEqualSecret(input.bootstrapSecret, expected)) {
       throw new AppError('BOOTSTRAP_FORBIDDEN', 'Không được phép.', 403);
@@ -20,19 +31,63 @@ export class PlatformService {
     }
     const now = Date.now();
     const id = crypto.randomUUID();
+    let passwordData:
+      { salt: string; digest: string; workFactor: number; pepperVersion: number } | undefined;
+    if (input.password) {
+      const salt = randomSalt(16);
+      const pepper = requireSecret(this.env.AUTH_PEPPER, 'AUTH_PEPPER');
+      const digest = await derivePasswordDigest({
+        password: input.password,
+        salt,
+        pepper,
+        workFactor: DEFAULT_PASSWORD_WORK_FACTOR,
+      });
+      passwordData = {
+        salt,
+        digest,
+        workFactor: DEFAULT_PASSWORD_WORK_FACTOR,
+        pepperVersion: 1,
+      };
+    }
     await this.repository.createSuperAdmin({
       id,
+      username: input.username?.trim(),
       email: input.email.trim().toLocaleLowerCase('en-US'),
       displayName: input.displayName.trim(),
+      password: passwordData,
       now,
     });
     return { id };
   }
 
-  async createStore(input: { name: string; ownerDisplayName: string; ownerEmail: string }) {
+  async createStore(input: {
+    name: string;
+    ownerDisplayName: string;
+    ownerEmail: string;
+    ownerUsername?: string | undefined;
+    ownerPassword?: string | undefined;
+  }) {
     const now = Date.now();
     const storeId = crypto.randomUUID();
     const ownerUserId = crypto.randomUUID();
+    let ownerPasswordData:
+      { salt: string; digest: string; workFactor: number; pepperVersion: number } | undefined;
+    if (input.ownerPassword) {
+      const salt = randomSalt(16);
+      const pepper = requireSecret(this.env.AUTH_PEPPER, 'AUTH_PEPPER');
+      const digest = await derivePasswordDigest({
+        password: input.ownerPassword,
+        salt,
+        pepper,
+        workFactor: DEFAULT_PASSWORD_WORK_FACTOR,
+      });
+      ownerPasswordData = {
+        salt,
+        digest,
+        workFactor: DEFAULT_PASSWORD_WORK_FACTOR,
+        pepperVersion: 1,
+      };
+    }
     await this.repository.createStoreWithOwner({
       storeId,
       storeName: input.name.trim(),
@@ -42,6 +97,8 @@ export class PlatformService {
       ownerMembershipId: crypto.randomUUID(),
       ownerDisplayName: input.ownerDisplayName.trim(),
       ownerEmail: input.ownerEmail.trim().toLocaleLowerCase('en-US'),
+      ownerUsername: input.ownerUsername?.trim(),
+      ownerPassword: ownerPasswordData,
       now,
     });
     return { storeId, ownerUserId };

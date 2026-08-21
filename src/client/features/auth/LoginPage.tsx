@@ -1,11 +1,11 @@
 import {
   ArrowLeftOutlined,
-  CheckCircleOutlined,
   DeleteOutlined,
   DesktopOutlined,
   EyeInvisibleOutlined,
   EyeOutlined,
-  MailOutlined,
+  LockOutlined,
+  LoginOutlined,
   SwapOutlined,
   UserOutlined,
 } from '@ant-design/icons';
@@ -14,7 +14,7 @@ import { Alert, Avatar, Button, Form, Input, Spin, Tabs, Typography } from 'antd
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router';
 
-import type { AccessStartResponse, AuthContextResponse, LoginResponse } from '@contracts/auth';
+import type { AuthContextResponse, LoginResponse } from '@contracts/auth';
 
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 
@@ -280,16 +280,27 @@ export function LoginPage() {
     setPinValue('');
   };
 
-  const ownerLogin = async () => {
+  const [ownerUsername, setOwnerUsername] = useState('');
+  const [ownerPassword, setOwnerPassword] = useState('');
+
+  const executeOwnerLogin = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!ownerUsername.trim() || !ownerPassword) {
+      setError('Vui lòng nhập tên đăng nhập và mật khẩu.');
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
-      const response = await jsonRequest<AccessStartResponse>('/api/v1/auth/access/start', {
-        purpose: 'OWNER_LOGIN',
+      await jsonRequest<LoginResponse>('/api/v1/auth/owner/login', {
+        username: ownerUsername.trim(),
+        password: ownerPassword,
       });
-      window.location.assign(response.loginUrl);
+      await queryClient.invalidateQueries({ queryKey: ['auth-context'] });
+      navigate('/owner', { replace: true });
     } catch (loginError) {
       setError(errorMessage(loginError));
+    } finally {
       setSubmitting(false);
     }
   };
@@ -338,46 +349,49 @@ export function LoginPage() {
         label: 'Chủ cửa hàng',
         children: (
           <div className="owner-login-clean">
-            {searchParams.get('loggedOut') === '1' ? (
-              <div className="owner-logout-badge">
-                <CheckCircleOutlined style={{ color: '#10b981' }} />
-                <span>Đã xóa phiên cũ. Sẵn sàng nhập email mới.</span>
+            <form onSubmit={executeOwnerLogin} className="owner-password-form">
+              <div style={{ marginBottom: 16 }}>
+                <Input
+                  size="large"
+                  prefix={<UserOutlined style={{ color: '#94a3b8' }} />}
+                  placeholder="Tên đăng nhập hoặc Email"
+                  value={ownerUsername}
+                  onChange={(e) => {
+                    setOwnerUsername(e.target.value);
+                    if (error) setError(null);
+                  }}
+                  autoComplete="username"
+                  disabled={submitting}
+                />
               </div>
-            ) : null}
 
-            <div className="owner-login-card-inner">
-              <div className="owner-login-icon">
-                <MailOutlined />
+              <div style={{ marginBottom: 20 }}>
+                <Input.Password
+                  size="large"
+                  prefix={<LockOutlined style={{ color: '#94a3b8' }} />}
+                  placeholder="Mật khẩu"
+                  value={ownerPassword}
+                  onChange={(e) => {
+                    setOwnerPassword(e.target.value);
+                    if (error) setError(null);
+                  }}
+                  autoComplete="current-password"
+                  disabled={submitting}
+                />
               </div>
-              <div className="owner-login-title">Đăng nhập Chủ cửa hàng</div>
-              <div className="owner-login-subtitle">
-                Mã xác thực OTP dùng một lần sẽ được gửi trực tiếp đến email của bạn
-              </div>
-            </div>
 
-            <Button
-              type="primary"
-              size="large"
-              block
-              icon={<MailOutlined />}
-              loading={submitting}
-              onClick={ownerLogin}
-              className="owner-login-btn"
-            >
-              Nhận mã OTP qua email
-            </Button>
-
-            <button
-              type="button"
-              className="owner-switch-account-btn"
-              onClick={() => {
-                window.location.assign(
-                  `/api/v1/auth/access/logout?returnTo=${encodeURIComponent(window.location.origin + '/?tab=owner&loggedOut=1')}`,
-                );
-              }}
-            >
-              <SwapOutlined /> Đổi tài khoản khác
-            </button>
+              <Button
+                type="primary"
+                size="large"
+                htmlType="submit"
+                block
+                icon={<LoginOutlined />}
+                loading={submitting}
+                className="owner-login-btn"
+              >
+                Đăng nhập Chủ cửa hàng
+              </Button>
+            </form>
           </div>
         ),
       },

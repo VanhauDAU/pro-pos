@@ -34,6 +34,8 @@ interface CreateStoreValues {
   name: string;
   ownerDisplayName: string;
   ownerEmail: string;
+  ownerUsername?: string | undefined;
+  ownerPassword?: string | undefined;
 }
 
 function readableError(error: unknown) {
@@ -111,6 +113,29 @@ export function SuperAdminPage() {
     }
   };
 
+  const toggleRealtime = async (store: PlatformStoreSummary) => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      await jsonRequest(
+        `/api/v1/platform/stores/${store.id}/capabilities`,
+        {
+          capability: 'POS_REALTIME',
+          enabled: !store.posRealtimeEnabled,
+        },
+        {
+          method: 'PATCH',
+          headers: csrfHeaders(),
+        },
+      );
+      await queryClient.invalidateQueries({ queryKey: ['platform-stores'] });
+    } catch (capabilityError) {
+      setError(readableError(capabilityError));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const logout = async () => {
     setSubmitting(true);
     try {
@@ -165,7 +190,7 @@ export function SuperAdminPage() {
           <div>
             <Typography.Title level={2}>Cửa hàng Pro POS</Typography.Title>
             <Typography.Text type="secondary">
-              Tạo cửa hàng, cấp Owner bằng email và quản lý trạng thái hoạt động.
+              Tạo cửa hàng và quản lý tài khoản Chủ cửa hàng.
             </Typography.Text>
           </div>
           <Button
@@ -180,93 +205,95 @@ export function SuperAdminPage() {
             Tạo cửa hàng
           </Button>
         </div>
-
-        {error ? <Alert className="platform-error" type="error" showIcon title={error} /> : null}
-        {stores.isError && !error ? (
+        {error ? (
           <Alert
             className="platform-error"
             type="error"
             showIcon
-            title="Không thể tải danh sách cửa hàng."
+            message={error}
+            closable
+            onClose={() => setError(null)}
           />
         ) : null}
 
-        <section className="platform-stats" aria-label="Thống kê cửa hàng">
-          <Card>
-            <Statistic title="Tổng cửa hàng" value={stats.total} prefix={<ShopOutlined />} />
+        <div className="platform-stats-grid">
+          <Card className="platform-stat-card">
+            <Statistic title="Tổng số cửa hàng" value={stats.total} prefix={<ShopOutlined />} />
           </Card>
-          <Card>
+          <Card className="platform-stat-card">
             <Statistic
               title="Đang hoạt động"
               value={stats.active}
-              styles={{ content: { color: '#16a34a' } }}
+              valueStyle={{ color: '#10b981' }}
             />
           </Card>
-          <Card>
+          <Card className="platform-stat-card">
             <Statistic
-              title="Đang khóa"
+              title="Đang bị khóa"
               value={stats.locked}
-              styles={{ content: { color: '#dc2626' } }}
+              valueStyle={{ color: '#ef4444' }}
             />
           </Card>
-        </section>
+        </div>
 
-        <Card className="platform-table-card" title="Danh sách cửa hàng">
-          <Table<PlatformStoreSummary>
+        <Card
+          className="platform-table-card"
+          title="Danh sách cửa hàng"
+          extra={
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+              Tạo cửa hàng
+            </Button>
+          }
+        >
+          <Table
             rowKey="id"
             loading={stores.isLoading}
             dataSource={stores.data ?? []}
-            pagination={{ pageSize: 10, hideOnSinglePage: true }}
-            scroll={{ x: 760 }}
-            locale={{ emptyText: 'Chưa có cửa hàng. Hãy tạo cửa hàng đầu tiên.' }}
+            pagination={{ pageSize: 10, showSizeChanger: false }}
             columns={[
               {
-                title: 'Cửa hàng',
+                title: 'Tên cửa hàng',
                 dataIndex: 'name',
                 key: 'name',
-                render: (name: string) => <Typography.Text strong>{name}</Typography.Text>,
+                render: (val: string) => <strong>{val}</strong>,
               },
               {
                 title: 'Trạng thái',
                 dataIndex: 'status',
                 key: 'status',
-                width: 150,
-                render: (status: PlatformStoreSummary['status']) =>
-                  status === 'ACTIVE' ? (
-                    <Tag color="success">Đang hoạt động</Tag>
-                  ) : (
-                    <Tag color="error">Đang khóa</Tag>
-                  ),
+                render: (status: 'ACTIVE' | 'LOCKED') => (
+                  <Tag color={status === 'ACTIVE' ? 'success' : 'error'}>
+                    {status === 'ACTIVE' ? 'Hoạt động' : 'Đã khóa'}
+                  </Tag>
+                ),
               },
               {
-                title: 'Múi giờ',
-                dataIndex: 'timezone',
-                key: 'timezone',
-                width: 180,
-              },
-              {
-                title: 'Ngày tạo',
-                dataIndex: 'createdAt',
-                key: 'createdAt',
-                width: 180,
-                render: (value: number) =>
-                  new Intl.DateTimeFormat('vi-VN', {
-                    dateStyle: 'short',
-                    timeStyle: 'short',
-                  }).format(new Date(value)),
+                title: 'Realtime POS',
+                dataIndex: 'posRealtimeEnabled',
+                key: 'posRealtimeEnabled',
+                render: (enabled: boolean, store: PlatformStoreSummary) => (
+                  <Button
+                    size="small"
+                    type={enabled ? 'primary' : 'default'}
+                    loading={submitting}
+                    onClick={() => toggleRealtime(store)}
+                  >
+                    {enabled ? 'Bật' : 'Tắt'}
+                  </Button>
+                ),
               },
               {
                 title: 'Thao tác',
                 key: 'actions',
-                width: 180,
-                fixed: 'right',
-                render: (_value, store) => (
+                render: (_, store: PlatformStoreSummary) => (
                   <Popconfirm
-                    title={store.status === 'ACTIVE' ? 'Khóa cửa hàng?' : 'Mở lại cửa hàng?'}
+                    title={
+                      store.status === 'ACTIVE' ? 'Khóa cửa hàng này?' : 'Mở lại cửa hàng này?'
+                    }
                     description={
                       store.status === 'ACTIVE'
-                        ? 'Employee/POS sẽ bị chặn cho đến khi mở lại.'
-                        : 'Thiết bị ACTIVE có thể tiếp tục sử dụng.'
+                        ? 'Nhân viên và Owner sẽ không thể đăng nhập.'
+                        : 'Cho phép cửa hàng hoạt động lại bình thường.'
                     }
                     okText="Xác nhận"
                     cancelText="Hủy"
@@ -294,15 +321,8 @@ export function SuperAdminPage() {
         confirmLoading={submitting}
         onOk={() => form.submit()}
         onCancel={() => !submitting && setCreateOpen(false)}
-        destroyOnHidden
+        destroyOnClose
       >
-        <Alert
-          className="platform-modal-note"
-          type="info"
-          showIcon
-          title="Owner đăng nhập bằng email OTP"
-          description="Sau khi tạo, hãy thêm đúng email Owner vào Cloudflare Access exact-email policy."
-        />
         <Form form={form} layout="vertical" requiredMark={false} onFinish={createStore}>
           <Form.Item
             label="Tên cửa hàng"
@@ -327,6 +347,26 @@ export function SuperAdminPage() {
             ]}
           >
             <Input type="email" maxLength={254} placeholder="owner@example.com" />
+          </Form.Item>
+          <Form.Item
+            label="Tên đăng nhập Owner"
+            name="ownerUsername"
+            tooltip="Nếu để trống sẽ sử dụng Email Owner làm tên đăng nhập."
+          >
+            <Input maxLength={128} placeholder="Tùy chọn (ví dụ: owner_billiards)" />
+          </Form.Item>
+          <Form.Item
+            label="Mật khẩu khởi tạo"
+            name="ownerPassword"
+            rules={[
+              {
+                required: true,
+                min: 6,
+                message: 'Vui lòng nhập mật khẩu Owner (tối thiểu 6 ký tự).',
+              },
+            ]}
+          >
+            <Input.Password placeholder="Nhập mật khẩu cho Owner" />
           </Form.Item>
         </Form>
       </Modal>

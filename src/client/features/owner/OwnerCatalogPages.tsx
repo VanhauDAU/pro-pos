@@ -3,6 +3,7 @@ import {
   ArrowLeftOutlined,
   CameraOutlined,
   CheckOutlined,
+  CopyOutlined,
   DeleteOutlined,
   EditOutlined,
   PictureOutlined,
@@ -43,7 +44,7 @@ import {
 import type { TableColumnsType } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
 import { CameraCaptureModal } from '@client/components/CameraCaptureModal';
@@ -428,6 +429,13 @@ export function OwnerProductListPage() {
         <Space>
           <Button
             type="link"
+            icon={<CopyOutlined />}
+            onClick={() => navigate(`/owner/catalog/products/new?copyFrom=${product.id}`)}
+          >
+            Sao chép
+          </Button>
+          <Button
+            type="link"
             icon={<EditOutlined />}
             onClick={() => navigate(`/owner/catalog/products/${product.id}`)}
           >
@@ -578,6 +586,8 @@ export function OwnerProductListPage() {
 
 export function OwnerProductFormPage({ productId }: { productId?: string }) {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const copyFromId = searchParams.get('copyFrom');
   const queryClient = useQueryClient();
   const [messageApi, contextHolder] = message.useMessage();
   const [form] = Form.useForm<ProductFormValues>();
@@ -588,14 +598,23 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
   const [cropperModalOpen, setCropperModalOpen] = useState(false);
   const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [categoryModalOpen, setCategoryModalOpen] = useState(false);
+
   const [categorySearch, setCategorySearch] = useState('');
-  const [categoryForm] = Form.useForm<{ name: string }>();
+  const [inlineCategoryName, setInlineCategoryName] = useState('');
+  const [creatingCategory, setCreatingCategory] = useState(false);
+  const [categorySelectOpen, setCategorySelectOpen] = useState(false);
+
+  const [unitSearch, setUnitSearch] = useState('');
+  const [inlineUnitName, setInlineUnitName] = useState('');
+  const [creatingUnit, setCreatingUnit] = useState(false);
+  const [unitSelectOpen, setUnitSelectOpen] = useState(false);
+
   const isEdit = Boolean(productId);
+  const sourceProductId = productId || copyFromId;
   const detail = useQuery({
-    queryKey: ['owner-product', productId],
-    queryFn: () => apiRequest<ProductDetail>(`/api/v1/owner/catalog/products/${productId}`),
-    enabled: isEdit,
+    queryKey: ['owner-product', sourceProductId],
+    queryFn: () => apiRequest<ProductDetail>(`/api/v1/owner/catalog/products/${sourceProductId}`),
+    enabled: Boolean(sourceProductId),
   });
   const categories = useQuery({
     queryKey: CATEGORY_QUERY,
@@ -611,46 +630,213 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
   });
   const firstPeriodEnabled = Form.useWatch('firstPeriodEnabled', form);
 
-  const createCategory = async ({ name }: { name: string }) => {
+  const createCategoryDirect = async (nameToCreate: string) => {
+    const name = nameToCreate.trim();
+    if (!name) return;
+    const existing = (categories.data ?? []).find(
+      (c) => c.name.trim().toLowerCase() === name.toLowerCase(),
+    );
+    if (existing) {
+      form.setFieldsValue({ categoryId: existing.id });
+      setCategorySearch('');
+      setInlineCategoryName('');
+      setCategorySelectOpen(false);
+      messageApi.info(`Đã chọn danh mục "${existing.name}".`);
+      return;
+    }
+    setCreatingCategory(true);
     try {
       const result = await jsonRequest<{ id: string }>(
         '/api/v1/owner/catalog/categories',
         { name },
         { headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' } },
       );
-      await queryClient.invalidateQueries({ queryKey: CATEGORY_QUERY });
-      form.setFieldValue('categoryId', result.id);
-      setCategoryModalOpen(false);
-      categoryForm.resetFields();
+      queryClient.setQueryData<Category[]>(CATEGORY_QUERY, (old) => {
+        const current = old ?? [];
+        if (current.some((c) => c.id === result.id)) return current;
+        return [...current, { id: result.id, name, status: 'ACTIVE' }];
+      });
+      form.setFieldsValue({ categoryId: result.id });
       setCategorySearch('');
-      messageApi.success('Đã thêm danh mục và chọn vào mặt hàng.');
+      setInlineCategoryName('');
+      setCategorySelectOpen(false);
+      void queryClient.invalidateQueries({ queryKey: CATEGORY_QUERY });
+      messageApi.success(`Đã thêm và chọn danh mục "${name}".`);
     } catch (error) {
       messageApi.error(errorMessage(error, 'Không thể thêm danh mục.'));
+    } finally {
+      setCreatingCategory(false);
     }
   };
 
-  const categoryDropdown = (menu: ReactNode) => (
-    <>
-      {menu}
-      <Divider style={{ margin: '8px 0' }} />
-      <Button
-        type="link"
-        block
-        disabled={!categorySearch.trim()}
-        onMouseDown={(event) => event.preventDefault()}
-        onClick={() => {
-          categoryForm.setFieldValue('name', categorySearch.trim());
-          setCategoryModalOpen(true);
-        }}
-      >
-        <PlusOutlined /> Thêm danh mục{categorySearch.trim() ? ` “${categorySearch.trim()}”` : ''}
-      </Button>
-    </>
-  );
+  const createUnitDirect = async (nameToCreate: string) => {
+    const name = nameToCreate.trim();
+    if (!name) return;
+    const existing = (units.data ?? []).find(
+      (u) => u.name.trim().toLowerCase() === name.toLowerCase(),
+    );
+    if (existing) {
+      form.setFieldsValue({ unitId: existing.id });
+      setUnitSearch('');
+      setInlineUnitName('');
+      setUnitSelectOpen(false);
+      messageApi.info(`Đã chọn đơn vị tính "${existing.name}".`);
+      return;
+    }
+    setCreatingUnit(true);
+    try {
+      const result = await jsonRequest<{ id: string }>(
+        '/api/v1/owner/catalog/units',
+        { name },
+        { headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' } },
+      );
+      queryClient.setQueryData<Unit[]>(['owner-units'], (old) => {
+        const current = old ?? [];
+        if (current.some((u) => u.id === result.id)) return current;
+        return [...current, { id: result.id, name }];
+      });
+      form.setFieldsValue({ unitId: result.id });
+      setUnitSearch('');
+      setInlineUnitName('');
+      setUnitSelectOpen(false);
+      void queryClient.invalidateQueries({ queryKey: ['owner-units'] });
+      messageApi.success(`Đã thêm và chọn đơn vị tính "${name}".`);
+    } catch (error) {
+      messageApi.error(errorMessage(error, 'Không thể thêm đơn vị.'));
+    } finally {
+      setCreatingUnit(false);
+    }
+  };
+
+  const categoryDropdown = (menu: ReactNode) => {
+    const trimmedSearch = categorySearch.trim();
+    const existingMatches = (categories.data ?? []).some(
+      (c) => c.name.toLowerCase() === trimmedSearch.toLowerCase(),
+    );
+
+    return (
+      <div onMouseDown={(e) => e.stopPropagation()}>
+        {menu}
+        <Divider style={{ margin: '6px 0' }} />
+        <div style={{ padding: '4px 8px 8px' }}>
+          {trimmedSearch && !existingMatches ? (
+            <div style={{ marginBottom: 6 }}>
+              <Button
+                type="link"
+                size="small"
+                icon={<PlusOutlined />}
+                loading={creatingCategory}
+                onClick={() => void createCategoryDirect(trimmedSearch)}
+                style={{
+                  padding: 0,
+                  fontWeight: 600,
+                  height: 'auto',
+                  textAlign: 'left',
+                  whiteSpace: 'normal',
+                }}
+              >
+                Thêm danh mục &ldquo;{trimmedSearch}&rdquo;
+              </Button>
+            </div>
+          ) : null}
+          <Space.Compact style={{ width: '100%' }}>
+            <Input
+              size="middle"
+              placeholder="Nhập tên danh mục mới..."
+              value={inlineCategoryName}
+              onChange={(e) => setInlineCategoryName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (inlineCategoryName.trim()) {
+                    void createCategoryDirect(inlineCategoryName.trim());
+                  }
+                }
+              }}
+            />
+            <Button
+              type="primary"
+              size="middle"
+              icon={<PlusOutlined />}
+              loading={creatingCategory}
+              disabled={!inlineCategoryName.trim()}
+              onClick={() => void createCategoryDirect(inlineCategoryName.trim())}
+            >
+              Thêm
+            </Button>
+          </Space.Compact>
+        </div>
+      </div>
+    );
+  };
+
+  const unitDropdown = (menu: ReactNode) => {
+    const trimmedSearch = unitSearch.trim();
+    const existingMatches = (units.data ?? []).some(
+      (u) => u.name.toLowerCase() === trimmedSearch.toLowerCase(),
+    );
+
+    return (
+      <div onMouseDown={(e) => e.stopPropagation()}>
+        {menu}
+        <Divider style={{ margin: '6px 0' }} />
+        <div style={{ padding: '4px 8px 8px' }}>
+          {trimmedSearch && !existingMatches ? (
+            <div style={{ marginBottom: 6 }}>
+              <Button
+                type="link"
+                size="small"
+                icon={<PlusOutlined />}
+                loading={creatingUnit}
+                onClick={() => void createUnitDirect(trimmedSearch)}
+                style={{
+                  padding: 0,
+                  fontWeight: 600,
+                  height: 'auto',
+                  textAlign: 'left',
+                  whiteSpace: 'normal',
+                }}
+              >
+                Thêm đơn vị tính &ldquo;{trimmedSearch}&rdquo;
+              </Button>
+            </div>
+          ) : null}
+          <Space.Compact style={{ width: '100%' }}>
+            <Input
+              size="middle"
+              placeholder="Nhập đơn vị tính mới..."
+              value={inlineUnitName}
+              onChange={(e) => setInlineUnitName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (inlineUnitName.trim()) {
+                    void createUnitDirect(inlineUnitName.trim());
+                  }
+                }
+              }}
+            />
+            <Button
+              type="primary"
+              size="middle"
+              icon={<PlusOutlined />}
+              loading={creatingUnit}
+              disabled={!inlineUnitName.trim()}
+              onClick={() => void createUnitDirect(inlineUnitName.trim())}
+            >
+              Thêm
+            </Button>
+          </Space.Compact>
+        </div>
+      </div>
+    );
+  };
 
   useEffect(() => {
     if (!detail.data) {
-      if (!isEdit) {
+      if (!isEdit && !copyFromId) {
         form.setFieldsValue({
           productType: 'QUANTITY',
           avatarType: 'COLOR',
@@ -675,13 +861,16 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
       : undefined;
     setProductType(product.productType);
     form.setFieldsValue({
-      name: product.name,
+      name: isEdit ? product.name : `${product.name} (sao chép)`,
       productType: product.productType,
       avatarType: product.avatarType,
       avatarColor: product.avatarColor || avatarColors[0] || '#facc15',
       mediaId: product.mediaId ?? null,
       variants: product.variants.map((variant) => ({
-        ...variant,
+        ...(isEdit && variant.id ? { id: variant.id } : {}),
+        name: variant.name,
+        salePriceVnd: variant.salePriceVnd,
+        costPriceVnd: variant.costPriceVnd,
         promptPrice: Boolean(variant.promptPrice),
       })),
       calculationMode: product.pricing?.calculationMode ?? 'ACTUAL_TIME',
@@ -717,11 +906,11 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
           endTime: minuteToTime(window.endMinute),
           weekdays: maskToWeekdays(window.weekdaysMask),
         };
-        if (window.id) item.id = window.id;
+        if (isEdit && window.id) item.id = window.id;
         return item;
       }),
     });
-  }, [detail.data, form, isEdit]);
+  }, [detail.data, form, isEdit, copyFromId]);
 
   const uploadImage = async (file: File) => {
     if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
@@ -868,13 +1057,23 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
       <div className="owner-page-heading">
         <div>
           <Typography.Title level={2}>
-            {isEdit ? 'Chi tiết mặt hàng' : 'Thêm mặt hàng'}
+            {isEdit ? 'Chi tiết mặt hàng' : copyFromId ? 'Sao chép mặt hàng' : 'Thêm mặt hàng'}
           </Typography.Title>
           <Typography.Text type="secondary">
             Thông tin cốt lõi để mặt hàng xuất hiện trên POS.
           </Typography.Text>
         </div>
-        <Button onClick={() => navigate('/owner/catalog/products')}>Hủy</Button>
+        <Space>
+          {isEdit && (
+            <Button
+              icon={<CopyOutlined />}
+              onClick={() => navigate(`/owner/catalog/products/new?copyFrom=${productId}`)}
+            >
+              Sao chép
+            </Button>
+          )}
+          <Button onClick={() => navigate('/owner/catalog/products')}>Hủy</Button>
+        </Space>
       </div>
       <Form
         form={form}
@@ -919,11 +1118,16 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
                       size="large"
                       allowClear
                       showSearch
+                      open={categorySelectOpen}
+                      onDropdownVisibleChange={setCategorySelectOpen}
                       optionFilterProp="label"
                       placeholder="Chọn danh mục"
                       searchValue={categorySearch}
                       onSearch={setCategorySearch}
-                      onChange={() => setCategorySearch('')}
+                      onChange={(val) => {
+                        form.setFieldValue('categoryId', val);
+                        setCategorySearch('');
+                      }}
                       dropdownRender={categoryDropdown}
                       options={(categories.data ?? [])
                         .filter((category) => category.status !== 'DISABLED')
@@ -941,8 +1145,18 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
                       <Select
                         size="large"
                         showSearch
+                        allowClear
+                        open={unitSelectOpen}
+                        onDropdownVisibleChange={setUnitSelectOpen}
                         optionFilterProp="label"
-                        placeholder="Chọn đơn vị"
+                        placeholder="Chọn hoặc nhập đơn vị"
+                        searchValue={unitSearch}
+                        onSearch={setUnitSearch}
+                        onChange={(val) => {
+                          form.setFieldValue('unitId', val);
+                          setUnitSearch('');
+                        }}
+                        dropdownRender={unitDropdown}
                         options={(units.data ?? []).map((unit) => ({
                           value: unit.id,
                           label: unit.name,
@@ -1542,24 +1756,6 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
           </Button>
         </div>
       </Form>
-      <Modal
-        title="Thêm danh mục nhanh"
-        open={categoryModalOpen}
-        onCancel={() => setCategoryModalOpen(false)}
-        okText="Thêm danh mục"
-        cancelText="Hủy"
-        onOk={() => categoryForm.submit()}
-      >
-        <Form form={categoryForm} layout="vertical" onFinish={createCategory}>
-          <Form.Item
-            name="name"
-            label="Tên danh mục"
-            rules={[{ required: true, message: 'Vui lòng nhập tên danh mục.' }]}
-          >
-            <Input maxLength={160} />
-          </Form.Item>
-        </Form>
-      </Modal>
     </div>
   );
 }

@@ -51,7 +51,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 
 import type { OrderDetailDto, OrderItemDetail } from '@contracts/order-detail';
+import type { StorePrintSettings } from '@contracts/store';
 import { apiRequest } from '@client/lib/api';
+import { printReceipt, type PosReceiptPrintData } from '@client/lib/pos-receipt-printer';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -100,10 +102,6 @@ function formatDurationHuman(seconds: number | null | undefined) {
   if (s > 0 || parts.length === 0) parts.push(`${s} giây`);
   return parts.join(' ');
 }
-
-const handlePrintInvoice = () => {
-  window.print();
-};
 
 function statusBadge(status: OrderDetailDto['order']['status']) {
   switch (status) {
@@ -220,6 +218,101 @@ export function OrderDetailPage({
     const itemTotal = data.items.reduce((sum, it) => sum + it.netLineTotalVnd, 0);
     return liveTotalTimeAmount + itemTotal;
   }, [data, liveTotalTimeAmount]);
+
+  const printSettings = useQuery({
+    queryKey: ['pos-print-settings'],
+    queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
+  });
+
+  const staffContext = useQuery({
+    queryKey: ['pos-context'],
+    queryFn: () =>
+      apiRequest<{
+        storeName?: string;
+        storePhone?: string | null;
+        storeAddress?: string | null;
+        bankName?: string | null;
+        bankAccountNumber?: string | null;
+        bankAccountName?: string | null;
+      }>('/api/v1/pos/context'),
+  });
+
+  const handlePrintReceipt = (receiptType: 'PROVISIONAL' | 'PAYMENT') => {
+    if (!data) return;
+    const isPayment = receiptType === 'PAYMENT' && Boolean(data.invoice);
+
+    const printData: PosReceiptPrintData = {
+      receiptType,
+      orderCode:
+        data.invoice?.displayCode ||
+        data.order.displayCode ||
+        data.order.id.slice(-6).toUpperCase(),
+      invoiceCode: data.invoice?.displayCode || null,
+      orderType: data.order.orderType,
+      tableName: data.order.tableName,
+      areaName: null,
+      cashierName: data.invoice?.issuedByName ?? null,
+      customerName: data.customer?.name ?? null,
+      guestPhone: data.customer?.phone ?? null,
+      guestAddress: null,
+      note: data.order.note,
+      checkInTimeMs: data.order.openedAt,
+      issuedAtMs: data.invoice?.issuedAt || Date.now(),
+      subtotal: isPayment ? data.invoice!.subtotalVnd : liveGrandTotal,
+      discountTotal: isPayment ? data.invoice!.discountTotalVnd : 0,
+      total: isPayment ? data.invoice!.totalVnd : liveGrandTotal,
+      paymentMethod: data.invoice ? 'CASH' : null,
+      cashReceived: null,
+      cashChange: null,
+      lines: [
+        ...(liveTimeSegments.length > 0
+          ? [
+              {
+                id: 'time-session',
+                name: 'Tiền giờ',
+                quantity: 1,
+                unitPrice: liveTotalTimeAmount,
+                totalPrice: liveTotalTimeAmount,
+                isTime: true,
+                timeStartedAtMs: data.order.openedAt,
+                timeEndedAtMs: data.order.status === 'OPEN' ? null : Date.now(),
+                timeElapsedSeconds: liveTotalElapsed,
+                tableSegments: liveTimeSegments.map((s) => ({
+                  tableName: s.tableName,
+                  startedAtMs: s.startedAt,
+                  endedAtMs: s.endedAt,
+                  elapsedSeconds: s.elapsedSeconds,
+                  amount: s.amountAfterRoundingVnd,
+                  hourlyPrice: s.unitPriceSnapshot,
+                })),
+              },
+            ]
+          : []),
+        ...data.items.map((it) => ({
+          id: it.id,
+          name: it.productNameSnapshot,
+          quantity: it.quantityMilli / 1000,
+          unitPrice: it.unitPriceSnapshot,
+          totalPrice: it.netLineTotalVnd,
+          unitName: it.unitNameSnapshot,
+          note: it.note,
+        })),
+      ],
+    };
+
+    void printReceipt({
+      data: printData,
+      printSettings: printSettings.data,
+      storeInfo: {
+        storeName: staffContext.data?.storeName ?? data.order.storeName,
+        phone: staffContext.data?.storePhone ?? null,
+        address: staffContext.data?.storeAddress ?? null,
+        bankName: staffContext.data?.bankName ?? null,
+        bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
+        bankAccountName: staffContext.data?.bankAccountName ?? null,
+      },
+    });
+  };
 
   if (detailQuery.isLoading) {
     return (
@@ -408,12 +501,18 @@ export function OrderDetailPage({
               </Button>
             )}
 
+            {!invoice && order.status !== 'CANCELLED' && (
+              <Button icon={<PrinterOutlined />} onClick={() => handlePrintReceipt('PROVISIONAL')}>
+                In tạm tính
+              </Button>
+            )}
+
             {invoice && (
               <>
                 <Button icon={<EyeOutlined />} onClick={() => setInvoiceModalVisible(true)}>
                   Xem hóa đơn
                 </Button>
-                <Button icon={<PrinterOutlined />} onClick={handlePrintInvoice}>
+                <Button icon={<PrinterOutlined />} onClick={() => handlePrintReceipt('PAYMENT')}>
                   In hóa đơn
                 </Button>
               </>
@@ -1032,7 +1131,11 @@ export function OrderDetailPage({
               className="order-detail-card"
               extra={
                 invoice && (
-                  <Button size="small" icon={<PrinterOutlined />} onClick={handlePrintInvoice}>
+                  <Button
+                    size="small"
+                    icon={<PrinterOutlined />}
+                    onClick={() => handlePrintReceipt('PAYMENT')}
+                  >
                     In hóa đơn
                   </Button>
                 )
@@ -1126,7 +1229,7 @@ export function OrderDetailPage({
             key="print"
             type="primary"
             icon={<PrinterOutlined />}
-            onClick={handlePrintInvoice}
+            onClick={() => handlePrintReceipt('PAYMENT')}
           >
             In hóa đơn
           </Button>,

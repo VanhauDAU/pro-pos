@@ -27,6 +27,8 @@ const migrationFiles = [
   '0017_update_order_item_variant_discount.sql',
   '0018_fix_checkout_command_session_references.sql',
   '0019_order_guest_count.sql',
+  '0020_store_print_settings.sql',
+  '0021_print_template_config.sql',
 ];
 
 const fixture = `

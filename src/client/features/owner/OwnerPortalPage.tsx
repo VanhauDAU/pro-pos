@@ -58,6 +58,8 @@ import {
   OwnerProductListPage,
 } from './OwnerCatalogPages';
 import { OwnerInvoicesPage } from './OwnerInvoicesPage';
+import { OwnerPrintSettingsPage } from './OwnerPrintSettingsPage';
+import { OwnerPrintTemplateEditPage } from './OwnerPrintTemplateEditPage';
 import { OwnerDashboardPage } from './OwnerDashboardPage';
 
 const BRAND = '#0975F7';
@@ -706,6 +708,10 @@ export function OwnerPortalPage() {
               <OwnerAreaSettingsPage />
             ) : location.pathname === '/owner/settings/areas/new' ? (
               <OwnerAreaCreatePage />
+            ) : location.pathname === '/owner/settings/printing' ? (
+              <OwnerPrintSettingsPage />
+            ) : location.pathname === '/owner/settings/printing/template' ? (
+              <OwnerPrintTemplateEditPage />
             ) : location.pathname === '/owner/settings/units' ? (
               <OwnerUnitSettingsPage />
             ) : location.pathname.startsWith('/owner/settings/units/') ? (

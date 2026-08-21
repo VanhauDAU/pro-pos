@@ -987,6 +987,7 @@ export class PosService {
       (sum, item) => sum + Number(item.discountAmountVnd),
       0,
     );
+    const bankSettings = await this.repository.findStoreBankSettings(storeId);
     const subtotal = productGross + (pricing?.amountAfterRoundingVnd ?? 0);
     return {
       order: {
@@ -1011,6 +1012,7 @@ export class PosService {
       subtotalVnd: subtotal,
       discountTotalVnd: discountTotal,
       totalVnd: subtotal - discountTotal,
+      bankSettings: bankSettings ?? null,
     };
   }
 

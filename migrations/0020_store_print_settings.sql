@@ -1,0 +1,28 @@
+-- 0020_store_print_settings.sql
+CREATE TABLE IF NOT EXISTS store_print_settings (
+  store_id TEXT PRIMARY KEY REFERENCES stores(id) ON DELETE CASCADE,
+  max_receipt_reprint_count INTEGER NOT NULL DEFAULT 0,
+  payment_copy_count INTEGER NOT NULL DEFAULT 1,
+  allow_provisional_print INTEGER NOT NULL DEFAULT 1,
+  provisional_copy_count INTEGER NOT NULL DEFAULT 1,
+  logo_horizontal_layout INTEGER NOT NULL DEFAULT 0,
+  logo_media_id TEXT REFERENCES media_objects(id),
+  bottom_image_description TEXT DEFAULT 'QR thanh toán',
+  bottom_image_type TEXT NOT NULL DEFAULT 'UPLOAD',
+  bottom_image_media_id TEXT REFERENCES media_objects(id),
+  bottom_bank_name TEXT,
+  bottom_bank_account_number TEXT,
+  bottom_bank_account_name TEXT,
+  custom_address_enabled INTEGER NOT NULL DEFAULT 0,
+  custom_address TEXT,
+  footer_line_1 TEXT DEFAULT 'Cảm ơn quý khách và hẹn gặp lại',
+  footer_line_1_bold INTEGER NOT NULL DEFAULT 0,
+  footer_line_2 TEXT DEFAULT 'Một sản phẩm của Pro POS',
+  footer_line_2_bold INTEGER NOT NULL DEFAULT 1,
+  print_wifi_enabled INTEGER NOT NULL DEFAULT 0,
+  wifi_name TEXT,
+  wifi_password TEXT,
+  paper_size TEXT NOT NULL DEFAULT 'K80',
+  printers_json TEXT,
+  updated_at INTEGER NOT NULL
+);

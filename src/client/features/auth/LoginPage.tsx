@@ -10,8 +10,8 @@ import {
   UserOutlined,
 } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Avatar, Button, Form, Input, Spin, Tabs, Typography } from 'antd';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Avatar, Button, Checkbox, Form, Input, Spin, Tabs, Typography } from 'antd';
+import { useEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router';
 
 import type { AuthContextResponse, LoginResponse } from '@contracts/auth';
@@ -258,10 +258,22 @@ export function LoginPage() {
   const [showPin, setShowPin] = useState(false);
   const [pinValue, setPinValue] = useState('');
   const [pinError, setPinError] = useState(false);
+
   const [rememberedEmployee, setRememberedEmployeeState] = useState<RememberedEmployee | null>(() =>
     getRememberedEmployee(),
   );
   const [isSwitchingAccount, setIsSwitchingAccount] = useState(false);
+
+  const [ownerUsername, setOwnerUsername] = useState(() => {
+    try {
+      return localStorage.getItem('pos_saved_owner_username') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [ownerPassword, setOwnerPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(true);
+
   const [error, setError] = useState<string | null>(() =>
     accessErrorMessage(searchParams.get('authError')),
   );
@@ -280,9 +292,6 @@ export function LoginPage() {
     setPinValue('');
   };
 
-  const [ownerUsername, setOwnerUsername] = useState('');
-  const [ownerPassword, setOwnerPassword] = useState('');
-
   const executeOwnerLogin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!ownerUsername.trim() || !ownerPassword) {
@@ -295,7 +304,17 @@ export function LoginPage() {
       await jsonRequest<LoginResponse>('/api/v1/auth/owner/login', {
         username: ownerUsername.trim(),
         password: ownerPassword,
+        rememberMe,
       });
+      try {
+        if (rememberMe) {
+          localStorage.setItem('pos_saved_owner_username', ownerUsername.trim());
+        } else {
+          localStorage.removeItem('pos_saved_owner_username');
+        }
+      } catch {
+        // ignore
+      }
       await queryClient.invalidateQueries({ queryKey: ['auth-context'] });
       navigate('/owner', { replace: true });
     } catch (loginError) {
@@ -342,249 +361,6 @@ export function LoginPage() {
     void executeEmployeeLogin(values.username, pinValue || values.pin);
   };
 
-  const items = useMemo(
-    () => [
-      {
-        key: 'owner',
-        label: 'Chủ cửa hàng',
-        children: (
-          <div className="owner-login-clean">
-            <form onSubmit={executeOwnerLogin} className="owner-password-form">
-              <div style={{ marginBottom: 16 }}>
-                <Input
-                  size="large"
-                  prefix={<UserOutlined style={{ color: '#94a3b8' }} />}
-                  placeholder="Tên đăng nhập hoặc Email"
-                  value={ownerUsername}
-                  onChange={(e) => {
-                    setOwnerUsername(e.target.value);
-                    if (error) setError(null);
-                  }}
-                  autoComplete="username"
-                  disabled={submitting}
-                />
-              </div>
-
-              <div style={{ marginBottom: 20 }}>
-                <Input.Password
-                  size="large"
-                  prefix={<LockOutlined style={{ color: '#94a3b8' }} />}
-                  placeholder="Mật khẩu"
-                  value={ownerPassword}
-                  onChange={(e) => {
-                    setOwnerPassword(e.target.value);
-                    if (error) setError(null);
-                  }}
-                  autoComplete="current-password"
-                  disabled={submitting}
-                />
-              </div>
-
-              <Button
-                type="primary"
-                size="large"
-                htmlType="submit"
-                block
-                icon={<LoginOutlined />}
-                loading={submitting}
-                className="owner-login-btn"
-              >
-                Đăng nhập Chủ cửa hàng
-              </Button>
-            </form>
-          </div>
-        ),
-      },
-      {
-        key: 'employee',
-        label: 'Nhân viên',
-        children: deviceIsActive ? (
-          rememberedEmployee && !isSwitchingAccount ? (
-            /* Quick PIN login for remembered employee */
-            <div className="employee-quick-login">
-              <div className="remembered-employee-card">
-                <Avatar size={48} className="remembered-employee-avatar">
-                  {getInitials(rememberedEmployee.displayName)}
-                </Avatar>
-                <div className="remembered-employee-info">
-                  <strong className="remembered-employee-name">
-                    {rememberedEmployee.displayName}
-                  </strong>
-                  <span className="remembered-employee-username">
-                    @{rememberedEmployee.username}
-                  </span>
-                </div>
-                <Button
-                  type="text"
-                  icon={<SwapOutlined />}
-                  className="remembered-employee-switch-btn"
-                  onClick={() => {
-                    setIsSwitchingAccount(true);
-                    setPinValue('');
-                    setError(null);
-                    setPinError(false);
-                  }}
-                  title="Đăng nhập tài khoản khác"
-                >
-                  Đổi
-                </Button>
-              </div>
-
-              <div className="quick-pin-prompt">
-                <span>Nhập mã PIN để vào ca</span>
-              </div>
-
-              <QuickPinInput
-                value={pinValue}
-                onChange={(val) => {
-                  setPinValue(val);
-                  if (pinError) setPinError(false);
-                  if (error) setError(null);
-                }}
-                onComplete={handleQuickPinComplete}
-                showPin={showPin}
-                onToggleShowPin={() => setShowPin((prev) => !prev)}
-                disabled={submitting}
-                hasError={pinError}
-                autoFocus
-              />
-
-              <Button
-                type="primary"
-                size="large"
-                block
-                className="employee-login-submit-btn"
-                loading={submitting}
-                disabled={pinValue.length < 4}
-                onClick={() => void executeEmployeeLogin(rememberedEmployee.username, pinValue)}
-              >
-                Đăng nhập
-              </Button>
-
-              <div className="device-caption">
-                <DesktopOutlined />
-                <span>{context.data?.device?.name}</span>
-              </div>
-            </div>
-          ) : (
-            /* Standard Username + PIN login form */
-            <Form<EmployeeFormValues>
-              layout="vertical"
-              requiredMark={false}
-              onFinish={handleFullFormFinish}
-              className="employee-full-login-form"
-            >
-              {rememberedEmployee ? (
-                <div className="employee-switch-back-bar">
-                  <Button
-                    type="link"
-                    size="small"
-                    icon={<ArrowLeftOutlined />}
-                    onClick={() => {
-                      setIsSwitchingAccount(false);
-                      setPinValue('');
-                      setError(null);
-                      setPinError(false);
-                    }}
-                    className="employee-switch-back-btn"
-                  >
-                    Quay lại {rememberedEmployee.displayName}
-                  </Button>
-                </div>
-              ) : null}
-
-              <Form.Item
-                name="username"
-                rules={[{ required: true, message: 'Vui lòng nhập tên đăng nhập.' }]}
-                style={{ marginBottom: 16 }}
-              >
-                <Input
-                  size="large"
-                  autoComplete="username"
-                  prefix={<UserOutlined />}
-                  placeholder="Tên đăng nhập"
-                  autoFocus={!rememberedEmployee}
-                />
-              </Form.Item>
-
-              <Form.Item
-                label={<span className="employee-pin-label">Mã PIN (4 số)</span>}
-                className="employee-pin-login-item"
-              >
-                <QuickPinInput
-                  value={pinValue}
-                  onChange={(val) => {
-                    setPinValue(val);
-                    if (pinError) setPinError(false);
-                    if (error) setError(null);
-                  }}
-                  showPin={showPin}
-                  onToggleShowPin={() => setShowPin((prev) => !prev)}
-                  disabled={submitting}
-                  hasError={pinError}
-                  autoFocus={Boolean(rememberedEmployee)}
-                />
-              </Form.Item>
-
-              <Button
-                type="primary"
-                htmlType="submit"
-                size="large"
-                block
-                className="employee-login-submit-btn"
-                loading={submitting}
-                disabled={pinValue.length < 4}
-              >
-                Đăng nhập
-              </Button>
-
-              <div className="device-caption">
-                <DesktopOutlined />
-                <span>{context.data?.device?.name}</span>
-              </div>
-            </Form>
-          )
-        ) : (
-          <div className="activation-clean-box">
-            <div className="activation-icon-wrap">
-              <DesktopOutlined />
-            </div>
-            <div className="activation-title">
-              {context.data?.device?.status === 'REVOKED'
-                ? 'Thiết bị POS đã bị thu hồi'
-                : 'Thiết bị chưa liên kết POS'}
-            </div>
-            <div className="activation-subtitle">
-              Chủ cửa hàng cần kích hoạt thiết bị tại quầy để nhân viên vào ca.
-            </div>
-            <Button
-              type="primary"
-              size="large"
-              block
-              icon={<DesktopOutlined />}
-              onClick={() => navigate('/device-activation')}
-              className="activation-primary-btn"
-            >
-              Kích hoạt máy POS
-            </Button>
-          </div>
-        ),
-      },
-    ],
-    [
-      context.data?.device?.name,
-      context.data?.device?.status,
-      deviceIsActive,
-      rememberedEmployee,
-      isSwitchingAccount,
-      pinValue,
-      pinError,
-      showPin,
-      submitting,
-      error,
-    ],
-  );
-
   if (context.isLoading) {
     return <Spin fullscreen description="Đang kiểm tra phiên đăng nhập và thiết bị" />;
   }
@@ -605,6 +381,246 @@ export function LoginPage() {
     return <Navigate to="/pos" replace />;
   }
 
+  const tabItems = [
+    {
+      key: 'owner',
+      label: 'Chủ cửa hàng',
+      children: (
+        <div className="owner-login-clean">
+          <form onSubmit={executeOwnerLogin} className="owner-password-form">
+            <div style={{ marginBottom: 16 }}>
+              <Input
+                size="large"
+                prefix={<UserOutlined style={{ color: '#94a3b8' }} />}
+                placeholder="Tên đăng nhập hoặc Email"
+                value={ownerUsername}
+                onChange={(e) => {
+                  setOwnerUsername(e.target.value);
+                  if (error) setError(null);
+                }}
+                autoComplete="username"
+                disabled={submitting}
+                autoFocus={!ownerUsername}
+              />
+            </div>
+
+            <div style={{ marginBottom: 14 }}>
+              <Input.Password
+                size="large"
+                prefix={<LockOutlined style={{ color: '#94a3b8' }} />}
+                placeholder="Mật khẩu"
+                value={ownerPassword}
+                onChange={(e) => {
+                  setOwnerPassword(e.target.value);
+                  if (error) setError(null);
+                }}
+                autoComplete="current-password"
+                disabled={submitting}
+                autoFocus={Boolean(ownerUsername)}
+              />
+            </div>
+
+            <div style={{ marginBottom: 20 }}>
+              <Checkbox
+                checked={rememberMe}
+                onChange={(e) => setRememberMe(e.target.checked)}
+                disabled={submitting}
+              >
+                <span style={{ color: '#475569', fontSize: 13.5 }}>Duy trì đăng nhập</span>
+              </Checkbox>
+            </div>
+
+            <Button
+              type="primary"
+              size="large"
+              htmlType="submit"
+              block
+              icon={<LoginOutlined />}
+              loading={submitting}
+              disabled={!ownerUsername.trim() || !ownerPassword}
+              className="owner-login-btn"
+            >
+              Đăng nhập Chủ cửa hàng
+            </Button>
+          </form>
+        </div>
+      ),
+    },
+    {
+      key: 'employee',
+      label: 'Nhân viên',
+      children: deviceIsActive ? (
+        rememberedEmployee && !isSwitchingAccount ? (
+          /* Quick PIN login for remembered employee */
+          <div className="employee-quick-login">
+            <div className="remembered-employee-card">
+              <Avatar size={40} className="remembered-employee-avatar">
+                {getInitials(rememberedEmployee.displayName)}
+              </Avatar>
+              <div className="remembered-employee-info">
+                <strong className="remembered-employee-name">
+                  {rememberedEmployee.displayName}
+                </strong>
+                <span className="remembered-employee-username">@{rememberedEmployee.username}</span>
+              </div>
+              <Button
+                type="text"
+                icon={<SwapOutlined />}
+                className="remembered-employee-switch-btn"
+                onClick={() => {
+                  setIsSwitchingAccount(true);
+                  setPinValue('');
+                  setError(null);
+                  setPinError(false);
+                }}
+                title="Đăng nhập tài khoản khác"
+              >
+                Đổi
+              </Button>
+            </div>
+
+            <div className="quick-pin-prompt">
+              <span>Nhập mã PIN để vào ca</span>
+            </div>
+
+            <QuickPinInput
+              value={pinValue}
+              onChange={(val) => {
+                setPinValue(val);
+                if (pinError) setPinError(false);
+                if (error) setError(null);
+              }}
+              onComplete={handleQuickPinComplete}
+              showPin={showPin}
+              onToggleShowPin={() => setShowPin((prev) => !prev)}
+              disabled={submitting}
+              hasError={pinError}
+              autoFocus
+            />
+
+            <Button
+              type="primary"
+              size="large"
+              block
+              className="employee-login-submit-btn"
+              loading={submitting}
+              disabled={pinValue.length < 4}
+              onClick={() => void executeEmployeeLogin(rememberedEmployee.username, pinValue)}
+            >
+              Đăng nhập
+            </Button>
+
+            <div className="device-caption">
+              <DesktopOutlined />
+              <span>{context.data?.device?.name}</span>
+            </div>
+          </div>
+        ) : (
+          /* Standard Username + PIN login form */
+          <Form<EmployeeFormValues>
+            layout="vertical"
+            requiredMark={false}
+            onFinish={handleFullFormFinish}
+            className="employee-full-login-form"
+          >
+            {rememberedEmployee ? (
+              <div className="employee-switch-back-bar">
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<ArrowLeftOutlined />}
+                  onClick={() => {
+                    setIsSwitchingAccount(false);
+                    setPinValue('');
+                    setError(null);
+                    setPinError(false);
+                  }}
+                  className="employee-switch-back-btn"
+                >
+                  Quay lại {rememberedEmployee.displayName}
+                </Button>
+              </div>
+            ) : null}
+
+            <Form.Item
+              name="username"
+              rules={[{ required: true, message: 'Vui lòng nhập tên đăng nhập.' }]}
+              style={{ marginBottom: 16 }}
+            >
+              <Input
+                size="large"
+                autoComplete="username"
+                prefix={<UserOutlined />}
+                placeholder="Tên đăng nhập"
+                autoFocus={!rememberedEmployee}
+              />
+            </Form.Item>
+
+            <Form.Item
+              label={<span className="employee-pin-label">Mã PIN (4 số)</span>}
+              className="employee-pin-login-item"
+            >
+              <QuickPinInput
+                value={pinValue}
+                onChange={(val) => {
+                  setPinValue(val);
+                  if (pinError) setPinError(false);
+                  if (error) setError(null);
+                }}
+                showPin={showPin}
+                onToggleShowPin={() => setShowPin((prev) => !prev)}
+                disabled={submitting}
+                hasError={pinError}
+                autoFocus={Boolean(rememberedEmployee)}
+              />
+            </Form.Item>
+
+            <Button
+              type="primary"
+              htmlType="submit"
+              size="large"
+              block
+              className="employee-login-submit-btn"
+              loading={submitting}
+              disabled={pinValue.length < 4}
+            >
+              Đăng nhập
+            </Button>
+
+            <div className="device-caption">
+              <DesktopOutlined />
+              <span>{context.data?.device?.name}</span>
+            </div>
+          </Form>
+        )
+      ) : (
+        <div className="activation-clean-box">
+          <div className="activation-icon-wrap">
+            <DesktopOutlined />
+          </div>
+          <div className="activation-title">
+            {context.data?.device?.status === 'REVOKED'
+              ? 'Thiết bị POS đã bị thu hồi'
+              : 'Thiết bị chưa liên kết POS'}
+          </div>
+          <div className="activation-subtitle">
+            Chủ cửa hàng cần kích hoạt thiết bị tại quầy để nhân viên vào ca.
+          </div>
+          <Button
+            type="primary"
+            size="large"
+            block
+            icon={<DesktopOutlined />}
+            onClick={() => navigate('/device-activation')}
+            className="activation-primary-btn"
+          >
+            Kích hoạt máy POS
+          </Button>
+        </div>
+      ),
+    },
+  ];
+
   return (
     <AuthLayout>
       <div className="login-heading">
@@ -616,7 +632,7 @@ export function LoginPage() {
         className="login-tabs"
         activeKey={activeTab}
         centered
-        items={items}
+        items={tabItems}
         onChange={switchTab}
       />
     </AuthLayout>

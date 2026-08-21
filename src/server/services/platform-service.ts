@@ -133,4 +133,67 @@ export class PlatformService {
     if (!result) throw new AppError('STORE_NOT_FOUND', 'Không tìm thấy cửa hàng.', 404);
     return { storeId: input.storeId, capability: input.capability, enabled: result.enabled === 1 };
   }
+
+  async getStoreDetails(storeId: string) {
+    const details = await this.repository.getStoreDetails(storeId);
+    if (!details) {
+      throw new AppError('STORE_NOT_FOUND', 'Không tìm thấy cửa hàng.', 404);
+    }
+    return details;
+  }
+
+  async updateStoreMember(input: {
+    storeId: string;
+    userId: string;
+    displayName?: string | undefined;
+    username?: string | undefined;
+    email?: string | null | undefined;
+    phone?: string | null | undefined;
+    status?: 'ACTIVE' | 'DISABLED' | undefined;
+    newPassword?: string | undefined;
+  }) {
+    let passwordData:
+      { salt: string; digest: string; workFactor: number; pepperVersion: number } | undefined;
+    if (input.newPassword) {
+      const salt = randomSalt(16);
+      const pepper = requireSecret(this.env.AUTH_PEPPER, 'AUTH_PEPPER');
+      const digest = await derivePasswordDigest({
+        password: input.newPassword,
+        salt,
+        pepper,
+        workFactor: DEFAULT_PASSWORD_WORK_FACTOR,
+      });
+      passwordData = {
+        salt,
+        digest,
+        workFactor: DEFAULT_PASSWORD_WORK_FACTOR,
+        pepperVersion: 1,
+      };
+    }
+
+    const result = await this.repository.updateStoreMember({
+      storeId: input.storeId,
+      userId: input.userId,
+      displayName: input.displayName,
+      username: input.username,
+      email: input.email,
+      phone: input.phone,
+      status: input.status,
+      password: passwordData,
+      now: Date.now(),
+    });
+
+    if (!result) {
+      throw new AppError(
+        'MEMBER_NOT_FOUND',
+        'Không tìm thấy tài khoản thành viên trong cửa hàng.',
+        404,
+      );
+    }
+    return { success: true };
+  }
+
+  async getPlatformAnalytics(days?: number) {
+    return this.repository.getPlatformAnalytics(days);
+  }
 }

@@ -65,6 +65,18 @@ interface StoreFormValues {
   address: string;
   provinceCode: number;
   wardCode: number;
+  bankName?: string | undefined;
+  bankAccountNumber?: string | undefined;
+  bankAccountName?: string | undefined;
+}
+
+interface VietQRBank {
+  id: number;
+  name: string;
+  code: string;
+  bin: string;
+  shortName: string;
+  logo: string;
 }
 
 function normalizePhone(value: string | null | undefined) {
@@ -106,6 +118,16 @@ export function OwnerStoreSettingsPage() {
     enabled: provinceCode !== undefined,
     staleTime: 10 * 60 * 1000,
   });
+  const banks = useQuery({
+    queryKey: ['vietqr-banks'],
+    queryFn: async () => {
+      const res = await fetch('https://api.vietqr.io/v2/banks');
+      if (!res.ok) throw new Error('Failed to fetch banks');
+      const json = await res.json();
+      return json.data as VietQRBank[];
+    },
+    staleTime: 24 * 60 * 60 * 1000,
+  });
 
   useEffect(() => {
     if (!settings.data) return;
@@ -118,6 +140,9 @@ export function OwnerStoreSettingsPage() {
       address: data.address ?? '',
       ...(data.provinceCode === null ? {} : { provinceCode: data.provinceCode }),
       ...(data.wardCode === null ? {} : { wardCode: data.wardCode }),
+      bankName: data.bankName ?? undefined,
+      bankAccountNumber: data.bankAccountNumber ?? undefined,
+      bankAccountName: data.bankAccountName ?? undefined,
     });
   }, [form, settings.data]);
 
@@ -137,9 +162,9 @@ export function OwnerStoreSettingsPage() {
           phone: values.phone || null,
           address: values.address,
           businessDayCutoffMinutes: settings.data?.businessDayCutoffMinutes ?? 0,
-          bankName: settings.data?.bankName ?? null,
-          bankAccountNumber: settings.data?.bankAccountNumber ?? null,
-          bankAccountName: settings.data?.bankAccountName ?? null,
+          bankName: values.bankName || null,
+          bankAccountNumber: values.bankAccountNumber || null,
+          bankAccountName: values.bankAccountName || null,
           bankQrMediaId: settings.data?.bankQrMediaId ?? null,
           provinceCode: province?.code ?? null,
           provinceName: province?.name ?? null,
@@ -183,22 +208,22 @@ export function OwnerStoreSettingsPage() {
         </Typography.Text>
       </div>
       <Divider />
-      <div className="owner-store-settings-layout">
-        <aside className="owner-store-settings-intro">
-          <Typography.Title level={4}>Thông tin chung</Typography.Title>
-          <Typography.Paragraph type="secondary">
-            Thông tin về cửa hàng, địa chỉ và lĩnh vực kinh doanh của bạn.
-          </Typography.Paragraph>
-          <Typography.Text type="secondary" italic>
-            Mã cửa hàng: {settings.data.id.slice(0, 8).toUpperCase()}
-          </Typography.Text>
-          <div className="owner-store-settings-tip">
-            <EnvironmentOutlined />
-            <span>Tỉnh/thành phố và phường/xã được tải theo dữ liệu hành chính mới nhất.</span>
-          </div>
-        </aside>
-        <Card className="owner-store-settings-card">
-          <Form form={form} layout="vertical" onFinish={save} requiredMark={false}>
+      <Form form={form} layout="vertical" onFinish={save} requiredMark={false}>
+        <div className="owner-store-settings-layout">
+          <aside className="owner-store-settings-intro">
+            <Typography.Title level={4}>Thông tin chung</Typography.Title>
+            <Typography.Paragraph type="secondary">
+              Thông tin về cửa hàng, địa chỉ và lĩnh vực kinh doanh của bạn.
+            </Typography.Paragraph>
+            <Typography.Text type="secondary" italic>
+              Mã cửa hàng: {settings.data.id.slice(0, 8).toUpperCase()}
+            </Typography.Text>
+            <div className="owner-store-settings-tip">
+              <EnvironmentOutlined />
+              <span>Tỉnh/thành phố và phường/xã được tải theo dữ liệu hành chính mới nhất.</span>
+            </div>
+          </aside>
+          <Card className="owner-store-settings-card">
             <Form.Item
               label={
                 <span>
@@ -321,15 +346,56 @@ export function OwnerStoreSettingsPage() {
                 </Form.Item>
               </Col>
             </Row>
-            <div className="owner-form-actions">
-              <Button onClick={() => navigate('/owner/settings')}>Hủy</Button>
-              <Button type="primary" htmlType="submit" loading={saving} icon={<SaveOutlined />}>
-                Lưu
-              </Button>
-            </div>
-          </Form>
-        </Card>
-      </div>
+          </Card>
+
+          <aside className="owner-store-settings-intro">
+            <Typography.Title level={4}>Thanh toán VietQR</Typography.Title>
+            <Typography.Paragraph type="secondary">
+              Cấu hình ngân hàng nhận tiền để in mã VietQR trên hóa đơn bán hàng.
+            </Typography.Paragraph>
+          </aside>
+          <Card className="owner-store-settings-card">
+            <Row gutter={16}>
+              <Col xs={24} md={12}>
+                <Form.Item label="Ngân hàng" name="bankName">
+                  <Select
+                    showSearch
+                    allowClear
+                    optionFilterProp="label"
+                    loading={banks.isLoading}
+                    placeholder="Chọn ngân hàng"
+                    options={
+                      banks.data?.map((b) => ({
+                        value: b.bin,
+                        label: `${b.shortName} - ${b.name}`,
+                      })) ?? []
+                    }
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={24} md={12}>
+                <Form.Item label="Số tài khoản" name="bankAccountNumber">
+                  <Input placeholder="Nhập số tài khoản" />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Form.Item
+              label="Tên chủ tài khoản"
+              name="bankAccountName"
+              normalize={(value) => (value || '').toUpperCase()}
+            >
+              <Input placeholder="Ví dụ: NGUYEN VAN A" />
+            </Form.Item>
+          </Card>
+        </div>
+
+        <div className="owner-form-actions">
+          <Button onClick={() => navigate('/owner/settings')}>Hủy</Button>
+          <Button type="primary" htmlType="submit" loading={saving} icon={<SaveOutlined />}>
+            Lưu
+          </Button>
+        </div>
+      </Form>
     </div>
   );
 }

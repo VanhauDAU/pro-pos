@@ -96,7 +96,7 @@ function formatDateTime(ms: number) {
 
 function methodLabel(method: PaymentMethod | null) {
   if (method === 'CASH') return 'Tiền mặt';
-  if (method === 'BANK_TRANSFER') return 'Thẻ ATM';
+  if (method === 'BANK_TRANSFER') return 'Chuyển khoản';
   return '—';
 }
 
@@ -610,7 +610,7 @@ export function OwnerInvoicesPage() {
               onChange={(v) => setFilterMethod(v)}
               options={[
                 { label: 'Tiền mặt', value: 'CASH' },
-                { label: 'Thẻ ATM / Chuyển khoản', value: 'BANK_TRANSFER' },
+                { label: 'Chuyển khoản', value: 'BANK_TRANSFER' },
               ]}
             />
           </Form.Item>

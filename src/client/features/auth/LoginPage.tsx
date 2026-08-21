@@ -133,7 +133,7 @@ function QuickPinInput({
       <input
         ref={inputRef}
         type={showPin ? 'text' : 'password'}
-        inputMode="numeric"
+        inputMode="none"
         pattern="[0-9]*"
         maxLength={4}
         value={value}

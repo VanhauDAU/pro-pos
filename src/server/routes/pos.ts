@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 
+import { REALTIME_SUBPROTOCOL } from '@contracts/realtime';
 import {
   addOrderItemSchema,
   cancelOrderSchema,
@@ -27,10 +28,27 @@ import {
 } from '@server/middleware/authorization';
 import { PosService } from '@server/services/pos-service';
 import { StoreService } from '@server/services/store-service';
+import { RealtimeRepository } from '@server/repositories/realtime-repository';
+import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
 import type { AppEnv } from '@server/types';
 
 const posRoutes = new Hono<AppEnv>();
 posRoutes.use('*', requireActor('OWNER', 'EMPLOYEE'));
+posRoutes.use('*', async (c, next) => {
+  await next();
+  if (
+    ['POST', 'PUT', 'PATCH', 'DELETE'].includes(c.req.method) &&
+    c.res.status >= 200 &&
+    c.res.status < 300
+  ) {
+    const storeId = c.get('actor').storeId;
+    if (storeId) {
+      c.executionCtx.waitUntil(
+        new RealtimeDispatcher(c.env).dispatchStore(storeId).catch(() => undefined),
+      );
+    }
+  }
+});
 
 function idempotencyKey(c: Parameters<typeof success>[0]) {
   const value = c.req.header('Idempotency-Key');
@@ -47,6 +65,65 @@ posRoutes.get('/tables', requirePermission('table.view'), async (c) =>
 posRoutes.get('/context', async (c) => {
   const actor = c.get('actor');
   return success(c, await new PosService(c.env).getStaffContext(actor.storeId!, actor.id));
+});
+
+posRoutes.get('/realtime/sync', requirePermission('table.view'), async (c) => {
+  const storeId = c.get('actor').storeId!;
+  const repository = new RealtimeRepository(c.env.DB);
+  if (!(await repository.isEnabled(storeId))) {
+    throw new AppError('REALTIME_DISABLED', 'Realtime chưa được bật cho cửa hàng này.', 409);
+  }
+  const rawAfter = c.req.query('after');
+  let after: number | null = null;
+  if (rawAfter !== undefined) {
+    after = Number(rawAfter);
+    if (!Number.isSafeInteger(after) || after < 0) {
+      throw new AppError('REALTIME_CURSOR_INVALID', 'Realtime cursor không hợp lệ.', 422);
+    }
+  }
+  return success(c, await repository.sync(storeId, after));
+});
+
+posRoutes.get('/realtime/stream', requirePermission('table.view'), async (c) => {
+  if (c.req.header('Upgrade')?.toLowerCase() !== 'websocket') {
+    throw new AppError('WEBSOCKET_UPGRADE_REQUIRED', 'Yêu cầu WebSocket upgrade.', 422);
+  }
+  const protocols = (c.req.header('Sec-WebSocket-Protocol') ?? '')
+    .split(',')
+    .map((item) => item.trim());
+  if (!protocols.includes(REALTIME_SUBPROTOCOL)) {
+    throw new AppError(
+      'REALTIME_PROTOCOL_UNSUPPORTED',
+      'Realtime protocol không được hỗ trợ.',
+      422,
+    );
+  }
+  const actor = c.get('actor');
+  const storeId = actor.storeId!;
+  const repository = new RealtimeRepository(c.env.DB);
+  if (!(await repository.isEnabled(storeId))) {
+    throw new AppError('REALTIME_DISABLED', 'Realtime chưa được bật cho cửa hàng này.', 409);
+  }
+
+  const connectionId = crypto.randomUUID();
+  const reauthAt = Date.now() + 5 * 60_000;
+  const headers = new Headers(c.req.raw.headers);
+  headers.set('Upgrade', 'websocket');
+  headers.set('Sec-WebSocket-Protocol', REALTIME_SUBPROTOCOL);
+  headers.set('X-Propos-Realtime-Store', storeId);
+  headers.set('X-Propos-Realtime-User', actor.id);
+  headers.set('X-Propos-Realtime-Session', c.get('sessionId'));
+  headers.set('X-Propos-Realtime-Connection', connectionId);
+  headers.set('X-Propos-Realtime-Reauth-At', String(reauthAt));
+  headers.set(
+    'X-Propos-Realtime-Client-Version',
+    (c.req.query('clientVersion') ?? 'unknown').slice(0, 100),
+  );
+  const deviceId = c.get('device')?.id;
+  if (deviceId) headers.set('X-Propos-Realtime-Device', deviceId);
+
+  const room = c.env.STORE_REALTIME.getByName(storeId);
+  return room.fetch(new Request(c.req.url, { method: 'GET', headers }));
 });
 
 posRoutes.get('/print-settings', requirePermission('order.manage'), async (c) =>
@@ -191,6 +268,8 @@ posRoutes.delete('/orders/:orderId/time', requirePermission('order.manage'), asy
       orderId: c.req.param('orderId'),
       expectedOrderVersion: body.expectedOrderVersion,
       reason: body.reason,
+      actorSessionId: c.get('sessionId'),
+      deviceId: c.get('device')?.id ?? null,
     }),
   );
 });

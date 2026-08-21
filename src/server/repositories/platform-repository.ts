@@ -127,10 +127,60 @@ export class PlatformRepository {
   async listStores() {
     return this.db
       .prepare(
-        `SELECT id, name, status, timezone, created_at AS createdAt, updated_at AS updatedAt
-         FROM stores ORDER BY created_at DESC`,
+        `SELECT s.id, s.name, s.status, s.timezone,
+                s.created_at AS createdAt, s.updated_at AS updatedAt,
+                EXISTS (
+                  SELECT 1 FROM store_capabilities sc
+                  WHERE sc.store_id = s.id AND sc.capability = 'POS_REALTIME' AND sc.enabled = 1
+                ) AS posRealtimeEnabled
+         FROM stores s ORDER BY s.created_at DESC`,
       )
       .all();
+  }
+
+  async setStoreCapability(input: {
+    storeId: string;
+    capability: 'POS_REALTIME';
+    enabled: boolean;
+    actorId: string;
+    requestId: string;
+    now: number;
+  }) {
+    await this.db.batch([
+      this.db
+        .prepare(
+          `INSERT INTO store_capabilities (store_id, capability, enabled, updated_by, updated_at)
+           SELECT id, ?, ?, ?, ? FROM stores WHERE id = ?
+           ON CONFLICT(store_id, capability) DO UPDATE SET
+             enabled = excluded.enabled,
+             updated_by = excluded.updated_by,
+             updated_at = excluded.updated_at`,
+        )
+        .bind(input.capability, input.enabled ? 1 : 0, input.actorId, input.now, input.storeId),
+      this.db
+        .prepare(
+          `INSERT INTO audit_logs (
+            id, store_id, actor_user_id, action, entity_type, entity_id,
+            request_id, after_json, created_at
+          ) SELECT ?, id, ?, 'STORE_CAPABILITY_UPDATED', 'STORE', id, ?, ?, ?
+            FROM stores WHERE id = ?`,
+        )
+        .bind(
+          crypto.randomUUID(),
+          input.actorId,
+          input.requestId,
+          JSON.stringify({ capability: input.capability, enabled: input.enabled }),
+          input.now,
+          input.storeId,
+        ),
+    ]);
+    return this.db
+      .prepare(
+        `SELECT enabled FROM store_capabilities
+         WHERE store_id = ? AND capability = ? LIMIT 1`,
+      )
+      .bind(input.storeId, input.capability)
+      .first<{ enabled: 0 | 1 }>();
   }
 
   async setStoreStatus(storeId: string, status: 'ACTIVE' | 'LOCKED', now: number) {

@@ -19,24 +19,36 @@ export class ApiError extends Error {
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method ?? 'GET').toUpperCase();
   const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method);
+  if (isMutation && typeof navigator !== 'undefined' && !navigator.onLine) {
+    throw new Error('Mất kết nối Internet. Thao tác chưa được gửi và không được lưu.');
+  }
   if (isMutation) beginMutation();
   try {
-    const response = await fetch(path, {
+    const requestInit: RequestInit = {
       ...init,
       credentials: 'include',
       headers: {
         Accept: 'application/json',
         ...init?.headers,
       },
-    });
-
-    const payload = (await response.json()) as ApiSuccessEnvelope<T> | ApiErrorEnvelope;
-
-    if (!response.ok || 'error' in payload) {
-      throw new ApiError(payload as ApiErrorEnvelope);
+    };
+    const execute = async () => {
+      const response = await fetch(path, requestInit);
+      const payload = (await response.json()) as ApiSuccessEnvelope<T> | ApiErrorEnvelope;
+      if (!response.ok || 'error' in payload) {
+        throw new ApiError(payload as ApiErrorEnvelope);
+      }
+      return payload.data;
+    };
+    try {
+      return await execute();
+    } catch (error) {
+      const headers = new Headers(requestInit.headers);
+      const canSafelyRetry =
+        isMutation && headers.has('Idempotency-Key') && !(error instanceof ApiError);
+      if (!canSafelyRetry) throw error;
+      return execute();
     }
-
-    return payload.data;
   } finally {
     if (isMutation) endMutation();
   }

@@ -54,6 +54,7 @@ import type { OrderDetailDto, OrderItemDetail } from '@contracts/order-detail';
 import type { StorePrintSettings } from '@contracts/store';
 import { apiRequest } from '@client/lib/api';
 import { printReceipt, type PosReceiptPrintData } from '@client/lib/pos-receipt-printer';
+import { usePosPollingInterval, useRealtime } from '@client/realtime/RealtimeProvider';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -163,20 +164,23 @@ export function OrderDetailPage({
   const [activeTab, setActiveTab] = useState('overview');
   const [now, setNow] = useState(Date.now());
   const [invoiceModalVisible, setInvoiceModalVisible] = useState(false);
+  const detailPollingInterval = usePosPollingInterval(5_000);
+  const { serverTimeOffsetMs } = useRealtime();
 
   // Realtime clock update for OPEN orders
   useEffect(() => {
     const timer = setInterval(() => {
-      setNow(Date.now());
+      setNow(Date.now() + serverTimeOffsetMs);
     }, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [serverTimeOffsetMs]);
 
   const detailQuery = useQuery({
     queryKey: ['pos-order-detail', targetOrderId],
     queryFn: () => apiRequest<OrderDetailDto>(`/api/v1/pos/orders/${targetOrderId}/detail`),
     enabled: Boolean(targetOrderId),
-    refetchInterval: (query) => (query.state.data?.order.status === 'OPEN' ? 5000 : false),
+    refetchInterval: (query) =>
+      query.state.data?.order.status === 'OPEN' ? detailPollingInterval : false,
   });
 
   const data = detailQuery.data;

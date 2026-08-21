@@ -1351,6 +1351,16 @@ describe('online POS vertical slice', () => {
       reason: 'Miễn phí tiền giờ bàn cho khách VIP',
     });
     expect(removedTime.removed).toBe(true);
+    const removedTimeReplay = await pos.removeTimeSession({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-remove-time-session-retry',
+      idempotencyKey: 'remove-time-session-001',
+      orderId: opened.orderId,
+      expectedOrderVersion: 3,
+      reason: 'Miễn phí tiền giờ bàn cho khách VIP',
+    });
+    expect(removedTimeReplay).toEqual({ orderId: opened.orderId, removed: true });
 
     // Quote after removing table time session: quote.time is null
     const quoteAfterRemovingTime = await pos.quote(
@@ -1378,12 +1388,29 @@ describe('online POS vertical slice', () => {
     });
     expect(restoredTime.startedAtMs).toBe(customStart);
     expect(restoredTime.endedAtMs).toBe(customEnd);
+    const restoredTimeReplay = await pos.updateTimeRange({
+      storeId,
+      orderId: opened.orderId,
+      actorId: ownerUserId,
+      expectedOrderVersion: 4,
+      startedAtMs: customStart,
+      endedAtMs: customEnd,
+      requestId: 'request-restore-time-retry',
+      idempotencyKey: 'restore-time-command-001',
+      now: startTime + 6000 * 1000,
+    });
+    expect(restoredTimeReplay).toMatchObject({
+      orderId: opened.orderId,
+      startedAtMs: customStart,
+      endedAtMs: customEnd,
+    });
 
     const quoteAfterRestore = await pos.quote(storeId, opened.orderId, startTime + 6000 * 1000);
     expect(quoteAfterRestore.time).not.toBeNull();
     expect(quoteAfterRestore.time?.startedAtMs).toBe(customStart);
     expect(quoteAfterRestore.time?.endedAtMs).toBe(customEnd);
     expect(quoteAfterRestore.time?.status).toBe('ENDED');
+    expect(quoteAfterRestore.order.version).toBe(5);
 
     // Test removing item with reason
     const removedItem = await pos.removeItem({

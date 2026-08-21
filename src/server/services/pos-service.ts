@@ -187,7 +187,14 @@ export class PosService {
   }
 
   getStaffContext(storeId: string, actorId: string) {
-    return this.repository.getStaffContext(storeId, actorId);
+    return this.repository.getStaffContext(storeId, actorId).then((context) => {
+      if (!context) return context;
+      const { posRealtimeEnabled, ...staffContext } = context;
+      return {
+        ...staffContext,
+        capabilities: { posRealtime: posRealtimeEnabled === 1 },
+      };
+    });
   }
 
   async productPricingSnapshot(
@@ -707,7 +714,14 @@ export class PosService {
     orderId: string;
     expectedOrderVersion: number;
     reason: string;
+    actorSessionId?: string | null;
+    deviceId?: string | null;
   }) {
+    const replay = await this.repository.findRemoveTimeSessionCommand(
+      input.storeId,
+      input.idempotencyKey,
+    );
+    if (replay) return { orderId: replay.orderId, removed: true };
     const order = await this.repository.findOrder(input.storeId, input.orderId);
     if (!order) throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn.', 404);
     if (order.status !== 'OPEN') {
@@ -722,12 +736,15 @@ export class PosService {
     }
     try {
       await this.repository.removeTimeSession({
+        commandId: input.idempotencyKey,
         storeId: input.storeId,
         orderId: input.orderId,
         sessionId: session.id,
         expectedOrderVersion: input.expectedOrderVersion,
         reason: input.reason,
         actorId: input.actorId,
+        actorSessionId: input.actorSessionId ?? null,
+        deviceId: input.deviceId ?? null,
         requestId: input.requestId,
         issuedAt: Date.now(),
       });
@@ -1082,10 +1099,9 @@ export class PosService {
     idempotencyKey: string;
     now?: number;
   }) {
-    const replay = await this.repository.findUpdateTimeRangeCommand(
-      input.storeId,
-      input.idempotencyKey,
-    );
+    const replay =
+      (await this.repository.findUpdateTimeRangeCommand(input.storeId, input.idempotencyKey)) ??
+      (await this.repository.findCreateTimeSessionCommand(input.storeId, input.idempotencyKey));
     if (replay) return replay;
     const now = input.now ?? Date.now();
     const order = await this.repository.findOrder(input.storeId, input.orderId);
@@ -1113,6 +1129,7 @@ export class PosService {
       const timeSessionId = crypto.randomUUID();
       try {
         await this.repository.createTimeSessionForOrder({
+          commandId: input.idempotencyKey,
           storeId: input.storeId,
           orderId: input.orderId,
           timeSessionId,
@@ -1126,6 +1143,8 @@ export class PosService {
           status: input.endedAtMs ? 'ENDED' : 'RUNNING',
           expectedOrderVersion: input.expectedOrderVersion,
           actorId: input.actorId,
+          actorSessionId: input.actorSessionId ?? null,
+          deviceId: input.deviceId ?? null,
           requestId: input.requestId,
           now,
         });

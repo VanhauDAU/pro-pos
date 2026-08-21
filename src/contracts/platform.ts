@@ -12,6 +12,11 @@ export const createStoreSchema = z.object({
   ownerEmail: z.string().trim().email().max(254),
 });
 
+export const setStoreCapabilitySchema = z.object({
+  capability: z.literal('POS_REALTIME'),
+  enabled: z.boolean(),
+});
+
 export { createEmployeeSchema };
 
 export interface PlatformStoreSummary {
@@ -21,6 +26,7 @@ export interface PlatformStoreSummary {
   timezone: string;
   createdAt: number;
   updatedAt: number;
+  posRealtimeEnabled: boolean;
 }
 
 export interface CreatePlatformStoreResponse {

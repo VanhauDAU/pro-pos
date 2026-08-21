@@ -73,7 +73,12 @@ import {
 } from '@client/lib/pos-receipt-printer';
 import { OrderDetailPage } from './OrderDetailPage';
 
-import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
+import { apiRequest, jsonRequest } from '@client/lib/api';
+import {
+  RealtimeProvider,
+  usePosPollingInterval,
+  useRealtime,
+} from '@client/realtime/RealtimeProvider';
 
 const BRAND = '#0975f7';
 
@@ -87,6 +92,7 @@ interface StaffContext {
   bankName?: string | null;
   bankAccountNumber?: string | null;
   bankAccountName?: string | null;
+  capabilities?: { posRealtime: boolean };
 }
 
 interface PosOrder {
@@ -412,7 +418,9 @@ function formatDateTimeInput(timestamp: number) {
 }
 
 function errorText(error: unknown) {
-  return error instanceof ApiError ? error.message : 'Không thể xử lý yêu cầu. Vui lòng thử lại.';
+  return error instanceof Error && error.message
+    ? error.message
+    : 'Không thể xử lý yêu cầu. Vui lòng thử lại.';
 }
 
 function mutationHeaders(csrfToken: string) {
@@ -426,6 +434,7 @@ function StaffHeader({
   context: AuthContextResponse | undefined;
   searchSlot?: React.ReactNode;
 }) {
+  const { status } = useRealtime();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [modal, holder] = Modal.useModal();
@@ -519,6 +528,26 @@ function StaffHeader({
         </div>
         {searchSlot ? <div className="staff-pos-header__search">{searchSlot}</div> : null}
       </div>
+      <Tag
+        color={
+          status === 'CONNECTED'
+            ? 'success'
+            : status === 'OFFLINE'
+              ? 'error'
+              : status === 'DISABLED'
+                ? 'default'
+                : 'warning'
+        }
+        style={{ marginLeft: 'auto', marginRight: 8 }}
+      >
+        {status === 'CONNECTED'
+          ? 'Đồng bộ trực tiếp'
+          : status === 'OFFLINE'
+            ? 'Mất mạng — không thể lưu'
+            : status === 'DISABLED'
+              ? 'Cập nhật định kỳ'
+              : 'Đang kết nối lại'}
+      </Tag>
       <Dropdown
         menu={{ items: menuItems }}
         trigger={['click']}
@@ -576,10 +605,11 @@ function StaffBottomNav({ active }: { active: (typeof navItems)[number]['key'] }
 function OrdersPage({ search }: { search: string }) {
   const navigate = useNavigate();
   const [filter, setFilter] = useState<'ALL' | 'DINE_IN' | 'TAKEAWAY'>('ALL');
+  const pollingInterval = usePosPollingInterval(30_000);
   const orders = useQuery({
     queryKey: ['pos-orders'],
     queryFn: () => apiRequest<PosOrder[]>('/api/v1/pos/orders'),
-    refetchInterval: 30_000,
+    refetchInterval: pollingInterval,
   });
   const filtered = useMemo(() => {
     const term = search.trim().toLocaleLowerCase('vi-VN');
@@ -695,10 +725,11 @@ function OrdersPage({ search }: { search: string }) {
 
 function AreasPage() {
   const navigate = useNavigate();
+  const pollingInterval = usePosPollingInterval(20_000);
   const tables = useQuery({
     queryKey: ['pos-tables'],
     queryFn: () => apiRequest<PosTable[]>('/api/v1/pos/tables'),
-    refetchInterval: 20_000,
+    refetchInterval: pollingInterval,
   });
   const areas = useMemo(() => {
     const map = new Map<string, { id: string; name: string; tables: PosTable[] }>();
@@ -1655,6 +1686,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const quotePollingInterval = usePosPollingInterval(5_000);
+  const { serverTimeOffsetMs } = useRealtime();
   const [messageApi, holder] = message.useMessage();
   const preselectedTableId = searchParams.get('tableId');
   const typeParam = searchParams.get('type');
@@ -1784,7 +1817,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     queryKey: ['pos-order-quote', orderId],
     queryFn: () => apiRequest<OrderQuote>(`/api/v1/pos/orders/${orderId}/quote`),
     enabled: !isNew,
-    refetchInterval: 5_000,
+    refetchInterval: quotePollingInterval,
   });
   const printSettings = useQuery({
     queryKey: ['pos-print-settings'],
@@ -1803,9 +1836,9 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   useEffect(() => {
     const hasRunningTime = quote.data?.time?.status === 'RUNNING';
     if (!hasRunningTime) return undefined;
-    const timer = window.setInterval(() => setClockNow(Date.now()), 1000);
+    const timer = window.setInterval(() => setClockNow(Date.now() + serverTimeOffsetMs), 1000);
     return () => window.clearInterval(timer);
-  }, [quote.data?.time?.status]);
+  }, [quote.data?.time?.status, serverTimeOffsetMs]);
 
   useEffect(() => {
     if (!isNew && quote.data && searchParams.get('checkout') === '1') {
@@ -5612,6 +5645,7 @@ const PAYMENT_METHODS: PaymentMethodItem[] = [
 function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResponse }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const quotePollingInterval = usePosPollingInterval(5_000);
   const [messageApi, holder] = message.useMessage();
   const [selectedMethod, setSelectedMethod] = useState<PaymentMethodType>('CASH');
   const [isMultiMethod, setIsMultiMethod] = useState(false);
@@ -5633,7 +5667,7 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
   const quote = useQuery({
     queryKey: ['pos-order-quote', orderId],
     queryFn: () => apiRequest<OrderQuote>(`/api/v1/pos/orders/${orderId}/quote`),
-    refetchInterval: 5_000,
+    refetchInterval: quotePollingInterval,
   });
 
   const printSettings = useQuery({
@@ -6382,45 +6416,47 @@ export function StaffPosPortalPage() {
 
   return (
     <ConfigProvider theme={{ token: { colorPrimary: BRAND, borderRadius: 8 } }}>
-      <div className={`staff-pos-shell${isFullScreen ? ' staff-pos-shell--editor' : ''}`}>
-        {!isFullScreen ? (
-          <StaffHeader
-            context={auth.data}
-            searchSlot={
-              active === 'orders' ? (
-                <Input
-                  size="large"
-                  allowClear
-                  prefix={<SearchOutlined style={{ color: '#8c8c8c' }} />}
-                  placeholder="Tìm kiếm đơn hàng..."
-                  value={ordersSearch}
-                  onChange={(event) => setOrdersSearch(event.target.value)}
-                />
-              ) : null
-            }
-          />
-        ) : null}
-        <div className="staff-pos-main">
-          {isInvoice ? (
-            <InvoicePage />
-          ) : isDetail && detailOrderId ? (
-            <OrderDetailPage orderId={detailOrderId} />
-          ) : isPayment && paymentOrderId ? (
-            <PaymentPage orderId={paymentOrderId} auth={auth.data} />
-          ) : isEditor ? (
-            <OrderEditor auth={auth.data} />
-          ) : active === 'areas' ? (
-            <AreasPage />
-          ) : active === 'qr' ? (
-            <QrOrderPage />
-          ) : active === 'more' ? (
-            <MorePage auth={auth.data} />
-          ) : (
-            <OrdersPage search={ordersSearch} />
-          )}
+      <RealtimeProvider>
+        <div className={`staff-pos-shell${isFullScreen ? ' staff-pos-shell--editor' : ''}`}>
+          {!isFullScreen ? (
+            <StaffHeader
+              context={auth.data}
+              searchSlot={
+                active === 'orders' ? (
+                  <Input
+                    size="large"
+                    allowClear
+                    prefix={<SearchOutlined style={{ color: '#8c8c8c' }} />}
+                    placeholder="Tìm kiếm đơn hàng..."
+                    value={ordersSearch}
+                    onChange={(event) => setOrdersSearch(event.target.value)}
+                  />
+                ) : null
+              }
+            />
+          ) : null}
+          <div className="staff-pos-main">
+            {isInvoice ? (
+              <InvoicePage />
+            ) : isDetail && detailOrderId ? (
+              <OrderDetailPage orderId={detailOrderId} />
+            ) : isPayment && paymentOrderId ? (
+              <PaymentPage orderId={paymentOrderId} auth={auth.data} />
+            ) : isEditor ? (
+              <OrderEditor auth={auth.data} />
+            ) : active === 'areas' ? (
+              <AreasPage />
+            ) : active === 'qr' ? (
+              <QrOrderPage />
+            ) : active === 'more' ? (
+              <MorePage auth={auth.data} />
+            ) : (
+              <OrdersPage search={ordersSearch} />
+            )}
+          </div>
+          {!isFullScreen ? <StaffBottomNav active={active} /> : null}
         </div>
-        {!isFullScreen ? <StaffBottomNav active={active} /> : null}
-      </div>
+      </RealtimeProvider>
     </ConfigProvider>
   );
 }

@@ -30,6 +30,14 @@ export const addOrderItemSchema = z.object({
 export const updateOrderItemSchema = z.object({
   expectedOrderVersion: z.number().int().positive(),
   quantityMilli: z.number().int().positive().max(1_000_000_000),
+  variantId: z.string().nullable().optional(),
+  discount: z
+    .object({
+      type: z.enum(['FIXED', 'PERCENT']),
+      value: z.number().int().nonnegative(),
+    })
+    .nullable()
+    .optional(),
   timeStartedAtMs: z.number().int().positive().nullable().optional(),
   timeEndedAtMs: z.number().int().positive().nullable().optional(),
   note: z.string().trim().max(500).nullable().optional(),
@@ -76,4 +84,12 @@ export const transferTableSchema = z.object({
 export const cancelOrderSchema = z.object({
   expectedOrderVersion: z.number().int().positive(),
   reason: z.string().trim().min(1).max(500),
+});
+
+export const stopTimeSchema = z.object({
+  expectedOrderVersion: z.number().int().positive(),
+});
+
+export const resumeCheckoutSchema = z.object({
+  expectedOrderVersion: z.number().int().positive(),
 });

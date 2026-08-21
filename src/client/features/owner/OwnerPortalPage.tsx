@@ -59,6 +59,7 @@ import {
   OwnerProductFormPage,
   OwnerProductListPage,
 } from './OwnerCatalogPages';
+import { OwnerInvoicesPage } from './OwnerInvoicesPage';
 
 const BRAND = '#0975F7';
 
@@ -804,6 +805,8 @@ export function OwnerPortalPage() {
               <OwnerCategoryListPage />
             ) : location.pathname.startsWith('/owner/catalog/categories/') ? (
               <OwnerCategoryDetailPage categoryId={location.pathname.split('/').at(-1)!} />
+            ) : location.pathname === '/owner/invoices' ? (
+              <OwnerInvoicesPage />
             ) : location.pathname === '/owner/staff' ? (
               <OwnerStaffListPage />
             ) : location.pathname === '/owner/staff/new' ? (

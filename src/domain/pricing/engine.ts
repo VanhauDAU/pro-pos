@@ -161,7 +161,12 @@ export function calculateTimePrice(input: {
 }): PricingResult {
   validatePricingConfig(input.config);
   if (input.endedAtMs <= input.startedAtMs) {
-    throw new Error('endedAtMs must be greater than startedAtMs');
+    return {
+      elapsedSeconds: 0,
+      amountBeforeRoundingVnd: 0,
+      amountAfterRoundingVnd: 0,
+      segments: [],
+    };
   }
 
   const activeIntervals = subtractPauses(input.startedAtMs, input.endedAtMs, input.pauses ?? []);

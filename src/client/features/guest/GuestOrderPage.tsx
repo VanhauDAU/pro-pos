@@ -254,7 +254,9 @@ export function GuestOrderPage() {
                       />
                     ) : (
                       <Typography.Text type="secondary">
-                        {variant ? money(variant.salePriceVnd) : ''}
+                        {variant
+                          ? `${money(variant.salePriceVnd)}${product.unitName ? ` / ${product.unitName}` : ''}`
+                          : ''}
                       </Typography.Text>
                     )}
                     <Button

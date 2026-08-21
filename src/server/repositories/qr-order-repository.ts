@@ -122,7 +122,8 @@ export class QrOrderRepository {
   async listMenu(storeId: string): Promise<GuestMenuProduct[]> {
     const result = await this.db
       .prepare(
-        `SELECT p.id AS productId, p.name AS productName, p.category_id AS categoryId,
+        `SELECT p.id AS productId, p.name AS productName, p.product_type AS productType,
+                p.category_id AS categoryId,
                 c.name AS categoryName, p.avatar_type AS avatarType,
                 p.avatar_color AS avatarColor, p.media_id AS mediaId,
                 u.name AS unitName, pv.id AS variantId, pv.name AS variantName,
@@ -133,13 +134,14 @@ export class QrOrderRepository {
          LEFT JOIN categories c ON c.id = p.category_id AND c.store_id = p.store_id
          LEFT JOIN units u ON u.id = p.unit_id AND u.store_id = p.store_id
          WHERE p.store_id = ? AND p.status = 'ACTIVE' AND p.is_system = 0
-           AND p.product_type = 'QUANTITY'
+           AND p.product_type IN ('QUANTITY', 'WEIGHT')
          ORDER BY c.sort_order, p.name COLLATE NOCASE, pv.name COLLATE NOCASE`,
       )
       .bind(storeId)
       .all<{
         productId: string;
         productName: string;
+        productType: 'QUANTITY' | 'WEIGHT';
         categoryId: string | null;
         categoryName: string | null;
         avatarType: 'COLOR' | 'IMAGE';
@@ -155,6 +157,7 @@ export class QrOrderRepository {
       const product = products.get(row.productId) ?? {
         id: row.productId,
         name: row.productName,
+        productType: row.productType,
         categoryId: row.categoryId,
         categoryName: row.categoryName,
         unitName: row.unitName,
@@ -184,14 +187,14 @@ export class QrOrderRepository {
            AND pv.status = 'ACTIVE' AND pv.prompt_price = 0 AND pv.sale_price IS NOT NULL
          LEFT JOIN units u ON u.id = p.unit_id AND u.store_id = p.store_id
          WHERE p.store_id = ? AND p.id = ? AND p.status = 'ACTIVE'
-           AND p.product_type = 'QUANTITY' AND (? IS NULL OR pv.id = ?)
+           AND p.product_type IN ('QUANTITY', 'WEIGHT') AND (? IS NULL OR pv.id = ?)
          ORDER BY pv.created_at LIMIT 1`,
       )
       .bind(storeId, productId, variantId, variantId)
       .first<{
         productId: string;
         productName: string;
-        productType: 'QUANTITY';
+        productType: 'QUANTITY' | 'WEIGHT';
         variantId: string;
         variantName: string;
         salePriceVnd: number;

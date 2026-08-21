@@ -21,6 +21,15 @@ export const setStoreCapabilitySchema = z.object({
   enabled: z.boolean(),
 });
 
+export const updateStoreMemberSchema = z.object({
+  displayName: z.string().trim().min(1).max(128).optional(),
+  username: z.string().trim().min(3).max(128).optional(),
+  email: z.string().trim().email().max(254).nullable().optional(),
+  phone: z.string().trim().max(32).nullable().optional(),
+  status: z.enum(['ACTIVE', 'DISABLED']).optional(),
+  newPassword: z.string().min(6).max(128).optional(),
+});
+
 export { createEmployeeSchema };
 
 export interface PlatformStoreSummary {

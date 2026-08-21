@@ -5,6 +5,7 @@ import {
   bootstrapSuperAdminSchema,
   createStoreSchema,
   setStoreCapabilitySchema,
+  updateStoreMemberSchema,
 } from '@contracts/platform';
 import { AppError } from '@server/lib/app-error';
 import { success } from '@server/lib/response';
@@ -67,6 +68,23 @@ platformRoutes.patch('/stores/:storeId/capabilities', async (c) => {
       enabled: body.enabled,
       actorId: c.get('actor').id,
       requestId: c.get('requestId'),
+    }),
+  );
+});
+
+platformRoutes.patch('/stores/:storeId/members/:userId', async (c) => {
+  const body = await parseJson(c.req.raw, updateStoreMemberSchema);
+  return success(
+    c,
+    await new PlatformService(c.env).updateStoreMember({
+      storeId: c.req.param('storeId'),
+      userId: c.req.param('userId'),
+      displayName: body.displayName,
+      username: body.username,
+      email: body.email,
+      phone: body.phone,
+      status: body.status,
+      newPassword: body.newPassword,
     }),
   );
 });

@@ -509,4 +509,107 @@ export class PlatformRepository {
       },
     };
   }
+
+  async updateStoreMember(input: {
+    storeId: string;
+    userId: string;
+    displayName?: string | undefined;
+    username?: string | undefined;
+    email?: string | null | undefined;
+    phone?: string | null | undefined;
+    status?: 'ACTIVE' | 'DISABLED' | undefined;
+    password?:
+      | {
+          salt: string;
+          digest: string;
+          workFactor: number;
+          pepperVersion: number;
+        }
+      | undefined;
+    now: number;
+  }) {
+    const membership = await this.db
+      .prepare(
+        `SELECT sm.id, sm.user_id, sm.role_id, r.code AS role_code
+         FROM store_memberships sm
+         JOIN roles r ON r.id = sm.role_id
+         WHERE sm.store_id = ? AND sm.user_id = ? LIMIT 1`,
+      )
+      .bind(input.storeId, input.userId)
+      .first<{ id: string; user_id: string; role_id: string; role_code: string }>();
+
+    if (!membership) return null;
+
+    const statements: D1PreparedStatement[] = [];
+
+    const userUpdates: string[] = ['updated_at = ?'];
+    const userBindings: unknown[] = [input.now];
+
+    if (input.displayName !== undefined) {
+      userUpdates.push('display_name = ?');
+      userBindings.push(input.displayName);
+    }
+    if (input.username !== undefined) {
+      userUpdates.push('username = ?');
+      userBindings.push(input.username);
+    }
+    if (input.email !== undefined) {
+      userUpdates.push('email = ?');
+      userBindings.push(input.email);
+    }
+    if (input.phone !== undefined) {
+      userUpdates.push('phone = ?');
+      userBindings.push(input.phone);
+    }
+    if (input.status !== undefined) {
+      userUpdates.push('status = ?');
+      userBindings.push(input.status);
+    }
+
+    userBindings.push(input.userId);
+    statements.push(
+      this.db
+        .prepare(`UPDATE users SET ${userUpdates.join(', ')} WHERE id = ?`)
+        .bind(...userBindings),
+    );
+
+    if (input.status !== undefined) {
+      statements.push(
+        this.db
+          .prepare(
+            'UPDATE store_memberships SET status = ?, updated_at = ? WHERE store_id = ? AND user_id = ?',
+          )
+          .bind(input.status, input.now, input.storeId, input.userId),
+      );
+    }
+
+    if (input.password) {
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO password_credentials (
+               user_id, algorithm, work_factor, salt, digest, pepper_version, credential_version, updated_at
+             ) VALUES (?, 'PBKDF2-HMAC-SHA256', ?, ?, ?, ?, 1, ?)
+             ON CONFLICT(user_id) DO UPDATE SET
+               salt = excluded.salt,
+               digest = excluded.digest,
+               work_factor = excluded.work_factor,
+               pepper_version = excluded.pepper_version,
+               credential_version = credential_version + 1,
+               updated_at = excluded.updated_at`,
+          )
+          .bind(
+            input.userId,
+            input.password.workFactor,
+            input.password.salt,
+            input.password.digest,
+            input.password.pepperVersion,
+            input.now,
+          ),
+      );
+    }
+
+    await this.db.batch(statements);
+    return { success: true };
+  }
 }

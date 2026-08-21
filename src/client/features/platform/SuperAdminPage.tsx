@@ -1,14 +1,20 @@
 import {
   AppstoreOutlined,
+  CheckCircleOutlined,
   ClockCircleOutlined,
   CreditCardOutlined,
   DesktopOutlined,
+  EditOutlined,
   EyeOutlined,
   InfoCircleOutlined,
+  KeyOutlined,
   LockOutlined,
   LogoutOutlined,
+  MailOutlined,
+  PhoneOutlined,
   PlusOutlined,
   ReloadOutlined,
+  SearchOutlined,
   ShopOutlined,
   ShoppingOutlined,
   TeamOutlined,
@@ -17,6 +23,7 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
+  Avatar,
   Badge,
   Button,
   Card,
@@ -29,7 +36,9 @@ import {
   Layout,
   Modal,
   Popconfirm,
+  Radio,
   Row,
+  Select,
   Space,
   Spin,
   Statistic,
@@ -37,6 +46,7 @@ import {
   Tabs,
   Tag,
   Typography,
+  message,
 } from 'antd';
 import { useMemo, useState } from 'react';
 import { Navigate } from 'react-router';
@@ -59,6 +69,21 @@ interface CreateStoreValues {
   ownerPassword?: string | undefined;
 }
 
+interface EditMemberValues {
+  displayName: string;
+  username: string;
+  email?: string | null | undefined;
+  phone?: string | null | undefined;
+  status: 'ACTIVE' | 'DISABLED';
+}
+
+interface ResetPasswordValues {
+  newPassword: string;
+  confirmPassword?: string | undefined;
+}
+
+type StoreMember = PlatformStoreDetail['members'][number];
+
 function readableError(error: unknown) {
   return error instanceof ApiError
     ? error.message
@@ -77,13 +102,34 @@ function formatDateTime(timestamp: number | null | undefined) {
   }).format(new Date(timestamp));
 }
 
+function getInitials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const first = parts[0];
+  const last = parts[parts.length - 1];
+  if (parts.length >= 2 && first && last && first.length > 0 && last.length > 0) {
+    return (first.charAt(0) + last.charAt(0)).toUpperCase();
+  }
+  return name.slice(0, 2).toUpperCase();
+}
+
 export function SuperAdminPage() {
   const queryClient = useQueryClient();
   const [form] = Form.useForm<CreateStoreValues>();
+  const [editMemberForm] = Form.useForm<EditMemberValues>();
+  const [resetPasswordForm] = Form.useForm<ResetPasswordValues>();
+
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Search & Filter state
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'LOCKED'>('ALL');
+
+  // Member editing state
+  const [editingMember, setEditingMember] = useState<StoreMember | null>(null);
+  const [resetPasswordMember, setResetPasswordMember] = useState<StoreMember | null>(null);
 
   const context = useQuery({
     queryKey: ['auth-context'],
@@ -110,6 +156,18 @@ export function SuperAdminPage() {
     };
   }, [stores.data]);
 
+  const filteredStores = useMemo(() => {
+    const rows = stores.data ?? [];
+    return rows.filter((store) => {
+      const matchesSearch =
+        !searchTerm.trim() ||
+        store.name.toLowerCase().includes(searchTerm.trim().toLowerCase()) ||
+        store.id.toLowerCase().includes(searchTerm.trim().toLowerCase());
+      const matchesStatus = statusFilter === 'ALL' || store.status === statusFilter;
+      return matchesSearch && matchesStatus;
+    });
+  }, [stores.data, searchTerm, statusFilter]);
+
   const csrfHeaders = () => ({
     'X-CSRF-Token': context.data?.csrfToken ?? '',
   });
@@ -124,6 +182,7 @@ export function SuperAdminPage() {
       await queryClient.invalidateQueries({ queryKey: ['platform-stores'] });
       setCreateOpen(false);
       form.resetFields();
+      message.success('Đã tạo cửa hàng mới thành công!');
     } catch (createError) {
       setError(readableError(createError));
     } finally {
@@ -149,6 +208,11 @@ export function SuperAdminPage() {
         queryClient.invalidateQueries({ queryKey: ['platform-stores'] }),
         queryClient.invalidateQueries({ queryKey: ['platform-store-detail', store.id] }),
       ]);
+      message.success(
+        store.status === 'ACTIVE'
+          ? 'Đã khóa cửa hàng thành công.'
+          : 'Đã mở lại cửa hàng hoạt động.',
+      );
     } catch (statusError) {
       setError(readableError(statusError));
     } finally {
@@ -175,8 +239,78 @@ export function SuperAdminPage() {
         queryClient.invalidateQueries({ queryKey: ['platform-stores'] }),
         queryClient.invalidateQueries({ queryKey: ['platform-store-detail', store.id] }),
       ]);
+      message.success(!store.posRealtimeEnabled ? 'Đã bật Realtime POS' : 'Đã tắt Realtime POS');
     } catch (capabilityError) {
       setError(readableError(capabilityError));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleEditMember = (member: StoreMember) => {
+    setEditingMember(member);
+    editMemberForm.setFieldsValue({
+      displayName: member.displayName,
+      username: member.username,
+      email: member.email,
+      phone: member.phone,
+      status: member.userStatus,
+    });
+  };
+
+  const submitEditMember = async (values: EditMemberValues) => {
+    if (!selectedStoreId || !editingMember) return;
+    setSubmitting(true);
+    try {
+      await jsonRequest(
+        `/api/v1/platform/stores/${selectedStoreId}/members/${editingMember.userId}`,
+        values,
+        {
+          method: 'PATCH',
+          headers: csrfHeaders(),
+        },
+      );
+      await queryClient.invalidateQueries({
+        queryKey: ['platform-store-detail', selectedStoreId],
+      });
+      message.success('Đã cập nhật thông tin tài khoản thành công!');
+      setEditingMember(null);
+    } catch (editError) {
+      message.error(readableError(editError));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleResetPassword = (member: StoreMember) => {
+    setResetPasswordMember(member);
+    resetPasswordForm.resetFields();
+  };
+
+  const submitResetPassword = async (values: ResetPasswordValues) => {
+    if (!selectedStoreId || !resetPasswordMember) return;
+    setSubmitting(true);
+    try {
+      await jsonRequest(
+        `/api/v1/platform/stores/${selectedStoreId}/members/${resetPasswordMember.userId}`,
+        {
+          newPassword: values.newPassword,
+        },
+        {
+          method: 'PATCH',
+          headers: csrfHeaders(),
+        },
+      );
+      await queryClient.invalidateQueries({
+        queryKey: ['platform-store-detail', selectedStoreId],
+      });
+      message.success(
+        `Đã đặt lại mật khẩu mới cho tài khoản @${resetPasswordMember.username} thành công!`,
+      );
+      setResetPasswordMember(null);
+      resetPasswordForm.resetFields();
+    } catch (resetError) {
+      message.error(readableError(resetError));
     } finally {
       setSubmitting(false);
     }
@@ -224,8 +358,17 @@ export function SuperAdminPage() {
         <div className="platform-brand">
           <img src={logo} alt="Pro POS" />
           <div>
-            <Typography.Text strong>Quản trị nền tảng</Typography.Text>
-            <Typography.Text type="secondary">{context.data.actor.displayName}</Typography.Text>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Typography.Text strong style={{ fontSize: 16 }}>
+                Quản trị nền tảng
+              </Typography.Text>
+              <Tag color="blue" style={{ borderRadius: 6, fontWeight: 600 }}>
+                SUPER_ADMIN
+              </Tag>
+            </div>
+            <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+              {context.data.actor.displayName}
+            </Typography.Text>
           </div>
         </div>
         <Button icon={<LogoutOutlined />} loading={submitting} onClick={logout}>
@@ -236,23 +379,27 @@ export function SuperAdminPage() {
       <main className="platform-content">
         <div className="platform-title-row">
           <div>
-            <Typography.Title level={2}>Cửa hàng Pro POS</Typography.Title>
-            <Typography.Text type="secondary">
-              Tạo cửa hàng, quản lý tài khoản Chủ cửa hàng và theo dõi hoạt động hệ thống.
+            <Typography.Title level={2} style={{ margin: 0, fontWeight: 800 }}>
+              Hệ thống cửa hàng
+            </Typography.Title>
+            <Typography.Text type="secondary" style={{ fontSize: 14 }}>
+              Quản lý danh sách cửa hàng, phân quyền Chủ quán và theo dõi thiết bị POS hoạt động.
             </Typography.Text>
           </div>
           <Button
             type="primary"
             size="large"
             icon={<PlusOutlined />}
+            style={{ borderRadius: 10, fontWeight: 600, height: 44 }}
             onClick={() => {
               setError(null);
               setCreateOpen(true);
             }}
           >
-            Tạo cửa hàng
+            Tạo cửa hàng mới
           </Button>
         </div>
+
         {error ? (
           <Alert
             className="platform-error"
@@ -261,34 +408,96 @@ export function SuperAdminPage() {
             message={error}
             closable
             onClose={() => setError(null)}
+            style={{ borderRadius: 10, marginTop: 16 }}
           />
         ) : null}
 
-        <div className="platform-stats-grid">
-          <Card className="platform-stat-card">
-            <Statistic title="Tổng số cửa hàng" value={stats.total} prefix={<ShopOutlined />} />
+        {/* Hero Statistic Cards */}
+        <div className="platform-stats">
+          <Card className="platform-stat-card-v2" styles={{ body: { padding: '20px 24px' } }}>
+            <div className="stat-card-inner">
+              <div className="stat-icon-wrapper stat-icon-wrapper--blue">
+                <ShopOutlined />
+              </div>
+              <div>
+                <Typography.Text type="secondary" style={{ fontSize: 13, fontWeight: 600 }}>
+                  Tổng số cửa hàng
+                </Typography.Text>
+                <div style={{ fontSize: 28, fontWeight: 800, color: '#0f172a', lineHeight: 1.2 }}>
+                  {stats.total}
+                </div>
+              </div>
+            </div>
           </Card>
-          <Card className="platform-stat-card">
-            <Statistic
-              title="Đang hoạt động"
-              value={stats.active}
-              valueStyle={{ color: '#10b981' }}
-            />
+
+          <Card className="platform-stat-card-v2" styles={{ body: { padding: '20px 24px' } }}>
+            <div className="stat-card-inner">
+              <div className="stat-icon-wrapper stat-icon-wrapper--green">
+                <CheckCircleOutlined />
+              </div>
+              <div>
+                <Typography.Text type="secondary" style={{ fontSize: 13, fontWeight: 600 }}>
+                  Đang hoạt động
+                </Typography.Text>
+                <div style={{ fontSize: 28, fontWeight: 800, color: '#10b981', lineHeight: 1.2 }}>
+                  {stats.active}
+                </div>
+              </div>
+            </div>
           </Card>
-          <Card className="platform-stat-card">
-            <Statistic
-              title="Đang bị khóa"
-              value={stats.locked}
-              valueStyle={{ color: '#ef4444' }}
-            />
+
+          <Card className="platform-stat-card-v2" styles={{ body: { padding: '20px 24px' } }}>
+            <div className="stat-card-inner">
+              <div className="stat-icon-wrapper stat-icon-wrapper--red">
+                <LockOutlined />
+              </div>
+              <div>
+                <Typography.Text type="secondary" style={{ fontSize: 13, fontWeight: 600 }}>
+                  Đang bị khóa
+                </Typography.Text>
+                <div style={{ fontSize: 28, fontWeight: 800, color: '#ef4444', lineHeight: 1.2 }}>
+                  {stats.locked}
+                </div>
+              </div>
+            </div>
           </Card>
         </div>
 
-        <Card className="platform-table-card" title="Danh sách cửa hàng">
+        {/* Stores Table Card */}
+        <Card className="platform-table-card" styles={{ body: { padding: '20px 24px' } }}>
+          <div className="platform-toolbar">
+            <div className="platform-toolbar-left">
+              <Input
+                placeholder="Tìm theo tên cửa hàng hoặc ID..."
+                prefix={<SearchOutlined style={{ color: '#94a3b8' }} />}
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                style={{ width: 280, borderRadius: 8 }}
+                allowClear
+              />
+              <Radio.Group
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                buttonStyle="solid"
+                style={{ borderRadius: 8 }}
+              >
+                <Radio.Button value="ALL">Tất cả ({stats.total})</Radio.Button>
+                <Radio.Button value="ACTIVE">Hoạt động ({stats.active})</Radio.Button>
+                <Radio.Button value="LOCKED">Đã khóa ({stats.locked})</Radio.Button>
+              </Radio.Group>
+            </div>
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={() => queryClient.invalidateQueries({ queryKey: ['platform-stores'] })}
+            >
+              Làm mới
+            </Button>
+          </div>
+
           <Table
             rowKey="id"
             loading={stores.isLoading}
-            dataSource={stores.data ?? []}
+            dataSource={filteredStores}
             pagination={{ pageSize: 10, showSizeChanger: false }}
             columns={[
               {
@@ -300,7 +509,9 @@ export function SuperAdminPage() {
                     <Typography.Text strong style={{ fontSize: 15 }}>
                       {val}
                     </Typography.Text>
-                    <div style={{ fontSize: 12, color: '#94a3b8' }}>ID: {record.id}</div>
+                    <div style={{ marginTop: 2 }}>
+                      <span className="platform-badge-id">ID: {record.id.slice(0, 8)}...</span>
+                    </div>
                   </div>
                 ),
               },
@@ -309,9 +520,19 @@ export function SuperAdminPage() {
                 dataIndex: 'status',
                 key: 'status',
                 render: (status: 'ACTIVE' | 'LOCKED') => (
-                  <Tag color={status === 'ACTIVE' ? 'success' : 'error'}>
-                    {status === 'ACTIVE' ? 'Hoạt động' : 'Đã khóa'}
-                  </Tag>
+                  <Badge
+                    status={status === 'ACTIVE' ? 'success' : 'error'}
+                    text={
+                      <span
+                        style={{
+                          fontWeight: 600,
+                          color: status === 'ACTIVE' ? '#10b981' : '#ef4444',
+                        }}
+                      >
+                        {status === 'ACTIVE' ? 'Đang hoạt động' : 'Đã khóa'}
+                      </span>
+                    }
+                  />
                 ),
               },
               {
@@ -324,27 +545,32 @@ export function SuperAdminPage() {
                     type={enabled ? 'primary' : 'default'}
                     loading={submitting}
                     onClick={() => toggleRealtime(store)}
+                    style={{ borderRadius: 6, fontSize: 12 }}
                   >
-                    {enabled ? 'Bật' : 'Tắt'}
+                    {enabled ? 'Đang bật' : 'Đang tắt'}
                   </Button>
                 ),
               },
               {
-                title: 'Ngày tạo',
+                title: 'Ngày khởi tạo',
                 dataIndex: 'createdAt',
                 key: 'createdAt',
-                render: (val: number) => formatDateTime(val),
+                render: (val: number) => (
+                  <span style={{ color: '#64748b', fontSize: 13 }}>{formatDateTime(val)}</span>
+                ),
               },
               {
                 title: 'Thao tác',
                 key: 'actions',
+                align: 'right',
                 render: (_, store: PlatformStoreSummary) => (
-                  <Space size="middle">
+                  <Space size="small">
                     <Button
                       type="primary"
                       ghost
                       icon={<EyeOutlined />}
                       onClick={() => setSelectedStoreId(store.id)}
+                      style={{ borderRadius: 6 }}
                     >
                       Chi tiết
                     </Button>
@@ -364,6 +590,7 @@ export function SuperAdminPage() {
                       <Button
                         danger={store.status === 'ACTIVE'}
                         icon={store.status === 'ACTIVE' ? <LockOutlined /> : <UnlockOutlined />}
+                        style={{ borderRadius: 6 }}
                       >
                         {store.status === 'ACTIVE' ? 'Khóa' : 'Mở lại'}
                       </Button>
@@ -376,27 +603,42 @@ export function SuperAdminPage() {
         </Card>
       </main>
 
+      {/* Drawer Xem & Quản lý Chi Tiết Cửa Hàng */}
       <Drawer
         title={
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <ShopOutlined style={{ fontSize: 20, color: '#2563eb' }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 10,
+                background: '#eff6ff',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#2563eb',
+                fontSize: 18,
+              }}
+            >
+              <ShopOutlined />
+            </div>
             <div>
-              <Typography.Text strong style={{ fontSize: 16 }}>
+              <Typography.Text strong style={{ fontSize: 17 }}>
                 {detail?.store.name || 'Chi tiết cửa hàng'}
               </Typography.Text>
               {detail ? (
                 <Tag
                   color={detail.store.status === 'ACTIVE' ? 'success' : 'error'}
-                  style={{ marginLeft: 8 }}
+                  style={{ marginLeft: 8, borderRadius: 6 }}
                 >
-                  {detail.store.status === 'ACTIVE' ? 'Hoạt động' : 'Đã khóa'}
+                  {detail.store.status === 'ACTIVE' ? 'Đang hoạt động' : 'Đã khóa'}
                 </Tag>
               ) : null}
             </div>
           </div>
         }
         placement="right"
-        width={780}
+        width={820}
         onClose={() => setSelectedStoreId(null)}
         open={Boolean(selectedStoreId)}
         extra={
@@ -425,9 +667,11 @@ export function SuperAdminPage() {
         }
       >
         {storeDetail.isLoading ? (
-          <div style={{ textAlign: 'center', padding: '60px 0' }}>
+          <div style={{ textAlign: 'center', padding: '80px 0' }}>
             <Spin size="large" />
-            <div style={{ marginTop: 12, color: '#64748b' }}>Đang tải dữ liệu chi tiết...</div>
+            <div style={{ marginTop: 16, color: '#64748b', fontWeight: 500 }}>
+              Đang tải dữ liệu cửa hàng...
+            </div>
           </div>
         ) : detail ? (
           <Tabs
@@ -441,10 +685,10 @@ export function SuperAdminPage() {
                   </span>
                 ),
                 children: (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-                    <Card size="small" title="Thông tin cơ bản" className="detail-card">
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+                    <Card size="small" title="Thông tin định danh" className="detail-card">
                       <Descriptions column={{ xs: 1, sm: 2 }} size="small" bordered>
-                        <Descriptions.Item label="Mã Cửa Hàng (ID)">
+                        <Descriptions.Item label="Mã ID (UUID)">
                           <Typography.Text copyable code>
                             {detail.store.id}
                           </Typography.Text>
@@ -473,11 +717,13 @@ export function SuperAdminPage() {
                     <Card size="small" title="Địa chỉ & Liên hệ" className="detail-card">
                       <Descriptions column={{ xs: 1, sm: 2 }} size="small" bordered>
                         <Descriptions.Item label="Số điện thoại">
-                          {detail.store.settings?.phone || (
+                          {detail.store.settings?.phone ? (
+                            <Typography.Text strong>{detail.store.settings.phone}</Typography.Text>
+                          ) : (
                             <span style={{ color: '#94a3b8' }}>Chưa cập nhật</span>
                           )}
                         </Descriptions.Item>
-                        <Descriptions.Item label="Đơn vị tiền tệ">
+                        <Descriptions.Item label="Tiền tệ">
                           <Tag color="blue">{detail.store.settings?.currency || 'VND'}</Tag>
                         </Descriptions.Item>
                         <Descriptions.Item label="Địa chỉ chi tiết" span={2}>
@@ -519,7 +765,7 @@ export function SuperAdminPage() {
                             <span style={{ color: '#94a3b8' }}>Chưa cấu hình</span>
                           )}
                         </Descriptions.Item>
-                        <Descriptions.Item label="Giờ chốt ngày">
+                        <Descriptions.Item label="Giờ chốt ca / ngày">
                           {detail.store.settings?.businessDayCutoffMinutes !== undefined
                             ? `${Math.floor(detail.store.settings.businessDayCutoffMinutes / 60)}:00`
                             : '0:00'}
@@ -536,7 +782,7 @@ export function SuperAdminPage() {
                         }}
                       >
                         <div>
-                          <strong>Realtime POS (Đồng bộ bàn & đơn hàng theo thời gian thực)</strong>
+                          <strong>Realtime POS (Đồng bộ bàn & đơn hàng trực tiếp)</strong>
                           <div style={{ color: '#64748b', fontSize: 13 }}>
                             Dùng Cloudflare Durable Objects để đồng bộ tức thì giữa thu ngân và nhân
                             viên quầy.
@@ -558,60 +804,120 @@ export function SuperAdminPage() {
                 key: 'members',
                 label: (
                   <span>
-                    <TeamOutlined /> Tài khoản ({detail.members.length})
+                    <TeamOutlined /> Tài khoản & Nhân sự ({detail.members.length})
                   </span>
                 ),
                 children: (
-                  <Table
-                    rowKey="id"
-                    size="small"
-                    dataSource={detail.members}
-                    pagination={false}
-                    columns={[
-                      {
-                        title: 'Tài khoản',
-                        key: 'user',
-                        render: (_, m) => (
-                          <div>
-                            <Typography.Text strong>{m.displayName}</Typography.Text>
-                            <div style={{ fontSize: 12, color: '#64748b' }}>
-                              @{m.username}{' '}
-                              {m.roleCode === 'OWNER' ? (
-                                <Tag color="gold">Chủ cửa hàng</Tag>
-                              ) : (
-                                <Tag color="blue">{m.roleName}</Tag>
-                              )}
+                  <div>
+                    <div style={{ marginBottom: 12, color: '#64748b', fontSize: 13 }}>
+                      Danh sách tài khoản Chủ quán và Nhân sự. SuperAdmin có thể chỉnh sửa thông tin
+                      hoặc đặt lại mật khẩu trực tiếp.
+                    </div>
+                    <Table
+                      rowKey="id"
+                      size="middle"
+                      dataSource={detail.members}
+                      pagination={false}
+                      columns={[
+                        {
+                          title: 'Tài khoản',
+                          key: 'user',
+                          render: (_, m) => (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                              <Avatar
+                                size={38}
+                                style={{
+                                  background: m.roleCode === 'OWNER' ? '#f59e0b' : '#3b82f6',
+                                  fontWeight: 700,
+                                }}
+                              >
+                                {getInitials(m.displayName)}
+                              </Avatar>
+                              <div>
+                                <Typography.Text strong style={{ fontSize: 14 }}>
+                                  {m.displayName}
+                                </Typography.Text>
+                                <div style={{ fontSize: 12, color: '#64748b' }}>
+                                  @{m.username}{' '}
+                                  {m.roleCode === 'OWNER' ? (
+                                    <Tag color="gold" style={{ borderRadius: 4 }}>
+                                      Chủ cửa hàng
+                                    </Tag>
+                                  ) : (
+                                    <Tag color="blue" style={{ borderRadius: 4 }}>
+                                      {m.roleName}
+                                    </Tag>
+                                  )}
+                                </div>
+                              </div>
                             </div>
-                          </div>
-                        ),
-                      },
-                      {
-                        title: 'Email / SĐT',
-                        key: 'contact',
-                        render: (_, m) => (
-                          <div style={{ fontSize: 13 }}>
-                            <div>{m.email || '—'}</div>
-                            <div style={{ color: '#64748b' }}>{m.phone || '—'}</div>
-                          </div>
-                        ),
-                      },
-                      {
-                        title: 'Trạng thái',
-                        key: 'status',
-                        render: (_, m) => (
-                          <Tag color={m.userStatus === 'ACTIVE' ? 'success' : 'default'}>
-                            {m.userStatus === 'ACTIVE' ? 'Hoạt động' : 'Đã khóa'}
-                          </Tag>
-                        ),
-                      },
-                      {
-                        title: 'Ngày tạo',
-                        dataIndex: 'createdAt',
-                        key: 'createdAt',
-                        render: (val: number) => formatDateTime(val),
-                      },
-                    ]}
-                  />
+                          ),
+                        },
+                        {
+                          title: 'Email / SĐT',
+                          key: 'contact',
+                          render: (_, m) => (
+                            <div style={{ fontSize: 13 }}>
+                              {m.email ? (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                  <MailOutlined style={{ color: '#94a3b8' }} />
+                                  <span>{m.email}</span>
+                                </div>
+                              ) : (
+                                <span style={{ color: '#94a3b8' }}>Chưa có email</span>
+                              )}
+                              {m.phone ? (
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 4,
+                                    marginTop: 2,
+                                  }}
+                                >
+                                  <PhoneOutlined style={{ color: '#94a3b8' }} />
+                                  <span style={{ color: '#64748b' }}>{m.phone}</span>
+                                </div>
+                              ) : null}
+                            </div>
+                          ),
+                        },
+                        {
+                          title: 'Trạng thái',
+                          key: 'status',
+                          render: (_, m) => (
+                            <Badge
+                              status={m.userStatus === 'ACTIVE' ? 'success' : 'default'}
+                              text={m.userStatus === 'ACTIVE' ? 'Hoạt động' : 'Đã khóa'}
+                            />
+                          ),
+                        },
+                        {
+                          title: 'Thao tác',
+                          key: 'actions',
+                          align: 'right',
+                          render: (_, m) => (
+                            <Space size="small">
+                              <Button
+                                size="small"
+                                icon={<EditOutlined />}
+                                onClick={() => handleEditMember(m)}
+                              >
+                                Sửa
+                              </Button>
+                              <Button
+                                size="small"
+                                icon={<KeyOutlined />}
+                                onClick={() => handleResetPassword(m)}
+                              >
+                                Đổi MK
+                              </Button>
+                            </Space>
+                          ),
+                        },
+                      ]}
+                    />
+                  </div>
                 ),
               },
               {
@@ -815,6 +1121,111 @@ export function SuperAdminPage() {
         ) : null}
       </Drawer>
 
+      {/* Modal Chỉnh Sửa Thông Tin Tài Khoản */}
+      <Modal
+        title={`Chỉnh sửa tài khoản: ${editingMember?.displayName || ''}`}
+        open={Boolean(editingMember)}
+        okText="Lưu thay đổi"
+        cancelText="Hủy"
+        confirmLoading={submitting}
+        onOk={() => editMemberForm.submit()}
+        onCancel={() => setEditingMember(null)}
+        destroyOnClose
+      >
+        <Form
+          form={editMemberForm}
+          layout="vertical"
+          requiredMark={false}
+          onFinish={submitEditMember}
+        >
+          <Form.Item
+            label="Tên hiển thị"
+            name="displayName"
+            rules={[{ required: true, message: 'Vui lòng nhập tên hiển thị.' }]}
+          >
+            <Input maxLength={128} placeholder="Tên hiển thị" />
+          </Form.Item>
+          <Form.Item
+            label="Tên đăng nhập"
+            name="username"
+            rules={[{ required: true, message: 'Vui lòng nhập tên đăng nhập.' }]}
+          >
+            <Input maxLength={128} placeholder="Tên đăng nhập" />
+          </Form.Item>
+          <Form.Item
+            label="Email"
+            name="email"
+            rules={[{ type: 'email', message: 'Email không hợp lệ.' }]}
+          >
+            <Input type="email" maxLength={254} placeholder="email@example.com" />
+          </Form.Item>
+          <Form.Item label="Số điện thoại" name="phone">
+            <Input maxLength={32} placeholder="Số điện thoại" />
+          </Form.Item>
+          <Form.Item label="Trạng thái tài khoản" name="status">
+            <Select
+              options={[
+                { label: 'Đang hoạt động (ACTIVE)', value: 'ACTIVE' },
+                { label: 'Vô hiệu hóa / Khóa (DISABLED)', value: 'DISABLED' },
+              ]}
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* Modal Đặt Lại Mật Khẩu Thành Viên */}
+      <Modal
+        title={`Đặt lại mật khẩu: @${resetPasswordMember?.username || ''}`}
+        open={Boolean(resetPasswordMember)}
+        okText="Cập nhật mật khẩu"
+        cancelText="Hủy"
+        confirmLoading={submitting}
+        onOk={() => resetPasswordForm.submit()}
+        onCancel={() => setResetPasswordMember(null)}
+        destroyOnClose
+      >
+        <div style={{ marginBottom: 16, color: '#64748b', fontSize: 13 }}>
+          Nhập mật khẩu mới cho tài khoản <strong>{resetPasswordMember?.displayName}</strong>. Mật
+          khẩu sẽ được mã hóa an toàn bằng chuẩn PBKDF2.
+        </div>
+        <Form
+          form={resetPasswordForm}
+          layout="vertical"
+          requiredMark={false}
+          onFinish={submitResetPassword}
+        >
+          <Form.Item
+            label="Mật khẩu mới"
+            name="newPassword"
+            rules={[
+              { required: true, message: 'Vui lòng nhập mật khẩu mới.' },
+              { min: 6, message: 'Mật khẩu tối thiểu 6 ký tự.' },
+            ]}
+          >
+            <Input.Password placeholder="Nhập mật khẩu mới" />
+          </Form.Item>
+          <Form.Item
+            label="Xác nhận mật khẩu mới"
+            name="confirmPassword"
+            dependencies={['newPassword']}
+            rules={[
+              { required: true, message: 'Vui lòng xác nhận mật khẩu mới.' },
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (!value || getFieldValue('newPassword') === value) {
+                    return Promise.resolve();
+                  }
+                  return Promise.reject(new Error('Mật khẩu xác nhận không khớp.'));
+                },
+              }),
+            ]}
+          >
+            <Input.Password placeholder="Nhập lại mật khẩu mới" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* Modal Tạo Cửa Hàng Mới */}
       <Modal
         title="Tạo cửa hàng mới"
         open={createOpen}

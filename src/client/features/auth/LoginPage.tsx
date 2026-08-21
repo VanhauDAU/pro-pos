@@ -417,7 +417,7 @@ export function LoginPage() {
             /* Quick login for remembered Owner */
             <div className="employee-quick-login">
               <div className="remembered-owner-card">
-                <Avatar size={48} className="remembered-owner-avatar">
+                <Avatar size={40} className="remembered-owner-avatar">
                   {getInitials(rememberedOwner.displayName)}
                 </Avatar>
                 <div className="remembered-employee-info">
@@ -453,7 +453,7 @@ export function LoginPage() {
                   <Input.Password
                     size="large"
                     prefix={<LockOutlined style={{ color: '#94a3b8' }} />}
-                    placeholder="Nhập mật khẩu Chủ cửa hàng"
+                    placeholder="Nhập mật khẩu"
                     value={ownerPassword}
                     onChange={(e) => {
                       setOwnerPassword(e.target.value);
@@ -475,7 +475,7 @@ export function LoginPage() {
                   disabled={!ownerPassword}
                   className="owner-login-btn"
                 >
-                  Đăng nhập Chủ cửa hàng
+                  Đăng nhập
                 </Button>
               </form>
             </div>
@@ -563,7 +563,7 @@ export function LoginPage() {
           /* Quick PIN login for remembered employee */
           <div className="employee-quick-login">
             <div className="remembered-employee-card">
-              <Avatar size={48} className="remembered-employee-avatar">
+              <Avatar size={40} className="remembered-employee-avatar">
                 {getInitials(rememberedEmployee.displayName)}
               </Avatar>
               <div className="remembered-employee-info">

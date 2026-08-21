@@ -517,27 +517,22 @@ export function OwnerPortalPage() {
 
   const logout = async () => {
     const csrfToken = context.data?.csrfToken;
-    if (!csrfToken) {
-      window.location.assign('/api/v1/auth/access/logout');
-      return;
-    }
     try {
-      const response = await apiRequest<{ loggedOut: boolean; accessLogoutUrl: string | null }>(
-        '/api/v1/auth/logout',
-        {
-          method: 'POST',
-          headers: { 'X-CSRF-Token': csrfToken },
-        },
-      );
-      await queryClient.invalidateQueries({ queryKey: ['auth-context'] });
-      queryClient.clear();
-      if (response?.accessLogoutUrl) {
-        window.location.assign(response.accessLogoutUrl);
-      } else {
-        window.location.assign('/?tab=owner&loggedOut=1');
+      if (csrfToken) {
+        await apiRequest<{ loggedOut: boolean; accessLogoutUrl: string | null }>(
+          '/api/v1/auth/logout',
+          {
+            method: 'POST',
+            headers: { 'X-CSRF-Token': csrfToken },
+          },
+        );
       }
     } catch {
-      window.location.assign('/api/v1/auth/access/logout');
+      // ignore
+    } finally {
+      await queryClient.invalidateQueries({ queryKey: ['auth-context'] });
+      queryClient.clear();
+      window.location.assign('/?tab=owner&loggedOut=1');
     }
   };
 

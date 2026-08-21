@@ -18,6 +18,7 @@ async function seedStore() {
     bootstrapSecret: env.SYSTEM_BOOTSTRAP_SECRET!,
     email: 'system.admin@example.com',
     displayName: 'System Admin',
+    password: 'AdminPassword123!',
   });
   return platform.createStore({
     name: 'Pilot Store',
@@ -449,5 +450,45 @@ describe('Owner and POS activation invariants', () => {
       }),
     });
     expect(loginNew.status).toBe(200);
+  });
+
+  it('rejects SUPER_ADMIN password login in staging/production with 403 PLATFORM_PASSWORD_LOGIN_DISABLED', async () => {
+    const response = await SELF.fetch(`${ORIGIN}/api/v1/auth/platform/login`, {
+      method: 'POST',
+      headers: {
+        Origin: ORIGIN,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        username: 'system.admin@example.com',
+        password: 'AnyPassword123!',
+      }),
+    });
+    expect(response.status).toBe(403);
+    const json = (await response.json()) as { error: { code: string; message: string } };
+    expect(json.error.code).toBe('PLATFORM_PASSWORD_LOGIN_DISABLED');
+  });
+
+  it('authenticates SUPER_ADMIN locally with valid password and rejects invalid password', async () => {
+    const authService = new AuthService({
+      ...env,
+      ENVIRONMENT: 'local',
+    });
+
+    // Valid credentials
+    const valid = await authService.platformLogin({
+      username: 'system.admin@example.com',
+      password: 'AdminPassword123!',
+    });
+    expect(valid.response.actor.kind).toBe('SUPER_ADMIN');
+    expect(valid.rawToken).toBeDefined();
+
+    // Invalid credentials
+    await expect(
+      authService.platformLogin({
+        username: 'system.admin@example.com',
+        password: 'WrongPassword!',
+      }),
+    ).rejects.toThrow('Tên đăng nhập hoặc mật khẩu không chính xác.');
   });
 });

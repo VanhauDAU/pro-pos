@@ -6,3 +6,7 @@ SYSTEM_BOOTSTRAP_SECRET=replace-with-random-secret
 VAPID_PUBLIC_KEY=replace-with-vapid-public-key
 VAPID_PRIVATE_KEY=replace-with-vapid-private-key
 VAPID_SUBJECT=mailto:admin@example.com
+LOCAL_SUPER_ADMIN_USERNAME=admin
+LOCAL_SUPER_ADMIN_EMAIL=vanhau.laravel@gmail.com
+LOCAL_SUPER_ADMIN_PASSWORD=ProPOS@Local2026!
+LOCAL_SUPER_ADMIN_DISPLAY_NAME=Lê Văn Hậu

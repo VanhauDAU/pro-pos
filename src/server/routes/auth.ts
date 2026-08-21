@@ -50,6 +50,13 @@ authRoutes.post('/owner/login', async (c) => {
 
 authRoutes.post('/platform/login', async (c) => {
   assertSameOrigin(c);
+  if (c.env.ENVIRONMENT !== 'local') {
+    throw new AppError(
+      'PLATFORM_PASSWORD_LOGIN_DISABLED',
+      'Đăng nhập mật khẩu SUPER_ADMIN chỉ được sử dụng ở môi trường local.',
+      403,
+    );
+  }
   const body = await parseJson(c.req.raw, platformLoginRequestSchema);
   const result = await new AuthService(c.env).platformLogin(body);
   setCredentialCookie(c, 'session', result.rawToken, 24 * 60 * 60);

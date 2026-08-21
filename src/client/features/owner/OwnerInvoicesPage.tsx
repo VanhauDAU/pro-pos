@@ -1,6 +1,7 @@
 import {
   CheckCircleOutlined,
   CloseCircleOutlined,
+  DeleteOutlined,
   DownloadOutlined,
   EyeOutlined,
   FilterOutlined,
@@ -12,7 +13,7 @@ import {
   ShoppingCartOutlined,
   WalletOutlined,
 } from '@ant-design/icons';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Badge,
   Button,
@@ -21,9 +22,11 @@ import {
   Empty,
   Form,
   Input,
+  Modal,
   Popover,
   Select,
   Skeleton,
+  Space,
   Table,
   Tabs,
   Tag,
@@ -35,6 +38,7 @@ import type { TableColumnsType } from 'antd';
 import { useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 
+import type { AuthContextResponse } from '@contracts/auth';
 import { apiRequest } from '@client/lib/api';
 import { OrderDetailPage } from '@client/features/pos/OrderDetailPage';
 
@@ -145,6 +149,12 @@ const ALL_OPTIONAL_COLUMNS: ColumnConfig[] = [
 
 export function OwnerInvoicesPage() {
   const [messageApi, contextHolder] = message.useMessage();
+  const queryClient = useQueryClient();
+
+  const authQuery = useQuery({
+    queryKey: ['auth-context'],
+    queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
+  });
 
   // ── Filter state ──────────────────────────────────────────────────────────
   const [tabStatus, setTabStatus] = useState<FilterStatus>('ALL');
@@ -153,6 +163,7 @@ export function OwnerInvoicesPage() {
   const [page, setPage] = useState(1);
   const [limit] = useState(20);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [deletingInvoice, setDeletingInvoice] = useState<Invoice | null>(null);
 
   // Advanced filter drawer
   const [filterOpen, setFilterOpen] = useState(false);
@@ -168,6 +179,25 @@ export function OwnerInvoicesPage() {
   const activeFilterCount = [filterOrderType, filterMethod, filterDateFrom, filterDateTo].filter(
     Boolean,
   ).length;
+
+  // ── Delete Mutation ────────────────────────────────────────────────────────
+  const deleteMutation = useMutation({
+    mutationFn: (targetId: string) =>
+      apiRequest<{ deleted: boolean }>(`/api/v1/owner/invoices/${targetId}`, {
+        method: 'DELETE',
+      }),
+    onSuccess: () => {
+      void messageApi.success('Đã xóa hóa đơn thành công.');
+      setDeletingInvoice(null);
+      void queryClient.invalidateQueries({ queryKey: ['owner-invoices'] });
+      void queryClient.invalidateQueries({ queryKey: ['owner-dashboard'] });
+      void queryClient.invalidateQueries({ queryKey: ['owner-analytics'] });
+    },
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : 'Không thể xóa hóa đơn.';
+      void messageApi.error(msg);
+    },
+  });
 
   // ── Query ──────────────────────────────────────────────────────────────────
   const params = useMemo(() => {
@@ -359,17 +389,28 @@ export function OwnerInvoicesPage() {
       key: 'actions',
       title: 'Thao tác',
       fixed: 'right',
-      width: 100,
+      width: 145,
       align: 'center',
       render: (_: unknown, row: Invoice) => (
-        <Button
-          type="link"
-          size="small"
-          icon={<EyeOutlined />}
-          onClick={() => setSelectedOrderId(row.orderId)}
-        >
-          Chi tiết
-        </Button>
+        <Space size={4}>
+          <Button
+            type="link"
+            size="small"
+            icon={<EyeOutlined />}
+            onClick={() => setSelectedOrderId(row.orderId)}
+          >
+            Chi tiết
+          </Button>
+          <Button
+            type="link"
+            size="small"
+            danger
+            icon={<DeleteOutlined />}
+            onClick={() => setDeletingInvoice(row)}
+          >
+            Xóa
+          </Button>
+        </Space>
       ),
     });
 
@@ -648,6 +689,48 @@ export function OwnerInvoicesPage() {
           <OrderDetailPage orderId={selectedOrderId} onClose={() => setSelectedOrderId(null)} />
         )}
       </Drawer>
+
+      {/* ── Delete Confirmation Modal ── */}
+      <Modal
+        open={Boolean(deletingInvoice)}
+        title={null}
+        onCancel={() => !deleteMutation.isPending && setDeletingInvoice(null)}
+        footer={[
+          <Button
+            key="cancel"
+            onClick={() => setDeletingInvoice(null)}
+            disabled={deleteMutation.isPending}
+          >
+            Hủy
+          </Button>,
+          <Button
+            key="confirm"
+            type="primary"
+            danger
+            loading={deleteMutation.isPending}
+            onClick={() => deletingInvoice && deleteMutation.mutate(deletingInvoice.orderId)}
+          >
+            Xác nhận xóa
+          </Button>,
+        ]}
+        centered
+        width={480}
+      >
+        <div style={{ padding: '8px 0', fontSize: '14.5px', lineHeight: '1.6' }}>
+          <div style={{ fontWeight: 600, fontSize: '16.5px', marginBottom: 14, color: '#0f172a' }}>
+            Xin chào {authQuery.data?.actor?.displayName || 'Chủ cửa hàng'}
+          </div>
+          <p style={{ margin: '0 0 10px 0', color: '#334155' }}>
+            Bạn đang thực hiện xóa hóa đơn này của cửa hàng.
+          </p>
+          <p style={{ margin: '0 0 10px 0', color: '#dc2626', fontWeight: 600 }}>
+            Thao tác xóa hóa đơn sẽ xóa tất cả báo cáo liên quan tới hóa đơn
+          </p>
+          <p style={{ margin: 0, color: '#64748b' }}>
+            Thao tác này sẽ không thể khôi phục, hãy cân nhắc kỹ trước khi xóa
+          </p>
+        </div>
+      </Modal>
     </div>
   );
 }

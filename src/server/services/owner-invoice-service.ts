@@ -30,4 +30,18 @@ export class OwnerInvoiceService {
       totalPages: Math.ceil(total / input.limit),
     };
   }
+
+  async deleteInvoice(input: {
+    storeId: string;
+    targetId: string;
+    actorUserId: string;
+    requestId: string;
+  }) {
+    return this.repository.deleteInvoice(
+      input.storeId,
+      input.targetId,
+      input.actorUserId,
+      input.requestId,
+    );
+  }
 }

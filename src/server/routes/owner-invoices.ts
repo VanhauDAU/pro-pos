@@ -56,4 +56,24 @@ ownerInvoiceRoutes.get('/', async (c) => {
   return success(c, result);
 });
 
+/**
+ * DELETE /api/v1/owner/invoices/:id
+ * Permanently deletes an invoice/order and its lines/payments/sessions from the database.
+ */
+ownerInvoiceRoutes.delete('/:id', async (c) => {
+  const storeId = c.get('actor').storeId!;
+  const id = c.req.param('id');
+  const actor = c.get('actor');
+  const requestId = c.get('requestId') || 'req-delete-invoice';
+
+  const result = await new OwnerInvoiceService(c.env).deleteInvoice({
+    storeId,
+    targetId: id,
+    actorUserId: actor.id,
+    requestId,
+  });
+
+  return success(c, result);
+});
+
 export { ownerInvoiceRoutes };

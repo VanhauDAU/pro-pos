@@ -1,4 +1,5 @@
 // D1Database is globally available from Cloudflare Worker types
+import { AppError } from '@server/lib/app-error';
 
 interface InvoiceFilter {
   storeId: string;
@@ -257,5 +258,310 @@ export class OwnerInvoiceRepository {
       results: rows.results,
       total: countResult?.total ?? 0,
     };
+  }
+
+  async deleteInvoice(
+    storeId: string,
+    targetId: string,
+    actorUserId: string,
+    requestId: string,
+  ): Promise<{ deleted: boolean; orderId: string; displayCode: string }> {
+    // 1. Try finding Dine-in invoice or order
+    const dineInInvoice = await this.db
+      .prepare(
+        `SELECT id, order_id AS orderId, display_code AS displayCode FROM invoices WHERE store_id = ? AND (id = ? OR order_id = ?)`,
+      )
+      .bind(storeId, targetId, targetId)
+      .first<{ id: string; orderId: string; displayCode: string }>();
+
+    if (dineInInvoice) {
+      const { id: invoiceId, orderId, displayCode } = dineInInvoice;
+      const stmts = [
+        this.db
+          .prepare(`DELETE FROM invoice_lines WHERE store_id = ? AND invoice_id = ?`)
+          .bind(storeId, invoiceId),
+        this.db
+          .prepare(`DELETE FROM invoices WHERE store_id = ? AND id = ?`)
+          .bind(storeId, invoiceId),
+        this.db
+          .prepare(`DELETE FROM checkout_pending_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM resume_checkout_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM checkout_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM payments WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM table_transfer_segments WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(
+            `DELETE FROM time_pauses WHERE store_id = ? AND time_session_id IN (SELECT id FROM time_sessions WHERE store_id = ? AND order_id = ?)`,
+          )
+          .bind(storeId, storeId, orderId),
+        this.db
+          .prepare(
+            `DELETE FROM table_time_segments WHERE store_id = ? AND time_session_id IN (SELECT id FROM time_sessions WHERE store_id = ? AND order_id = ?)`,
+          )
+          .bind(storeId, storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM remove_time_session_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM create_time_session_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM update_time_range_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM transfer_table_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM start_time_session_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM stop_time_session_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM time_sessions WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM order_items WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM add_item_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM update_order_item_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM remove_order_item_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM update_order_guest_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM update_order_note_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM cancel_order_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM open_table_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db.prepare(`DELETE FROM orders WHERE store_id = ? AND id = ?`).bind(storeId, orderId),
+        this.db
+          .prepare(
+            `INSERT INTO audit_logs (
+              id, store_id, actor_user_id, action, entity_type, entity_id, request_id, before_json, after_json, created_at
+            ) VALUES (
+              lower(hex(randomblob(16))), ?, ?, 'INVOICE_DELETED', 'INVOICE', ?, ?, ?, ?, ?
+            )`,
+          )
+          .bind(
+            storeId,
+            actorUserId,
+            invoiceId,
+            requestId,
+            JSON.stringify({ invoiceId, orderId, displayCode, orderType: 'DINE_IN' }),
+            JSON.stringify({ deleted: true }),
+            Date.now(),
+          ),
+      ];
+
+      await this.db.batch(stmts);
+      return { deleted: true, orderId, displayCode };
+    }
+
+    // 2. Try finding Takeaway invoice or order
+    const takeawayInvoice = await this.db
+      .prepare(
+        `SELECT id, order_id AS orderId, display_code AS displayCode FROM takeaway_invoices WHERE store_id = ? AND (id = ? OR order_id = ?)`,
+      )
+      .bind(storeId, targetId, targetId)
+      .first<{ id: string; orderId: string; displayCode: string }>();
+
+    if (takeawayInvoice) {
+      const { id: invoiceId, orderId, displayCode } = takeawayInvoice;
+      const stmts = [
+        this.db
+          .prepare(`DELETE FROM takeaway_invoice_lines WHERE store_id = ? AND invoice_id = ?`)
+          .bind(storeId, invoiceId),
+        this.db
+          .prepare(`DELETE FROM takeaway_invoices WHERE store_id = ? AND id = ?`)
+          .bind(storeId, invoiceId),
+        this.db
+          .prepare(`DELETE FROM takeaway_checkout_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM takeaway_payments WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM takeaway_order_items WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM add_takeaway_item_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM cancel_takeaway_order_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM create_takeaway_order_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM takeaway_orders WHERE store_id = ? AND id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(
+            `INSERT INTO audit_logs (
+              id, store_id, actor_user_id, action, entity_type, entity_id, request_id, before_json, after_json, created_at
+            ) VALUES (
+              lower(hex(randomblob(16))), ?, ?, 'INVOICE_DELETED', 'TAKEAWAY_INVOICE', ?, ?, ?, ?, ?
+            )`,
+          )
+          .bind(
+            storeId,
+            actorUserId,
+            invoiceId,
+            requestId,
+            JSON.stringify({ invoiceId, orderId, displayCode, orderType: 'TAKEAWAY' }),
+            JSON.stringify({ deleted: true }),
+            Date.now(),
+          ),
+      ];
+
+      await this.db.batch(stmts);
+      return { deleted: true, orderId, displayCode };
+    }
+
+    // 3. Check if it's a cancelled Dine-in order without invoice
+    const dineInOrder = await this.db
+      .prepare(`SELECT id, display_code AS displayCode FROM orders WHERE store_id = ? AND id = ?`)
+      .bind(storeId, targetId)
+      .first<{ id: string; displayCode: string }>();
+
+    if (dineInOrder) {
+      const orderId = dineInOrder.id;
+      const displayCode = dineInOrder.displayCode;
+      const stmts = [
+        this.db
+          .prepare(`DELETE FROM checkout_pending_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM resume_checkout_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM checkout_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM payments WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM table_transfer_segments WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(
+            `DELETE FROM time_pauses WHERE store_id = ? AND time_session_id IN (SELECT id FROM time_sessions WHERE store_id = ? AND order_id = ?)`,
+          )
+          .bind(storeId, storeId, orderId),
+        this.db
+          .prepare(
+            `DELETE FROM table_time_segments WHERE store_id = ? AND time_session_id IN (SELECT id FROM time_sessions WHERE store_id = ? AND order_id = ?)`,
+          )
+          .bind(storeId, storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM remove_time_session_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM create_time_session_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM update_time_range_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM transfer_table_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM start_time_session_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM stop_time_session_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM time_sessions WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM order_items WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM add_item_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM update_order_item_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM remove_order_item_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM update_order_guest_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM update_order_note_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM cancel_order_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM open_table_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db.prepare(`DELETE FROM orders WHERE store_id = ? AND id = ?`).bind(storeId, orderId),
+      ];
+      await this.db.batch(stmts);
+      return { deleted: true, orderId, displayCode };
+    }
+
+    // 4. Check if it's a cancelled Takeaway order without invoice
+    const takeawayOrder = await this.db
+      .prepare(
+        `SELECT id, display_code AS displayCode FROM takeaway_orders WHERE store_id = ? AND id = ?`,
+      )
+      .bind(storeId, targetId)
+      .first<{ id: string; displayCode: string }>();
+
+    if (takeawayOrder) {
+      const orderId = takeawayOrder.id;
+      const displayCode = takeawayOrder.displayCode;
+      const stmts = [
+        this.db
+          .prepare(`DELETE FROM takeaway_checkout_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM takeaway_payments WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM takeaway_order_items WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM add_takeaway_item_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM cancel_takeaway_order_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM create_takeaway_order_commands WHERE store_id = ? AND order_id = ?`)
+          .bind(storeId, orderId),
+        this.db
+          .prepare(`DELETE FROM takeaway_orders WHERE store_id = ? AND id = ?`)
+          .bind(storeId, orderId),
+      ];
+      await this.db.batch(stmts);
+      return { deleted: true, orderId, displayCode };
+    }
+
+    throw new AppError('INVOICE_NOT_FOUND', 'Hóa đơn hoặc đơn hàng không tồn tại.', 404);
   }
 }

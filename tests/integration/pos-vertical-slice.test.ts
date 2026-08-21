@@ -1362,6 +1362,29 @@ describe('online POS vertical slice', () => {
     // Only item total remains (90,000 VND)
     expect(quoteAfterRemovingTime.totalVnd).toBe(90_000);
 
+    // Test restoring time session with custom start & end time
+    const customStart = startTime + 1000 * 1000;
+    const customEnd = startTime + 4600 * 1000;
+    const restoredTime = await pos.updateTimeRange({
+      storeId,
+      orderId: opened.orderId,
+      actorId: ownerUserId,
+      expectedOrderVersion: 4,
+      startedAtMs: customStart,
+      endedAtMs: customEnd,
+      requestId: 'request-restore-time-1',
+      idempotencyKey: 'restore-time-command-001',
+      now: startTime + 6000 * 1000,
+    });
+    expect(restoredTime.startedAtMs).toBe(customStart);
+    expect(restoredTime.endedAtMs).toBe(customEnd);
+
+    const quoteAfterRestore = await pos.quote(storeId, opened.orderId, startTime + 6000 * 1000);
+    expect(quoteAfterRestore.time).not.toBeNull();
+    expect(quoteAfterRestore.time?.startedAtMs).toBe(customStart);
+    expect(quoteAfterRestore.time?.endedAtMs).toBe(customEnd);
+    expect(quoteAfterRestore.time?.status).toBe('ENDED');
+
     // Test removing item with reason
     const removedItem = await pos.removeItem({
       storeId,
@@ -1370,7 +1393,7 @@ describe('online POS vertical slice', () => {
       idempotencyKey: 'remove-item-001',
       orderId: opened.orderId,
       itemId: added.itemId,
-      expectedOrderVersion: 4,
+      expectedOrderVersion: 5,
       reason: 'Khách trả lại món',
     });
     expect(removedItem.removed).toBe(true);
@@ -1381,7 +1404,7 @@ describe('online POS vertical slice', () => {
       startTime + 6000 * 1000,
     );
     expect(quoteAfterRemovingItem.items.length).toBe(0);
-    expect(quoteAfterRemovingItem.totalVnd).toBe(0);
+    expect(quoteAfterRemovingItem.totalVnd).toBe(60_000);
   });
 
   it('supports provisional bill (tam tinh), stop-time checkout pending (dong bang tien), and resume playing (tiep tuc choi)', async () => {

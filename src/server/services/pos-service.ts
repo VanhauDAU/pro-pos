@@ -1,4 +1,12 @@
 import type { PricingConfigSnapshot, PricingResult, PricingSegment } from '@domain/pricing/types';
+import type {
+  OrderDetailDto,
+  OrderTimeSegmentDetail,
+  OrderTableTransferDetail,
+  OrderRateChangeDetail,
+  OrderItemDetail,
+  OrderAuditEventDetail,
+} from '@contracts/order-detail';
 import { calculateTimePrice } from '@domain/pricing/engine';
 import { AppError } from '@server/lib/app-error';
 import { PosRepository } from '@server/repositories/pos-repository';
@@ -291,14 +299,14 @@ export class PosService {
     idempotencyKey: string;
     orderId: string;
     productId: string;
-    variantId: string | null;
+    variantId?: string | null;
     enteredUnitPriceVnd?: number;
     quantityMilli: number;
     timeStartedAtMs?: number | null | undefined;
     timeEndedAtMs?: number | null | undefined;
     note?: string | null;
     expectedOrderVersion: number;
-    discount: null | { type: 'FIXED' | 'PERCENT'; value: number };
+    discount?: null | { type: 'FIXED' | 'PERCENT'; value: number };
     actorSessionId?: string | null;
     deviceId?: string | null;
     now?: number;
@@ -765,6 +773,46 @@ export class PosService {
     return { orderId: input.orderId };
   }
 
+  async updateGuest(input: {
+    storeId: string;
+    actorId: string;
+    requestId: string;
+    idempotencyKey: string;
+    orderId: string;
+    expectedOrderVersion: number;
+    guestCount: number;
+    customerName?: string | null;
+    customerPhone?: string | null;
+  }) {
+    const replay = await this.repository.findUpdateOrderGuestCommand(
+      input.storeId,
+      input.idempotencyKey,
+    );
+    if (replay) return replay;
+    const order =
+      (await this.repository.findOrder(input.storeId, input.orderId)) ??
+      (await this.repository.findTakeawayOrder(input.storeId, input.orderId));
+    if (!order) throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn.', 404);
+    try {
+      await this.repository.updateOrderGuest({
+        commandId: input.idempotencyKey,
+        storeId: input.storeId,
+        orderType: order.order_type,
+        orderId: input.orderId,
+        expectedOrderVersion: input.expectedOrderVersion,
+        guestCount: Math.max(1, input.guestCount),
+        customerName: input.customerName?.trim() || null,
+        customerPhone: input.customerPhone?.trim() || null,
+        actorId: input.actorId,
+        requestId: input.requestId,
+        issuedAt: Date.now(),
+      });
+    } catch (error) {
+      mapDatabaseError(error);
+    }
+    return { orderId: input.orderId };
+  }
+
   async quote(storeId: string, orderId: string, now = Date.now()) {
     const order =
       (await this.repository.findOrder(storeId, orderId)) ??
@@ -954,6 +1002,9 @@ export class PosService {
         openedAt: order.opened_at,
         openedByName: order.opened_by_name ?? null,
         note: order.note,
+        guestCount: order.guest_count ?? 1,
+        customerName: order.customer_name ?? null,
+        customerPhone: order.customer_phone ?? null,
       },
       items: processedItems,
       time: pricing,
@@ -1038,8 +1089,6 @@ export class PosService {
     const order = await this.repository.findOrder(input.storeId, input.orderId);
     if (!order) throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn tại chỗ.', 404);
     const session = await this.repository.findTimeSession(input.storeId, input.orderId);
-    if (!session)
-      throw new AppError('ORDER_TIME_SESSION_MISSING', 'Đơn thiếu phiên tính giờ.', 409);
     if (
       input.startedAtMs > now ||
       (input.endedAtMs !== null && (input.endedAtMs <= input.startedAtMs || input.endedAtMs > now))
@@ -1049,6 +1098,43 @@ export class PosService {
         'Giờ vào/giờ ra không hợp lệ hoặc vượt quá thời điểm hiện tại.',
         422,
       );
+    }
+    if (!session) {
+      if (order.order_type !== 'DINE_IN' || !order.table_id) {
+        throw new AppError(
+          'ORDER_TIME_SESSION_MISSING',
+          'Đơn thiếu phiên tính giờ hoặc không phải đơn tại chỗ.',
+          409,
+        );
+      }
+      const pricing = await this.pricingSnapshot(input.storeId, order.table_id);
+      const timeSessionId = crypto.randomUUID();
+      try {
+        await this.repository.createTimeSessionForOrder({
+          storeId: input.storeId,
+          orderId: input.orderId,
+          timeSessionId,
+          tableId: order.table_id,
+          timeProductId: pricing.row.product_id,
+          tableName: order.table_name ?? 'Bàn',
+          pricingSnapshotJson: JSON.stringify(pricing.config),
+          pricingVersion: pricing.config.version,
+          startedAtMs: input.startedAtMs,
+          endedAtMs: input.endedAtMs,
+          status: input.endedAtMs ? 'ENDED' : 'RUNNING',
+          expectedOrderVersion: input.expectedOrderVersion,
+          actorId: input.actorId,
+          requestId: input.requestId,
+          now,
+        });
+      } catch (error) {
+        mapDatabaseError(error);
+      }
+      return {
+        orderId: input.orderId,
+        startedAtMs: input.startedAtMs,
+        endedAtMs: input.endedAtMs,
+      };
     }
     try {
       await this.repository.updateTimeRange({
@@ -1402,9 +1488,11 @@ export class PosService {
     expectedTargetTableVersion: number;
     actorSessionId?: string | null;
     deviceId?: string | null;
+    now?: number;
   }) {
     const replay = await this.repository.findTransferCommand(input.storeId, input.idempotencyKey);
     if (replay) return replay;
+    const now = input.now ?? Date.now();
     const order = await this.repository.findOrder(input.storeId, input.orderId);
     if (!order) throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn.', 404);
     if (order.order_type !== 'DINE_IN' || !order.table_id) {
@@ -1438,7 +1526,7 @@ export class PosService {
         targetPricingVersion: targetPricing.config.version,
         actorId: input.actorId,
         requestId: input.requestId,
-        now: Date.now(),
+        now,
       });
     } catch (error) {
       mapDatabaseError(error);
@@ -1517,5 +1605,521 @@ export class PosService {
     const result = await this.repository.getInvoice(storeId, invoiceId);
     if (!result.invoice) throw new AppError('INVOICE_NOT_FOUND', 'Không tìm thấy phiếu.', 404);
     return result;
+  }
+
+  async getOrderDetail(
+    storeId: string,
+    orderId: string,
+    now = Date.now(),
+  ): Promise<OrderDetailDto> {
+    const orderRaw = await this.repository.findOrderDetailRaw(storeId, orderId);
+    if (!orderRaw) throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn hàng.', 404);
+
+    const isTakeaway = orderRaw.order_type === 'TAKEAWAY';
+
+    // 1. Time session & multi-segment calculation
+    let timeSummary: OrderDetailDto['timeSummary'] = null;
+    const timeSegments: OrderTimeSegmentDetail[] = [];
+    let tableUsageChain: string[] = [];
+
+    if (!isTakeaway) {
+      const session = await this.repository.findTimeSession(storeId, orderId);
+      const segmentsRaw = await this.repository.listOrderTimeSegmentsDetail(storeId, orderId);
+      const pausesRaw = session ? await this.repository.listPauses(storeId, session.id) : null;
+      const sessionPauses = pausesRaw
+        ? pausesRaw.results.map((p) => ({
+            pausedAtMs: p.pausedAtMs,
+            resumedAtMs: p.resumedAtMs ?? now,
+          }))
+        : [];
+
+      if (segmentsRaw.results.length > 0) {
+        let totalElapsedSeconds = 0;
+        let totalAmountBeforeRoundingVnd = 0;
+        let totalAmountAfterRoundingVnd = 0;
+
+        for (let i = 0; i < segmentsRaw.results.length; i++) {
+          const seg = segmentsRaw.results[i]!;
+          const isFirst = i === 0;
+          const isLast = i === segmentsRaw.results.length - 1;
+
+          const segStarted = isFirst ? (session?.started_at ?? seg.startedAt) : seg.startedAt;
+          let segEnded: number;
+
+          if (seg.endedAt !== null) {
+            segEnded = Math.max(segStarted + 1, seg.endedAt);
+          } else if (orderRaw.status === 'PAYMENT_PENDING' || orderRaw.status === 'PAID') {
+            segEnded = Math.max(segStarted + 1, session?.ended_at ?? orderRaw.closed_at ?? now);
+          } else if (orderRaw.status === 'CANCELLED') {
+            segEnded = Math.max(segStarted + 1, session?.ended_at ?? orderRaw.cancelled_at ?? now);
+          } else {
+            segEnded = Math.max(segStarted + 1, isLast ? now : (session?.ended_at ?? now));
+          }
+
+          let segConfig: PricingConfigSnapshot;
+          try {
+            segConfig = JSON.parse(seg.pricingSnapshotJson) as PricingConfigSnapshot;
+          } catch {
+            segConfig = {
+              version: seg.pricingVersion,
+              timezone: this.env.STORE_TIMEZONE,
+              basePriceVnd: seg.unitPriceSnapshot,
+              baseDurationSeconds: 3600,
+              calculationMode: 'ACTUAL_TIME',
+              roundingUnitVnd: 1000,
+              firstPeriod: { enabled: false },
+              specialWindows: [],
+            };
+          }
+
+          const segPauses = sessionPauses.filter(
+            (p) => p.resumedAtMs > segStarted && p.pausedAtMs < segEnded,
+          );
+
+          const segPricing = calculateTimePrice({
+            startedAtMs: segStarted,
+            endedAtMs: segEnded,
+            pauses: segPauses,
+            config: segConfig,
+          });
+
+          totalElapsedSeconds += segPricing.elapsedSeconds;
+          totalAmountBeforeRoundingVnd += segPricing.amountBeforeRoundingVnd;
+          totalAmountAfterRoundingVnd += segPricing.amountAfterRoundingVnd;
+
+          const isCurrentActive = seg.endedAt === null && orderRaw.status === 'OPEN';
+
+          timeSegments.push({
+            id: seg.id,
+            tableId: seg.tableId,
+            tableName: seg.tableName,
+            areaName: seg.areaName,
+            timeProductId: seg.timeProductId,
+            rateNameSnapshot: seg.rateNameSnapshot,
+            startedAt: segStarted,
+            endedAt: seg.endedAt !== null || orderRaw.status !== 'OPEN' ? segEnded : null,
+            elapsedSeconds: segPricing.elapsedSeconds,
+            unitPriceSnapshot: seg.unitPriceSnapshot || segConfig.basePriceVnd,
+            billingUnit: 'đ/giờ',
+            amountBeforeRoundingVnd: segPricing.amountBeforeRoundingVnd,
+            amountAfterRoundingVnd: segPricing.amountAfterRoundingVnd,
+            pricingRuleSnapshot: segConfig,
+            isCurrentActive,
+          });
+        }
+
+        timeSummary = {
+          totalElapsedSeconds,
+          totalAmountBeforeRoundingVnd,
+          totalAmountAfterRoundingVnd,
+          isRealtime: orderRaw.status === 'OPEN',
+          status: session?.status ?? (orderRaw.status === 'OPEN' ? 'RUNNING' : 'ENDED'),
+        };
+
+        tableUsageChain = timeSegments.reduce<string[]>((acc, s) => {
+          if (acc.length === 0 || acc[acc.length - 1] !== s.tableName) {
+            acc.push(s.tableName);
+          }
+          return acc;
+        }, []);
+      } else if (session) {
+        let pricingConfig: PricingConfigSnapshot;
+        try {
+          pricingConfig = JSON.parse(session.pricing_snapshot_json) as PricingConfigSnapshot;
+        } catch {
+          pricingConfig = {
+            version: session.pricing_version,
+            timezone: this.env.STORE_TIMEZONE,
+            basePriceVnd: 0,
+            baseDurationSeconds: 3600,
+            calculationMode: 'ACTUAL_TIME',
+            roundingUnitVnd: 1000,
+            firstPeriod: { enabled: false },
+            specialWindows: [],
+          };
+        }
+
+        const effectiveEndedAt =
+          orderRaw.status === 'OPEN'
+            ? now
+            : (session.ended_at ?? orderRaw.closed_at ?? orderRaw.cancelled_at ?? now);
+
+        const singlePricing = calculateTimePrice({
+          startedAtMs: session.started_at,
+          endedAtMs: Math.max(session.started_at + 1, effectiveEndedAt),
+          pauses: sessionPauses,
+          config: pricingConfig,
+        });
+
+        timeSegments.push({
+          id: session.id,
+          tableId: session.table_id,
+          tableName: orderRaw.table_name ?? 'Bàn',
+          areaName: orderRaw.area_name,
+          timeProductId: session.time_product_id,
+          rateNameSnapshot: 'Giá tính giờ',
+          startedAt: session.started_at,
+          endedAt: orderRaw.status !== 'OPEN' ? effectiveEndedAt : null,
+          elapsedSeconds: singlePricing.elapsedSeconds,
+          unitPriceSnapshot: pricingConfig.basePriceVnd,
+          billingUnit: 'đ/giờ',
+          amountBeforeRoundingVnd: singlePricing.amountBeforeRoundingVnd,
+          amountAfterRoundingVnd: singlePricing.amountAfterRoundingVnd,
+          pricingRuleSnapshot: pricingConfig,
+          isCurrentActive: orderRaw.status === 'OPEN',
+        });
+
+        timeSummary = {
+          totalElapsedSeconds: singlePricing.elapsedSeconds,
+          totalAmountBeforeRoundingVnd: singlePricing.amountBeforeRoundingVnd,
+          totalAmountAfterRoundingVnd: singlePricing.amountAfterRoundingVnd,
+          isRealtime: orderRaw.status === 'OPEN',
+          status: session.status,
+        };
+
+        if (orderRaw.table_name) tableUsageChain = [orderRaw.table_name];
+      }
+    }
+
+    // 2. Table transfers
+    const transfersRaw = isTakeaway
+      ? { results: [] }
+      : await this.repository.listOrderTableTransfers(storeId, orderId);
+
+    const tableTransfers: OrderTableTransferDetail[] = transfersRaw.results.map((tr) => {
+      const prevSeg = timeSegments.find((s) => s.startedAt < tr.transferredAt);
+      const oldRateVnd = prevSeg ? prevSeg.unitPriceSnapshot : tr.newRateVnd;
+      return {
+        id: tr.id,
+        fromTableId: tr.fromTableId,
+        fromTableName: tr.fromTableName,
+        toTableId: tr.toTableId,
+        toTableName: tr.toTableName,
+        transferredAt: tr.transferredAt,
+        employeeId: tr.employeeId,
+        employeeName: tr.employeeName,
+        oldRateVnd,
+        newRateVnd: tr.newRateVnd,
+        reason: null,
+      };
+    });
+
+    // 3. Rate changes
+    const rateChanges: OrderRateChangeDetail[] = [];
+    if (timeSegments.length > 1) {
+      for (let i = 1; i < timeSegments.length; i++) {
+        const prev = timeSegments[i - 1]!;
+        const curr = timeSegments[i]!;
+        if (prev.tableId === curr.tableId && prev.unitPriceSnapshot !== curr.unitPriceSnapshot) {
+          rateChanges.push({
+            id: curr.id,
+            tableName: curr.tableName,
+            oldRateVnd: prev.unitPriceSnapshot,
+            newRateVnd: curr.unitPriceSnapshot,
+            appliedAt: curr.startedAt,
+            employeeName: orderRaw.opened_by_name ?? 'Nhân viên',
+            reason: null,
+          });
+        }
+      }
+    }
+
+    // 4. Order items
+    const itemsRaw = await this.repository.listOrderItemsWithActors(storeId, orderId, isTakeaway);
+    const items: OrderItemDetail[] = await Promise.all(
+      itemsRaw.results.map(async (item) => {
+        let gross = item.grossLineTotalVnd;
+        let net = item.netLineTotalVnd;
+        let discount = item.discountAmountVnd;
+        let qty = item.quantityMilli;
+
+        if (item.productType === 'TIME' && item.timeStartedAtMs) {
+          const productPricing = await this.productPricingSnapshot(storeId, item.productId);
+          if (productPricing) {
+            const startedAt = item.timeStartedAtMs;
+            const endedAt = item.timeEndedAtMs ?? (orderRaw.status === 'OPEN' ? now : startedAt);
+            const timeCalc = calculateTimePrice({
+              startedAtMs: startedAt,
+              endedAtMs: Math.max(startedAt + 1000, endedAt),
+              config: productPricing,
+            });
+            qty = Math.max(1, Math.round((timeCalc.elapsedSeconds / 3600) * 1000));
+            gross = timeCalc.amountAfterRoundingVnd;
+            discount =
+              item.discountType === 'PERCENT'
+                ? Math.min(gross, Math.round((gross * (item.discountInputValue ?? 0)) / 100))
+                : item.discountType === 'FIXED'
+                  ? Math.min(gross, item.discountInputValue ?? 0)
+                  : 0;
+            net = gross - discount;
+          }
+        }
+
+        return {
+          id: item.id,
+          productId: item.productId,
+          variantId: item.variantId,
+          productType: item.productType,
+          productNameSnapshot: item.productNameSnapshot,
+          variantNameSnapshot: item.variantNameSnapshot,
+          unitNameSnapshot: item.unitNameSnapshot,
+          unitPriceSnapshot: item.unitPriceSnapshot,
+          quantityMilli: qty,
+          grossLineTotalVnd: gross,
+          discountType: item.discountType,
+          discountInputValue: item.discountInputValue,
+          discountAmountVnd: discount,
+          netLineTotalVnd: net,
+          note: item.note,
+          addedById: item.addedById,
+          addedByName: item.addedByName,
+          addedAt: item.addedAt,
+          timeStartedAtMs: item.timeStartedAtMs,
+          timeEndedAtMs: item.timeEndedAtMs,
+        };
+      }),
+    );
+
+    // 5. Checkout / Stop Time / Resume
+    const stopResume = isTakeaway
+      ? { stops: [], resumes: [] }
+      : await this.repository.listOrderStopAndResumeCommands(storeId, orderId);
+
+    let checkout: OrderDetailDto['checkout'] = null;
+    if (stopResume.stops.length > 0) {
+      const lastStop = stopResume.stops[stopResume.stops.length - 1]!;
+      const lastResume =
+        stopResume.resumes.length > 0 ? stopResume.resumes[stopResume.resumes.length - 1]! : null;
+
+      const frozenTimeAmount = timeSummary?.totalAmountAfterRoundingVnd ?? 0;
+      const frozenItemsAmount = items.reduce((sum, it) => sum + it.netLineTotalVnd, 0);
+
+      checkout = {
+        stoppedAt: lastStop.stoppedAt,
+        status: orderRaw.status === 'PAYMENT_PENDING' ? 'CHECKOUT_PENDING' : null,
+        frozenElapsedSeconds: timeSummary?.totalElapsedSeconds ?? null,
+        frozenTimeAmountVnd: frozenTimeAmount,
+        frozenItemsAmountVnd: frozenItemsAmount,
+        frozenTotalVnd: frozenTimeAmount + frozenItemsAmount,
+        stoppedByName: lastStop.actorName,
+        resumedAt: lastResume ? lastResume.resumedAt : null,
+        resumedByName: lastResume ? lastResume.actorName : null,
+      };
+    }
+
+    // 6. Payments
+    const paymentsRaw = await this.repository.listOrderPaymentsDetail(storeId, orderId, isTakeaway);
+    const payments = paymentsRaw.results.map((p) => ({
+      id: p.id,
+      method: p.method,
+      status: p.status,
+      amount: p.amount,
+      cashReceived: p.cashReceived,
+      cashChange: p.cashChange,
+      transactionRef: p.transactionRef,
+      createdById: p.createdById,
+      createdByName: p.createdByName ?? 'Thu ngân',
+      createdAt: p.createdAt,
+    }));
+
+    // 7. Invoice
+    const invoiceRaw = await this.repository.findOrderInvoiceDetail(storeId, orderId, isTakeaway);
+    const invoice = invoiceRaw
+      ? {
+          id: invoiceRaw.id,
+          displayCode: invoiceRaw.displayCode,
+          status: invoiceRaw.status,
+          issuedAt: invoiceRaw.issuedAt,
+          issuedById: invoiceRaw.issuedById,
+          issuedByName: invoiceRaw.issuedByName ?? 'Thu ngân',
+          subtotalVnd: invoiceRaw.subtotalVnd,
+          discountTotalVnd: invoiceRaw.discountTotalVnd,
+          totalVnd: invoiceRaw.totalVnd,
+          snapshotJson: invoiceRaw.snapshotJson,
+        }
+      : null;
+
+    // 8. Audit logs & timeline
+    const auditLogsRaw = await this.repository.listOrderAuditLogsDetail(storeId, orderId);
+    const auditEvents: OrderAuditEventDetail[] = auditLogsRaw.results.map((log) => {
+      let afterObj: Record<string, unknown> = {};
+      let beforeObj: Record<string, unknown> = {};
+      try {
+        if (log.afterJson) afterObj = JSON.parse(log.afterJson) as Record<string, unknown>;
+      } catch {
+        /* empty */
+      }
+      try {
+        if (log.beforeJson) beforeObj = JSON.parse(log.beforeJson) as Record<string, unknown>;
+      } catch {
+        /* empty */
+      }
+
+      const actor = log.actorName ?? 'Nhân viên';
+      let title = log.action;
+      let description = `${actor} thực hiện thao tác`;
+
+      switch (log.action) {
+        case 'TABLE_OPENED':
+          title = 'Mở bàn';
+          description = `${actor} mở ${orderRaw.table_name ?? 'bàn'}`;
+          break;
+        case 'ORDER_CREATED':
+          title = 'Tạo đơn mang đi';
+          description = `${actor} tạo đơn mang đi`;
+          break;
+        case 'ORDER_ITEM_ADDED':
+          title = 'Thêm mặt hàng';
+          description = `${actor} thêm món ${String(afterObj['productName'] ?? afterObj['product_name'] ?? 'mặt hàng')}`;
+          break;
+        case 'ORDER_ITEM_ADDED_WITH_DISCOUNT':
+          title = 'Thêm món (có giảm giá)';
+          description = `${actor} thêm món có áp dụng giảm giá`;
+          break;
+        case 'ORDER_ITEM_UPDATED':
+          title = 'Cập nhật mặt hàng';
+          description = `${actor} điều chỉnh số lượng hoặc ghi chú món`;
+          break;
+        case 'ORDER_ITEM_REMOVED':
+          title = 'Xóa mặt hàng';
+          description = `${actor} xóa món khỏi đơn`;
+          break;
+        case 'TIME_SESSION_REMOVED':
+          title = 'Xóa tiền giờ';
+          description = `${actor} xóa tiền giờ của đơn`;
+          break;
+        case 'TABLE_TRANSFERRED': {
+          const fromName =
+            tableTransfers.find((t) => t.transferredAt === log.eventAt)?.fromTableName ??
+            'bàn trước';
+          const toName =
+            tableTransfers.find((t) => t.transferredAt === log.eventAt)?.toTableName ?? 'bàn mới';
+          title = 'Chuyển bàn';
+          description = `${actor} chuyển từ ${fromName} sang ${toName}`;
+          break;
+        }
+        case 'TIME_PAUSED':
+          title = 'Tạm dừng tính giờ';
+          description = `${actor} tạm dừng tính giờ bàn`;
+          break;
+        case 'TIME_RESUMED':
+          title = 'Tiếp tục tính giờ';
+          description = `${actor} tiếp tục tính giờ bàn`;
+          break;
+        case 'TIME_RANGE_UPDATED':
+          title = 'Điều chỉnh giờ chơi';
+          description = `${actor} cập nhật lại khoảng thời gian chơi`;
+          break;
+        case 'ORDER_CHECKOUT_PENDING':
+          title = 'Dừng giờ để thanh toán';
+          description = `${actor} dừng tính giờ, chốt thời gian thanh toán`;
+          break;
+        case 'ORDER_RESUMED_FROM_CHECKOUT':
+          title = 'Tiếp tục chơi';
+          description = `${actor} xác nhận khách tiếp tục chơi`;
+          break;
+        case 'CHECKOUT_COMPLETED':
+          title = 'Thanh toán thành công';
+          description = `${actor} hoàn tất thanh toán hóa đơn`;
+          break;
+        case 'ORDER_CANCELLED':
+          title = 'Hủy đơn hàng';
+          description = `${actor} hủy đơn hàng (Lý do: ${String(afterObj['reason'] ?? orderRaw.cancel_reason ?? 'Không có')})`;
+          break;
+        case 'ORDER_NOTE_UPDATED':
+          title = 'Cập nhật ghi chú';
+          description = `${actor} cập nhật ghi chú đơn hàng`;
+          break;
+        default:
+          title = log.action;
+          description = `${actor} thực hiện ${log.action}`;
+      }
+
+      return {
+        id: log.id,
+        action: log.action,
+        title,
+        description,
+        eventAt: log.eventAt,
+        actorId: log.actorId,
+        actorName: log.actorName,
+        before: beforeObj,
+        after: afterObj,
+        metadata: null,
+      };
+    });
+
+    // 9. Totals calculation
+    let timeAmountVnd = timeSummary?.totalAmountAfterRoundingVnd ?? 0;
+    let itemGrossAmountVnd = items.reduce((sum, it) => sum + it.grossLineTotalVnd, 0);
+    let itemDiscountAmountVnd = items.reduce((sum, it) => sum + it.discountAmountVnd, 0);
+    const orderDiscountAmountVnd = 0;
+
+    let subtotalVnd = timeAmountVnd + itemGrossAmountVnd;
+    let totalDiscountVnd = itemDiscountAmountVnd + orderDiscountAmountVnd;
+    let totalVnd = subtotalVnd - totalDiscountVnd;
+
+    // If order is PAID with snapshot, use authoritative invoice numbers
+    if (invoice) {
+      subtotalVnd = invoice.subtotalVnd;
+      totalDiscountVnd = invoice.discountTotalVnd;
+      totalVnd = invoice.totalVnd;
+    }
+
+    const paidAmountVnd = payments
+      .filter((p) => p.status === 'SUCCEEDED')
+      .reduce((sum, p) => sum + p.amount, 0);
+
+    const changeAmountVnd =
+      payments.find((p) => p.cashChange !== null && p.cashChange !== undefined)?.cashChange ?? 0;
+
+    return {
+      order: {
+        id: orderRaw.id,
+        displayCode: orderRaw.display_code,
+        orderType: orderRaw.order_type,
+        status: orderRaw.status,
+        version: orderRaw.version,
+        storeId: orderRaw.store_id,
+        storeName: orderRaw.store_name,
+        tableId: orderRaw.table_id,
+        tableName: orderRaw.table_name,
+        areaId: orderRaw.area_id,
+        areaName: orderRaw.area_name,
+        tableUsageChain,
+        openedAt: orderRaw.opened_at,
+        openedById: orderRaw.opened_by_id,
+        openedByName: orderRaw.opened_by_name ?? 'Nhân viên',
+        closedAt: orderRaw.closed_at,
+        cancelledAt: orderRaw.cancelled_at,
+        cancelReason: orderRaw.cancel_reason,
+        cancelledByName: orderRaw.cancelled_by_name,
+        note: orderRaw.note,
+      },
+      customer: {
+        name: 'Khách lẻ',
+        phone: null,
+      },
+      timeSummary,
+      timeSegments,
+      tableTransfers,
+      rateChanges,
+      items,
+      checkout,
+      payments,
+      invoice,
+      auditEvents,
+      totals: {
+        timeAmountVnd,
+        itemGrossAmountVnd,
+        itemDiscountAmountVnd,
+        orderDiscountAmountVnd,
+        subtotalVnd,
+        totalDiscountVnd,
+        totalVnd,
+        paidAmountVnd,
+        changeAmountVnd,
+      },
+    };
   }
 }

@@ -31,6 +31,9 @@ export interface OrderRow {
   updated_at: number;
   opened_by_name: string | null;
   note: string | null;
+  guest_count: number;
+  customer_name: string | null;
+  customer_phone: string | null;
 }
 
 export interface TimeSessionRow {
@@ -299,8 +302,10 @@ export class PosRepository {
   findOrder(storeId: string, orderId: string) {
     return this.db
       .prepare(
-        `SELECT o.id, o.store_id, o.table_id, o.order_type, o.display_code,
+        `SELECT o.id, o.store_id, o.table_id, o.order_type,
+                COALESCE(o.display_code, 'D' || strftime('%y%m%d', o.opened_at / 1000, 'unixepoch') || '-' || substr(o.id, 1, 4)) AS display_code,
                 o.status, o.version, o.opened_at, COALESCE(o.updated_at, o.opened_at) AS updated_at, o.note,
+                COALESCE(o.guest_count, 1) AS guest_count, o.customer_name, o.customer_phone,
                 COALESCE(st.display_name, st.name) AS table_name,
                 a.id AS area_id, a.name AS area_name,
                 COALESCE(u.display_name, 'Nhân viên') AS opened_by_name
@@ -317,8 +322,10 @@ export class PosRepository {
   async listActiveOrders(storeId: string) {
     return this.db
       .prepare(
-        `SELECT o.id, o.store_id, o.table_id, o.order_type, o.display_code,
+        `SELECT o.id, o.store_id, o.table_id, o.order_type,
+                COALESCE(o.display_code, 'D' || strftime('%y%m%d', o.opened_at / 1000, 'unixepoch') || '-' || substr(o.id, 1, 4)) AS display_code,
                 o.status, o.version, o.opened_at, COALESCE(o.updated_at, o.opened_at) AS updated_at, o.note,
+                COALESCE(o.guest_count, 1) AS guest_count, o.customer_name, o.customer_phone,
                 COALESCE(st.display_name, st.name) AS table_name,
                 a.id AS area_id, a.name AS area_name,
                 COALESCE(u.display_name, 'Nhân viên') AS opened_by_name
@@ -329,7 +336,9 @@ export class PosRepository {
          WHERE o.store_id = ? AND o.status IN ('OPEN', 'PAYMENT_PENDING')
          UNION ALL
          SELECT t.id, t.store_id, NULL AS table_id, 'TAKEAWAY' AS order_type,
-                t.display_code, t.status, t.version, t.opened_at, COALESCE(t.updated_at, t.opened_at) AS updated_at, t.note,
+                COALESCE(t.display_code, 'D' || strftime('%y%m%d', t.opened_at / 1000, 'unixepoch') || '-' || substr(t.id, 1, 4)) AS display_code,
+                t.status, t.version, t.opened_at, COALESCE(t.updated_at, t.opened_at) AS updated_at, t.note,
+                COALESCE(t.guest_count, 1) AS guest_count, t.customer_name, t.customer_phone,
                 NULL AS table_name, NULL AS area_id, NULL AS area_name,
                 COALESCE(u.display_name, 'Nhân viên') AS opened_by_name
          FROM takeaway_orders t
@@ -345,7 +354,9 @@ export class PosRepository {
     return this.db
       .prepare(
         `SELECT t.id, t.store_id, NULL AS table_id, 'TAKEAWAY' AS order_type,
-                t.display_code, t.status, t.version, t.opened_at, COALESCE(t.updated_at, t.opened_at) AS updated_at, t.note,
+                COALESCE(t.display_code, 'D' || strftime('%y%m%d', t.opened_at / 1000, 'unixepoch') || '-' || substr(t.id, 1, 4)) AS display_code,
+                t.status, t.version, t.opened_at, COALESCE(t.updated_at, t.opened_at) AS updated_at, t.note,
+                COALESCE(t.guest_count, 1) AS guest_count, t.customer_name, t.customer_phone,
                 NULL AS table_name, NULL AS area_id, NULL AS area_name,
                 COALESCE(u.display_name, 'Nhân viên') AS opened_by_name
          FROM takeaway_orders t
@@ -623,7 +634,8 @@ export class PosRepository {
       }>();
   }
 
-  findSaleVariant(storeId: string, productId: string, variantId: string | null) {
+  findSaleVariant(storeId: string, productId: string, variantId: string | null | undefined) {
+    const targetVariantId = variantId ?? null;
     return this.db
       .prepare(
         `SELECT
@@ -640,10 +652,10 @@ export class PosRepository {
         LEFT JOIN time_price_configs tpc ON tpc.product_id = p.id AND tpc.store_id = p.store_id
         LEFT JOIN units u ON u.id = p.unit_id AND u.store_id = p.store_id
         WHERE p.store_id = ? AND p.id = ?
-          AND ((? IS NULL AND pv.id IS NULL) OR pv.id = ? OR p.product_type = 'TIME')
+          AND ((? IS NULL) OR pv.id = ? OR p.product_type = 'TIME')
         LIMIT 1`,
       )
-      .bind(storeId, productId, variantId, variantId)
+      .bind(storeId, productId, targetVariantId, targetVariantId)
       .first<SaleVariantRow>();
   }
 
@@ -881,6 +893,99 @@ export class PosRepository {
     ]);
   }
 
+  async createTimeSessionForOrder(input: {
+    storeId: string;
+    orderId: string;
+    timeSessionId: string;
+    tableId: string;
+    timeProductId: string;
+    tableName: string;
+    pricingSnapshotJson: string;
+    pricingVersion: number;
+    startedAtMs: number;
+    endedAtMs: number | null;
+    status: 'RUNNING' | 'ENDED' | 'PAUSED';
+    expectedOrderVersion: number;
+    actorId: string;
+    requestId: string;
+    now: number;
+  }) {
+    let basePrice = 0;
+    try {
+      const parsed = JSON.parse(input.pricingSnapshotJson) as { basePriceVnd?: number };
+      basePrice = parsed.basePriceVnd ?? 0;
+    } catch {
+      basePrice = 0;
+    }
+
+    await this.db.batch([
+      this.db
+        .prepare(
+          `INSERT INTO time_sessions (
+            id, store_id, order_id, table_id, time_product_id, status, started_at, ended_at,
+            pricing_snapshot_json, pricing_version, opened_by, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          input.timeSessionId,
+          input.storeId,
+          input.orderId,
+          input.tableId,
+          input.timeProductId,
+          input.status,
+          input.startedAtMs,
+          input.endedAtMs,
+          input.pricingSnapshotJson,
+          input.pricingVersion,
+          input.actorId,
+          input.now,
+        ),
+      this.db
+        .prepare(
+          `INSERT INTO table_time_segments (
+            id, store_id, order_id, time_session_id, table_id, time_product_id,
+            table_name_snapshot, started_at, ended_at, pricing_snapshot_json,
+            pricing_version, unit_price_snapshot, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          crypto.randomUUID(),
+          input.storeId,
+          input.orderId,
+          input.timeSessionId,
+          input.tableId,
+          input.timeProductId,
+          input.tableName,
+          input.startedAtMs,
+          input.endedAtMs,
+          input.pricingSnapshotJson,
+          input.pricingVersion,
+          basePrice,
+          input.now,
+          input.now,
+        ),
+      this.db
+        .prepare(
+          `UPDATE orders SET version = version + 1, updated_at = ? WHERE store_id = ? AND id = ? AND version = ?`,
+        )
+        .bind(input.now, input.storeId, input.orderId, input.expectedOrderVersion),
+      this.db
+        .prepare(
+          `INSERT INTO audit_logs (id, store_id, actor_user_id, action, entity_type, entity_id, request_id, before_json, after_json, created_at)
+           VALUES (?, ?, ?, 'TIME_SESSION_RESTORED', 'TIME_SESSION', ?, ?, NULL, ?, ?)`,
+        )
+        .bind(
+          crypto.randomUUID(),
+          input.storeId,
+          input.actorId,
+          input.timeSessionId,
+          input.requestId,
+          JSON.stringify({ startedAtMs: input.startedAtMs, endedAtMs: input.endedAtMs }),
+          input.now,
+        ),
+    ]);
+  }
+
   findUpdateOrderNoteCommand(storeId: string, commandId: string) {
     return this.db
       .prepare(
@@ -916,6 +1021,52 @@ export class PosRepository {
         input.orderId,
         input.expectedOrderVersion,
         input.note,
+        input.actorId,
+        input.requestId,
+        input.issuedAt,
+      )
+      .run();
+  }
+
+  findUpdateOrderGuestCommand(storeId: string, commandId: string) {
+    return this.db
+      .prepare(
+        `SELECT order_id AS orderId FROM update_order_guest_commands
+         WHERE store_id = ? AND id = ? LIMIT 1`,
+      )
+      .bind(storeId, commandId)
+      .first<{ orderId: string }>();
+  }
+
+  updateOrderGuest(input: {
+    commandId: string;
+    storeId: string;
+    orderType: 'DINE_IN' | 'TAKEAWAY';
+    orderId: string;
+    expectedOrderVersion: number;
+    guestCount: number;
+    customerName: string | null;
+    customerPhone: string | null;
+    actorId: string;
+    requestId: string;
+    issuedAt: number;
+  }) {
+    return this.db
+      .prepare(
+        `INSERT INTO update_order_guest_commands (
+          id, store_id, order_type, order_id, expected_order_version, guest_count,
+          customer_name, customer_phone, actor_user_id, request_id, issued_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        input.commandId,
+        input.storeId,
+        input.orderType,
+        input.orderId,
+        input.expectedOrderVersion,
+        input.guestCount,
+        input.customerName,
+        input.customerPhone,
         input.actorId,
         input.requestId,
         input.issuedAt,
@@ -1518,5 +1669,476 @@ export class PosRepository {
           .first()
       : null;
     return { invoice, lines: lines.results, payment };
+  }
+
+  async findOrderDetailRaw(storeId: string, orderId: string) {
+    const dineIn = await this.db
+      .prepare(
+        `SELECT
+          o.id,
+          COALESCE(o.display_code, i.display_code, 'D-' || substr(o.id, 1, 8)) AS display_code,
+          'DINE_IN' AS order_type,
+          o.status,
+          o.version,
+          o.store_id,
+          s.name AS store_name,
+          o.table_id,
+          COALESCE(st.display_name, st.name) AS table_name,
+          st.area_id,
+          a.name AS area_name,
+          o.opened_at,
+          o.opened_by AS opened_by_id,
+          u_open.display_name AS opened_by_name,
+          o.closed_at,
+          o.cancelled_at,
+          o.cancel_reason,
+          u_cancel.display_name AS cancelled_by_name,
+          o.note
+        FROM orders o
+        JOIN stores s ON s.id = o.store_id
+        LEFT JOIN service_tables st ON st.id = o.table_id AND st.store_id = o.store_id
+        LEFT JOIN areas a ON a.id = st.area_id AND a.store_id = o.store_id
+        LEFT JOIN users u_open ON u_open.id = o.opened_by
+        LEFT JOIN invoices i ON i.store_id = o.store_id AND i.order_id = o.id
+        LEFT JOIN cancel_order_commands coc ON coc.store_id = o.store_id AND coc.order_id = o.id
+        LEFT JOIN users u_cancel ON u_cancel.id = coc.actor_user_id
+        WHERE o.store_id = ? AND o.id = ?
+        LIMIT 1`,
+      )
+      .bind(storeId, orderId)
+      .first<{
+        id: string;
+        display_code: string;
+        order_type: 'DINE_IN';
+        status: 'OPEN' | 'PAYMENT_PENDING' | 'PAID' | 'CANCELLED';
+        version: number;
+        store_id: string;
+        store_name: string;
+        table_id: string | null;
+        table_name: string | null;
+        area_id: string | null;
+        area_name: string | null;
+        opened_at: number;
+        opened_by_id: string;
+        opened_by_name: string | null;
+        closed_at: number | null;
+        cancelled_at: number | null;
+        cancel_reason: string | null;
+        cancelled_by_name: string | null;
+        note: string | null;
+      }>();
+
+    if (dineIn) return dineIn;
+
+    const takeaway = await this.db
+      .prepare(
+        `SELECT
+          o.id,
+          COALESCE(o.display_code, i.display_code, 'D-' || substr(o.id, 1, 8)) AS display_code,
+          'TAKEAWAY' AS order_type,
+          o.status,
+          o.version,
+          o.store_id,
+          s.name AS store_name,
+          NULL AS table_id,
+          NULL AS table_name,
+          NULL AS area_id,
+          NULL AS area_name,
+          o.opened_at,
+          o.opened_by AS opened_by_id,
+          u_open.display_name AS opened_by_name,
+          o.closed_at,
+          o.cancelled_at,
+          o.cancel_reason,
+          u_cancel.display_name AS cancelled_by_name,
+          o.note
+        FROM takeaway_orders o
+        JOIN stores s ON s.id = o.store_id
+        LEFT JOIN users u_open ON u_open.id = o.opened_by
+        LEFT JOIN takeaway_invoices i ON i.store_id = o.store_id AND i.order_id = o.id
+        LEFT JOIN cancel_takeaway_order_commands coc ON coc.store_id = o.store_id AND coc.order_id = o.id
+        LEFT JOIN users u_cancel ON u_cancel.id = coc.actor_user_id
+        WHERE o.store_id = ? AND o.id = ?
+        LIMIT 1`,
+      )
+      .bind(storeId, orderId)
+      .first<{
+        id: string;
+        display_code: string;
+        order_type: 'TAKEAWAY';
+        status: 'OPEN' | 'PAYMENT_PENDING' | 'PAID' | 'CANCELLED';
+        version: number;
+        store_id: string;
+        store_name: string;
+        table_id: null;
+        table_name: null;
+        area_id: null;
+        area_name: null;
+        opened_at: number;
+        opened_by_id: string;
+        opened_by_name: string | null;
+        closed_at: number | null;
+        cancelled_at: number | null;
+        cancel_reason: string | null;
+        cancelled_by_name: string | null;
+        note: string | null;
+      }>();
+
+    return takeaway ?? null;
+  }
+
+  async listOrderTimeSegmentsDetail(storeId: string, orderId: string) {
+    return this.db
+      .prepare(
+        `SELECT
+          tts.id,
+          tts.table_id AS tableId,
+          tts.table_name_snapshot AS tableName,
+          a.name AS areaName,
+          tts.time_product_id AS timeProductId,
+          COALESCE(p.name, 'Giá tính giờ') AS rateNameSnapshot,
+          tts.started_at AS startedAt,
+          tts.ended_at AS endedAt,
+          tts.unit_price_snapshot AS unitPriceSnapshot,
+          tts.pricing_snapshot_json AS pricingSnapshotJson,
+          tts.pricing_version AS pricingVersion
+        FROM table_time_segments tts
+        LEFT JOIN service_tables st ON st.id = tts.table_id AND st.store_id = tts.store_id
+        LEFT JOIN areas a ON a.id = st.area_id AND a.store_id = tts.store_id
+        LEFT JOIN products p ON p.id = tts.time_product_id AND p.store_id = tts.store_id
+        WHERE tts.store_id = ? AND tts.order_id = ?
+        ORDER BY tts.started_at ASC`,
+      )
+      .bind(storeId, orderId)
+      .all<{
+        id: string;
+        tableId: string;
+        tableName: string;
+        areaName: string | null;
+        timeProductId: string;
+        rateNameSnapshot: string;
+        startedAt: number;
+        endedAt: number | null;
+        unitPriceSnapshot: number;
+        pricingSnapshotJson: string;
+        pricingVersion: number;
+      }>();
+  }
+
+  async listOrderTableTransfers(storeId: string, orderId: string) {
+    return this.db
+      .prepare(
+        `SELECT
+          ttc.id,
+          ttc.source_table_id AS fromTableId,
+          COALESCE(st_src.display_name, st_src.name, 'Bàn nguồn') AS fromTableName,
+          ttc.target_table_id AS toTableId,
+          COALESCE(st_tgt.display_name, st_tgt.name, 'Bàn đích') AS toTableName,
+          ttc.issued_at AS transferredAt,
+          ttc.actor_user_id AS employeeId,
+          COALESCE(u.display_name, 'Nhân viên') AS employeeName,
+          COALESCE(json_extract(ttc.target_pricing_snapshot_json, '$.basePriceVnd'), 0) AS newRateVnd
+        FROM transfer_table_commands ttc
+        LEFT JOIN service_tables st_src ON st_src.id = ttc.source_table_id AND st_src.store_id = ttc.store_id
+        LEFT JOIN service_tables st_tgt ON st_tgt.id = ttc.target_table_id AND st_tgt.store_id = ttc.store_id
+        LEFT JOIN users u ON u.id = ttc.actor_user_id
+        WHERE ttc.store_id = ? AND ttc.order_id = ?
+        ORDER BY ttc.issued_at ASC`,
+      )
+      .bind(storeId, orderId)
+      .all<{
+        id: string;
+        fromTableId: string;
+        fromTableName: string;
+        toTableId: string;
+        toTableName: string;
+        transferredAt: number;
+        employeeId: string;
+        employeeName: string;
+        newRateVnd: number;
+      }>();
+  }
+
+  async listOrderItemsWithActors(storeId: string, orderId: string, isTakeaway: boolean) {
+    if (isTakeaway) {
+      return this.db
+        .prepare(
+          `SELECT
+            oi.id,
+            oi.product_id AS productId,
+            oi.variant_id AS variantId,
+            oi.product_type AS productType,
+            oi.product_name_snapshot AS productNameSnapshot,
+            oi.variant_name_snapshot AS variantNameSnapshot,
+            oi.unit_name_snapshot AS unitNameSnapshot,
+            oi.unit_price_snapshot AS unitPriceSnapshot,
+            oi.quantity_milli AS quantityMilli,
+            oi.gross_line_total AS grossLineTotalVnd,
+            oi.discount_type AS discountType,
+            oi.discount_input_value AS discountInputValue,
+            oi.discount_amount AS discountAmountVnd,
+            oi.net_line_total AS netLineTotalVnd,
+            oi.note,
+            oi.added_by AS addedById,
+            u.display_name AS addedByName,
+            oi.created_at AS addedAt,
+            NULL AS timeStartedAtMs,
+            NULL AS timeEndedAtMs,
+            p.avatar_type AS avatarType,
+            p.avatar_color AS avatarColor,
+            p.media_id AS mediaId
+          FROM takeaway_order_items oi
+          LEFT JOIN users u ON u.id = oi.added_by
+          LEFT JOIN products p ON p.id = oi.product_id AND p.store_id = oi.store_id
+          WHERE oi.store_id = ? AND oi.order_id = ?
+          ORDER BY oi.created_at ASC`,
+        )
+        .bind(storeId, orderId)
+        .all<{
+          id: string;
+          productId: string;
+          variantId: string | null;
+          productType: 'QUANTITY' | 'WEIGHT' | 'TIME';
+          productNameSnapshot: string;
+          variantNameSnapshot: string | null;
+          unitNameSnapshot: string | null;
+          unitPriceSnapshot: number;
+          quantityMilli: number;
+          grossLineTotalVnd: number;
+          discountType: 'FIXED' | 'PERCENT' | null;
+          discountInputValue: number | null;
+          discountAmountVnd: number;
+          netLineTotalVnd: number;
+          note: string | null;
+          addedById: string | null;
+          addedByName: string | null;
+          addedAt: number | null;
+          timeStartedAtMs: number | null;
+          timeEndedAtMs: number | null;
+          avatarType?: 'COLOR' | 'IMAGE' | null;
+          avatarColor?: string | null;
+          mediaId?: string | null;
+        }>();
+    }
+
+    return this.db
+      .prepare(
+        `SELECT
+          oi.id,
+          oi.product_id AS productId,
+          oi.variant_id AS variantId,
+          oi.product_type AS productType,
+          oi.product_name_snapshot AS productNameSnapshot,
+          oi.variant_name_snapshot AS variantNameSnapshot,
+          oi.unit_name_snapshot AS unitNameSnapshot,
+          oi.unit_price_snapshot AS unitPriceSnapshot,
+          oi.quantity_milli AS quantityMilli,
+          COALESCE(oi.gross_line_total, oi.line_total) AS grossLineTotalVnd,
+          oi.discount_type AS discountType,
+          oi.discount_input_value AS discountInputValue,
+          COALESCE(oi.discount_amount, oi.discount_value, 0) AS discountAmountVnd,
+          COALESCE(oi.net_line_total, oi.line_total) AS netLineTotalVnd,
+          oi.note,
+          oi.added_by AS addedById,
+          u.display_name AS addedByName,
+          oi.created_at AS addedAt,
+          oi.time_started_at AS timeStartedAtMs,
+          oi.time_ended_at AS timeEndedAtMs,
+          p.avatar_type AS avatarType,
+          p.avatar_color AS avatarColor,
+          p.media_id AS mediaId
+        FROM order_items oi
+        LEFT JOIN users u ON u.id = oi.added_by
+        LEFT JOIN products p ON p.id = oi.product_id AND p.store_id = oi.store_id
+        WHERE oi.store_id = ? AND oi.order_id = ?
+        ORDER BY oi.created_at ASC`,
+      )
+      .bind(storeId, orderId)
+      .all<{
+        id: string;
+        productId: string;
+        variantId: string | null;
+        productType: 'QUANTITY' | 'WEIGHT' | 'TIME';
+        productNameSnapshot: string;
+        variantNameSnapshot: string | null;
+        unitNameSnapshot: string | null;
+        unitPriceSnapshot: number;
+        quantityMilli: number;
+        grossLineTotalVnd: number;
+        discountType: 'FIXED' | 'PERCENT' | null;
+        discountInputValue: number | null;
+        discountAmountVnd: number;
+        netLineTotalVnd: number;
+        note: string | null;
+        addedById: string | null;
+        addedByName: string | null;
+        addedAt: number | null;
+        timeStartedAtMs: number | null;
+        timeEndedAtMs: number | null;
+        avatarType?: 'COLOR' | 'IMAGE' | null;
+        avatarColor?: string | null;
+        mediaId?: string | null;
+      }>();
+  }
+
+  async listOrderPaymentsDetail(storeId: string, orderId: string, isTakeaway: boolean) {
+    const table = isTakeaway ? 'takeaway_payments' : 'payments';
+    return this.db
+      .prepare(
+        `SELECT
+          p.id,
+          p.method,
+          p.status,
+          p.amount,
+          p.cash_received AS cashReceived,
+          p.cash_change AS cashChange,
+          p.idempotency_key AS transactionRef,
+          p.created_by AS createdById,
+          u.display_name AS createdByName,
+          p.created_at AS createdAt
+        FROM ${table} p
+        LEFT JOIN users u ON u.id = p.created_by
+        WHERE p.store_id = ? AND p.order_id = ?
+        ORDER BY p.created_at ASC`,
+      )
+      .bind(storeId, orderId)
+      .all<{
+        id: string;
+        method: 'CASH' | 'BANK_TRANSFER';
+        status: 'SUCCEEDED' | 'PENDING' | 'VOIDED';
+        amount: number;
+        cashReceived: number | null;
+        cashChange: number | null;
+        transactionRef: string | null;
+        createdById: string;
+        createdByName: string | null;
+        createdAt: number;
+      }>();
+  }
+
+  async findOrderInvoiceDetail(storeId: string, orderId: string, isTakeaway: boolean) {
+    const table = isTakeaway ? 'takeaway_invoices' : 'invoices';
+    return this.db
+      .prepare(
+        `SELECT
+          i.id,
+          i.display_code AS displayCode,
+          i.status,
+          i.issued_at AS issuedAt,
+          i.issued_by AS issuedById,
+          u.display_name AS issuedByName,
+          i.subtotal AS subtotalVnd,
+          i.discount_total AS discountTotalVnd,
+          i.total AS totalVnd,
+          i.snapshot_json AS snapshotJson
+        FROM ${table} i
+        LEFT JOIN users u ON u.id = i.issued_by
+        WHERE i.store_id = ? AND i.order_id = ?
+        LIMIT 1`,
+      )
+      .bind(storeId, orderId)
+      .first<{
+        id: string;
+        displayCode: string;
+        status: 'COMPLETED' | 'CANCELLED';
+        issuedAt: number;
+        issuedById: string;
+        issuedByName: string | null;
+        subtotalVnd: number;
+        discountTotalVnd: number;
+        totalVnd: number;
+        snapshotJson: string;
+      }>();
+  }
+
+  async listOrderStopAndResumeCommands(storeId: string, orderId: string) {
+    const stops = await this.db
+      .prepare(
+        `SELECT stc.id, stc.issued_at AS stoppedAt, stc.actor_user_id AS actorUserId, u.display_name AS actorName
+         FROM stop_time_commands stc
+         LEFT JOIN users u ON u.id = stc.actor_user_id
+         WHERE stc.store_id = ? AND stc.order_id = ?
+         ORDER BY stc.issued_at ASC`,
+      )
+      .bind(storeId, orderId)
+      .all<{
+        id: string;
+        stoppedAt: number;
+        actorUserId: string;
+        actorName: string | null;
+      }>();
+
+    const resumes = await this.db
+      .prepare(
+        `SELECT rcc.id, rcc.issued_at AS resumedAt, rcc.actor_user_id AS actorUserId, u.display_name AS actorName
+         FROM resume_checkout_commands rcc
+         LEFT JOIN users u ON u.id = rcc.actor_user_id
+         WHERE rcc.store_id = ? AND rcc.order_id = ?
+         ORDER BY rcc.issued_at ASC`,
+      )
+      .bind(storeId, orderId)
+      .all<{
+        id: string;
+        resumedAt: number;
+        actorUserId: string;
+        actorName: string | null;
+      }>();
+
+    return { stops: stops.results, resumes: resumes.results };
+  }
+
+  async listOrderAuditLogsDetail(storeId: string, orderId: string) {
+    return this.db
+      .prepare(
+        `SELECT
+          al.id,
+          al.action,
+          al.entity_type AS entityType,
+          al.entity_id AS entityId,
+          al.actor_user_id AS actorId,
+          u.display_name AS actorName,
+          al.before_json AS beforeJson,
+          al.after_json AS afterJson,
+          al.created_at AS eventAt
+        FROM audit_logs al
+        LEFT JOIN users u ON u.id = al.actor_user_id
+        WHERE al.store_id = ? AND (
+          al.entity_id = ?
+          OR json_extract(al.after_json, '$.orderId') = ?
+          OR json_extract(al.after_json, '$.order_id') = ?
+          OR json_extract(al.before_json, '$.orderId') = ?
+          OR al.entity_id IN (SELECT id FROM order_items WHERE store_id = ? AND order_id = ?)
+          OR al.entity_id IN (SELECT id FROM takeaway_order_items WHERE store_id = ? AND order_id = ?)
+          OR al.entity_id IN (SELECT id FROM invoices WHERE store_id = ? AND order_id = ?)
+          OR al.entity_id IN (SELECT id FROM takeaway_invoices WHERE store_id = ? AND order_id = ?)
+        )
+        ORDER BY al.created_at ASC`,
+      )
+      .bind(
+        storeId,
+        orderId,
+        orderId,
+        orderId,
+        orderId,
+        storeId,
+        orderId,
+        storeId,
+        orderId,
+        storeId,
+        orderId,
+        storeId,
+        orderId,
+      )
+      .all<{
+        id: string;
+        action: string;
+        entityType: string;
+        entityId: string | null;
+        actorId: string | null;
+        actorName: string | null;
+        beforeJson: string | null;
+        afterJson: string | null;
+        eventAt: number;
+      }>();
   }
 }

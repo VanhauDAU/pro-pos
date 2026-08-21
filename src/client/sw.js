@@ -28,6 +28,7 @@ self.addEventListener('push', (event) => {
     badge: '/pwa-192x192.png',
     tag: payload.tag ?? 'propos-notification',
     renotify: true,
+    vibrate: [250, 100, 250, 100, 500],
     data: { url: payload.url ?? '/pos/qr-order' },
   };
   event.waitUntil(self.registration.showNotification(title, options));

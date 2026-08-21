@@ -42,6 +42,7 @@ export interface GuestMenuVariant {
 export interface GuestMenuProduct {
   id: string;
   name: string;
+  productType?: 'QUANTITY' | 'WEIGHT';
   categoryId: string | null;
   categoryName: string | null;
   unitName: string | null;

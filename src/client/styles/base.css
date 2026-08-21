@@ -3283,8 +3283,47 @@
 }
 
 @media print {
+  html,
   body {
-    background: #fff;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* When printing thermal receipts, hide the entire interactive web app UI */
+  body:has(#thermal-receipt-print-root:not(:empty)) > *:not(#thermal-receipt-print-root) {
+    display: none !important;
+  }
+
+  /* If :has is not supported, standard fallback */
+  #root:has(~ #thermal-receipt-print-root:not(:empty)) {
+    display: none !important;
+  }
+
+  #thermal-receipt-print-root {
+    display: block !important;
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+  }
+
+  #thermal-receipt-print-root:empty {
+    display: none !important;
+  }
+
+  #thermal-receipt-print-root .thermal-receipt-preview {
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    margin: 0 auto !important;
+    padding: 2mm 0 !important;
+    background: #ffffff !important;
   }
 
   .staff-invoice-page {
@@ -3294,7 +3333,7 @@
 
   .staff-invoice-page > .ant-result,
   .staff-invoice-actions {
-    display: none;
+    display: none !important;
   }
 
   .staff-invoice-sheet {
@@ -3313,6 +3352,11 @@
   .staff-invoice-transfer-segments-table {
     background: transparent !important;
     border: 1px dashed #999 !important;
+  }
+
+  @page {
+    margin: 0;
+    size: auto;
   }
 }
 
@@ -4695,7 +4739,7 @@ body {
 .owner-content {
   min-height: calc(100vh - 64px);
   padding: clamp(22px, 3vw, 38px) clamp(18px, 3vw, 42px) 60px;
-  overflow: auto;
+  overflow: visible;
   background: #f5f7fb;
 }
 
@@ -9930,4 +9974,561 @@ body {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+/* ==========================================================================
+   Owner Print Settings & Thermal Receipt Preview
+   ========================================================================== */
+
+.owner-print-settings-page {
+  padding: 0 0 40px;
+  max-width: 1360px;
+  margin: 0 auto;
+}
+
+.owner-print-settings-header {
+  position: sticky;
+  top: 12px;
+  z-index: 100;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  padding: 14px 24px;
+  gap: 16px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
+}
+
+.owner-print-settings-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.owner-print-unsaved-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: #ea580c;
+  background: #fff7ed;
+  border: 1px solid #ffedd5;
+  padding: 6px 12px;
+  border-radius: 8px;
+}
+
+.owner-print-unsaved-dot {
+  color: #f97316;
+  font-size: 11px;
+  display: inline-block;
+}
+
+.owner-print-settings-backlink {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #64748b;
+  font-size: 13.5px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.owner-print-settings-backlink:hover {
+  color: var(--brand-primary);
+}
+
+.owner-print-settings-tabs-wrapper {
+  margin-bottom: 20px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.owner-print-settings-tabs-wrapper .ant-tabs-nav {
+  margin-bottom: 0;
+}
+
+.owner-print-card {
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+  background: #ffffff;
+}
+
+.owner-print-card .ant-card-head {
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 15.5px;
+  font-weight: 700;
+  color: #0f172a;
+  padding: 0 24px;
+  min-height: 48px;
+}
+
+.owner-print-card .ant-card-body {
+  padding: 22px 24px;
+}
+
+.owner-print-card .ant-form-item {
+  margin-bottom: 16px;
+}
+
+.owner-print-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 0;
+}
+
+.owner-print-switch-row__label {
+  font-size: 14px;
+  color: #1e293b;
+}
+
+.owner-print-instruction {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #475569;
+}
+
+.owner-print-media-box {
+  width: 120px;
+  height: 120px;
+  margin: 0 auto;
+  border: 1.5px dashed #cbd5e1;
+  border-radius: 12px;
+  background: #f8fafc;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  position: relative;
+}
+
+.owner-print-media-box__img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 4px;
+}
+
+.owner-print-media-box__placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
+.owner-print-footer-line {
+  margin-bottom: 8px;
+}
+
+.owner-print-footer-line__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #334155;
+}
+
+/* ── Thermal Receipt Live Preview Container ── */
+.owner-print-preview-card {
+  position: sticky;
+  top: 90px;
+}
+
+.thermal-receipt-preview {
+  background: #ffffff;
+  border: 1px dashed #94a3b8;
+  border-radius: 8px;
+  margin: 0 auto;
+  padding: 18px 16px;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  color: #0f172a;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.06);
+  transition: all 0.2s ease;
+}
+
+.thermal-receipt-preview--k80 {
+  width: 100%;
+  max-width: 310px;
+  padding: 14px 15px;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.thermal-receipt-preview--k58 {
+  width: 100%;
+  max-width: 228px;
+  padding: 10px 11px;
+  font-size: 9.5px;
+  line-height: 1.25;
+  letter-spacing: -0.2px;
+}
+
+.thermal-receipt-preview--k58 .thermal-receipt-header-horizontal {
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.thermal-receipt-preview--k58 .thermal-receipt-logo-thumb img {
+  width: 32px;
+  height: 32px;
+}
+
+.thermal-receipt-preview--k58 .thermal-receipt-logo-centered {
+  margin-bottom: 3px;
+}
+
+.thermal-receipt-preview--k58 .thermal-receipt-logo-centered img {
+  max-width: 70px;
+  max-height: 36px;
+}
+
+.thermal-receipt-preview--k58 .thermal-receipt-store-name {
+  font-size: 11px;
+  margin-bottom: 2px;
+}
+
+.thermal-receipt-preview--k58 .thermal-receipt-store-address,
+.thermal-receipt-preview--k58 .thermal-receipt-store-phone {
+  font-size: 9px;
+  line-height: 1.2;
+}
+
+.thermal-receipt-preview--k58 .thermal-receipt-title {
+  font-size: 11.5px;
+  margin: 3px 0 1px;
+}
+
+.thermal-receipt-preview--k58 .thermal-receipt-copy-count {
+  font-size: 9px;
+  margin-bottom: 2px;
+}
+
+.thermal-receipt-preview--k58 .thermal-receipt-divider-dash {
+  margin: 3px 0;
+}
+
+.thermal-receipt-preview--k58 .thermal-receipt-meta {
+  font-size: 9px;
+  gap: 1.5px;
+}
+
+.thermal-receipt-preview--k58 .thermal-receipt-table-header {
+  font-size: 9px;
+  padding-bottom: 2px;
+  margin-bottom: 2px;
+}
+
+.thermal-receipt-preview--k58 .thermal-receipt-item-row {
+  font-size: 9px;
+  margin-bottom: 2px;
+}
+
+.thermal-receipt-preview--k58 .thermal-receipt-item-sub {
+  font-size: 8.5px;
+  line-height: 1.2;
+  padding-left: 2px;
+}
+
+.thermal-receipt-preview--k58 .thermal-receipt-items--bordered {
+  padding: 3px 4px;
+}
+
+.thermal-receipt-preview--k58 .thermal-receipt-summary {
+  font-size: 9px;
+  gap: 1.5px;
+}
+
+.thermal-receipt-preview--k58 .thermal-receipt-grand-total {
+  font-size: 11px;
+  padding: 2px 0;
+}
+
+.thermal-receipt-preview--k58 .thermal-receipt-grand-total-amount {
+  font-size: 12px;
+}
+
+.thermal-receipt-preview--k58 .thermal-receipt-star-divider {
+  font-size: 8px;
+  letter-spacing: -0.3px;
+  margin: 3px 0;
+}
+
+.thermal-receipt-preview--k58 .thermal-receipt-bottom-qr-container {
+  margin: 5px 0 2px;
+}
+
+.thermal-receipt-preview--k58 .thermal-receipt-bottom-qr-img {
+  width: 72px;
+  height: 72px;
+}
+
+.thermal-receipt-preview--k58 .thermal-receipt-qr-desc {
+  font-size: 8.5px;
+  margin-top: 2px;
+}
+
+.thermal-receipt-preview--k58 .thermal-receipt-wifi {
+  font-size: 8.5px;
+  padding: 2px 4px;
+  margin: 2px 0;
+}
+
+.thermal-receipt-preview--k58 .thermal-receipt-footer-text {
+  font-size: 9px;
+  line-height: 1.25;
+  margin: 1px 0;
+}
+
+.thermal-receipt-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.thermal-receipt-header-vertical {
+  text-align: center;
+  margin-bottom: 6px;
+}
+
+.thermal-receipt-header-horizontal {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.thermal-receipt-logo-centered {
+  margin-bottom: 4px;
+}
+
+.thermal-receipt-logo-centered img {
+  max-width: 65px;
+  max-height: 45px;
+  object-fit: contain;
+}
+
+.thermal-receipt-logo-thumb {
+  flex-shrink: 0;
+}
+
+.thermal-receipt-logo-thumb img {
+  width: 44px;
+  height: 44px;
+  object-fit: contain;
+}
+
+.thermal-receipt-store-info {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+.thermal-receipt-store-name {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #000;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+
+.thermal-receipt-header-vertical .thermal-receipt-store-name {
+  text-align: center;
+}
+
+.thermal-receipt-store-address,
+.thermal-receipt-store-phone {
+  font-size: 11px;
+  color: #334155;
+  line-height: 1.3;
+}
+
+.thermal-receipt-header-vertical .thermal-receipt-store-address,
+.thermal-receipt-header-vertical .thermal-receipt-store-phone {
+  text-align: center;
+}
+
+.thermal-receipt-title {
+  text-align: center;
+  font-size: 14.5px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  color: #000;
+  margin: 4px 0 1px;
+}
+
+.thermal-receipt-copy-count {
+  text-align: center;
+  font-size: 11.5px;
+  color: #334155;
+  margin-bottom: 3px;
+}
+
+.thermal-receipt-divider-dash {
+  border-bottom: 1px dashed #64748b;
+  margin: 6px 0;
+}
+
+.thermal-receipt-meta {
+  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.thermal-receipt-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.thermal-receipt-table-header {
+  display: flex;
+  font-weight: 700;
+  font-size: 11px;
+  color: #0f172a;
+  border-bottom: 1px dashed #cbd5e1;
+  padding-bottom: 3px;
+  margin-bottom: 3px;
+}
+
+.thermal-receipt-item-row {
+  font-size: 11px;
+  margin-bottom: 3px;
+}
+
+.thermal-receipt-item-main {
+  display: flex;
+  justify-content: space-between;
+}
+
+.thermal-receipt-item-sub {
+  font-size: 10px;
+  color: #475569;
+  padding-left: 4px;
+  line-height: 1.3;
+}
+
+.thermal-receipt-items--bordered {
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+
+.thermal-receipt-summary {
+  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.thermal-receipt-grand-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13.5px;
+  font-weight: 800;
+  color: #000;
+  padding: 3px 0;
+}
+
+.thermal-receipt-grand-total-amount {
+  font-size: 14.5px;
+  font-weight: 800;
+}
+
+.thermal-receipt-star-divider {
+  text-align: center;
+  font-size: 10.5px;
+  color: #64748b;
+  letter-spacing: 1px;
+  margin: 4px 0;
+}
+
+.thermal-receipt-bottom-qr-container {
+  text-align: center;
+  margin: 6px 0;
+}
+
+.thermal-receipt-bottom-qr-img {
+  width: 90px;
+  height: 90px;
+  object-fit: contain;
+  margin: 0 auto;
+  display: block;
+}
+
+.thermal-receipt-qr-desc {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #334155;
+  margin-top: 3px;
+}
+
+.thermal-receipt-wifi {
+  text-align: center;
+  font-size: 10.5px;
+  color: #1e293b;
+  margin: 3px 0;
+  padding: 3px 6px;
+  background: #f1f5f9;
+  border-radius: 4px;
+}
+
+.thermal-receipt-footer-text {
+  text-align: center;
+  font-size: 11px;
+  color: #1e293b;
+  margin: 2px 0;
+  line-height: 1.3;
+}
+
+/* ── QZ Tray & Printer Devices Styling ── */
+.owner-printer-devices-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.qz-tray-status-box {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 14px 18px;
+}
+
+.qz-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.qz-badge--connected {
+  background: #dcfce7;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+}
+
+.qz-badge--disconnected {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+}
+
+.qz-badge-dot {
+  font-size: 10px;
 }

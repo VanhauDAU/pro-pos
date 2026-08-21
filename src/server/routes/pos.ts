@@ -26,6 +26,7 @@ import {
   requirePermission,
 } from '@server/middleware/authorization';
 import { PosService } from '@server/services/pos-service';
+import { StoreService } from '@server/services/store-service';
 import type { AppEnv } from '@server/types';
 
 const posRoutes = new Hono<AppEnv>();
@@ -47,6 +48,10 @@ posRoutes.get('/context', async (c) => {
   const actor = c.get('actor');
   return success(c, await new PosService(c.env).getStaffContext(actor.storeId!, actor.id));
 });
+
+posRoutes.get('/print-settings', requirePermission('order.manage'), async (c) =>
+  success(c, await new StoreService(c.env).getPrintSettings(c.get('actor').storeId!)),
+);
 
 posRoutes.get('/catalog', requirePermission('order.manage'), async (c) =>
   success(c, await new PosService(c.env).listCatalog(c.get('actor').storeId!)),

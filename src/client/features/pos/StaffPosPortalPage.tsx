@@ -64,7 +64,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
+import type { StorePrintSettings } from '@contracts/store';
 import type { PricingConfigSnapshot } from '@domain/pricing/types';
+import {
+  buildPrintDataFromInvoice,
+  buildPrintDataFromQuote,
+  printReceipt,
+} from '@client/lib/pos-receipt-printer';
 import { OrderDetailPage } from './OrderDetailPage';
 
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
@@ -76,6 +82,8 @@ interface StaffContext {
   storeName: string;
   employeeId: string;
   employeeName: string;
+  storePhone?: string | null;
+  storeAddress?: string | null;
   bankName?: string | null;
   bankAccountNumber?: string | null;
   bankAccountName?: string | null;
@@ -606,7 +614,7 @@ function OrdersPage({ search }: { search: string }) {
             >
               {icon}
               <span>{label}</span>
-              <b>{counts[key]}</b>
+              {counts[key] > 0 ? <b>{counts[key]}</b> : null}
             </button>
           ))}
         </aside>
@@ -616,9 +624,15 @@ function OrdersPage({ search }: { search: string }) {
               block
               value={filter}
               options={[
-                { value: 'ALL', label: `Tất cả (${counts.ALL})` },
-                { value: 'DINE_IN', label: `Tại chỗ (${counts.DINE_IN})` },
-                { value: 'TAKEAWAY', label: `Mang đi (${counts.TAKEAWAY})` },
+                { value: 'ALL', label: counts.ALL > 0 ? `Tất cả (${counts.ALL})` : 'Tất cả' },
+                {
+                  value: 'DINE_IN',
+                  label: counts.DINE_IN > 0 ? `Tại chỗ (${counts.DINE_IN})` : 'Tại chỗ',
+                },
+                {
+                  value: 'TAKEAWAY',
+                  label: counts.TAKEAWAY > 0 ? `Mang đi (${counts.TAKEAWAY})` : 'Mang đi',
+                },
               ]}
               onChange={(value) => setFilter(value as typeof filter)}
             />
@@ -1771,6 +1785,14 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     queryFn: () => apiRequest<OrderQuote>(`/api/v1/pos/orders/${orderId}/quote`),
     enabled: !isNew,
     refetchInterval: 5_000,
+  });
+  const printSettings = useQuery({
+    queryKey: ['pos-print-settings'],
+    queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
+  });
+  const staffContext = useQuery({
+    queryKey: ['pos-context'],
+    queryFn: () => apiRequest<StaffContext>('/api/v1/pos/context'),
   });
 
   const selectedTable = useMemo(
@@ -4560,7 +4582,21 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
             key="print"
             icon={<PrinterOutlined />}
             onClick={() => {
-              window.print();
+              if (!quote.data) return;
+              const printData = buildPrintDataFromQuote(quote.data, 'PROVISIONAL');
+              void printReceipt({
+                data: printData,
+                printSettings: printSettings.data,
+                storeInfo: {
+                  storeName: staffContext.data?.storeName ?? null,
+                  phone: staffContext.data?.storePhone ?? null,
+                  address: staffContext.data?.storeAddress ?? null,
+                  bankName: staffContext.data?.bankName ?? null,
+                  bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
+                  bankAccountName: staffContext.data?.bankAccountName ?? null,
+                },
+              });
+              messageApi.success('Đã gửi lệnh in phiếu tạm tính!');
             }}
           >
             In tạm tính
@@ -5310,11 +5346,20 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
 function InvoicePage() {
   const location = useLocation();
   const navigate = useNavigate();
+  const [messageApi, holder] = message.useMessage();
   const invoiceId = location.pathname.match(/^\/pos\/invoices\/([^/]+)$/u)?.[1];
   const invoice = useQuery({
     queryKey: ['pos-invoice', invoiceId],
     queryFn: () => apiRequest<InvoiceDetail>(`/api/v1/pos/invoices/${invoiceId}`),
     enabled: Boolean(invoiceId),
+  });
+  const printSettings = useQuery({
+    queryKey: ['pos-print-settings'],
+    queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
+  });
+  const staffContext = useQuery({
+    queryKey: ['pos-context'],
+    queryFn: () => apiRequest<StaffContext>('/api/v1/pos/context'),
   });
   if (invoice.isLoading) return <Spin fullscreen description="Đang tạo hóa đơn" />;
   if (invoice.isError || !invoice.data) {
@@ -5329,6 +5374,7 @@ function InvoicePage() {
   const data = invoice.data;
   return (
     <main className="staff-invoice-page">
+      {holder}
       <Result
         status="success"
         title="Thanh toán thành công"
@@ -5498,7 +5544,22 @@ function InvoicePage() {
           type="primary"
           size="large"
           icon={<PrinterOutlined />}
-          onClick={() => window.print()}
+          onClick={() => {
+            const printData = buildPrintDataFromInvoice(data);
+            void printReceipt({
+              data: printData,
+              printSettings: printSettings.data,
+              storeInfo: {
+                storeName: staffContext.data?.storeName ?? null,
+                phone: staffContext.data?.storePhone ?? null,
+                address: staffContext.data?.storeAddress ?? null,
+                bankName: staffContext.data?.bankName ?? null,
+                bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
+                bankAccountName: staffContext.data?.bankAccountName ?? null,
+              },
+            });
+            messageApi.success('Đã gửi lệnh in hóa đơn!');
+          }}
         >
           In hóa đơn
         </Button>
@@ -5575,6 +5636,16 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
     refetchInterval: 5_000,
   });
 
+  const printSettings = useQuery({
+    queryKey: ['pos-print-settings'],
+    queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
+  });
+
+  const staffContext = useQuery({
+    queryKey: ['pos-context'],
+    queryFn: () => apiRequest<StaffContext>('/api/v1/pos/context'),
+  });
+
   const handleCopy = (text: string, label: string) => {
     if (!text) return;
     void navigator.clipboard.writeText(text);
@@ -5628,7 +5699,7 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
     }
   };
 
-  const handleConfirmPayment = async () => {
+  const handleConfirmPayment = async (andPrint = false) => {
     if (!quote.data || submitting) return;
     if (selectedMethod === 'CASH' && (cashReceived === null || cashReceived < totalVnd)) {
       messageApi.warning('Số tiền khách đưa chưa đủ để thanh toán.');
@@ -5636,7 +5707,10 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
     }
     setSubmitting(true);
     try {
-      const result = await jsonRequest<{ invoiceId: string }>(
+      const result = await jsonRequest<{
+        invoiceId: string;
+        displayCode?: string;
+      }>(
         `/api/v1/pos/orders/${quote.data.order.id}/checkout`,
         {
           expectedOrderVersion: quote.data.order.version,
@@ -5647,8 +5721,39 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
       );
       void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
       void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
-      messageApi.success('Thanh toán đơn hàng thành công!');
-      navigate(`/pos/invoices/${result.invoiceId}`, { replace: true });
+
+      if (andPrint) {
+        const printData = buildPrintDataFromQuote(
+          quote.data,
+          'PAYMENT',
+          currentMethodItem.backendMethod,
+          cashReceived,
+        );
+        const resolvedCode =
+          result.displayCode ||
+          quote.data.order.displayCode ||
+          (quote.data.order.id ? `HD-${quote.data.order.id.slice(0, 8).toUpperCase()}` : '—');
+        printData.orderCode = resolvedCode;
+        printData.invoiceCode = resolvedCode;
+        await printReceipt({
+          data: printData,
+          printSettings: printSettings.data,
+          storeInfo: {
+            storeName: staffContext.data?.storeName ?? null,
+            phone: staffContext.data?.storePhone ?? null,
+            address: staffContext.data?.storeAddress ?? null,
+            bankName: staffContext.data?.bankName ?? null,
+            bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
+            bankAccountName: staffContext.data?.bankAccountName ?? null,
+          },
+        });
+        messageApi.success('Thanh toán và in hóa đơn thành công!');
+      } else {
+        messageApi.success('Thanh toán đơn hàng thành công!');
+      }
+
+      // Return directly to POS home
+      navigate('/pos', { replace: true });
     } catch (error) {
       messageApi.error(errorText(error));
     } finally {
@@ -6081,21 +6186,53 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
                 </div>
               )}
 
-              <Button
-                type="primary"
-                size="large"
-                block
-                className="staff-payment-page__submit-btn"
-                loading={submitting}
-                disabled={
-                  !quote.data || (selectedMethod === 'CASH' && (cashReceived ?? 0) < totalVnd)
-                }
-                onClick={() => {
-                  void handleConfirmPayment();
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 10,
+                  width: '100%',
                 }}
               >
-                {selectedMethod === 'CASH' ? 'Xác nhận thanh toán' : 'Xác nhận đã nhận tiền'}
-              </Button>
+                <Button
+                  type="primary"
+                  size="large"
+                  block
+                  icon={<PrinterOutlined />}
+                  className="staff-payment-page__submit-btn"
+                  style={{
+                    backgroundColor: '#10b981',
+                    borderColor: '#10b981',
+                    height: 48,
+                    fontWeight: 700,
+                    fontSize: 15.5,
+                  }}
+                  loading={submitting}
+                  disabled={
+                    !quote.data || (selectedMethod === 'CASH' && (cashReceived ?? 0) < totalVnd)
+                  }
+                  onClick={() => {
+                    void handleConfirmPayment(true);
+                  }}
+                >
+                  {selectedMethod === 'CASH'
+                    ? 'Xác nhận thanh toán & in'
+                    : 'Xác nhận đã nhận tiền & in'}
+                </Button>
+                <Button
+                  size="large"
+                  block
+                  icon={<CheckOutlined />}
+                  disabled={
+                    !quote.data || (selectedMethod === 'CASH' && (cashReceived ?? 0) < totalVnd)
+                  }
+                  onClick={() => {
+                    void handleConfirmPayment(false);
+                  }}
+                >
+                  {selectedMethod === 'CASH' ? 'Xác nhận thanh toán' : 'Xác nhận đã nhận tiền'}
+                </Button>
+              </div>
             </div>
           </div>
         </div>

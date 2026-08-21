@@ -973,21 +973,21 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
           values.productType === 'TIME'
             ? []
             : (values.variants ?? []).map((variant) => {
-              const item: {
-                id?: string;
-                name: string;
-                salePriceVnd: number | null;
-                costPriceVnd: number;
-                promptPrice: boolean;
-              } = {
-                name: variant.name,
-                salePriceVnd: variant.promptPrice ? null : variant.salePriceVnd,
-                costPriceVnd: variant.costPriceVnd ?? 0,
-                promptPrice: Boolean(variant.promptPrice),
-              };
-              if (variant.id) item.id = variant.id;
-              return item;
-            }),
+                const item: {
+                  id?: string;
+                  name: string;
+                  salePriceVnd: number | null;
+                  costPriceVnd: number;
+                  promptPrice: boolean;
+                } = {
+                  name: variant.name,
+                  salePriceVnd: variant.promptPrice ? null : variant.salePriceVnd,
+                  costPriceVnd: variant.costPriceVnd ?? 0,
+                  promptPrice: Boolean(variant.promptPrice),
+                };
+                if (variant.id) item.id = variant.id;
+                return item;
+              }),
       };
       const saved = await jsonRequest<{ id: string }>(
         isEdit ? `/api/v1/owner/catalog/products/${productId}` : '/api/v1/owner/catalog/products',
@@ -1013,13 +1013,13 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
             roundingUnitVnd: values.roundingUnitVnd,
             firstPeriod: values.firstPeriodEnabled
               ? {
-                enabled: true,
-                durationSeconds: durationToSeconds(
-                  values.firstPeriodDurationValue,
-                  values.firstPeriodDurationUnit,
-                ),
-                priceVnd: values.firstPeriodPrice,
-              }
+                  enabled: true,
+                  durationSeconds: durationToSeconds(
+                    values.firstPeriodDurationValue,
+                    values.firstPeriodDurationUnit,
+                  ),
+                  priceVnd: values.firstPeriodPrice,
+                }
               : { enabled: false },
             specialWindows: windows.map((window) => ({
               name: window.name.trim(),

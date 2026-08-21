@@ -534,6 +534,7 @@ export class PosRepository {
       .prepare(
         `SELECT s.id AS storeId, s.name AS storeName,
                 u.id AS employeeId, u.display_name AS employeeName,
+                ss.phone AS storePhone, ss.address AS storeAddress,
                 ss.bank_name AS bankName, ss.bank_account_number AS bankAccountNumber,
                 ss.bank_account_name AS bankAccountName
          FROM stores s
@@ -549,6 +550,8 @@ export class PosRepository {
         storeName: string;
         employeeId: string;
         employeeName: string;
+        storePhone: string | null;
+        storeAddress: string | null;
         bankName: string | null;
         bankAccountNumber: string | null;
         bankAccountName: string | null;

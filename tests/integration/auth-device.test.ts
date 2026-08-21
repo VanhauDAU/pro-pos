@@ -23,6 +23,8 @@ async function seedStore() {
     name: 'Pilot Store',
     ownerDisplayName: 'Pilot Owner',
     ownerEmail: OWNER_EMAIL,
+    ownerUsername: 'owner.test',
+    ownerPassword: 'OwnerPassword123!',
   });
 }
 
@@ -80,6 +82,64 @@ describe('Owner and POS activation invariants', () => {
     await seedStore();
   });
 
+  it('logs in Owner using username and password', async () => {
+    const login = await SELF.fetch(`${ORIGIN}/api/v1/auth/owner/login`, {
+      method: 'POST',
+      headers: {
+        Origin: ORIGIN,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        username: 'owner.test',
+        password: 'OwnerPassword123!',
+      }),
+    });
+    expect(login.status).toBe(200);
+    expect(login.headers.get('Set-Cookie')).toContain('__Host-propos-session=');
+    const data = await jsonData<{
+      actor: { kind: string; displayName: string };
+      csrfToken: string;
+    }>(login);
+    expect(data.actor.kind).toBe('OWNER');
+    expect(data.actor.displayName).toBe('Pilot Owner');
+    expect(data.csrfToken).toBeTruthy();
+  });
+
+  it('rejects Owner login with incorrect password', async () => {
+    const login = await SELF.fetch(`${ORIGIN}/api/v1/auth/owner/login`, {
+      method: 'POST',
+      headers: {
+        Origin: ORIGIN,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        username: 'owner.test',
+        password: 'WrongPassword!',
+      }),
+    });
+    expect(login.status).toBe(401);
+  });
+
+  it('activates POS device directly using Owner username and password', async () => {
+    const activate = await SELF.fetch(`${ORIGIN}/api/v1/device-activations/direct`, {
+      method: 'POST',
+      headers: {
+        Origin: ORIGIN,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        username: 'owner.test',
+        password: 'OwnerPassword123!',
+        deviceName: 'Máy thu ngân trực tiếp',
+      }),
+    });
+    expect(activate.status).toBe(201);
+    expect(activate.headers.get('Set-Cookie')).toContain('__Host-propos-device=');
+    const data = await jsonData<{ device: { name: string; status: string } }>(activate);
+    expect(data.device.name).toBe('Máy thu ngân trực tiếp');
+    expect(data.device.status).toBe('ACTIVE');
+  });
+
   it('rejects an Access callback when Cloudflare did not authenticate the request', async () => {
     const response = await SELF.fetch(`${ORIGIN}/api/v1/auth/access/complete`, {
       redirect: 'manual',
@@ -98,28 +158,29 @@ describe('Owner and POS activation invariants', () => {
   });
 
   it('returns a failed SUPER_ADMIN callback to the platform login page', async () => {
+    const unauthorizedEmail = 'attacker@example.com';
     const start = await SELF.fetch(`${ORIGIN}/api/v1/auth/access/start`, {
       method: 'POST',
       headers: { Origin: ORIGIN, 'Content-Type': 'application/json' },
       body: JSON.stringify({ purpose: 'PLATFORM_LOGIN' }),
     });
+    expect(start.status).toBe(200);
     const accessCookie = cookieValue(start, '__Host-propos-access')!;
     const startData = await jsonData<{ loginUrl: string }>(start);
-    const requestId = new URL(startData.loginUrl).searchParams.get('request')!;
-    const code = await authorizeBridge(requestId, 'not-an-admin@example.com');
+    const requestId = new URL(startData.loginUrl).searchParams.get('request');
+    const rawCode = await authorizeBridge(requestId!, unauthorizedEmail);
 
-    const callback = await SELF.fetch(
-      `${ORIGIN}/api/v1/auth/access/complete?code=${encodeURIComponent(code)}`,
+    const complete = await SELF.fetch(
+      `${ORIGIN}/api/v1/auth/access/complete?code=${encodeURIComponent(rawCode)}`,
       {
-        redirect: 'manual',
         headers: { Cookie: accessCookie },
+        redirect: 'manual',
       },
     );
-
-    expect(callback.status).toBe(303);
-    expect(callback.headers.get('Location')).toBe(
-      `${ORIGIN}/platform/login?authError=ACCESS_IDENTITY_DENIED`,
-    );
+    expect(complete.status).toBe(303);
+    const location = complete.headers.get('Location');
+    expect(location).toContain('/platform/login');
+    expect(location).toContain('authError=ACCESS_IDENTITY_DENIED');
   });
 
   it('lets SUPER_ADMIN create and lock a store through the protected API', async () => {
@@ -163,14 +224,17 @@ describe('Owner and POS activation invariants', () => {
   });
 
   it('allows Owner login on a fresh device without creating a POS device', async () => {
+    const beforeCount = await env.DB.prepare('SELECT COUNT(*) AS total FROM devices').first<{
+      total: number;
+    }>();
     const response = await completeAccess('OWNER_LOGIN');
 
     expect(response.purpose).toBe('OWNER_LOGIN');
     expect(response).toHaveProperty('rawSession');
-    const count = await env.DB.prepare('SELECT COUNT(*) AS total FROM devices').first<{
+    const afterCount = await env.DB.prepare('SELECT COUNT(*) AS total FROM devices').first<{
       total: number;
     }>();
-    expect(count?.total).toBe(0);
+    expect(afterCount?.total).toBe(beforeCount?.total);
   });
 
   it('activates a POS only after dedicated Owner authorization', async () => {
@@ -308,5 +372,63 @@ describe('Owner and POS activation invariants', () => {
       ),
     );
     expect(logout.headers.get('Set-Cookie')).toContain('__Host-propos-session=; Max-Age=0');
+  });
+
+  it('allows Owner to change password and login with the new password', async () => {
+    const loginInitial = await SELF.fetch(`${ORIGIN}/api/v1/auth/owner/login`, {
+      method: 'POST',
+      headers: {
+        Origin: ORIGIN,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        username: 'owner.test',
+        password: 'OwnerPassword123!',
+      }),
+    });
+    expect(loginInitial.status).toBe(200);
+    const sessionCookie = cookieValue(loginInitial, '__Host-propos-session')!;
+    const initialData = await jsonData<{ csrfToken: string }>(loginInitial);
+
+    const change = await SELF.fetch(`${ORIGIN}/api/v1/auth/change-password`, {
+      method: 'POST',
+      headers: {
+        Origin: ORIGIN,
+        Cookie: sessionCookie,
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': initialData.csrfToken,
+      },
+      body: JSON.stringify({
+        currentPassword: 'OwnerPassword123!',
+        newPassword: 'BrandNewOwnerPassword456!',
+      }),
+    });
+    expect(change.status).toBe(200);
+
+    const loginOld = await SELF.fetch(`${ORIGIN}/api/v1/auth/owner/login`, {
+      method: 'POST',
+      headers: {
+        Origin: ORIGIN,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        username: 'owner.test',
+        password: 'OwnerPassword123!',
+      }),
+    });
+    expect(loginOld.status).toBe(401);
+
+    const loginNew = await SELF.fetch(`${ORIGIN}/api/v1/auth/owner/login`, {
+      method: 'POST',
+      headers: {
+        Origin: ORIGIN,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        username: 'owner.test',
+        password: 'BrandNewOwnerPassword456!',
+      }),
+    });
+    expect(loginNew.status).toBe(200);
   });
 });

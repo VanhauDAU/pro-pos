@@ -1,4 +1,9 @@
-import { ArrowLeftOutlined, EnvironmentOutlined, SaveOutlined } from '@ant-design/icons';
+import {
+  ArrowLeftOutlined,
+  EnvironmentOutlined,
+  LockOutlined,
+  SaveOutlined,
+} from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
@@ -8,6 +13,7 @@ import {
   Divider,
   Form,
   Input,
+  Modal,
   Row,
   Select,
   Spin,
@@ -20,7 +26,7 @@ import { useNavigate } from 'react-router';
 import type { AuthContextResponse } from '@contracts/auth';
 import { VIETNAM_PHONE_REGEX } from '@contracts/store';
 
-import { ApiError, apiRequest } from '@client/lib/api';
+import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 
 const LOCATION_API = 'https://provinces.open-api.vn/api/v2';
 
@@ -128,6 +134,29 @@ export function OwnerStoreSettingsPage() {
     },
     staleTime: 24 * 60 * 60 * 1000,
   });
+
+  const [passwordModalOpen, setPasswordModalOpen] = useState(false);
+  const [passwordForm] = Form.useForm();
+  const [passwordSaving, setPasswordSaving] = useState(false);
+
+  const handleChangePassword = async (values: {
+    currentPassword?: string;
+    newPassword: string;
+  }) => {
+    setPasswordSaving(true);
+    try {
+      await jsonRequest('/api/v1/auth/change-password', values, {
+        headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' },
+      });
+      messageApi.success('Đổi mật khẩu thành công.');
+      passwordForm.resetFields();
+      setPasswordModalOpen(false);
+    } catch (err) {
+      messageApi.error(err instanceof ApiError ? err.message : 'Không thể đổi mật khẩu.');
+    } finally {
+      setPasswordSaving(false);
+    }
+  };
 
   useEffect(() => {
     if (!settings.data) return;
@@ -259,43 +288,42 @@ export function OwnerStoreSettingsPage() {
                   />
                 </Form.Item>
               </Col>
-              <Col xs={24} md={12}>
-                <Form.Item
-                  label={
-                    <span>
-                      Đơn vị tiền tệ <b className="owner-required">(*)</b>
-                    </span>
-                  }
-                  name="currency"
-                >
-                  <Select options={[{ value: 'VND', label: 'Việt Nam đồng (VND)' }]} disabled />
-                </Form.Item>
-              </Col>
             </Row>
             <Form.Item
-              label={
-                <span>
-                  Địa chỉ <b className="owner-required">(*)</b>
-                </span>
-              }
-              name="address"
-              rules={[{ required: true, message: 'Vui lòng nhập địa chỉ.' }]}
+              label="Đơn vị tiền tệ"
+              name="currency"
+              rules={[{ required: true, message: 'Vui lòng chọn đơn vị tiền tệ.' }]}
             >
-              <Input.TextArea
-                autoSize={{ minRows: 2, maxRows: 4 }}
-                maxLength={500}
-                showCount
-                placeholder="Số nhà, đường, thôn/tổ..."
+              <Select
+                options={[
+                  { value: 'VND', label: 'VND (Việt Nam Đồng)' },
+                  { value: 'USD', label: 'USD (Đô la Mỹ)' },
+                ]}
+              />
+            </Form.Item>
+          </Card>
+
+          <aside className="owner-store-settings-intro">
+            <Typography.Title level={4}>Địa chỉ</Typography.Title>
+            <Typography.Paragraph type="secondary">
+              Địa chỉ kinh doanh được in trên hóa đơn thanh toán cho khách hàng.
+            </Typography.Paragraph>
+          </aside>
+          <Card className="owner-store-settings-card">
+            <Form.Item
+              label="Số nhà, tên đường"
+              name="address"
+              rules={[{ required: true, message: 'Vui lòng nhập địa chỉ chi tiết.' }]}
+            >
+              <Input
+                prefix={<EnvironmentOutlined style={{ color: '#94a3b8' }} />}
+                placeholder="Ví dụ: 123 Đường Nguyễn Văn Cừ"
               />
             </Form.Item>
             <Row gutter={16}>
               <Col xs={24} md={12}>
                 <Form.Item
-                  label={
-                    <span>
-                      Tỉnh / Thành phố <b className="owner-required">(*)</b>
-                    </span>
-                  }
+                  label="Tỉnh / Thành phố"
                   name="provinceCode"
                   rules={[{ required: true, message: 'Vui lòng chọn tỉnh/thành phố.' }]}
                 >
@@ -305,28 +333,21 @@ export function OwnerStoreSettingsPage() {
                     loading={provinces.isLoading}
                     placeholder="Chọn tỉnh/thành phố"
                     options={
-                      provinces.data?.map((item) => ({
-                        value: item.code,
-                        label: item.name,
-                      })) ?? []
+                      provinces.data?.map((item) => ({ value: item.code, label: item.name })) ?? []
                     }
                     onChange={(value: number) => {
                       setProvinceCode(value);
-                      form.resetFields(['wardCode']);
+                      form.setFieldValue('wardCode', undefined);
                     }}
                     notFoundContent={
-                      provinces.isError ? 'Không tải được dữ liệu tỉnh/thành phố' : undefined
+                      provinces.isError ? 'Không tải được dữ liệu tỉnh/thành' : undefined
                     }
                   />
                 </Form.Item>
               </Col>
               <Col xs={24} md={12}>
                 <Form.Item
-                  label={
-                    <span>
-                      Phường / Xã <b className="owner-required">(*)</b>
-                    </span>
-                  }
+                  label="Phường / Xã"
                   name="wardCode"
                   rules={[{ required: true, message: 'Vui lòng chọn phường/xã.' }]}
                 >
@@ -387,6 +408,35 @@ export function OwnerStoreSettingsPage() {
               <Input placeholder="Ví dụ: NGUYEN VAN A" />
             </Form.Item>
           </Card>
+
+          <aside className="owner-store-settings-intro">
+            <Typography.Title level={4}>Bảo mật tài khoản</Typography.Title>
+            <Typography.Paragraph type="secondary">
+              Quản lý mật khẩu đăng nhập của Chủ cửa hàng.
+            </Typography.Paragraph>
+          </aside>
+          <Card className="owner-store-settings-card">
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: 12,
+              }}
+            >
+              <div>
+                <Typography.Text strong>Mật khẩu Chủ cửa hàng</Typography.Text>
+                <br />
+                <Typography.Text type="secondary">
+                  Dùng để đăng nhập vào trang quản trị và kích hoạt máy POS tại quầy.
+                </Typography.Text>
+              </div>
+              <Button icon={<LockOutlined />} onClick={() => setPasswordModalOpen(true)}>
+                Đổi mật khẩu
+              </Button>
+            </div>
+          </Card>
         </div>
 
         <div className="owner-form-actions">
@@ -396,6 +446,34 @@ export function OwnerStoreSettingsPage() {
           </Button>
         </div>
       </Form>
+
+      <Modal
+        title="Đổi mật khẩu Chủ cửa hàng"
+        open={passwordModalOpen}
+        okText="Đổi mật khẩu"
+        cancelText="Hủy"
+        confirmLoading={passwordSaving}
+        onOk={() => passwordForm.submit()}
+        onCancel={() => !passwordSaving && setPasswordModalOpen(false)}
+        destroyOnClose
+      >
+        <Form form={passwordForm} layout="vertical" onFinish={handleChangePassword}>
+          <Form.Item
+            label="Mật khẩu hiện tại"
+            name="currentPassword"
+            rules={[{ required: true, message: 'Vui lòng nhập mật khẩu hiện tại.' }]}
+          >
+            <Input.Password placeholder="Nhập mật khẩu hiện tại" />
+          </Form.Item>
+          <Form.Item
+            label="Mật khẩu mới"
+            name="newPassword"
+            rules={[{ required: true, min: 6, message: 'Mật khẩu mới tối thiểu 6 ký tự.' }]}
+          >
+            <Input.Password placeholder="Nhập mật khẩu mới (tối thiểu 6 ký tự)" />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 }

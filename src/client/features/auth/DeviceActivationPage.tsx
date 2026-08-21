@@ -1,94 +1,47 @@
-import { DesktopOutlined, MailOutlined } from '@ant-design/icons';
+import { DesktopOutlined, LockOutlined, UserOutlined } from '@ant-design/icons';
 import { useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Form, Input, Steps, Typography } from 'antd';
-import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router';
+import { Alert, Button, Form, Input, Typography } from 'antd';
+import { useState } from 'react';
+import { useNavigate } from 'react-router';
 
-import type {
-  AccessStartResponse,
-  ActivationAuthorizationResponse,
-  ActivationConfirmationResponse,
-} from '@contracts/auth';
+import type { ActivationConfirmationResponse } from '@contracts/auth';
 
-import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
+import { ApiError, jsonRequest } from '@client/lib/api';
 
 import { AuthLayout } from './AuthLayout';
 
-interface DeviceValues {
+interface DirectActivationValues {
+  username: string;
+  password: string;
   deviceName: string;
 }
 
 function activationError(error: unknown) {
-  return error instanceof ApiError ? error.message : 'Không thể thiết lập máy POS.';
+  return error instanceof ApiError ? error.message : 'Không thể kích hoạt máy POS.';
 }
 
 export function DeviceActivationPage() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
-  const [step, setStep] = useState(0);
-  const [csrfToken, setCsrfToken] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const activationIntentKey = useRef<string | null>(null);
 
-  useEffect(() => {
-    if (searchParams.get('authorized') !== '1') return;
-    setSubmitting(true);
-    apiRequest<ActivationAuthorizationResponse>('/api/v1/device-activations/context')
-      .then((response) => {
-        setCsrfToken(response.csrfToken);
-        setStep(1);
-      })
-      .catch((contextError: unknown) => setError(activationError(contextError)))
-      .finally(() => setSubmitting(false));
-  }, [searchParams]);
-
-  const authorize = async () => {
-    activationIntentKey.current = null;
+  const handleActivate = async (values: DirectActivationValues) => {
     setSubmitting(true);
     setError(null);
     try {
-      const response = await jsonRequest<AccessStartResponse>('/api/v1/auth/access/start', {
-        purpose: 'DEVICE_ACTIVATION',
+      await jsonRequest<ActivationConfirmationResponse>('/api/v1/device-activations/direct', {
+        username: values.username.trim(),
+        password: values.password,
+        deviceName: values.deviceName.trim() || 'Máy thu ngân chính',
       });
-      window.location.assign(response.loginUrl);
-    } catch (authorizationError) {
-      setError(activationError(authorizationError));
-      setSubmitting(false);
-    }
-  };
-
-  const confirm = async (values: DeviceValues) => {
-    if (!csrfToken) return;
-    activationIntentKey.current ??= crypto.randomUUID();
-    setSubmitting(true);
-    setError(null);
-    try {
-      await jsonRequest<ActivationConfirmationResponse>(
-        '/api/v1/device-activations/confirm',
-        values,
-        {
-          headers: {
-            'X-CSRF-Token': csrfToken,
-            'Idempotency-Key': activationIntentKey.current,
-          },
-        },
-      );
       await queryClient.invalidateQueries({ queryKey: ['auth-context'] });
-      activationIntentKey.current = null;
       navigate('/?tab=employee', { replace: true });
-    } catch (confirmationError) {
-      setError(activationError(confirmationError));
+    } catch (activateError) {
+      setError(activationError(activateError));
     } finally {
       setSubmitting(false);
     }
-  };
-
-  const cancel = async () => {
-    activationIntentKey.current = null;
-    await apiRequest('/api/v1/device-activations/current', { method: 'DELETE' }).catch(() => null);
-    navigate('/?tab=employee');
   };
 
   return (
@@ -96,60 +49,89 @@ export function DeviceActivationPage() {
       <div className="activation-heading">
         <Typography.Title level={2}>Thiết lập máy POS</Typography.Title>
         <Typography.Paragraph type="secondary">
-          Thực hiện một lần trên trình duyệt Windows tại quầy. Owner xác nhận cửa hàng và đặt tên
-          máy; sau đó nhân viên mới có thể đăng nhập bằng PIN. Đây không phải bước cài phần mềm và
-          Owner trên điện thoại không cần thực hiện.
+          Thực hiện một lần trên trình duyệt tại quầy thu ngân. Chủ cửa hàng xác nhận tài khoản và
+          đặt tên máy; sau đó nhân viên có thể đăng nhập bằng mã PIN nội bộ.
         </Typography.Paragraph>
       </div>
 
-      <Steps
-        className="activation-steps"
-        size="small"
-        current={step}
-        items={[{ title: 'Owner xác nhận' }, { title: 'Đặt tên máy' }]}
-      />
+      {error ? (
+        <Alert
+          className="login-error"
+          type="error"
+          showIcon
+          message={error}
+          style={{ marginBottom: 20 }}
+        />
+      ) : null}
 
-      {error ? <Alert className="login-error" type="error" showIcon title={error} /> : null}
-
-      {step === 0 ? (
-        <div className="owner-otp-login">
-          <Alert
-            type="info"
-            showIcon
-            title="Owner xác nhận bằng email OTP"
-            description="Cloudflare Access gửi mã dùng một lần đến email Owner đã được cấp quyền cho cửa hàng."
-          />
-          <Button
-            type="primary"
+      <Form<DirectActivationValues>
+        layout="vertical"
+        requiredMark={false}
+        initialValues={{ deviceName: 'Máy thu ngân chính' }}
+        onFinish={handleActivate}
+      >
+        <Form.Item
+          label="Tài khoản Chủ cửa hàng"
+          name="username"
+          rules={[{ required: true, message: 'Vui lòng nhập tên đăng nhập hoặc email Owner.' }]}
+        >
+          <Input
             size="large"
-            block
-            icon={<MailOutlined />}
-            loading={submitting}
-            onClick={authorize}
-          >
-            Xác thực Owner qua email
-          </Button>
-        </div>
-      ) : (
-        <Form<DeviceValues> layout="vertical" requiredMark={false} onFinish={confirm}>
-          <Form.Item
-            name="deviceName"
-            rules={[{ required: true, message: 'Vui lòng đặt tên cho máy POS.' }]}
-          >
-            <Input
-              size="large"
-              maxLength={80}
-              prefix={<DesktopOutlined />}
-              placeholder="Ví dụ: Máy thu ngân chính"
-            />
-          </Form.Item>
-          <Button type="primary" htmlType="submit" size="large" block loading={submitting}>
-            Kích hoạt máy POS
-          </Button>
-        </Form>
-      )}
+            prefix={<UserOutlined style={{ color: '#94a3b8' }} />}
+            placeholder="Tên đăng nhập hoặc Email"
+            autoComplete="username"
+            disabled={submitting}
+          />
+        </Form.Item>
 
-      <Button className="activation-cancel" type="link" block onClick={cancel}>
+        <Form.Item
+          label="Mật khẩu Chủ cửa hàng"
+          name="password"
+          rules={[{ required: true, message: 'Vui lòng nhập mật khẩu Owner.' }]}
+        >
+          <Input.Password
+            size="large"
+            prefix={<LockOutlined style={{ color: '#94a3b8' }} />}
+            placeholder="Mật khẩu Owner"
+            autoComplete="current-password"
+            disabled={submitting}
+          />
+        </Form.Item>
+
+        <Form.Item
+          label="Tên máy POS tại quầy"
+          name="deviceName"
+          rules={[{ required: true, message: 'Vui lòng đặt tên cho máy POS.' }]}
+        >
+          <Input
+            size="large"
+            maxLength={80}
+            prefix={<DesktopOutlined style={{ color: '#94a3b8' }} />}
+            placeholder="Ví dụ: Máy thu ngân chính"
+            disabled={submitting}
+          />
+        </Form.Item>
+
+        <Button
+          type="primary"
+          htmlType="submit"
+          size="large"
+          block
+          loading={submitting}
+          className="owner-login-btn"
+          style={{ marginTop: 12 }}
+        >
+          Kích hoạt máy POS
+        </Button>
+      </Form>
+
+      <Button
+        className="activation-cancel"
+        type="link"
+        block
+        onClick={() => navigate('/?tab=employee')}
+        style={{ marginTop: 16 }}
+      >
         Quay lại đăng nhập
       </Button>
     </AuthLayout>

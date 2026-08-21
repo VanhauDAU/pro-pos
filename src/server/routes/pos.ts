@@ -28,6 +28,7 @@ import {
 } from '@server/middleware/authorization';
 import { PosService } from '@server/services/pos-service';
 import { StoreService } from '@server/services/store-service';
+import { OwnerInvoiceService } from '@server/services/owner-invoice-service';
 import { RealtimeRepository } from '@server/repositories/realtime-repository';
 import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
 import { qrOrderStaffRoutes } from '@server/routes/qr-order-staff';
@@ -468,9 +469,41 @@ posRoutes.post('/orders/:orderId/cancel', requirePermission('order.manage'), asy
   );
 });
 
-posRoutes.get('/invoices', requirePermission('invoice.view'), async (c) =>
-  success(c, await new PosService(c.env).listInvoices(c.get('actor').storeId!)),
-);
+posRoutes.get('/invoices', requirePermission('invoice.view'), async (c) => {
+  const storeId = c.get('actor').storeId!;
+  const qs = c.req.query();
+
+  const rawStatus = qs['status'];
+  const status: 'PAID' | 'CANCELLED' | undefined =
+    rawStatus === 'PAID' || rawStatus === 'CANCELLED' ? rawStatus : undefined;
+
+  const rawOrderType = qs['orderType'];
+  const orderType: 'DINE_IN' | 'TAKEAWAY' | undefined =
+    rawOrderType === 'DINE_IN' || rawOrderType === 'TAKEAWAY' ? rawOrderType : undefined;
+
+  const rawMethod = qs['method'];
+  const method: 'CASH' | 'BANK_TRANSFER' | undefined =
+    rawMethod === 'CASH' || rawMethod === 'BANK_TRANSFER' ? rawMethod : undefined;
+
+  const search = qs['search']?.trim() ?? '';
+  const dateFrom = qs['dateFrom'] ?? null;
+  const dateTo = qs['dateTo'] ?? null;
+  const page = Math.max(1, Number(qs['page'] ?? 1));
+  const limit = Math.min(100, Math.max(1, Number(qs['limit'] ?? 20)));
+
+  const result = await new OwnerInvoiceService(c.env).listInvoices({
+    storeId,
+    status,
+    search,
+    orderType,
+    method,
+    dateFrom,
+    dateTo,
+    page,
+    limit,
+  });
+  return success(c, result);
+});
 
 posRoutes.get('/invoices/:invoiceId', requirePermission('invoice.view'), async (c) =>
   success(
@@ -478,6 +511,26 @@ posRoutes.get('/invoices/:invoiceId', requirePermission('invoice.view'), async (
     await new PosService(c.env).getInvoice(c.get('actor').storeId!, c.req.param('invoiceId')),
   ),
 );
+
+posRoutes.delete('/invoices/:id', requirePermission('invoice.delete'), async (c) => {
+  const storeId = c.get('actor').storeId!;
+  const id = c.req.param('id');
+  const actor = c.get('actor');
+  const requestId = c.get('requestId') || 'req-delete-invoice';
+
+  const result = await new OwnerInvoiceService(c.env).deleteInvoice({
+    storeId,
+    targetId: id,
+    actorUserId: actor.id,
+    requestId,
+  });
+
+  c.executionCtx.waitUntil(
+    new RealtimeDispatcher(c.env).dispatchStore(storeId).catch(() => undefined),
+  );
+
+  return success(c, result);
+});
 
 posRoutes.route('/qr-orders', qrOrderStaffRoutes);
 posRoutes.route('/push', pushNotificationRoutes);

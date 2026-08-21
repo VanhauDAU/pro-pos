@@ -27,6 +27,7 @@ import {
   PlusOutlined,
   PrinterOutlined,
   QrcodeOutlined,
+  RightOutlined,
   SearchOutlined,
   ShopOutlined,
   ShoppingCartOutlined,
@@ -77,6 +78,7 @@ import {
 } from '@client/lib/pos-receipt-printer';
 import { OrderDetailPage } from './OrderDetailPage';
 import { PushNotificationControl } from '@client/features/pwa/PushNotificationControl';
+import { OwnerInvoicesPage } from '@client/features/owner/OwnerInvoicesPage';
 
 import { apiRequest, jsonRequest } from '@client/lib/api';
 import { playPosSound } from '@client/lib/sound';
@@ -98,6 +100,7 @@ interface StaffContext {
   bankName?: string | null;
   bankAccountNumber?: string | null;
   bankAccountName?: string | null;
+  permissions?: string[];
   capabilities?: { posRealtime: boolean };
 }
 
@@ -1032,6 +1035,11 @@ function MorePage({ auth }: { auth: AuthContextResponse }) {
     queryKey: ['pos-context'],
     queryFn: () => apiRequest<StaffContext>('/api/v1/pos/context'),
   });
+
+  const permissions = context.data?.permissions ?? [];
+  const isOwner = auth.actor?.kind === 'OWNER';
+  const hasPermission = (key: string) => isOwner || permissions.includes(key);
+
   const logout = useMutation({
     mutationFn: () =>
       apiRequest('/api/v1/auth/logout', {
@@ -1052,24 +1060,156 @@ function MorePage({ auth }: { auth: AuthContextResponse }) {
         <Avatar size={76} icon={<UserOutlined />} />
         <div>
           <Typography.Title level={2}>{auth.actor!.displayName}</Typography.Title>
-          <Typography.Text>Nhân viên cửa hàng</Typography.Text>
+          <Typography.Text>
+            {isOwner ? 'Chủ cửa hàng (Quản trị viên)' : 'Nhân viên cửa hàng'}
+          </Typography.Text>
         </div>
       </section>
-      <Card className="staff-store-card" loading={context.isLoading}>
+
+      {/* ── Feature Modules Section ─────────────────────────────────── */}
+      <div style={{ marginBottom: 16 }}>
+        <Typography.Title
+          level={5}
+          style={{
+            margin: '0 0 10px 4px',
+            color: '#475569',
+            fontSize: 13,
+            textTransform: 'uppercase',
+            letterSpacing: '0.04em',
+          }}
+        >
+          Chức năng & Nghiệp vụ được phân quyền
+        </Typography.Title>
+
+        <Card
+          styles={{ body: { padding: 0 } }}
+          style={{
+            overflow: 'hidden',
+            borderRadius: 12,
+            border: '1px solid #e2e8f0',
+            boxShadow: '0 2px 8px rgba(15, 23, 42, 0.04)',
+          }}
+        >
+          {hasPermission('invoice.view') ? (
+            <div
+              className="staff-more-nav-item"
+              onClick={() => navigate('/pos/invoices')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '16px 18px',
+                cursor: 'pointer',
+                borderBottom: '1px solid #f1f5f9',
+                transition: 'background 0.15s ease',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                <div
+                  style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 10,
+                    background: '#eff6ff',
+                    color: '#0975f7',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 22,
+                  }}
+                >
+                  <FileTextOutlined />
+                </div>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>
+                    Quản lý Hóa đơn & Biên lai
+                  </div>
+                  <div style={{ fontSize: 12.5, color: '#64748b', marginTop: 2 }}>
+                    Xem lịch sử hóa đơn bán hàng, in lại bill, tra cứu đơn đã thanh toán
+                  </div>
+                </div>
+              </div>
+              <RightOutlined style={{ color: '#94a3b8', fontSize: 14 }} />
+            </div>
+          ) : null}
+
+          {/* QR Order fast entry */}
+          <div
+            className="staff-more-nav-item"
+            onClick={() => navigate('/pos/qr-order')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '16px 18px',
+              cursor: 'pointer',
+              borderBottom: '1px solid #f1f5f9',
+              transition: 'background 0.15s ease',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <div
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 10,
+                  background: '#fef3c7',
+                  color: '#d97706',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 22,
+                }}
+              >
+                <QrcodeOutlined />
+              </div>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>
+                  Yêu cầu gọi món qua QR
+                </div>
+                <div style={{ fontSize: 12.5, color: '#64748b', marginTop: 2 }}>
+                  Tiếp nhận và xác nhận món khách gọi từ mã QR tại bàn
+                </div>
+              </div>
+            </div>
+            <RightOutlined style={{ color: '#94a3b8', fontSize: 14 }} />
+          </div>
+
+          {/* Push Notification Setup */}
+          <div style={{ padding: '14px 18px' }}>
+            <PushNotificationControl csrfToken={auth.csrfToken} />
+          </div>
+        </Card>
+      </div>
+
+      {/* ── Store Info Section ────────────────────────────────────────── */}
+      <Card
+        className="staff-store-card"
+        loading={context.isLoading}
+        style={{ borderRadius: 12, border: '1px solid #e2e8f0' }}
+      >
         <ShopOutlined />
         <div>
           <strong>{context.data?.storeName ?? 'Cửa hàng'}</strong>
           <span>Mã cửa hàng: {context.data?.storeId ?? '—'}</span>
+          {context.data?.storeAddress ? <span>Địa chỉ: {context.data.storeAddress}</span> : null}
+          {context.data?.storePhone ? <span>Điện thoại: {context.data.storePhone}</span> : null}
         </div>
       </Card>
-      <Card className="staff-more-actions">
+
+      {/* ── Logout Section ───────────────────────────────────────────── */}
+      <Card
+        className="staff-more-actions"
+        style={{ borderRadius: 12, border: '1px solid #e2e8f0' }}
+      >
         <button type="button" onClick={() => logout.mutate()}>
           <LogoutOutlined />
-          <span>Đăng xuất</span>
+          <span>Đăng xuất tài khoản</span>
         </button>
       </Card>
+
       <Typography.Text type="secondary" className="staff-version">
-        Pro POS · Cổng nhân viên
+        Pro POS · Cổng nhân viên bán hàng
       </Typography.Text>
     </div>
   );
@@ -6803,29 +6943,36 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
 }
 
 export function StaffPosPortalPage() {
+  const navigate = useNavigate();
   const location = useLocation();
   const [ordersSearch, setOrdersSearch] = useState('');
   const auth = useQuery({
     queryKey: ['auth-context'],
     queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
   });
+  const posContext = useQuery({
+    queryKey: ['pos-context'],
+    queryFn: () => apiRequest<StaffContext>('/api/v1/pos/context'),
+  });
   if (auth.isLoading) return <Spin fullscreen description="Đang mở cổng nhân viên" />;
   if (auth.isError || auth.data?.actor?.kind !== 'EMPLOYEE') {
     return <Navigate to="/?tab=employee&authError=SESSION_EXPIRED" replace />;
   }
 
-  const isInvoice = location.pathname.startsWith('/pos/invoices/');
+  const isInvoiceDetail = location.pathname.startsWith('/pos/invoices/');
+  const isInvoicesList =
+    location.pathname === '/pos/invoices' || location.pathname.startsWith('/pos/invoices?');
   const isDetail =
     location.pathname.startsWith('/pos/orders/') && location.pathname.endsWith('/detail');
   const isPayment =
     location.pathname.startsWith('/pos/orders/') && location.pathname.endsWith('/payment');
   const isEditor = location.pathname.startsWith('/pos/orders/') && !isPayment && !isDetail;
-  const isFullScreen = isInvoice || isPayment || isEditor || isDetail;
+  const isFullScreen = isInvoiceDetail || isPayment || isEditor || isDetail;
   const active = location.pathname.startsWith('/pos/areas')
     ? 'areas'
     : location.pathname.startsWith('/pos/qr-order')
       ? 'qr'
-      : location.pathname.startsWith('/pos/more')
+      : location.pathname.startsWith('/pos/more') || isInvoicesList
         ? 'more'
         : 'orders';
 
@@ -6854,8 +7001,15 @@ export function StaffPosPortalPage() {
             />
           ) : null}
           <div className="staff-pos-main">
-            {isInvoice ? (
+            {isInvoiceDetail ? (
               <InvoicePage />
+            ) : isInvoicesList ? (
+              <OwnerInvoicesPage
+                apiPrefix="/api/v1/pos/invoices"
+                userPermissions={posContext.data?.permissions}
+                isOwner={false}
+                onBack={() => navigate('/pos/more')}
+              />
             ) : isDetail && detailOrderId ? (
               <OrderDetailPage orderId={detailOrderId} />
             ) : isPayment && paymentOrderId ? (

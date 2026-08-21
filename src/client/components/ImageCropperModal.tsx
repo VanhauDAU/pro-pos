@@ -177,9 +177,8 @@ export function ImageCropperModal({
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('Không thể khởi tạo bộ dựng ảnh.');
 
-      // Background fill (pure white or transparent)
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, outW, outH);
+      // Clear canvas to preserve full transparency for PNG / WebP images
+      ctx.clearRect(0, 0, outW, outH);
 
       // Scale factor from preview frame to export canvas
       const exportRatio = outW / frameWidth;
@@ -203,11 +202,11 @@ export function ImageCropperModal({
       ctx.restore();
 
       const blob = await new Promise<Blob | null>((resolve) =>
-        canvas.toBlob(resolve, 'image/jpeg', 0.92),
+        canvas.toBlob(resolve, 'image/webp', 0.95),
       );
       if (!blob) throw new Error('Không thể xuất tệp ảnh.');
 
-      const file = new File([blob], `product_${Date.now()}.jpg`, { type: 'image/jpeg' });
+      const file = new File([blob], `product_${Date.now()}.webp`, { type: 'image/webp' });
       await onConfirm(file);
       onClose();
     } catch (err) {

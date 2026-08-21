@@ -11,6 +11,7 @@ import { calculateTimePrice } from '@domain/pricing/engine';
 import { AppError } from '@server/lib/app-error';
 import { PosRepository } from '@server/repositories/pos-repository';
 import { AuditRepository } from '@server/repositories/audit-repository';
+import { AuthorizationRepository } from '@server/repositories/authorization-repository';
 
 function checkedMoneyFromMilli(unitPriceVnd: number, quantityMilli: number) {
   const amount = (BigInt(unitPriceVnd) * BigInt(quantityMilli) + 500n) / 1000n;
@@ -186,15 +187,19 @@ export class PosService {
     return [...products.values()];
   }
 
-  getStaffContext(storeId: string, actorId: string) {
-    return this.repository.getStaffContext(storeId, actorId).then((context) => {
-      if (!context) return context;
-      const { posRealtimeEnabled, ...staffContext } = context;
-      return {
-        ...staffContext,
-        capabilities: { posRealtime: posRealtimeEnabled === 1 },
-      };
-    });
+  async getStaffContext(storeId: string, actorId: string) {
+    const context = await this.repository.getStaffContext(storeId, actorId);
+    if (!context) return context;
+    const permissions = await new AuthorizationRepository(this.env.DB).listUserPermissions(
+      storeId,
+      actorId,
+    );
+    const { posRealtimeEnabled, ...staffContext } = context;
+    return {
+      ...staffContext,
+      permissions,
+      capabilities: { posRealtime: posRealtimeEnabled === 1 },
+    };
   }
 
   async productPricingSnapshot(

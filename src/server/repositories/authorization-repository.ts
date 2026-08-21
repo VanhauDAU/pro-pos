@@ -23,4 +23,19 @@ export class AuthorizationRepository {
       .first<{ allowed: 1 }>();
     return row?.allowed === 1;
   }
+
+  async listUserPermissions(storeId: string, userId: string): Promise<string[]> {
+    const rows = await this.db
+      .prepare(
+        `SELECT rp.permission_key AS permissionKey
+         FROM store_memberships sm
+         JOIN role_permissions rp
+           ON rp.store_id = sm.store_id AND rp.role_id = sm.role_id
+         WHERE sm.store_id = ? AND sm.user_id = ? AND sm.status = 'ACTIVE'
+         ORDER BY rp.permission_key ASC`,
+      )
+      .bind(storeId, userId)
+      .all<{ permissionKey: string }>();
+    return rows.results.map((r) => r.permissionKey);
+  }
 }

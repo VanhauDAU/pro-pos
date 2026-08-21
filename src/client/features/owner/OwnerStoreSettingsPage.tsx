@@ -70,7 +70,6 @@ interface StoreFormValues {
   bankAccountName?: string | undefined;
 }
 
-
 interface VietQRBank {
   id: number;
   name: string;
@@ -211,20 +210,20 @@ export function OwnerStoreSettingsPage() {
       <Divider />
       <Form form={form} layout="vertical" onFinish={save} requiredMark={false}>
         <div className="owner-store-settings-layout">
-        <aside className="owner-store-settings-intro">
-          <Typography.Title level={4}>Thông tin chung</Typography.Title>
-          <Typography.Paragraph type="secondary">
-            Thông tin về cửa hàng, địa chỉ và lĩnh vực kinh doanh của bạn.
-          </Typography.Paragraph>
-          <Typography.Text type="secondary" italic>
-            Mã cửa hàng: {settings.data.id.slice(0, 8).toUpperCase()}
-          </Typography.Text>
-          <div className="owner-store-settings-tip">
-            <EnvironmentOutlined />
-            <span>Tỉnh/thành phố và phường/xã được tải theo dữ liệu hành chính mới nhất.</span>
-          </div>
-        </aside>
-        <Card className="owner-store-settings-card">
+          <aside className="owner-store-settings-intro">
+            <Typography.Title level={4}>Thông tin chung</Typography.Title>
+            <Typography.Paragraph type="secondary">
+              Thông tin về cửa hàng, địa chỉ và lĩnh vực kinh doanh của bạn.
+            </Typography.Paragraph>
+            <Typography.Text type="secondary" italic>
+              Mã cửa hàng: {settings.data.id.slice(0, 8).toUpperCase()}
+            </Typography.Text>
+            <div className="owner-store-settings-tip">
+              <EnvironmentOutlined />
+              <span>Tỉnh/thành phố và phường/xã được tải theo dữ liệu hành chính mới nhất.</span>
+            </div>
+          </aside>
+          <Card className="owner-store-settings-card">
             <Form.Item
               label={
                 <span>
@@ -347,61 +346,56 @@ export function OwnerStoreSettingsPage() {
                 </Form.Item>
               </Col>
             </Row>
-        </Card>
+          </Card>
 
-        <aside className="owner-store-settings-intro">
-          <Typography.Title level={4}>Thanh toán VietQR</Typography.Title>
-          <Typography.Paragraph type="secondary">
-            Cấu hình ngân hàng nhận tiền để in mã VietQR trên hóa đơn bán hàng.
-          </Typography.Paragraph>
-        </aside>
-        <Card className="owner-store-settings-card">
-          <Row gutter={16}>
-            <Col xs={24} md={12}>
-              <Form.Item
-                label="Ngân hàng"
-                name="bankName"
-              >
-                <Select
-                  showSearch
-                  allowClear
-                  optionFilterProp="label"
-                  loading={banks.isLoading}
-                  placeholder="Chọn ngân hàng"
-                  options={banks.data?.map(b => ({
-                    value: b.bin,
-                    label: `${b.shortName} - ${b.name}`,
-                  })) ?? []}
-                />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={12}>
-              <Form.Item
-                label="Số tài khoản"
-                name="bankAccountNumber"
-              >
-                <Input placeholder="Nhập số tài khoản" />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item
-            label="Tên chủ tài khoản"
-            name="bankAccountName"
-            normalize={(value) => (value || '').toUpperCase()}
-          >
-            <Input placeholder="Ví dụ: NGUYEN VAN A" />
-          </Form.Item>
-        </Card>
-      </div>
-      
-      <div className="owner-form-actions">
-        <Button onClick={() => navigate('/owner/settings')}>Hủy</Button>
-        <Button type="primary" htmlType="submit" loading={saving} icon={<SaveOutlined />}>
-          Lưu
-        </Button>
-      </div>
+          <aside className="owner-store-settings-intro">
+            <Typography.Title level={4}>Thanh toán VietQR</Typography.Title>
+            <Typography.Paragraph type="secondary">
+              Cấu hình ngân hàng nhận tiền để in mã VietQR trên hóa đơn bán hàng.
+            </Typography.Paragraph>
+          </aside>
+          <Card className="owner-store-settings-card">
+            <Row gutter={16}>
+              <Col xs={24} md={12}>
+                <Form.Item label="Ngân hàng" name="bankName">
+                  <Select
+                    showSearch
+                    allowClear
+                    optionFilterProp="label"
+                    loading={banks.isLoading}
+                    placeholder="Chọn ngân hàng"
+                    options={
+                      banks.data?.map((b) => ({
+                        value: b.bin,
+                        label: `${b.shortName} - ${b.name}`,
+                      })) ?? []
+                    }
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={24} md={12}>
+                <Form.Item label="Số tài khoản" name="bankAccountNumber">
+                  <Input placeholder="Nhập số tài khoản" />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Form.Item
+              label="Tên chủ tài khoản"
+              name="bankAccountName"
+              normalize={(value) => (value || '').toUpperCase()}
+            >
+              <Input placeholder="Ví dụ: NGUYEN VAN A" />
+            </Form.Item>
+          </Card>
+        </div>
+
+        <div className="owner-form-actions">
+          <Button onClick={() => navigate('/owner/settings')}>Hủy</Button>
+          <Button type="primary" htmlType="submit" loading={saving} icon={<SaveOutlined />}>
+            Lưu
+          </Button>
+        </div>
       </Form>
     </div>
-
   );
 }

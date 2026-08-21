@@ -60,7 +60,7 @@ import {
 } from 'antd';
 import type { MenuProps } from 'antd';
 import * as React from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
@@ -5670,7 +5670,9 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
         ]}
       >
         <p>Bàn này đang được tạm dừng tính giờ để thanh toán.</p>
-        <p>Bạn có muốn <strong>Tiếp tục chơi</strong> cho bàn này không?</p>
+        <p>
+          Bạn có muốn <strong>Tiếp tục chơi</strong> cho bàn này không?
+        </p>
       </Modal>
 
       {quote.isLoading ? (
@@ -5802,143 +5804,163 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
               </div>
             </section>
 
-            {selectedMethod === 'BANK_TRANSFER' ? (() => {
-              const bankSettings = quote.data?.bankSettings;
-              const hasBank = Boolean(bankSettings?.bankName && bankSettings?.bankAccountNumber);
-              const transferNote = `TT ${quote.data?.order.tableName ? `${quote.data.order.tableName} ` : ''}${quote.data?.order.displayCode || quote.data?.order.id.slice(0, 6) || ''}`.trim();
-              const qrUrl = hasBank
-                ? `https://img.vietqr.io/image/${encodeURIComponent(bankSettings!.bankName!.trim())}-${encodeURIComponent(bankSettings!.bankAccountNumber!.trim())}-compact2.png?amount=${totalVnd}&addInfo=${encodeURIComponent(transferNote)}&accountName=${encodeURIComponent(bankSettings!.bankAccountName?.trim() || '')}`
-                : null;
+            {selectedMethod === 'BANK_TRANSFER'
+              ? (() => {
+                  const bankSettings = quote.data?.bankSettings;
+                  const hasBank = Boolean(
+                    bankSettings?.bankName && bankSettings?.bankAccountNumber,
+                  );
+                  const transferNote =
+                    `TT ${quote.data?.order.tableName ? `${quote.data.order.tableName} ` : ''}${quote.data?.order.displayCode || quote.data?.order.id.slice(0, 6) || ''}`.trim();
+                  const qrUrl = hasBank
+                    ? `https://img.vietqr.io/image/${encodeURIComponent(bankSettings!.bankName!.trim())}-${encodeURIComponent(bankSettings!.bankAccountNumber!.trim())}-compact2.png?amount=${totalVnd}&addInfo=${encodeURIComponent(transferNote)}&accountName=${encodeURIComponent(bankSettings!.bankAccountName?.trim() || '')}`
+                    : null;
 
-              return (
-                <section className="staff-payment-page__section staff-vietqr-card">
-                  <div className="staff-vietqr-card__header">
-                    <div className="staff-vietqr-card__title">
-                      <QrcodeOutlined style={{ color: '#0877ee', fontSize: 20 }} />
-                      <span>Mã VietQR chuyển khoản</span>
-                    </div>
-                    <Tag color="processing" style={{ borderRadius: 12, margin: 0 }}>
-                      Tự động điền số tiền
-                    </Tag>
-                  </div>
-
-                  {hasBank && qrUrl ? (
-                    <div className="staff-vietqr-container">
-                      <div className="staff-vietqr-preview-box">
-                        <div
-                          className="staff-vietqr-img-wrapper"
-                          onClick={() => setQrModalOpen(true)}
-                          title="Nhấn để phóng to mã QR"
-                        >
-                          <img
-                            src={qrUrl}
-                            alt="VietQR Payment"
-                            className="staff-vietqr-img"
-                            loading="eager"
-                          />
-                          <div className="staff-vietqr-img-overlay">
-                            <FullscreenOutlined /> Phóng to QR
-                          </div>
+                  return (
+                    <section className="staff-payment-page__section staff-vietqr-card">
+                      <div className="staff-vietqr-card__header">
+                        <div className="staff-vietqr-card__title">
+                          <QrcodeOutlined style={{ color: '#0877ee', fontSize: 20 }} />
+                          <span>Mã VietQR chuyển khoản</span>
                         </div>
-                        <Button
-                          type="dashed"
-                          icon={<FullscreenOutlined />}
-                          onClick={() => setQrModalOpen(true)}
-                          className="staff-vietqr-zoom-btn"
-                          block
-                        >
-                          Phóng to cho khách quét
-                        </Button>
+                        <Tag color="processing" style={{ borderRadius: 12, margin: 0 }}>
+                          Tự động điền số tiền
+                        </Tag>
                       </div>
 
-                      <div className="staff-vietqr-details">
-                        <div className="staff-vietqr-detail-item">
-                          <span className="staff-vietqr-detail-label">Số tài khoản</span>
-                          <div className="staff-vietqr-detail-value">
-                            <strong className="staff-vietqr-copyable">{bankSettings?.bankAccountNumber}</strong>
-                            <Tooltip title="Sao chép STK">
-                              <Button
-                                type="text"
-                                size="small"
-                                icon={<CopyOutlined />}
-                                onClick={() => handleCopy(bankSettings?.bankAccountNumber || '', 'số tài khoản')}
+                      {hasBank && qrUrl ? (
+                        <div className="staff-vietqr-container">
+                          <div className="staff-vietqr-preview-box">
+                            <div
+                              className="staff-vietqr-img-wrapper"
+                              onClick={() => setQrModalOpen(true)}
+                              title="Nhấn để phóng to mã QR"
+                            >
+                              <img
+                                src={qrUrl}
+                                alt="VietQR Payment"
+                                className="staff-vietqr-img"
+                                loading="eager"
                               />
-                            </Tooltip>
+                              <div className="staff-vietqr-img-overlay">
+                                <FullscreenOutlined /> Phóng to QR
+                              </div>
+                            </div>
+                            <Button
+                              type="dashed"
+                              icon={<FullscreenOutlined />}
+                              onClick={() => setQrModalOpen(true)}
+                              className="staff-vietqr-zoom-btn"
+                              block
+                            >
+                              Phóng to cho khách quét
+                            </Button>
                           </div>
-                        </div>
 
-                        {bankSettings?.bankAccountName ? (
-                          <div className="staff-vietqr-detail-item">
-                            <span className="staff-vietqr-detail-label">Chủ tài khoản</span>
-                            <div className="staff-vietqr-detail-value">
-                              <strong>{bankSettings.bankAccountName}</strong>
-                              <Tooltip title="Sao chép tên chủ TK">
-                                <Button
-                                  type="text"
-                                  size="small"
-                                  icon={<CopyOutlined />}
-                                  onClick={() => handleCopy(bankSettings.bankAccountName || '', 'tên chủ tài khoản')}
-                                />
-                              </Tooltip>
+                          <div className="staff-vietqr-details">
+                            <div className="staff-vietqr-detail-item">
+                              <span className="staff-vietqr-detail-label">Số tài khoản</span>
+                              <div className="staff-vietqr-detail-value">
+                                <strong className="staff-vietqr-copyable">
+                                  {bankSettings?.bankAccountNumber}
+                                </strong>
+                                <Tooltip title="Sao chép STK">
+                                  <Button
+                                    type="text"
+                                    size="small"
+                                    icon={<CopyOutlined />}
+                                    onClick={() =>
+                                      handleCopy(
+                                        bankSettings?.bankAccountNumber || '',
+                                        'số tài khoản',
+                                      )
+                                    }
+                                  />
+                                </Tooltip>
+                              </div>
+                            </div>
+
+                            {bankSettings?.bankAccountName ? (
+                              <div className="staff-vietqr-detail-item">
+                                <span className="staff-vietqr-detail-label">Chủ tài khoản</span>
+                                <div className="staff-vietqr-detail-value">
+                                  <strong>{bankSettings.bankAccountName}</strong>
+                                  <Tooltip title="Sao chép tên chủ TK">
+                                    <Button
+                                      type="text"
+                                      size="small"
+                                      icon={<CopyOutlined />}
+                                      onClick={() =>
+                                        handleCopy(
+                                          bankSettings.bankAccountName || '',
+                                          'tên chủ tài khoản',
+                                        )
+                                      }
+                                    />
+                                  </Tooltip>
+                                </div>
+                              </div>
+                            ) : null}
+
+                            <div className="staff-vietqr-detail-item">
+                              <span className="staff-vietqr-detail-label">Số tiền cần chuyển</span>
+                              <div className="staff-vietqr-detail-value">
+                                <strong style={{ color: '#0877ee', fontSize: 16 }}>
+                                  {formatMoney(totalVnd)}
+                                </strong>
+                                <Tooltip title="Sao chép số tiền">
+                                  <Button
+                                    type="text"
+                                    size="small"
+                                    icon={<CopyOutlined />}
+                                    onClick={() => handleCopy(String(totalVnd), 'số tiền')}
+                                  />
+                                </Tooltip>
+                              </div>
+                            </div>
+
+                            <div className="staff-vietqr-detail-item">
+                              <span className="staff-vietqr-detail-label">Nội dung CK</span>
+                              <div className="staff-vietqr-detail-value">
+                                <strong style={{ color: '#d97706' }}>{transferNote}</strong>
+                                <Tooltip title="Sao chép nội dung">
+                                  <Button
+                                    type="text"
+                                    size="small"
+                                    icon={<CopyOutlined />}
+                                    onClick={() => handleCopy(transferNote, 'nội dung')}
+                                  />
+                                </Tooltip>
+                              </div>
                             </div>
                           </div>
-                        ) : null}
-
-                        <div className="staff-vietqr-detail-item">
-                          <span className="staff-vietqr-detail-label">Số tiền cần chuyển</span>
-                          <div className="staff-vietqr-detail-value">
-                            <strong style={{ color: '#0877ee', fontSize: 16 }}>{formatMoney(totalVnd)}</strong>
-                            <Tooltip title="Sao chép số tiền">
+                        </div>
+                      ) : (
+                        <Alert
+                          type="warning"
+                          showIcon
+                          title="Chưa cấu hình tài khoản ngân hàng"
+                          description={
+                            <div style={{ marginTop: 6 }}>
+                              <p style={{ margin: '0 0 10px', color: '#64748b', fontSize: 13 }}>
+                                Vui lòng cấu hình tài khoản ngân hàng trong Thiết lập để tự động tạo
+                                mã VietQR cho khách quét chuyển khoản.
+                              </p>
                               <Button
-                                type="text"
                                 size="small"
-                                icon={<CopyOutlined />}
-                                onClick={() => handleCopy(String(totalVnd), 'số tiền')}
-                              />
-                            </Tooltip>
-                          </div>
-                        </div>
-
-                        <div className="staff-vietqr-detail-item">
-                          <span className="staff-vietqr-detail-label">Nội dung CK</span>
-                          <div className="staff-vietqr-detail-value">
-                            <strong style={{ color: '#d97706' }}>{transferNote}</strong>
-                            <Tooltip title="Sao chép nội dung">
-                              <Button
-                                type="text"
-                                size="small"
-                                icon={<CopyOutlined />}
-                                onClick={() => handleCopy(transferNote, 'nội dung')}
-                              />
-                            </Tooltip>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <Alert
-                      type="warning"
-                      showIcon
-                      title="Chưa cấu hình tài khoản ngân hàng"
-                      description={
-                        <div style={{ marginTop: 6 }}>
-                          <p style={{ margin: '0 0 10px', color: '#64748b', fontSize: 13 }}>
-                            Vui lòng cấu hình tài khoản ngân hàng trong Thiết lập để tự động tạo mã VietQR cho khách quét chuyển khoản.
-                          </p>
-                          <Button
-                            size="small"
-                            type="primary"
-                            onClick={() => navigate('/owner/settings/store')}
-                          >
-                            Đến trang Cấu hình ngân hàng
-                          </Button>
-                        </div>
-                      }
-                    />
-                  )}
-                </section>
-              );
-            })() : null}
+                                type="primary"
+                                onClick={() => navigate('/owner/settings/store')}
+                              >
+                                Đến trang Cấu hình ngân hàng
+                              </Button>
+                            </div>
+                          }
+                        />
+                      )}
+                    </section>
+                  );
+                })()
+              : null}
           </div>
 
           <div className="staff-payment-page__right">
@@ -5984,8 +6006,9 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
                     <CreditCardOutlined /> Chuyển khoản ngân hàng (VietQR)
                   </div>
                   <p className="staff-payment-bank-summary__hint">
-                    Khách quét mã VietQR bên cạnh để thanh toán đúng số tiền <b>{formatMoney(totalVnd)}</b>.
-                    Sau khi kiểm tra tiền đã vào tài khoản, bấm nút <b>Xác nhận thanh toán</b>.
+                    Khách quét mã VietQR bên cạnh để thanh toán đúng số tiền{' '}
+                    <b>{formatMoney(totalVnd)}</b>. Sau khi kiểm tra tiền đã vào tài khoản, bấm nút{' '}
+                    <b>Xác nhận thanh toán</b>.
                   </p>
                 </div>
               )}
@@ -5995,7 +6018,9 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
               {selectedMethod === 'CASH' ? (
                 <div className="staff-payment-page__change-row">
                   <span className="staff-payment-page__change-label">Tiền thừa trả khách</span>
-                  <strong className="staff-payment-page__change-val">{formatMoney(changeVnd)}</strong>
+                  <strong className="staff-payment-page__change-val">
+                    {formatMoney(changeVnd)}
+                  </strong>
                 </div>
               ) : (
                 <div className="staff-payment-page__change-row">
@@ -6046,7 +6071,8 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
         {(() => {
           const bankSettings = quote.data?.bankSettings;
           const hasBank = Boolean(bankSettings?.bankName && bankSettings?.bankAccountNumber);
-          const transferNote = `TT ${quote.data?.order.tableName ? `${quote.data.order.tableName} ` : ''}${quote.data?.order.displayCode || quote.data?.order.id.slice(0, 6) || ''}`.trim();
+          const transferNote =
+            `TT ${quote.data?.order.tableName ? `${quote.data.order.tableName} ` : ''}${quote.data?.order.displayCode || quote.data?.order.id.slice(0, 6) || ''}`.trim();
           const qrUrl = hasBank
             ? `https://img.vietqr.io/image/${encodeURIComponent(bankSettings!.bankName!.trim())}-${encodeURIComponent(bankSettings!.bankAccountNumber!.trim())}-compact2.png?amount=${totalVnd}&addInfo=${encodeURIComponent(transferNote)}&accountName=${encodeURIComponent(bankSettings!.bankAccountName?.trim() || '')}`
             : null;

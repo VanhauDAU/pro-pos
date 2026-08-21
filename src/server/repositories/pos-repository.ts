@@ -533,15 +533,43 @@ export class PosRepository {
     return this.db
       .prepare(
         `SELECT s.id AS storeId, s.name AS storeName,
-                u.id AS employeeId, u.display_name AS employeeName
+                u.id AS employeeId, u.display_name AS employeeName,
+                ss.bank_name AS bankName, ss.bank_account_number AS bankAccountNumber,
+                ss.bank_account_name AS bankAccountName
          FROM stores s
          JOIN store_memberships sm ON sm.store_id = s.id AND sm.user_id = ?
            AND sm.status = 'ACTIVE' AND sm.deleted_at IS NULL
          JOIN users u ON u.id = sm.user_id
+         LEFT JOIN store_settings ss ON ss.store_id = s.id
          WHERE s.id = ? LIMIT 1`,
       )
       .bind(actorId, storeId)
-      .first();
+      .first<{
+        storeId: string;
+        storeName: string;
+        employeeId: string;
+        employeeName: string;
+        bankName: string | null;
+        bankAccountNumber: string | null;
+        bankAccountName: string | null;
+      }>();
+  }
+
+  findStoreBankSettings(storeId: string) {
+    return this.db
+      .prepare(
+        `SELECT ss.bank_name AS bankName,
+                ss.bank_account_number AS bankAccountNumber,
+                ss.bank_account_name AS bankAccountName
+         FROM store_settings ss
+         WHERE ss.store_id = ? LIMIT 1`,
+      )
+      .bind(storeId)
+      .first<{
+        bankName: string | null;
+        bankAccountNumber: string | null;
+        bankAccountName: string | null;
+      }>();
   }
 
   findTimeSession(storeId: string, orderId: string) {

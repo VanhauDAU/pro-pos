@@ -5,12 +5,14 @@ import {
   ClockCircleOutlined,
   CloseCircleOutlined,
   CloseOutlined,
+  CopyOutlined,
   CreditCardOutlined,
   DeleteOutlined,
   DownOutlined,
   EditOutlined,
   EllipsisOutlined,
   FileTextOutlined,
+  FullscreenOutlined,
   HistoryOutlined,
   LeftOutlined,
   LogoutOutlined,
@@ -51,11 +53,14 @@ import {
   Skeleton,
   Spin,
   Switch,
+  Tag,
+  Tooltip,
   Typography,
   message,
 } from 'antd';
 import type { MenuProps } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
+import * as React from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
@@ -71,6 +76,9 @@ interface StaffContext {
   storeName: string;
   employeeId: string;
   employeeName: string;
+  bankName?: string | null;
+  bankAccountNumber?: string | null;
+  bankAccountName?: string | null;
 }
 
 interface PosOrder {
@@ -191,6 +199,11 @@ interface OrderQuote {
   subtotalVnd: number;
   discountTotalVnd: number;
   totalVnd: number;
+  bankSettings?: {
+    bankName: string | null;
+    bankAccountNumber: string | null;
+    bankAccountName: string | null;
+  } | null;
 }
 
 interface DraftLine {
@@ -1670,6 +1683,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     typeof window !== 'undefined' ? window.innerWidth <= 900 : false,
   );
   const [mobileView, setMobileView] = useState<'CART' | 'PRODUCTS'>('CART');
+  const [pickingCart, setPickingCart] = useState<DraftLine[]>([]);
+  const [cartPreviewOpen, setCartPreviewOpen] = useState(false);
+  const [editingNoteItemIndex, setEditingNoteItemIndex] = useState<number | null>(null);
+  const [itemNoteDraft, setItemNoteDraft] = useState('');
+  const cartIconRef = React.useRef<HTMLButtonElement>(null);
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
   const [guestCount, setGuestCount] = useState<number>(1);
   const [guestModalOpen, setGuestModalOpen] = useState(false);
@@ -1916,6 +1934,54 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     });
   };
 
+  const addPickingVariant = (
+    product: CatalogProduct,
+    variant: CatalogVariant,
+    enteredPrice?: number,
+  ) => {
+    const effectiveVariant =
+      variant.promptPrice === 1 ? { ...variant, salePriceVnd: enteredPrice ?? null } : variant;
+    if (effectiveVariant.salePriceVnd === null) return;
+    if (product.productType === 'WEIGHT') {
+      const id = crypto.randomUUID();
+      const line: DraftLine = {
+        id,
+        product,
+        variant: effectiveVariant,
+        quantityMilli: 1000,
+        note: null,
+        discountType: null,
+        discountInputValue: null,
+      };
+      setPickingCart((lines) => [...lines, line]);
+      return;
+    }
+    setPickingCart((lines) => {
+      const found = lines.find(
+        (line) =>
+          line.variant.id === effectiveVariant.id &&
+          line.variant.salePriceVnd === effectiveVariant.salePriceVnd,
+      );
+      if (found) {
+        return lines.map((line) =>
+          line === found ? { ...line, quantityMilli: line.quantityMilli + 1000 } : line,
+        );
+      }
+      return [
+        ...lines,
+        {
+          id: crypto.randomUUID(),
+          product,
+          variant: effectiveVariant,
+          quantityMilli: 1000,
+          note: null,
+          discountType: null,
+          discountInputValue: null,
+        },
+      ];
+    });
+  };
+
   const refreshOrder = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['pos-order-quote', orderId] }),
@@ -1924,27 +1990,87 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     ]);
   };
 
-  const chooseProduct = (product: CatalogProduct) => {
+  const chooseProduct = (product: CatalogProduct, event?: React.MouseEvent) => {
     if (product.variants.length > 1) {
       setVariantProduct(product);
       return;
+    }
+    if (event && isMobile && mobileView === 'PRODUCTS') {
+      triggerFlyAnimation(event, product);
     }
     const variant = product.variants[0];
     if (!variant) return;
     chooseVariant(product, variant);
   };
 
-  const chooseVariant = (product: CatalogProduct, variant: CatalogVariant) => {
+  const triggerFlyAnimation = (e: React.MouseEvent, product: CatalogProduct) => {
+    if (!cartIconRef.current) return;
+    const target = e.currentTarget as HTMLElement;
+    const startRect = target.getBoundingClientRect();
+    const cartRect = cartIconRef.current.getBoundingClientRect();
+
+    const startX = startRect.left + startRect.width / 2 - 24;
+    const startY = startRect.top + startRect.height / 2 - 24;
+    const endX = cartRect.left + cartRect.width / 2 - 24;
+    const endY = cartRect.top + cartRect.height / 2 - 24;
+
+    const flyer = document.createElement('div');
+    flyer.className = 'staff-flying-item';
+
+    if (product.avatarType === 'IMAGE' && product.mediaId) {
+      const img = document.createElement('img');
+      img.src = `/api/v1/media/${product.mediaId}`;
+      img.alt = product.productName;
+      flyer.appendChild(img);
+    } else {
+      flyer.style.backgroundColor = product.avatarColor || '#0975f7';
+      flyer.textContent = getProductInitials(product.productName);
+    }
+
+    flyer.style.left = `${startX}px`;
+    flyer.style.top = `${startY}px`;
+    flyer.style.setProperty('--end-x', `${endX}px`);
+    flyer.style.setProperty('--end-y', `${endY}px`);
+
+    document.body.appendChild(flyer);
+
+    requestAnimationFrame(() => {
+      flyer.classList.add('is-flying');
+    });
+
+    setTimeout(() => {
+      flyer.remove();
+      cartIconRef.current?.classList.add('staff-cart-bounce');
+      setTimeout(() => cartIconRef.current?.classList.remove('staff-cart-bounce'), 450);
+    }, 550);
+  };
+
+  const chooseVariant = (
+    product: CatalogProduct,
+    variant: CatalogVariant,
+    event?: React.MouseEvent,
+  ) => {
+    if (event && isMobile && mobileView === 'PRODUCTS') {
+      triggerFlyAnimation(event, product);
+    }
     setVariantProduct(null);
     if (variant.promptPrice === 1 || variant.salePriceVnd === null) {
       setPromptTarget({ product, variant });
       setPromptPrice(null);
-    } else addDraftVariant(product, variant);
+    } else if (isMobile && mobileView === 'PRODUCTS') {
+      addPickingVariant(product, variant);
+    } else {
+      addDraftVariant(product, variant);
+    }
   };
 
   const confirmPromptPrice = () => {
     if (!promptTarget || promptPrice === null || promptPrice < 0) return;
-    addDraftVariant(promptTarget.product, promptTarget.variant, promptPrice);
+    if (isMobile && mobileView === 'PRODUCTS') {
+      addPickingVariant(promptTarget.product, promptTarget.variant, promptPrice);
+    } else {
+      addDraftVariant(promptTarget.product, promptTarget.variant, promptPrice);
+    }
     setPromptTarget(null);
     setPromptPrice(null);
   };
@@ -2464,6 +2590,18 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   );
   const regularProductCount = allCurrentItems.length;
 
+  // Tiền trong giỏ hàng tạm khi chọn món
+  const pickingCartTotal = useMemo(() => {
+    return pickingCart.reduce(
+      (sum, line) => sum + calculateLineTotal(line.variant.salePriceVnd ?? 0, line.quantityMilli),
+      0,
+    );
+  }, [pickingCart]);
+
+  const pickingCartCount = useMemo(() => {
+    return pickingCart.reduce((sum, line) => sum + line.quantityMilli / 1000, 0);
+  }, [pickingCart]);
+
   // 2. Tiền giờ (phiên tính giờ của bàn)
   const totalTimeGross = quote.data?.time ? quote.data.time.amountAfterRoundingVnd : 0;
 
@@ -2485,24 +2623,22 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       {isMobile ? (
         mobileView === 'PRODUCTS' ? (
           <div className="staff-product-picker-mobile">
-            {/* Header with Back Button */}
+            {/* Header with Close Button */}
             <header className="staff-product-picker-mobile__header">
               <button
                 type="button"
-                className="staff-product-picker-mobile__back-btn"
-                onClick={() => setMobileView('CART')}
+                className="staff-product-picker-mobile__close-btn"
+                onClick={() => {
+                  setPickingCart([]);
+                  setCartPreviewOpen(false);
+                  setMobileView('CART');
+                }}
+                aria-label="Thoát chọn món"
               >
-                <LeftOutlined />
-                <span>Quay lại</span>
+                <CloseOutlined />
               </button>
               <div className="staff-product-picker-mobile__title">Chọn mặt hàng</div>
-              <div
-                className="staff-product-picker-mobile__cart-badge"
-                onClick={() => setMobileView('CART')}
-              >
-                <ShoppingCartOutlined />
-                <span>{allCurrentItems.length}</span>
-              </div>
+              <div className="staff-product-picker-mobile__header-space" />
             </header>
 
             {/* Search Bar */}
@@ -2511,107 +2647,156 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                 size="large"
                 allowClear
                 prefix={<SearchOutlined />}
-                placeholder="Tìm kiếm món ăn, đồ uống..."
+                placeholder="Tìm kiếm mặt hàng"
                 value={catalogSearch}
                 onChange={(e) => setCatalogSearch(e.target.value)}
               />
             </div>
 
-            {/* Categories Horizontal Scroll */}
-            <div className="staff-product-picker-mobile__categories">
-              <button
-                type="button"
-                className={`staff-product-cat-chip ${selectedCategory === 'ALL' ? 'is-active' : ''}`}
-                onClick={() => setSelectedCategory('ALL')}
-              >
-                Tất cả
-              </button>
-              {categories.map((cat) => (
+            {/* Categories & Products Layout */}
+            <div className="staff-product-picker-mobile__body-split">
+              <aside className="staff-product-picker-mobile__cats-col">
                 <button
                   type="button"
-                  key={cat.id}
-                  className={`staff-product-cat-chip ${selectedCategory === cat.id ? 'is-active' : ''}`}
-                  onClick={() => setSelectedCategory(cat.id)}
+                  className={`staff-product-picker-cat-btn ${selectedCategory === 'ALL' ? 'is-active' : ''}`}
+                  onClick={() => setSelectedCategory('ALL')}
                 >
-                  {cat.name}
+                  <AppstoreOutlined className="staff-product-picker-cat-btn__icon" />
+                  <span>Tất cả</span>
                 </button>
-              ))}
-            </div>
+                {categories.map((cat) => (
+                  <button
+                    type="button"
+                    key={cat.id}
+                    className={`staff-product-picker-cat-btn ${selectedCategory === cat.id ? 'is-active' : ''}`}
+                    onClick={() => setSelectedCategory(cat.id)}
+                  >
+                    <ShopOutlined className="staff-product-picker-cat-btn__icon" />
+                    <span>{cat.name}</span>
+                  </button>
+                ))}
+              </aside>
 
-            {/* Product Grid */}
-            <div className="staff-product-picker-mobile__grid-wrap">
-              {catalog.isLoading ? (
-                <Skeleton active />
-              ) : visibleCatalog.length === 0 ? (
-                <Empty description="Không tìm thấy sản phẩm" />
-              ) : (
-                <div className="staff-product-picker-mobile__grid">
-                  {visibleCatalog.map((product) => {
-                    const prices = product.variants
-                      .map((v) => v.salePriceVnd)
-                      .filter((p): p is number => p !== null);
-                    const minPrice = prices.length > 0 ? Math.min(...prices) : null;
-                    const maxPrice = prices.length > 0 ? Math.max(...prices) : null;
-                    return (
-                      <button
-                        type="button"
-                        key={product.productId}
-                        className="staff-product-mobile-card"
-                        onClick={() => chooseProduct(product)}
-                      >
-                        <div
-                          className={`staff-product-mobile-card__visual ${product.avatarType === 'IMAGE' && product.mediaId ? 'has-image' : 'has-color'}`}
-                          style={{
-                            background:
-                              product.avatarType === 'IMAGE' && product.mediaId
-                                ? '#ffffff'
-                                : (product.avatarColor ?? '#0877ee'),
-                          }}
-                        >
-                          {product.avatarType === 'IMAGE' && product.mediaId ? (
-                            <img src={`/api/v1/media/${product.mediaId}`} alt="" />
-                          ) : (
-                            getProductInitials(product.productName)
-                          )}
-                        </div>
-                        <strong className="staff-product-mobile-card__name">
-                          {product.productName}
-                        </strong>
-                        <small className="staff-product-mobile-card__variant">
-                          {product.variants.length > 1
-                            ? `${product.variants.length} phiên bản`
-                            : '\u00a0'}
-                        </small>
-                        <b className="staff-product-mobile-card__price">
-                          {minPrice === null
-                            ? 'Nhập giá'
-                            : minPrice === maxPrice
-                              ? `${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`
-                              : `Từ ${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`}
-                        </b>
-                      </button>
-                    );
-                  })}
+              <main className="staff-product-picker-mobile__products-col">
+                <div className="staff-product-picker-mobile__section-heading">
+                  {selectedCategory === 'ALL'
+                    ? 'Tất cả'
+                    : (categories.find((c) => c.id === selectedCategory)?.name ?? 'Danh sách')}
                 </div>
-              )}
+                {catalog.isLoading ? (
+                  <Skeleton active />
+                ) : visibleCatalog.length === 0 ? (
+                  <Empty description="Không tìm thấy sản phẩm" style={{ marginTop: 40 }} />
+                ) : (
+                  <div className="staff-product-picker-mobile__grid">
+                    {visibleCatalog.map((product) => {
+                      const prices = product.variants
+                        .map((v) => v.salePriceVnd)
+                        .filter((p): p is number => p !== null);
+                      const minPrice = prices.length > 0 ? Math.min(...prices) : null;
+                      const maxPrice = prices.length > 0 ? Math.max(...prices) : null;
+                      return (
+                        <button
+                          type="button"
+                          key={product.productId}
+                          className="staff-product-mobile-card"
+                          onClick={(e) => chooseProduct(product, e)}
+                        >
+                          <div
+                            className={`staff-product-mobile-card__visual ${product.avatarType === 'IMAGE' && product.mediaId ? 'has-image' : 'has-color'}`}
+                            style={{
+                              background:
+                                product.avatarType === 'IMAGE' && product.mediaId
+                                  ? '#ffffff'
+                                  : (product.avatarColor ?? '#facc15'),
+                            }}
+                          >
+                            {product.avatarType === 'IMAGE' && product.mediaId ? (
+                              <img src={`/api/v1/media/${product.mediaId}`} alt="" />
+                            ) : (
+                              getProductInitials(product.productName)
+                            )}
+                          </div>
+                          <strong className="staff-product-mobile-card__name">
+                            {product.productName}
+                          </strong>
+                          {product.variants.length > 1 ? (
+                            <small className="staff-product-mobile-card__variant">
+                              {product.variants.length} phiên bản
+                            </small>
+                          ) : null}
+                          <b className="staff-product-mobile-card__price">
+                            {minPrice === null
+                              ? 'Nhập giá'
+                              : minPrice === maxPrice
+                                ? `${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`
+                                : `Từ ${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`}
+                          </b>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </main>
             </div>
 
-            {/* Bottom Bar: See order / done */}
+            {/* Bottom Bar: [ 🛒 6 ] | 370,000đ | [ Tiếp tục ] */}
             <div className="staff-product-picker-mobile__bottom-bar">
-              <div className="staff-product-picker-mobile__bottom-info">
-                <span>
-                  Đã gọi <strong>{allCurrentItems.length} món</strong>
-                </span>
-                <b>{formatMoney(displayedTotal)}</b>
-              </div>
-              <Button
-                type="primary"
-                size="large"
-                onClick={() => setMobileView('CART')}
-                className="staff-product-picker-mobile__done-btn"
+              <button
+                type="button"
+                className="staff-product-picker-mobile__cart-btn"
+                ref={cartIconRef}
+                onClick={() => {
+                  if (pickingCart.length === 0) {
+                    messageApi.info('Chưa có món nào trong giỏ hàng.');
+                    return;
+                  }
+                  setCartPreviewOpen(true);
+                }}
               >
-                Xem đơn hàng ({allCurrentItems.length})
-              </Button>
+                <ShoppingCartOutlined />
+                <span className="staff-product-picker-mobile__cart-count">{pickingCartCount}</span>
+              </button>
+              <div className="staff-product-picker-mobile__bottom-actions">
+                <b className="staff-product-picker-mobile__bottom-price">
+                  {formatMoney(pickingCartTotal)}
+                </b>
+                <Button
+                  type="primary"
+                  size="large"
+                  onClick={() => {
+                    if (pickingCart.length === 0) {
+                      messageApi.warning('Vui lòng chọn ít nhất một món vào giỏ hàng.');
+                      return;
+                    }
+                    // Xác nhận thêm các món từ pickingCart vào đơn hàng (draftLines)
+                    setDraftLines((prev) => {
+                      const next = [...prev];
+                      for (const line of pickingCart) {
+                        const found = next.find(
+                          (l) =>
+                            l.variant.id === line.variant.id &&
+                            l.variant.salePriceVnd === line.variant.salePriceVnd &&
+                            l.note === line.note,
+                        );
+                        if (found && line.product.productType !== 'WEIGHT') {
+                          found.quantityMilli += line.quantityMilli;
+                        } else {
+                          next.push(line);
+                        }
+                      }
+                      return next;
+                    });
+                    setPickingCart([]);
+                    setCartPreviewOpen(false);
+                    setMobileView('CART');
+                    messageApi.success('Đã thêm các món vào đơn hàng.');
+                  }}
+                  className="staff-product-picker-mobile__done-btn"
+                >
+                  Tiếp tục
+                </Button>
+              </div>
             </div>
           </div>
         ) : (
@@ -2953,7 +3138,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                         <Button
                           type="dashed"
                           icon={<PlusOutlined />}
-                          onClick={() => setMobileView('PRODUCTS')}
+                          onClick={() => {
+                            setPickingCart([]);
+                            setCartPreviewOpen(false);
+                            setMobileView('PRODUCTS');
+                          }}
                         >
                           Chọn món ngay
                         </Button>
@@ -2978,7 +3167,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
             <button
               type="button"
               className="staff-order-mobile-fab"
-              onClick={() => setMobileView('PRODUCTS')}
+              onClick={() => {
+                setPickingCart([]);
+                setCartPreviewOpen(false);
+                setMobileView('PRODUCTS');
+              }}
             >
               <PlusOutlined />
               <span>Thêm món</span>
@@ -3814,7 +4007,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
             <button
               type="button"
               key={variant.id}
-              onClick={() => chooseVariant(variantProduct, variant)}
+              onClick={(e) => chooseVariant(variantProduct, variant, e)}
             >
               <span>{variant.name}</span>
               <b>
@@ -4871,6 +5064,195 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           </label>
         </div>
       </Modal>
+
+      {/* Modal Xem trước đơn hàng (Mobile Cart Review) */}
+      <Modal
+        open={isMobile && cartPreviewOpen}
+        footer={null}
+        closable={false}
+        centered
+        width={480}
+        className="staff-cart-preview-modal"
+        styles={{
+          body: { padding: 0 },
+        }}
+        onCancel={() => setCartPreviewOpen(false)}
+      >
+        <div className="staff-cart-preview-container">
+          {/* Header */}
+          <div className="staff-cart-preview-header">
+            <button
+              type="button"
+              className="staff-cart-preview-clear-btn"
+              onClick={() => {
+                setPickingCart([]);
+                setCartPreviewOpen(false);
+              }}
+            >
+              Xoá tất cả
+            </button>
+            <strong className="staff-cart-preview-title">Xem trước đơn hàng</strong>
+            <button
+              type="button"
+              className="staff-cart-preview-close-btn"
+              onClick={() => setCartPreviewOpen(false)}
+              aria-label="Đóng xem trước"
+            >
+              <CloseOutlined />
+            </button>
+          </div>
+
+          {/* List */}
+          <div className="staff-cart-preview-list">
+            {pickingCart.length === 0 ? (
+              <div className="staff-cart-preview-empty">Giỏ hàng đang trống</div>
+            ) : (
+              pickingCart.map((item, index) => {
+                const lineTotal = calculateLineTotal(
+                  item.variant.salePriceVnd ?? 0,
+                  item.quantityMilli,
+                );
+                return (
+                  <div key={item.id || index} className="staff-cart-preview-item">
+                    <div className="staff-cart-preview-item__top">
+                      <div className="staff-cart-preview-item__name-wrap">
+                        <strong className="staff-cart-preview-item__name">
+                          {item.product.productName}
+                        </strong>
+                        {item.variant.name && item.variant.name !== 'Mặc định' && (
+                          <span className="staff-cart-preview-item__variant">
+                            ({item.variant.name})
+                          </span>
+                        )}
+                      </div>
+                      <span className="staff-cart-preview-item__price">
+                        {formatMoney(lineTotal)}
+                      </span>
+                    </div>
+
+                    <div
+                      className="staff-cart-preview-item__note-row"
+                      onClick={() => {
+                        setEditingNoteItemIndex(index);
+                        setItemNoteDraft(item.note ?? '');
+                      }}
+                    >
+                      <FileTextOutlined style={{ color: '#0975f7', marginRight: 6 }} />
+                      <span className="staff-cart-preview-item__note-label">Ghi chú:</span>
+                      <span className="staff-cart-preview-item__note-val">
+                        {item.note ? item.note : 'Không có'}
+                      </span>
+                    </div>
+
+                    <div className="staff-cart-preview-item__bottom">
+                      <button
+                        type="button"
+                        className="staff-cart-preview-item__del-btn"
+                        onClick={() => {
+                          setPickingCart((prev) => prev.filter((_, i) => i !== index));
+                        }}
+                      >
+                        Xoá
+                      </button>
+                      <div className="staff-cart-preview-stepper">
+                        <button
+                          type="button"
+                          className="staff-cart-preview-stepper__btn"
+                          onClick={() => {
+                            if (item.quantityMilli <= 1000) {
+                              setPickingCart((prev) => prev.filter((_, i) => i !== index));
+                            } else {
+                              setPickingCart((prev) =>
+                                prev.map((l, i) =>
+                                  i === index ? { ...l, quantityMilli: l.quantityMilli - 1000 } : l,
+                                ),
+                              );
+                            }
+                          }}
+                        >
+                          <MinusOutlined />
+                        </button>
+                        <span className="staff-cart-preview-stepper__val">
+                          {item.product.productType === 'WEIGHT'
+                            ? `${item.quantityMilli / 1000} ${getWeightUnit(item.product.unitName)}`
+                            : item.quantityMilli / 1000}
+                        </span>
+                        <button
+                          type="button"
+                          className="staff-cart-preview-stepper__btn"
+                          onClick={() => {
+                            setPickingCart((prev) =>
+                              prev.map((l, i) =>
+                                i === index ? { ...l, quantityMilli: l.quantityMilli + 1000 } : l,
+                              ),
+                            );
+                          }}
+                        >
+                          <PlusOutlined />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Sticky Bottom Bar inside Preview */}
+          <div className="staff-cart-preview-footer">
+            <div className="staff-product-picker-mobile__cart-btn">
+              <ShoppingCartOutlined />
+              <span className="staff-product-picker-mobile__cart-count">{pickingCartCount}</span>
+            </div>
+            <div className="staff-product-picker-mobile__bottom-actions">
+              <b className="staff-product-picker-mobile__bottom-price">
+                {formatMoney(pickingCartTotal)}
+              </b>
+              <Button
+                type="primary"
+                size="large"
+                onClick={() => {
+                  // Đóng xem trước và quay ra lại danh sách món
+                  setCartPreviewOpen(false);
+                }}
+                className="staff-product-picker-mobile__done-btn"
+              >
+                Tiếp tục
+              </Button>
+            </div>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Note Editing Modal */}
+      <Modal
+        open={editingNoteItemIndex !== null}
+        title="Ghi chú món"
+        okText="Lưu ghi chú"
+        cancelText="Hủy"
+        onOk={() => {
+          if (editingNoteItemIndex !== null) {
+            setPickingCart((prev) =>
+              prev.map((l, i) =>
+                i === editingNoteItemIndex ? { ...l, note: itemNoteDraft.trim() || null } : l,
+              ),
+            );
+            setEditingNoteItemIndex(null);
+            setItemNoteDraft('');
+          }
+        }}
+        onCancel={() => {
+          setEditingNoteItemIndex(null);
+          setItemNoteDraft('');
+        }}
+      >
+        <Input.TextArea
+          rows={3}
+          placeholder="Nhập ghi chú (ví dụ: ít đá, không đường, cay...)"
+          value={itemNoteDraft}
+          onChange={(e) => setItemNoteDraft(e.target.value)}
+        />
+      </Modal>
     </div>
   );
 }
@@ -5075,7 +5457,7 @@ function InvoicePage() {
   );
 }
 
-type PaymentMethodType = 'CASH' | 'VISA' | 'MASTER' | 'JCB' | 'ATM' | 'DEBT';
+type PaymentMethodType = 'CASH' | 'BANK_TRANSFER';
 
 interface PaymentMethodItem {
   key: PaymentMethodType;
@@ -5109,85 +5491,10 @@ const PAYMENT_METHODS: PaymentMethodItem[] = [
     ),
   },
   {
-    key: 'VISA',
-    label: 'Thẻ Visa',
-    backendMethod: 'BANK_TRANSFER',
-    icon: (
-      <div
-        style={{
-          width: 38,
-          height: 22,
-          background: '#1a1f71',
-          borderRadius: 3,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: '#fff',
-          fontStyle: 'italic',
-          fontWeight: 900,
-          fontSize: 11,
-          letterSpacing: 0.5,
-        }}
-      >
-        VISA
-      </div>
-    ),
-  },
-  {
-    key: 'MASTER',
-    label: 'Thẻ Master',
-    backendMethod: 'BANK_TRANSFER',
-    icon: (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div
-          style={{ width: 18, height: 18, borderRadius: '50%', background: '#eb001b', zIndex: 1 }}
-        />
-        <div
-          style={{
-            width: 18,
-            height: 18,
-            borderRadius: '50%',
-            background: '#f79e1b',
-            marginLeft: -8,
-            opacity: 0.9,
-          }}
-        />
-      </div>
-    ),
-  },
-  {
-    key: 'JCB',
-    label: 'Thẻ JCB',
-    backendMethod: 'BANK_TRANSFER',
-    icon: (
-      <div
-        style={{
-          display: 'flex',
-          gap: 2,
-          alignItems: 'center',
-          padding: '2px 4px',
-          border: '1px solid #e0e4e8',
-          borderRadius: 3,
-          background: '#fff',
-        }}
-      >
-        <div style={{ width: 6, height: 16, background: '#0079c1', borderRadius: 2 }} />
-        <div style={{ width: 6, height: 16, background: '#e60012', borderRadius: 2 }} />
-        <div style={{ width: 6, height: 16, background: '#00873c', borderRadius: 2 }} />
-      </div>
-    ),
-  },
-  {
-    key: 'ATM',
-    label: 'Thẻ ATM',
+    key: 'BANK_TRANSFER',
+    label: 'Chuyển khoản ngân hàng',
     backendMethod: 'BANK_TRANSFER',
     icon: <CreditCardOutlined style={{ fontSize: 24, color: '#0877ee' }} />,
-  },
-  {
-    key: 'DEBT',
-    label: 'Ghi nợ - Thanh toán sau',
-    backendMethod: 'BANK_TRANSFER',
-    icon: <HistoryOutlined style={{ fontSize: 24, color: '#0877ee' }} />,
   },
 ];
 
@@ -5206,6 +5513,8 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
     phone?: string | undefined;
   } | null>(null);
   const [resumeModalOpen, setResumeModalOpen] = useState(false);
+  const [backConfirmOpen, setBackConfirmOpen] = useState(false);
+  const [qrModalOpen, setQrModalOpen] = useState(false);
   const [resuming, setResuming] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const csrf = auth.csrfToken!;
@@ -5215,6 +5524,12 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
     queryFn: () => apiRequest<OrderQuote>(`/api/v1/pos/orders/${orderId}/quote`),
     refetchInterval: 5_000,
   });
+
+  const handleCopy = (text: string, label: string) => {
+    if (!text) return;
+    void navigator.clipboard.writeText(text);
+    messageApi.success(`Đã sao chép ${label}`);
+  };
 
   // Mặc định tiền khách đưa điền đúng giá tiền khách phải trả
   useEffect(() => {
@@ -5313,12 +5628,50 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
           icon={<LeftOutlined />}
           className="staff-payment-page__back-btn"
           aria-label="Quay lại đơn hàng"
-          onClick={() => navigate(`/pos/orders/${orderId}`)}
+          onClick={() => {
+            if (quote.data?.time && quote.data.order.status === 'PAYMENT_PENDING') {
+              setBackConfirmOpen(true);
+            } else {
+              navigate(`/pos/orders/${orderId}`);
+            }
+          }}
         />
         <Typography.Title level={4} className="staff-payment-page__title">
           Thanh toán
         </Typography.Title>
       </header>
+
+      <Modal
+        open={backConfirmOpen}
+        title="Xác nhận quay lại"
+        onCancel={() => setBackConfirmOpen(false)}
+        footer={[
+          <Button
+            key="resume"
+            type="primary"
+            loading={resuming}
+            onClick={async () => {
+              setBackConfirmOpen(false);
+              await handleResumeCheckout();
+            }}
+          >
+            Đồng ý (Tiếp tục chơi)
+          </Button>,
+          <Button
+            key="leave"
+            danger
+            onClick={() => {
+              setBackConfirmOpen(false);
+              navigate(`/pos/orders/${orderId}`);
+            }}
+          >
+            Không (Vẫn dừng giờ)
+          </Button>,
+        ]}
+      >
+        <p>Bàn này đang được tạm dừng tính giờ để thanh toán.</p>
+        <p>Bạn có muốn <strong>Tiếp tục chơi</strong> cho bàn này không?</p>
+      </Modal>
 
       {quote.isLoading ? (
         <div style={{ padding: 40, textAlign: 'center' }}>
@@ -5448,6 +5801,144 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
                 })}
               </div>
             </section>
+
+            {selectedMethod === 'BANK_TRANSFER' ? (() => {
+              const bankSettings = quote.data?.bankSettings;
+              const hasBank = Boolean(bankSettings?.bankName && bankSettings?.bankAccountNumber);
+              const transferNote = `TT ${quote.data?.order.tableName ? `${quote.data.order.tableName} ` : ''}${quote.data?.order.displayCode || quote.data?.order.id.slice(0, 6) || ''}`.trim();
+              const qrUrl = hasBank
+                ? `https://img.vietqr.io/image/${encodeURIComponent(bankSettings!.bankName!.trim())}-${encodeURIComponent(bankSettings!.bankAccountNumber!.trim())}-compact2.png?amount=${totalVnd}&addInfo=${encodeURIComponent(transferNote)}&accountName=${encodeURIComponent(bankSettings!.bankAccountName?.trim() || '')}`
+                : null;
+
+              return (
+                <section className="staff-payment-page__section staff-vietqr-card">
+                  <div className="staff-vietqr-card__header">
+                    <div className="staff-vietqr-card__title">
+                      <QrcodeOutlined style={{ color: '#0877ee', fontSize: 20 }} />
+                      <span>Mã VietQR chuyển khoản</span>
+                    </div>
+                    <Tag color="processing" style={{ borderRadius: 12, margin: 0 }}>
+                      Tự động điền số tiền
+                    </Tag>
+                  </div>
+
+                  {hasBank && qrUrl ? (
+                    <div className="staff-vietqr-container">
+                      <div className="staff-vietqr-preview-box">
+                        <div
+                          className="staff-vietqr-img-wrapper"
+                          onClick={() => setQrModalOpen(true)}
+                          title="Nhấn để phóng to mã QR"
+                        >
+                          <img
+                            src={qrUrl}
+                            alt="VietQR Payment"
+                            className="staff-vietqr-img"
+                            loading="eager"
+                          />
+                          <div className="staff-vietqr-img-overlay">
+                            <FullscreenOutlined /> Phóng to QR
+                          </div>
+                        </div>
+                        <Button
+                          type="dashed"
+                          icon={<FullscreenOutlined />}
+                          onClick={() => setQrModalOpen(true)}
+                          className="staff-vietqr-zoom-btn"
+                          block
+                        >
+                          Phóng to cho khách quét
+                        </Button>
+                      </div>
+
+                      <div className="staff-vietqr-details">
+                        <div className="staff-vietqr-detail-item">
+                          <span className="staff-vietqr-detail-label">Số tài khoản</span>
+                          <div className="staff-vietqr-detail-value">
+                            <strong className="staff-vietqr-copyable">{bankSettings?.bankAccountNumber}</strong>
+                            <Tooltip title="Sao chép STK">
+                              <Button
+                                type="text"
+                                size="small"
+                                icon={<CopyOutlined />}
+                                onClick={() => handleCopy(bankSettings?.bankAccountNumber || '', 'số tài khoản')}
+                              />
+                            </Tooltip>
+                          </div>
+                        </div>
+
+                        {bankSettings?.bankAccountName ? (
+                          <div className="staff-vietqr-detail-item">
+                            <span className="staff-vietqr-detail-label">Chủ tài khoản</span>
+                            <div className="staff-vietqr-detail-value">
+                              <strong>{bankSettings.bankAccountName}</strong>
+                              <Tooltip title="Sao chép tên chủ TK">
+                                <Button
+                                  type="text"
+                                  size="small"
+                                  icon={<CopyOutlined />}
+                                  onClick={() => handleCopy(bankSettings.bankAccountName || '', 'tên chủ tài khoản')}
+                                />
+                              </Tooltip>
+                            </div>
+                          </div>
+                        ) : null}
+
+                        <div className="staff-vietqr-detail-item">
+                          <span className="staff-vietqr-detail-label">Số tiền cần chuyển</span>
+                          <div className="staff-vietqr-detail-value">
+                            <strong style={{ color: '#0877ee', fontSize: 16 }}>{formatMoney(totalVnd)}</strong>
+                            <Tooltip title="Sao chép số tiền">
+                              <Button
+                                type="text"
+                                size="small"
+                                icon={<CopyOutlined />}
+                                onClick={() => handleCopy(String(totalVnd), 'số tiền')}
+                              />
+                            </Tooltip>
+                          </div>
+                        </div>
+
+                        <div className="staff-vietqr-detail-item">
+                          <span className="staff-vietqr-detail-label">Nội dung CK</span>
+                          <div className="staff-vietqr-detail-value">
+                            <strong style={{ color: '#d97706' }}>{transferNote}</strong>
+                            <Tooltip title="Sao chép nội dung">
+                              <Button
+                                type="text"
+                                size="small"
+                                icon={<CopyOutlined />}
+                                onClick={() => handleCopy(transferNote, 'nội dung')}
+                              />
+                            </Tooltip>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      title="Chưa cấu hình tài khoản ngân hàng"
+                      description={
+                        <div style={{ marginTop: 6 }}>
+                          <p style={{ margin: '0 0 10px', color: '#64748b', fontSize: 13 }}>
+                            Vui lòng cấu hình tài khoản ngân hàng trong Thiết lập để tự động tạo mã VietQR cho khách quét chuyển khoản.
+                          </p>
+                          <Button
+                            size="small"
+                            type="primary"
+                            onClick={() => navigate('/owner/settings/store')}
+                          >
+                            Đến trang Cấu hình ngân hàng
+                          </Button>
+                        </div>
+                      }
+                    />
+                  )}
+                </section>
+              );
+            })() : null}
           </div>
 
           <div className="staff-payment-page__right">
@@ -5457,42 +5948,63 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
                 <strong className="staff-payment-page__total-val">{formatMoney(totalVnd)}</strong>
               </div>
 
-              <div className="staff-payment-page__input-row">
-                <span className="staff-payment-page__input-label">{currentMethodItem.label}</span>
-                <div className="staff-payment-page__input-wrap">
-                  <InputNumber
-                    className="staff-payment-page__amount-input"
-                    min={0}
-                    value={cashReceived}
-                    onChange={(val) => setCashReceived(val === null ? 0 : Number(val))}
-                    formatter={(val) => `${val ?? ''}`.replace(/\B(?=(\d{3})+(?!\d))/gu, ',')}
-                    parser={(val) => Number((val ?? '').replaceAll(',', ''))}
-                    addonAfter="đ"
-                  />
-                </div>
-              </div>
-
               {selectedMethod === 'CASH' ? (
-                <div className="staff-payment-page__quick-cash">
-                  <button type="button" onClick={() => setCashReceived(totalVnd)}>
-                    Đúng giá ({formatMoney(totalVnd)})
-                  </button>
-                  {[50000, 100000, 200000, 500000]
-                    .filter((amount) => amount >= totalVnd)
-                    .map((amount) => (
-                      <button key={amount} type="button" onClick={() => setCashReceived(amount)}>
-                        {formatMoney(amount)}
-                      </button>
-                    ))}
+                <>
+                  <div className="staff-payment-page__input-row">
+                    <span className="staff-payment-page__input-label">Tiền khách đưa</span>
+                    <div className="staff-payment-page__input-wrap">
+                      <InputNumber
+                        className="staff-payment-page__amount-input"
+                        min={0}
+                        value={cashReceived}
+                        onChange={(val) => setCashReceived(val === null ? 0 : Number(val))}
+                        formatter={(val) => `${val ?? ''}`.replace(/\B(?=(\d{3})+(?!\d))/gu, ',')}
+                        parser={(val) => Number((val ?? '').replaceAll(',', ''))}
+                        addonAfter="đ"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="staff-payment-page__quick-cash">
+                    <button type="button" onClick={() => setCashReceived(totalVnd)}>
+                      Đúng giá ({formatMoney(totalVnd)})
+                    </button>
+                    {[50000, 100000, 200000, 500000]
+                      .filter((amount) => amount >= totalVnd)
+                      .map((amount) => (
+                        <button key={amount} type="button" onClick={() => setCashReceived(amount)}>
+                          {formatMoney(amount)}
+                        </button>
+                      ))}
+                  </div>
+                </>
+              ) : (
+                <div className="staff-payment-bank-summary">
+                  <div className="staff-payment-bank-summary__badge">
+                    <CreditCardOutlined /> Chuyển khoản ngân hàng (VietQR)
+                  </div>
+                  <p className="staff-payment-bank-summary__hint">
+                    Khách quét mã VietQR bên cạnh để thanh toán đúng số tiền <b>{formatMoney(totalVnd)}</b>.
+                    Sau khi kiểm tra tiền đã vào tài khoản, bấm nút <b>Xác nhận thanh toán</b>.
+                  </p>
                 </div>
-              ) : null}
+              )}
             </div>
 
             <div className="staff-payment-page__right-bottom">
-              <div className="staff-payment-page__change-row">
-                <span className="staff-payment-page__change-label">Tiền thừa trả khách</span>
-                <strong className="staff-payment-page__change-val">{formatMoney(changeVnd)}</strong>
-              </div>
+              {selectedMethod === 'CASH' ? (
+                <div className="staff-payment-page__change-row">
+                  <span className="staff-payment-page__change-label">Tiền thừa trả khách</span>
+                  <strong className="staff-payment-page__change-val">{formatMoney(changeVnd)}</strong>
+                </div>
+              ) : (
+                <div className="staff-payment-page__change-row">
+                  <span className="staff-payment-page__change-label">Phương thức</span>
+                  <Tag color="blue" style={{ fontSize: 13, padding: '2px 10px', borderRadius: 6 }}>
+                    Chuyển khoản VietQR
+                  </Tag>
+                </div>
+              )}
 
               <Button
                 type="primary"
@@ -5507,12 +6019,62 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
                   void handleConfirmPayment();
                 }}
               >
-                Xác nhận thanh toán
+                {selectedMethod === 'CASH' ? 'Xác nhận thanh toán' : 'Xác nhận đã nhận tiền'}
               </Button>
             </div>
           </div>
         </div>
       )}
+
+      <Modal
+        open={qrModalOpen}
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <QrcodeOutlined style={{ color: '#0877ee', fontSize: 18 }} />
+            <span>Mã QR Chuyển khoản - {quote.data?.order.tableName || 'Đơn hàng'}</span>
+          </div>
+        }
+        footer={[
+          <Button key="close" type="primary" size="large" onClick={() => setQrModalOpen(false)}>
+            Đóng
+          </Button>,
+        ]}
+        onCancel={() => setQrModalOpen(false)}
+        centered
+        width={420}
+      >
+        {(() => {
+          const bankSettings = quote.data?.bankSettings;
+          const hasBank = Boolean(bankSettings?.bankName && bankSettings?.bankAccountNumber);
+          const transferNote = `TT ${quote.data?.order.tableName ? `${quote.data.order.tableName} ` : ''}${quote.data?.order.displayCode || quote.data?.order.id.slice(0, 6) || ''}`.trim();
+          const qrUrl = hasBank
+            ? `https://img.vietqr.io/image/${encodeURIComponent(bankSettings!.bankName!.trim())}-${encodeURIComponent(bankSettings!.bankAccountNumber!.trim())}-compact2.png?amount=${totalVnd}&addInfo=${encodeURIComponent(transferNote)}&accountName=${encodeURIComponent(bankSettings!.bankAccountName?.trim() || '')}`
+            : null;
+
+          if (!qrUrl) return null;
+          return (
+            <div style={{ textAlign: 'center', padding: '8px 0' }}>
+              <img
+                src={qrUrl}
+                alt="VietQR Full"
+                style={{
+                  maxWidth: '100%',
+                  width: '100%',
+                  borderRadius: 12,
+                  boxShadow: '0 8px 30px rgba(0,0,0,0.12)',
+                  border: '1px solid #e2e8f0',
+                }}
+              />
+              <div style={{ marginTop: 14, fontSize: 18, fontWeight: 800, color: '#0877ee' }}>
+                {formatMoney(totalVnd)}
+              </div>
+              <div style={{ marginTop: 4, color: '#64748b', fontSize: 13 }}>
+                Nội dung CK: <strong style={{ color: '#d97706' }}>{transferNote}</strong>
+              </div>
+            </div>
+          );
+        })()}
+      </Modal>
 
       <Modal
         open={customerModalOpen}

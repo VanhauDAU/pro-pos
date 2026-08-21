@@ -44,7 +44,7 @@ authRoutes.post('/owner/login', async (c) => {
   assertSameOrigin(c);
   const body = await parseJson(c.req.raw, ownerLoginRequestSchema);
   const result = await new AuthService(c.env).ownerLogin(body);
-  setCredentialCookie(c, 'session', result.rawToken, 7 * 24 * 60 * 60);
+  setCredentialCookie(c, 'session', result.rawToken, result.maxAgeSeconds);
   return success(c, result.response);
 });
 

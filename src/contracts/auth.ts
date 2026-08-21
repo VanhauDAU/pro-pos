@@ -22,6 +22,7 @@ export const employeeLoginRequestSchema = z.object({
 export const ownerLoginRequestSchema = z.object({
   username: z.string().trim().min(1).max(254),
   password: z.string().min(1).max(128),
+  rememberMe: z.boolean().default(false).optional(),
 });
 
 export const platformLoginRequestSchema = z.object({

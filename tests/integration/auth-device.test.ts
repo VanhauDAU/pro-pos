@@ -541,7 +541,16 @@ describe('Owner and POS activation invariants', () => {
     const loginRes = await authService.ownerLogin({
       username: 'owner.edit.test',
       password: 'BrandNewPassword123!',
+      rememberMe: true,
     });
     expect(loginRes.response.actor.displayName).toBe('Updated Owner Name');
+    expect(loginRes.maxAgeSeconds).toBe(30 * 24 * 60 * 60);
+
+    const loginShort = await authService.ownerLogin({
+      username: 'owner.edit.test',
+      password: 'BrandNewPassword123!',
+      rememberMe: false,
+    });
+    expect(loginShort.maxAgeSeconds).toBe(24 * 60 * 60);
   });
 });

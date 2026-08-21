@@ -10,7 +10,7 @@ import {
   UserOutlined,
 } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Avatar, Button, Form, Input, Spin, Tabs, Typography } from 'antd';
+import { Alert, Avatar, Button, Checkbox, Form, Input, Spin, Tabs, Typography } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router';
 
@@ -30,13 +30,7 @@ interface RememberedEmployee {
   displayName: string;
 }
 
-interface RememberedOwner {
-  username: string;
-  displayName: string;
-}
-
 const REMEMBERED_EMPLOYEE_KEY = 'pos_last_employee';
-const REMEMBERED_OWNER_KEY = 'pos_last_owner';
 
 function getRememberedEmployee(): RememberedEmployee | null {
   try {
@@ -61,34 +55,6 @@ function getRememberedEmployee(): RememberedEmployee | null {
 function setRememberedEmployee(data: RememberedEmployee) {
   try {
     localStorage.setItem(REMEMBERED_EMPLOYEE_KEY, JSON.stringify(data));
-  } catch {
-    // ignore
-  }
-}
-
-function getRememberedOwner(): RememberedOwner | null {
-  try {
-    const raw = localStorage.getItem(REMEMBERED_OWNER_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<RememberedOwner>;
-    if (parsed && typeof parsed.username === 'string' && parsed.username.trim()) {
-      return {
-        username: parsed.username.trim(),
-        displayName:
-          typeof parsed.displayName === 'string' && parsed.displayName.trim()
-            ? parsed.displayName.trim()
-            : parsed.username.trim(),
-      };
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function setRememberedOwner(data: RememberedOwner) {
-  try {
-    localStorage.setItem(REMEMBERED_OWNER_KEY, JSON.stringify(data));
   } catch {
     // ignore
   }
@@ -298,12 +264,9 @@ export function LoginPage() {
   );
   const [isSwitchingAccount, setIsSwitchingAccount] = useState(false);
 
-  const [rememberedOwner, setRememberedOwnerState] = useState<RememberedOwner | null>(() =>
-    getRememberedOwner(),
-  );
-  const [isSwitchingOwnerAccount, setIsSwitchingOwnerAccount] = useState(false);
-  const [ownerUsername, setOwnerUsername] = useState(() => getRememberedOwner()?.username || '');
+  const [ownerUsername, setOwnerUsername] = useState('');
   const [ownerPassword, setOwnerPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(true);
 
   const [error, setError] = useState<string | null>(() =>
     accessErrorMessage(searchParams.get('authError')),
@@ -323,24 +286,20 @@ export function LoginPage() {
     setPinValue('');
   };
 
-  const executeOwnerLogin = async (usernameToUse: string, passwordToUse: string) => {
-    if (!usernameToUse.trim() || !passwordToUse) {
+  const executeOwnerLogin = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!ownerUsername.trim() || !ownerPassword) {
       setError('Vui lòng nhập tên đăng nhập và mật khẩu.');
       return;
     }
     setSubmitting(true);
     setError(null);
     try {
-      const response = await jsonRequest<LoginResponse>('/api/v1/auth/owner/login', {
-        username: usernameToUse.trim(),
-        password: passwordToUse,
+      await jsonRequest<LoginResponse>('/api/v1/auth/owner/login', {
+        username: ownerUsername.trim(),
+        password: ownerPassword,
+        rememberMe,
       });
-      const savedInfo: RememberedOwner = {
-        username: usernameToUse.trim(),
-        displayName: response.actor.displayName || usernameToUse.trim(),
-      };
-      setRememberedOwner(savedInfo);
-      setRememberedOwnerState(savedInfo);
       await queryClient.invalidateQueries({ queryKey: ['auth-context'] });
       navigate('/owner', { replace: true });
     } catch (loginError) {
@@ -413,145 +372,63 @@ export function LoginPage() {
       label: 'Chủ cửa hàng',
       children: (
         <div className="owner-login-clean">
-          {rememberedOwner && !isSwitchingOwnerAccount ? (
-            /* Quick login for remembered Owner */
-            <div className="employee-quick-login">
-              <div className="remembered-owner-card">
-                <Avatar size={40} className="remembered-owner-avatar">
-                  {getInitials(rememberedOwner.displayName)}
-                </Avatar>
-                <div className="remembered-employee-info">
-                  <strong className="remembered-employee-name">
-                    {rememberedOwner.displayName}
-                  </strong>
-                  <span className="remembered-employee-username">@{rememberedOwner.username}</span>
-                </div>
-                <Button
-                  type="text"
-                  icon={<SwapOutlined />}
-                  className="remembered-owner-switch-btn"
-                  onClick={() => {
-                    setIsSwitchingOwnerAccount(true);
-                    setOwnerPassword('');
-                    setError(null);
-                  }}
-                  title="Đăng nhập tài khoản khác"
-                >
-                  Đổi
-                </Button>
-              </div>
-
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void executeOwnerLogin(rememberedOwner.username, ownerPassword);
+          <form onSubmit={executeOwnerLogin} className="owner-password-form">
+            <div style={{ marginBottom: 16 }}>
+              <Input
+                size="large"
+                prefix={<UserOutlined style={{ color: '#94a3b8' }} />}
+                placeholder="Tên đăng nhập hoặc Email"
+                value={ownerUsername}
+                onChange={(e) => {
+                  setOwnerUsername(e.target.value);
+                  if (error) setError(null);
                 }}
-                className="owner-password-form"
-                style={{ marginTop: 12 }}
-              >
-                <div style={{ marginBottom: 16 }}>
-                  <Input.Password
-                    size="large"
-                    prefix={<LockOutlined style={{ color: '#94a3b8' }} />}
-                    placeholder="Nhập mật khẩu"
-                    value={ownerPassword}
-                    onChange={(e) => {
-                      setOwnerPassword(e.target.value);
-                      if (error) setError(null);
-                    }}
-                    autoComplete="current-password"
-                    disabled={submitting}
-                    autoFocus
-                  />
-                </div>
-
-                <Button
-                  type="primary"
-                  size="large"
-                  htmlType="submit"
-                  block
-                  icon={<LoginOutlined />}
-                  loading={submitting}
-                  disabled={!ownerPassword}
-                  className="owner-login-btn"
-                >
-                  Đăng nhập
-                </Button>
-              </form>
+                autoComplete="username"
+                disabled={submitting}
+                autoFocus
+              />
             </div>
-          ) : (
-            /* Full username/email + password form */
-            <div>
-              {rememberedOwner ? (
-                <div className="employee-switch-back-bar">
-                  <Button
-                    type="link"
-                    size="small"
-                    icon={<ArrowLeftOutlined />}
-                    onClick={() => {
-                      setIsSwitchingOwnerAccount(false);
-                      setOwnerPassword('');
-                      setError(null);
-                    }}
-                    className="employee-switch-back-btn"
-                  >
-                    Quay lại {rememberedOwner.displayName}
-                  </Button>
-                </div>
-              ) : null}
 
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void executeOwnerLogin(ownerUsername, ownerPassword);
+            <div style={{ marginBottom: 14 }}>
+              <Input.Password
+                size="large"
+                prefix={<LockOutlined style={{ color: '#94a3b8' }} />}
+                placeholder="Mật khẩu"
+                value={ownerPassword}
+                onChange={(e) => {
+                  setOwnerPassword(e.target.value);
+                  if (error) setError(null);
                 }}
-                className="owner-password-form"
-              >
-                <div style={{ marginBottom: 16 }}>
-                  <Input
-                    size="large"
-                    prefix={<UserOutlined style={{ color: '#94a3b8' }} />}
-                    placeholder="Tên đăng nhập hoặc Email"
-                    value={ownerUsername}
-                    onChange={(e) => {
-                      setOwnerUsername(e.target.value);
-                      if (error) setError(null);
-                    }}
-                    autoComplete="username"
-                    disabled={submitting}
-                    autoFocus={!rememberedOwner}
-                  />
-                </div>
-
-                <div style={{ marginBottom: 20 }}>
-                  <Input.Password
-                    size="large"
-                    prefix={<LockOutlined style={{ color: '#94a3b8' }} />}
-                    placeholder="Mật khẩu"
-                    value={ownerPassword}
-                    onChange={(e) => {
-                      setOwnerPassword(e.target.value);
-                      if (error) setError(null);
-                    }}
-                    autoComplete="current-password"
-                    disabled={submitting}
-                  />
-                </div>
-
-                <Button
-                  type="primary"
-                  size="large"
-                  htmlType="submit"
-                  block
-                  icon={<LoginOutlined />}
-                  loading={submitting}
-                  className="owner-login-btn"
-                >
-                  Đăng nhập Chủ cửa hàng
-                </Button>
-              </form>
+                autoComplete="current-password"
+                disabled={submitting}
+              />
             </div>
-          )}
+
+            <div style={{ marginBottom: 20 }}>
+              <Checkbox
+                checked={rememberMe}
+                onChange={(e) => setRememberMe(e.target.checked)}
+                disabled={submitting}
+              >
+                <span style={{ color: '#475569', fontSize: 13.5 }}>
+                  Duy trì đăng nhập trên thiết bị này
+                </span>
+              </Checkbox>
+            </div>
+
+            <Button
+              type="primary"
+              size="large"
+              htmlType="submit"
+              block
+              icon={<LoginOutlined />}
+              loading={submitting}
+              disabled={!ownerUsername.trim() || !ownerPassword}
+              className="owner-login-btn"
+            >
+              Đăng nhập Chủ cửa hàng
+            </Button>
+          </form>
         </div>
       ),
     },

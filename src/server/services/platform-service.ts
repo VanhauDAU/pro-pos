@@ -47,8 +47,14 @@ export class PlatformService {
     return { storeId, ownerUserId };
   }
 
-  listStores() {
-    return this.repository.listStores();
+  async listStores() {
+    const result = await this.repository.listStores();
+    return {
+      ...result,
+      results: result.results.map((store) =>
+        Object.assign(store, { posRealtimeEnabled: Boolean(store.posRealtimeEnabled) }),
+      ),
+    };
   }
 
   async setStoreStatus(storeId: string, status: 'ACTIVE' | 'LOCKED') {
@@ -57,5 +63,17 @@ export class PlatformService {
       throw new AppError('STORE_NOT_FOUND', 'Không tìm thấy cửa hàng.', 404);
     }
     return { storeId, status };
+  }
+
+  async setStoreCapability(input: {
+    storeId: string;
+    capability: 'POS_REALTIME';
+    enabled: boolean;
+    actorId: string;
+    requestId: string;
+  }) {
+    const result = await this.repository.setStoreCapability({ ...input, now: Date.now() });
+    if (!result) throw new AppError('STORE_NOT_FOUND', 'Không tìm thấy cửa hàng.', 404);
+    return { storeId: input.storeId, capability: input.capability, enabled: result.enabled === 1 };
   }
 }

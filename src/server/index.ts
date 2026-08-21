@@ -12,7 +12,11 @@ import { currentDeviceRoutes, ownerDeviceRoutes } from '@server/routes/devices';
 import { ownerStoreRoutes } from '@server/routes/owner-store';
 import { ownerInvoiceRoutes } from '@server/routes/owner-invoices';
 import { ownerAnalyticsRoutes } from '@server/routes/owner-analytics';
+import { guestOrderRoutes } from '@server/routes/guest-order';
 import type { AppEnv } from '@server/types';
+import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
+
+export { StoreRealtimeRoom } from '@server/realtime/store-realtime-room';
 
 const app = new Hono<AppEnv>();
 
@@ -46,6 +50,7 @@ app.route('/api/v1/platform', platformRoutes);
 app.route('/api/v1/owner/staff', ownerStaffRoutes);
 app.route('/api/v1/owner/catalog', ownerCatalogRoutes);
 app.route('/api/v1/media', mediaRoutes);
+app.route('/api/v1/guest-order', guestOrderRoutes);
 app.route('/api/v1/pos', posRoutes);
 app.route('/api/v1/owner/devices', ownerDeviceRoutes);
 app.route('/api/v1/devices/current', currentDeviceRoutes);
@@ -89,4 +94,14 @@ app.onError((error, c) => {
   );
 });
 
-export default app;
+export default {
+  fetch: app.fetch,
+  async scheduled(controller: ScheduledController, env: CloudflareBindings) {
+    const dispatcher = new RealtimeDispatcher(env);
+    if (controller.cron === '17 18 * * *') {
+      await dispatcher.cleanupPublished();
+      return;
+    }
+    await dispatcher.dispatchPendingStores();
+  },
+} satisfies ExportedHandler<CloudflareBindings>;

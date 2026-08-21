@@ -20,6 +20,13 @@
     "enabled": true,
     "head_sampling_rate": 1,
   },
+  "durable_objects": {
+    "bindings": [{ "name": "STORE_REALTIME", "class_name": "StoreRealtimeRoom" }],
+  },
+  "migrations": [{ "tag": "realtime-v1", "new_sqlite_classes": ["StoreRealtimeRoom"] }],
+  "triggers": {
+    "crons": ["* * * * *", "17 18 * * *"],
+  },
   "vars": {
     "ENVIRONMENT": "local",
     "APP_VERSION": "0.1.0",
@@ -46,6 +53,12 @@
   "env": {
     "staging": {
       "name": "pro-pos-staging",
+      "durable_objects": {
+        "bindings": [{ "name": "STORE_REALTIME", "class_name": "StoreRealtimeRoom" }],
+      },
+      "triggers": {
+        "crons": ["* * * * *", "17 18 * * *"],
+      },
       "secrets": {
         "required": [
           "AUTH_PEPPER",
@@ -80,6 +93,12 @@
     },
     "production": {
       "name": "pro-pos-production",
+      "durable_objects": {
+        "bindings": [{ "name": "STORE_REALTIME", "class_name": "StoreRealtimeRoom" }],
+      },
+      "triggers": {
+        "crons": ["* * * * *", "17 18 * * *"],
+      },
       "secrets": {
         "required": [
           "AUTH_PEPPER",

@@ -128,7 +128,15 @@ authRoutes.post('/logout', async (c) => {
   const rawSession = readCredentialCookie(c, 'session');
   if (rawSession) {
     await assertCsrf(c, rawSession);
-    await new AuthService(c.env).logout(rawSession);
+    const authService = new AuthService(c.env);
+    const context = await authService.context(rawSession, readCredentialCookie(c, 'device'));
+    await authService.logout(rawSession);
+    if (context.actor?.storeId && context.sessionId) {
+      const room = c.env.STORE_REALTIME.getByName(context.actor.storeId);
+      c.executionCtx.waitUntil(
+        room.disconnectSession(context.actor.storeId, context.sessionId).catch(() => 0),
+      );
+    }
   } else {
     assertSameOrigin(c);
   }

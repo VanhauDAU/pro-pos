@@ -4,6 +4,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { CatalogService } from '@server/services/catalog-service';
 import { PlatformService } from '@server/services/platform-service';
 import { PosService } from '@server/services/pos-service';
+import { QrOrderService } from '@server/services/qr-order-service';
 
 describe('online POS vertical slice', () => {
   let storeId: string;
@@ -1351,6 +1352,16 @@ describe('online POS vertical slice', () => {
       reason: 'Miễn phí tiền giờ bàn cho khách VIP',
     });
     expect(removedTime.removed).toBe(true);
+    const removedTimeReplay = await pos.removeTimeSession({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-remove-time-session-retry',
+      idempotencyKey: 'remove-time-session-001',
+      orderId: opened.orderId,
+      expectedOrderVersion: 3,
+      reason: 'Miễn phí tiền giờ bàn cho khách VIP',
+    });
+    expect(removedTimeReplay).toEqual({ orderId: opened.orderId, removed: true });
 
     // Quote after removing table time session: quote.time is null
     const quoteAfterRemovingTime = await pos.quote(
@@ -1378,12 +1389,29 @@ describe('online POS vertical slice', () => {
     });
     expect(restoredTime.startedAtMs).toBe(customStart);
     expect(restoredTime.endedAtMs).toBe(customEnd);
+    const restoredTimeReplay = await pos.updateTimeRange({
+      storeId,
+      orderId: opened.orderId,
+      actorId: ownerUserId,
+      expectedOrderVersion: 4,
+      startedAtMs: customStart,
+      endedAtMs: customEnd,
+      requestId: 'request-restore-time-retry',
+      idempotencyKey: 'restore-time-command-001',
+      now: startTime + 6000 * 1000,
+    });
+    expect(restoredTimeReplay).toMatchObject({
+      orderId: opened.orderId,
+      startedAtMs: customStart,
+      endedAtMs: customEnd,
+    });
 
     const quoteAfterRestore = await pos.quote(storeId, opened.orderId, startTime + 6000 * 1000);
     expect(quoteAfterRestore.time).not.toBeNull();
     expect(quoteAfterRestore.time?.startedAtMs).toBe(customStart);
     expect(quoteAfterRestore.time?.endedAtMs).toBe(customEnd);
     expect(quoteAfterRestore.time?.status).toBe('ENDED');
+    expect(quoteAfterRestore.order.version).toBe(5);
 
     // Test removing item with reason
     const removedItem = await pos.removeItem({
@@ -1671,5 +1699,134 @@ describe('online POS vertical slice', () => {
     expect(quoteAfter3.order.status).toBe('PAYMENT_PENDING');
     expect(quoteAfter3.time?.status).toBe('ENDED');
     expect(quoteAfter3.time?.endedAtMs).toBe(tStop);
+  });
+
+  it('creates a QR guest request and atomically accepts it into the active table order', async () => {
+    const catalog = new CatalogService(env);
+    const table = await catalog.createTable({
+      storeId,
+      areaId,
+      timeProductId,
+      name: 'Bàn QR Order',
+      sortOrder: 120,
+    });
+    const pos = new PosService(env);
+    const opened = await pos.openTable({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'req-open-qr',
+      idempotencyKey: 'cmd-open-qr',
+      tableId: table.id,
+      expectedTableVersion: 1,
+    });
+    const qr = new QrOrderService(env);
+    const code = await qr.rotateQrCode(storeId, table.id, ownerUserId);
+    const resolved = await qr.resolveQr({
+      rawQrToken: code.token,
+      ip: '127.0.0.1',
+      deviceNonce: 'test-device',
+    });
+    expect(resolved.context.tableName).toBe('Bàn QR Order');
+    expect(resolved.context.menu.some((item) => item.id === productId)).toBe(true);
+
+    const clientRequestId = crypto.randomUUID();
+    const submitted = await qr.submitOrder(
+      resolved.rawGuest,
+      {
+        clientRequestId,
+        items: [{ productId, variantId, quantity: 2 }],
+      },
+      '127.0.0.1',
+    );
+    const replay = await qr.submitOrder(
+      resolved.rawGuest,
+      {
+        clientRequestId,
+        items: [{ productId, variantId, quantity: 2 }],
+      },
+      '127.0.0.1',
+    );
+    expect(replay).toMatchObject({ requestId: submitted.requestId, replayed: true });
+
+    const [pending] = await qr.listStaffRequests(storeId, 'PENDING');
+    expect(pending).toMatchObject({
+      id: submitted.requestId,
+      orderId: opened.orderId,
+      orderVersion: 1,
+    });
+    expect(pending!.items[0]).toMatchObject({ quantity: 2, lineTotalVnd: 40_000 });
+
+    await qr.accept({
+      commandId: 'accept-qr-request-001',
+      storeId,
+      guestRequestId: submitted.requestId,
+      expectedOrderVersion: pending!.orderVersion,
+      actorId: ownerUserId,
+      actorSessionId: null,
+      deviceId: null,
+      requestId: 'req-accept-qr',
+    });
+    const quote = await pos.quote(storeId, opened.orderId);
+    expect(quote.order.version).toBe(2);
+    expect(quote.items).toHaveLength(1);
+    expect(quote.items[0]).toMatchObject({ productName: 'Nước suối', quantityMilli: 2000 });
+    const source = await env.DB.prepare(
+      'SELECT source, source_guest_request_id AS guestRequestId FROM order_items WHERE order_id = ? LIMIT 1',
+    )
+      .bind(opened.orderId)
+      .first<{ source: string; guestRequestId: string }>();
+    expect(source).toEqual({ source: 'QR_GUEST', guestRequestId: submitted.requestId });
+    expect(await qr.listStaffRequests(storeId, 'PENDING')).toHaveLength(0);
+
+    const secondGuest = await qr.resolveQr({
+      rawQrToken: code.token,
+      ip: '127.0.0.2',
+      deviceNonce: 'test-device-2',
+    });
+    const second = await qr.submitOrder(
+      secondGuest.rawGuest,
+      {
+        clientRequestId: crypto.randomUUID(),
+        items: [{ productId, variantId, quantity: 1 }],
+      },
+      '127.0.0.2',
+    );
+    const race = await Promise.allSettled([
+      qr.accept({
+        commandId: 'accept-qr-race-a',
+        storeId,
+        guestRequestId: second.requestId,
+        expectedOrderVersion: 2,
+        actorId: ownerUserId,
+        actorSessionId: null,
+        deviceId: null,
+        requestId: 'req-accept-race-a',
+      }),
+      qr.accept({
+        commandId: 'accept-qr-race-b',
+        storeId,
+        guestRequestId: second.requestId,
+        expectedOrderVersion: 2,
+        actorId: ownerUserId,
+        actorSessionId: null,
+        deviceId: null,
+        requestId: 'req-accept-race-b',
+      }),
+    ]);
+    expect(race.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(race.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    expect((await pos.quote(storeId, opened.orderId)).order.version).toBe(3);
+
+    await pos.stopTimeForCheckout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'req-stop-qr',
+      idempotencyKey: 'cmd-stop-qr',
+      orderId: opened.orderId,
+      expectedOrderVersion: 3,
+    });
+    await expect(qr.getContext(resolved.rawGuest)).rejects.toMatchObject({
+      code: 'GUEST_SESSION_INVALID',
+    });
   });
 });

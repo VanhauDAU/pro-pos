@@ -1,7 +1,11 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 
-import { bootstrapSuperAdminSchema, createStoreSchema } from '@contracts/platform';
+import {
+  bootstrapSuperAdminSchema,
+  createStoreSchema,
+  setStoreCapabilitySchema,
+} from '@contracts/platform';
 import { AppError } from '@server/lib/app-error';
 import { success } from '@server/lib/response';
 import { assertSameOrigin } from '@server/lib/security';
@@ -45,6 +49,20 @@ platformRoutes.patch('/stores/:storeId/status', async (c) => {
   return success(
     c,
     await new PlatformService(c.env).setStoreStatus(c.req.param('storeId'), body.status),
+  );
+});
+
+platformRoutes.patch('/stores/:storeId/capabilities', async (c) => {
+  const body = await parseJson(c.req.raw, setStoreCapabilitySchema);
+  return success(
+    c,
+    await new PlatformService(c.env).setStoreCapability({
+      storeId: c.req.param('storeId'),
+      capability: body.capability,
+      enabled: body.enabled,
+      actorId: c.get('actor').id,
+      requestId: c.get('requestId'),
+    }),
   );
 });
 

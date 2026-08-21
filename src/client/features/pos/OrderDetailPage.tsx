@@ -5,6 +5,7 @@ import {
   ClockCircleOutlined,
   CloseCircleOutlined,
   CreditCardOutlined,
+  DeleteOutlined,
   DollarOutlined,
   EditOutlined,
   EnvironmentOutlined,
@@ -23,7 +24,7 @@ import {
   UserOutlined,
   WalletOutlined,
 } from '@ant-design/icons';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
   Avatar,
@@ -45,15 +46,18 @@ import {
   Timeline,
   Tooltip,
   Typography,
+  message,
 } from 'antd';
 import type { TableColumnsType } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 
+import type { AuthContextResponse } from '@contracts/auth';
 import type { OrderDetailDto, OrderItemDetail } from '@contracts/order-detail';
 import type { StorePrintSettings } from '@contracts/store';
 import { apiRequest } from '@client/lib/api';
 import { printReceipt, type PosReceiptPrintData } from '@client/lib/pos-receipt-printer';
+import { usePosPollingInterval, useRealtime } from '@client/realtime/RealtimeProvider';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -158,25 +162,60 @@ export function OrderDetailPage({
 }) {
   const params = useParams<{ orderId: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [messageApi, contextHolder] = message.useMessage();
   const targetOrderId = propOrderId ?? params.orderId;
 
   const [activeTab, setActiveTab] = useState('overview');
   const [now, setNow] = useState(Date.now());
   const [invoiceModalVisible, setInvoiceModalVisible] = useState(false);
+  const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
+  const detailPollingInterval = usePosPollingInterval(5_000);
+  const { serverTimeOffsetMs } = useRealtime();
+
+  const authQuery = useQuery({
+    queryKey: ['auth-context'],
+    queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
+  });
+  const isOwner =
+    authQuery.data?.allowedEntrypoints?.includes('OWNER') ||
+    authQuery.data?.actor?.kind === 'OWNER';
+
+  const deleteMutation = useMutation({
+    mutationFn: () =>
+      apiRequest<{ deleted: boolean }>(`/api/v1/owner/invoices/${targetOrderId}`, {
+        method: 'DELETE',
+        headers: { 'X-CSRF-Token': authQuery.data?.csrfToken ?? '' },
+      }),
+    onSuccess: () => {
+      void messageApi.success('Đã xóa hóa đơn thành công.');
+      setDeleteConfirmVisible(false);
+      void queryClient.invalidateQueries({ queryKey: ['owner-invoices'] });
+      void queryClient.invalidateQueries({ queryKey: ['owner-dashboard'] });
+      void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
+      void queryClient.invalidateQueries({ queryKey: ['pos-order-detail', targetOrderId] });
+      onClose?.();
+    },
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : 'Không thể xóa hóa đơn.';
+      void messageApi.error(msg);
+    },
+  });
 
   // Realtime clock update for OPEN orders
   useEffect(() => {
     const timer = setInterval(() => {
-      setNow(Date.now());
+      setNow(Date.now() + serverTimeOffsetMs);
     }, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [serverTimeOffsetMs]);
 
   const detailQuery = useQuery({
     queryKey: ['pos-order-detail', targetOrderId],
     queryFn: () => apiRequest<OrderDetailDto>(`/api/v1/pos/orders/${targetOrderId}/detail`),
     enabled: Boolean(targetOrderId),
-    refetchInterval: (query) => (query.state.data?.order.status === 'OPEN' ? 5000 : false),
+    refetchInterval: (query) =>
+      query.state.data?.order.status === 'OPEN' ? detailPollingInterval : false,
   });
 
   const data = detailQuery.data;
@@ -438,6 +477,7 @@ export function OrderDetailPage({
 
   return (
     <div className="order-detail-page">
+      {contextHolder}
       {/* ── Top Header Navigation ── */}
       <div className="order-detail-header">
         <div className="order-detail-header__left">
@@ -471,7 +511,7 @@ export function OrderDetailPage({
         </div>
 
         <div className="order-detail-header__right">
-          <Space>
+          <Space wrap size={10}>
             <Tooltip title="Làm mới dữ liệu">
               <Button
                 icon={<ReloadOutlined />}
@@ -516,6 +556,16 @@ export function OrderDetailPage({
                   In hóa đơn
                 </Button>
               </>
+            )}
+
+            {isOwner && (invoice || order.status === 'PAID' || order.status === 'CANCELLED') && (
+              <Button
+                danger
+                icon={<DeleteOutlined />}
+                onClick={() => setDeleteConfirmVisible(true)}
+              >
+                Xóa hóa đơn
+              </Button>
             )}
           </Space>
         </div>
@@ -1305,6 +1355,48 @@ export function OrderDetailPage({
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* ── Delete Confirmation Modal ── */}
+      <Modal
+        open={deleteConfirmVisible}
+        title={null}
+        onCancel={() => !deleteMutation.isPending && setDeleteConfirmVisible(false)}
+        footer={[
+          <Button
+            key="cancel"
+            onClick={() => setDeleteConfirmVisible(false)}
+            disabled={deleteMutation.isPending}
+          >
+            Hủy
+          </Button>,
+          <Button
+            key="confirm"
+            type="primary"
+            danger
+            loading={deleteMutation.isPending}
+            onClick={() => deleteMutation.mutate()}
+          >
+            Xác nhận xóa
+          </Button>,
+        ]}
+        centered
+        width={480}
+      >
+        <div style={{ padding: '8px 0', fontSize: '14.5px', lineHeight: '1.6' }}>
+          <div style={{ fontWeight: 600, fontSize: '16.5px', marginBottom: 14, color: '#0f172a' }}>
+            Xin chào {authQuery.data?.actor?.displayName || 'Chủ cửa hàng'}
+          </div>
+          <p style={{ margin: '0 0 10px 0', color: '#334155' }}>
+            Bạn đang thực hiện xóa hóa đơn này của cửa hàng.
+          </p>
+          <p style={{ margin: '0 0 10px 0', color: '#dc2626', fontWeight: 600 }}>
+            Thao tác xóa hóa đơn sẽ xóa tất cả báo cáo liên quan tới hóa đơn
+          </p>
+          <p style={{ margin: 0, color: '#64748b' }}>
+            Thao tác này sẽ không thể khôi phục, hãy cân nhắc kỹ trước khi xóa
+          </p>
+        </div>
       </Modal>
     </div>
   );

@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { success } from '@server/lib/response';
 import { requireActor } from '@server/middleware/authorization';
 import { OwnerInvoiceService } from '@server/services/owner-invoice-service';
+import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
 import type { AppEnv } from '@server/types';
 
 const ownerInvoiceRoutes = new Hono<AppEnv>();
@@ -53,6 +54,30 @@ ownerInvoiceRoutes.get('/', async (c) => {
     page,
     limit,
   });
+  return success(c, result);
+});
+
+/**
+ * DELETE /api/v1/owner/invoices/:id
+ * Permanently deletes an invoice/order and its lines/payments/sessions from the database.
+ */
+ownerInvoiceRoutes.delete('/:id', async (c) => {
+  const storeId = c.get('actor').storeId!;
+  const id = c.req.param('id');
+  const actor = c.get('actor');
+  const requestId = c.get('requestId') || 'req-delete-invoice';
+
+  const result = await new OwnerInvoiceService(c.env).deleteInvoice({
+    storeId,
+    targetId: id,
+    actorUserId: actor.id,
+    requestId,
+  });
+
+  c.executionCtx.waitUntil(
+    new RealtimeDispatcher(c.env).dispatchStore(storeId).catch(() => undefined),
+  );
+
   return success(c, result);
 });
 

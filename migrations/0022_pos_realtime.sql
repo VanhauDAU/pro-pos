@@ -70,13 +70,19 @@ CREATE TABLE realtime_event_requests (
 CREATE TRIGGER trg_realtime_event_request_execute
 AFTER INSERT ON realtime_event_requests
 BEGIN
-  INSERT INTO realtime_store_sequences (store_id, last_sequence)
-  SELECT NEW.store_id, 1
+  INSERT OR IGNORE INTO realtime_store_sequences (store_id, last_sequence)
+  SELECT NEW.store_id, 0
   WHERE EXISTS (
     SELECT 1 FROM store_capabilities
     WHERE store_id = NEW.store_id AND capability = 'POS_REALTIME' AND enabled = 1
-  )
-  ON CONFLICT(store_id) DO UPDATE SET last_sequence = last_sequence + 1;
+  );
+
+  UPDATE realtime_store_sequences
+  SET last_sequence = last_sequence + 1
+  WHERE store_id = NEW.store_id AND EXISTS (
+    SELECT 1 FROM store_capabilities
+    WHERE store_id = NEW.store_id AND capability = 'POS_REALTIME' AND enabled = 1
+  );
 
   INSERT INTO realtime_events (
     event_id, store_id, sequence, schema_version, event_type,
@@ -124,15 +130,15 @@ CREATE TABLE remove_time_session_commands (
 CREATE TRIGGER trg_remove_time_session_validate
 BEFORE INSERT ON remove_time_session_commands
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT RAISE(ABORT, 'ORDER_VERSION_CONFLICT') WHERE NOT EXISTS (
     SELECT 1 FROM orders
     WHERE id = NEW.order_id AND store_id = NEW.store_id
       AND status = 'OPEN' AND version = NEW.expected_order_version
-  ) THEN RAISE(ABORT, 'ORDER_VERSION_CONFLICT') END;
-  SELECT CASE WHEN NOT EXISTS (
+  );
+  SELECT RAISE(ABORT, 'TIME_SESSION_NOT_FOUND') WHERE NOT EXISTS (
     SELECT 1 FROM time_sessions
     WHERE id = NEW.time_session_id AND order_id = NEW.order_id AND store_id = NEW.store_id
-  ) THEN RAISE(ABORT, 'TIME_SESSION_NOT_FOUND') END;
+  );
 END;
 
 CREATE TRIGGER trg_remove_time_session_execute
@@ -189,15 +195,15 @@ CREATE TABLE create_time_session_commands (
 CREATE TRIGGER trg_create_time_session_validate
 BEFORE INSERT ON create_time_session_commands
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT RAISE(ABORT, 'ORDER_VERSION_CONFLICT') WHERE NOT EXISTS (
     SELECT 1 FROM orders
     WHERE id = NEW.order_id AND store_id = NEW.store_id
       AND order_type = 'DINE_IN' AND status = 'OPEN'
       AND table_id = NEW.table_id AND version = NEW.expected_order_version
-  ) THEN RAISE(ABORT, 'ORDER_VERSION_CONFLICT') END;
-  SELECT CASE WHEN EXISTS (
+  );
+  SELECT RAISE(ABORT, 'TIME_SESSION_ALREADY_EXISTS') WHERE EXISTS (
     SELECT 1 FROM time_sessions WHERE order_id = NEW.order_id
-  ) THEN RAISE(ABORT, 'TIME_SESSION_ALREADY_EXISTS') END;
+  );
 END;
 
 CREATE TRIGGER trg_create_time_session_execute
@@ -237,7 +243,9 @@ BEGIN
 END;
 
 -- Command-to-event adapters. These run inside the original command INSERT.
-CREATE TRIGGER trg_rt_create_takeaway AFTER INSERT ON create_takeaway_order_commands BEGIN
+CREATE TRIGGER trg_rt_create_takeaway
+AFTER INSERT ON create_takeaway_order_commands
+BEGIN
   INSERT INTO realtime_event_requests VALUES (
     lower(hex(randomblob(16))), NEW.store_id, 'pos.order.created', NEW.order_id, 1,
     NEW.actor_user_id, NULL, NEW.id, NEW.request_id,
@@ -246,7 +254,9 @@ CREATE TRIGGER trg_rt_create_takeaway AFTER INSERT ON create_takeaway_order_comm
   );
 END;
 
-CREATE TRIGGER trg_rt_open_table AFTER INSERT ON open_table_commands BEGIN
+CREATE TRIGGER trg_rt_open_table
+AFTER INSERT ON open_table_commands
+BEGIN
   INSERT INTO realtime_event_requests VALUES (
     lower(hex(randomblob(16))), NEW.store_id, 'pos.order.created', NEW.order_id, 1,
     NEW.actor_user_id, NULL, NEW.id, NEW.request_id,
@@ -255,7 +265,9 @@ CREATE TRIGGER trg_rt_open_table AFTER INSERT ON open_table_commands BEGIN
   );
 END;
 
-CREATE TRIGGER trg_rt_add_item AFTER INSERT ON add_item_commands BEGIN
+CREATE TRIGGER trg_rt_add_item
+AFTER INSERT ON add_item_commands
+BEGIN
   INSERT INTO realtime_event_requests VALUES (
     lower(hex(randomblob(16))), NEW.store_id, 'pos.order.changed', NEW.order_id,
     NEW.expected_order_version + 1, NEW.actor_user_id, NULL, NEW.id, NEW.request_id,
@@ -264,7 +276,9 @@ CREATE TRIGGER trg_rt_add_item AFTER INSERT ON add_item_commands BEGIN
   );
 END;
 
-CREATE TRIGGER trg_rt_add_takeaway_item AFTER INSERT ON add_takeaway_item_commands BEGIN
+CREATE TRIGGER trg_rt_add_takeaway_item
+AFTER INSERT ON add_takeaway_item_commands
+BEGIN
   INSERT INTO realtime_event_requests VALUES (
     lower(hex(randomblob(16))), NEW.store_id, 'pos.order.changed', NEW.order_id,
     NEW.expected_order_version + 1, NEW.actor_user_id, NULL, NEW.id, NEW.request_id,
@@ -273,7 +287,9 @@ CREATE TRIGGER trg_rt_add_takeaway_item AFTER INSERT ON add_takeaway_item_comman
   );
 END;
 
-CREATE TRIGGER trg_rt_update_item AFTER INSERT ON update_order_item_commands BEGIN
+CREATE TRIGGER trg_rt_update_item
+AFTER INSERT ON update_order_item_commands
+BEGIN
   INSERT INTO realtime_event_requests VALUES (
     lower(hex(randomblob(16))), NEW.store_id, 'pos.order.changed', NEW.order_id,
     NEW.expected_order_version + 1, NEW.actor_user_id, NULL, NEW.id, NEW.request_id,
@@ -282,7 +298,9 @@ CREATE TRIGGER trg_rt_update_item AFTER INSERT ON update_order_item_commands BEG
   );
 END;
 
-CREATE TRIGGER trg_rt_remove_item AFTER INSERT ON remove_order_item_commands BEGIN
+CREATE TRIGGER trg_rt_remove_item
+AFTER INSERT ON remove_order_item_commands
+BEGIN
   INSERT INTO realtime_event_requests VALUES (
     lower(hex(randomblob(16))), NEW.store_id, 'pos.order.changed', NEW.order_id,
     NEW.expected_order_version + 1, NEW.actor_user_id, NULL, NEW.id, NEW.request_id,
@@ -291,7 +309,9 @@ CREATE TRIGGER trg_rt_remove_item AFTER INSERT ON remove_order_item_commands BEG
   );
 END;
 
-CREATE TRIGGER trg_rt_update_note AFTER INSERT ON update_order_note_commands BEGIN
+CREATE TRIGGER trg_rt_update_note
+AFTER INSERT ON update_order_note_commands
+BEGIN
   INSERT INTO realtime_event_requests VALUES (
     lower(hex(randomblob(16))), NEW.store_id, 'pos.order.changed', NEW.order_id,
     NEW.expected_order_version + 1, NEW.actor_user_id, NULL, NEW.id, NEW.request_id,
@@ -300,7 +320,9 @@ CREATE TRIGGER trg_rt_update_note AFTER INSERT ON update_order_note_commands BEG
   );
 END;
 
-CREATE TRIGGER trg_rt_update_guest AFTER INSERT ON update_order_guest_commands BEGIN
+CREATE TRIGGER trg_rt_update_guest
+AFTER INSERT ON update_order_guest_commands
+BEGIN
   INSERT INTO realtime_event_requests VALUES (
     lower(hex(randomblob(16))), NEW.store_id, 'pos.order.changed', NEW.order_id,
     NEW.expected_order_version + 1, NEW.actor_user_id, NULL, NEW.id, NEW.request_id,
@@ -309,7 +331,9 @@ CREATE TRIGGER trg_rt_update_guest AFTER INSERT ON update_order_guest_commands B
   );
 END;
 
-CREATE TRIGGER trg_rt_pause AFTER INSERT ON pause_time_commands BEGIN
+CREATE TRIGGER trg_rt_pause
+AFTER INSERT ON pause_time_commands
+BEGIN
   INSERT INTO realtime_event_requests VALUES (
     lower(hex(randomblob(16))), NEW.store_id, 'pos.order.changed', NEW.order_id,
     NEW.expected_order_version + 1, NEW.actor_user_id, NEW.device_id, NEW.id, NEW.request_id,
@@ -318,7 +342,9 @@ CREATE TRIGGER trg_rt_pause AFTER INSERT ON pause_time_commands BEGIN
   );
 END;
 
-CREATE TRIGGER trg_rt_resume AFTER INSERT ON resume_time_commands BEGIN
+CREATE TRIGGER trg_rt_resume
+AFTER INSERT ON resume_time_commands
+BEGIN
   INSERT INTO realtime_event_requests VALUES (
     lower(hex(randomblob(16))), NEW.store_id, 'pos.order.changed', NEW.order_id,
     NEW.expected_order_version + 1, NEW.actor_user_id, NEW.device_id, NEW.id, NEW.request_id,
@@ -327,7 +353,9 @@ CREATE TRIGGER trg_rt_resume AFTER INSERT ON resume_time_commands BEGIN
   );
 END;
 
-CREATE TRIGGER trg_rt_update_time AFTER INSERT ON update_time_range_commands BEGIN
+CREATE TRIGGER trg_rt_update_time
+AFTER INSERT ON update_time_range_commands
+BEGIN
   INSERT INTO realtime_event_requests VALUES (
     lower(hex(randomblob(16))), NEW.store_id, 'pos.order.changed', NEW.order_id,
     NEW.expected_order_version + 1, NEW.actor_user_id, NEW.device_id, NEW.id, NEW.request_id,
@@ -336,7 +364,9 @@ CREATE TRIGGER trg_rt_update_time AFTER INSERT ON update_time_range_commands BEG
   );
 END;
 
-CREATE TRIGGER trg_rt_create_time AFTER INSERT ON create_time_session_commands BEGIN
+CREATE TRIGGER trg_rt_create_time
+AFTER INSERT ON create_time_session_commands
+BEGIN
   INSERT INTO realtime_event_requests VALUES (
     lower(hex(randomblob(16))), NEW.store_id, 'pos.order.changed', NEW.order_id,
     NEW.expected_order_version + 1, NEW.actor_user_id, NEW.device_id, NEW.id, NEW.request_id,
@@ -346,7 +376,9 @@ CREATE TRIGGER trg_rt_create_time AFTER INSERT ON create_time_session_commands B
   );
 END;
 
-CREATE TRIGGER trg_rt_remove_time AFTER INSERT ON remove_time_session_commands BEGIN
+CREATE TRIGGER trg_rt_remove_time
+AFTER INSERT ON remove_time_session_commands
+BEGIN
   INSERT INTO realtime_event_requests VALUES (
     lower(hex(randomblob(16))), NEW.store_id, 'pos.order.changed', NEW.order_id,
     NEW.expected_order_version + 1, NEW.actor_user_id, NEW.device_id, NEW.id, NEW.request_id,
@@ -355,7 +387,9 @@ CREATE TRIGGER trg_rt_remove_time AFTER INSERT ON remove_time_session_commands B
   );
 END;
 
-CREATE TRIGGER trg_rt_stop_time AFTER INSERT ON stop_time_commands BEGIN
+CREATE TRIGGER trg_rt_stop_time
+AFTER INSERT ON stop_time_commands
+BEGIN
   INSERT INTO realtime_event_requests VALUES (
     lower(hex(randomblob(16))), NEW.store_id, 'pos.order.changed', NEW.order_id,
     NEW.expected_order_version + 1, NEW.actor_user_id, NEW.device_id, NEW.id, NEW.request_id,
@@ -364,7 +398,9 @@ CREATE TRIGGER trg_rt_stop_time AFTER INSERT ON stop_time_commands BEGIN
   );
 END;
 
-CREATE TRIGGER trg_rt_resume_checkout AFTER INSERT ON resume_checkout_commands BEGIN
+CREATE TRIGGER trg_rt_resume_checkout
+AFTER INSERT ON resume_checkout_commands
+BEGIN
   INSERT INTO realtime_event_requests VALUES (
     lower(hex(randomblob(16))), NEW.store_id, 'pos.order.changed', NEW.order_id,
     NEW.expected_order_version + 1, NEW.actor_user_id, NEW.device_id, NEW.id, NEW.request_id,
@@ -373,7 +409,9 @@ CREATE TRIGGER trg_rt_resume_checkout AFTER INSERT ON resume_checkout_commands B
   );
 END;
 
-CREATE TRIGGER trg_rt_checkout AFTER INSERT ON checkout_commands BEGIN
+CREATE TRIGGER trg_rt_checkout
+AFTER INSERT ON checkout_commands
+BEGIN
   INSERT INTO realtime_event_requests VALUES (
     lower(hex(randomblob(16))), NEW.store_id, 'pos.order.closed', NEW.order_id,
     NEW.expected_order_version + 1, NEW.actor_user_id, NULL, NEW.id, NEW.request_id,
@@ -383,7 +421,9 @@ CREATE TRIGGER trg_rt_checkout AFTER INSERT ON checkout_commands BEGIN
   );
 END;
 
-CREATE TRIGGER trg_rt_takeaway_checkout AFTER INSERT ON takeaway_checkout_commands BEGIN
+CREATE TRIGGER trg_rt_takeaway_checkout
+AFTER INSERT ON takeaway_checkout_commands
+BEGIN
   INSERT INTO realtime_event_requests VALUES (
     lower(hex(randomblob(16))), NEW.store_id, 'pos.order.closed', NEW.order_id,
     NEW.expected_order_version + 1, NEW.actor_user_id, NULL, NEW.id, NEW.request_id,
@@ -392,7 +432,9 @@ CREATE TRIGGER trg_rt_takeaway_checkout AFTER INSERT ON takeaway_checkout_comman
   );
 END;
 
-CREATE TRIGGER trg_rt_transfer AFTER INSERT ON transfer_table_commands BEGIN
+CREATE TRIGGER trg_rt_transfer
+AFTER INSERT ON transfer_table_commands
+BEGIN
   INSERT INTO realtime_event_requests VALUES (
     lower(hex(randomblob(16))), NEW.store_id, 'pos.order.changed', NEW.order_id,
     NEW.expected_order_version + 1, NEW.actor_user_id, NULL, NEW.id, NEW.request_id,
@@ -402,7 +444,9 @@ CREATE TRIGGER trg_rt_transfer AFTER INSERT ON transfer_table_commands BEGIN
   );
 END;
 
-CREATE TRIGGER trg_rt_cancel AFTER INSERT ON cancel_order_commands BEGIN
+CREATE TRIGGER trg_rt_cancel
+AFTER INSERT ON cancel_order_commands
+BEGIN
   INSERT INTO realtime_event_requests VALUES (
     lower(hex(randomblob(16))), NEW.store_id, 'pos.order.closed', NEW.order_id,
     NEW.expected_order_version + 1, NEW.actor_user_id, NULL, NEW.id, NEW.request_id,
@@ -411,7 +455,9 @@ CREATE TRIGGER trg_rt_cancel AFTER INSERT ON cancel_order_commands BEGIN
   );
 END;
 
-CREATE TRIGGER trg_rt_cancel_takeaway AFTER INSERT ON cancel_takeaway_order_commands BEGIN
+CREATE TRIGGER trg_rt_cancel_takeaway
+AFTER INSERT ON cancel_takeaway_order_commands
+BEGIN
   INSERT INTO realtime_event_requests VALUES (
     lower(hex(randomblob(16))), NEW.store_id, 'pos.order.closed', NEW.order_id,
     NEW.expected_order_version + 1, NEW.actor_user_id, NULL, NEW.id, NEW.request_id,

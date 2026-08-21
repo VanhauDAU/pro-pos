@@ -49,6 +49,7 @@ export interface RealtimeEventV1 {
     affectedTableIds?: string[];
     guestRequestId?: string;
     serviceRequestId?: string;
+    serviceRequestType?: 'CALL_STAFF' | 'CHECKOUT_REQUEST';
   };
 }
 

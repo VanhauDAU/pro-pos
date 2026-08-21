@@ -31,6 +31,7 @@ import { StoreService } from '@server/services/store-service';
 import { RealtimeRepository } from '@server/repositories/realtime-repository';
 import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
 import { qrOrderStaffRoutes } from '@server/routes/qr-order-staff';
+import { pushNotificationRoutes } from '@server/routes/push-notifications';
 import type { AppEnv } from '@server/types';
 
 const posRoutes = new Hono<AppEnv>();
@@ -479,5 +480,6 @@ posRoutes.get('/invoices/:invoiceId', requirePermission('invoice.view'), async (
 );
 
 posRoutes.route('/qr-orders', qrOrderStaffRoutes);
+posRoutes.route('/push', pushNotificationRoutes);
 
 export { posRoutes };

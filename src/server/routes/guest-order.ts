@@ -7,6 +7,7 @@ import { success } from '@server/lib/response';
 import { assertSameOrigin } from '@server/lib/security';
 import { parseJson } from '@server/lib/validation';
 import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
+import { PushNotificationService } from '@server/services/push-notification-service';
 import { QrOrderService } from '@server/services/qr-order-service';
 import type { AppEnv } from '@server/types';
 
@@ -64,7 +65,16 @@ guestOrderRoutes.post('/requests', async (c) => {
   const rawGuest = guestCredential(c);
   const result = await new QrOrderService(c.env).submitOrder(rawGuest, body, clientIp(c));
   c.executionCtx.waitUntil(
-    new RealtimeDispatcher(c.env).dispatchStore(result.storeId).catch(() => undefined),
+    Promise.all([
+      new RealtimeDispatcher(c.env).dispatchStore(result.storeId),
+      new PushNotificationService(c.env).sendStoreNotification({
+        storeId: result.storeId,
+        title: 'QR Order mới',
+        body: `${result.tableName} vừa gọi món`,
+        url: '/pos/qr-order',
+        tag: `qr-order:${result.requestId}`,
+      }),
+    ]).catch(() => undefined),
   );
   return success(c, { requestId: result.requestId, replayed: result.replayed }, 201);
 });
@@ -77,7 +87,16 @@ guestOrderRoutes.post('/service-requests', async (c) => {
     body.type,
   );
   c.executionCtx.waitUntil(
-    new RealtimeDispatcher(c.env).dispatchStore(result.storeId).catch(() => undefined),
+    Promise.all([
+      new RealtimeDispatcher(c.env).dispatchStore(result.storeId),
+      new PushNotificationService(c.env).sendStoreNotification({
+        storeId: result.storeId,
+        title: result.status === 'OPEN' ? 'Yêu cầu từ khách' : 'Pro POS',
+        body: `${result.tableName}: ${body.type === 'CALL_STAFF' ? 'Gọi nhân viên' : 'Yêu cầu thanh toán'}`,
+        url: '/pos/qr-order',
+        tag: `service-request:${result.id}`,
+      }),
+    ]).catch(() => undefined),
   );
   return success(c, { id: result.id, status: result.status }, 201);
 });

@@ -21,8 +21,16 @@ export default defineConfig({
     react(),
     cloudflare(),
     VitePWA({
+      strategies: 'injectManifest',
+      srcDir: 'src/client',
+      filename: 'sw.js',
       registerType: 'prompt',
-      includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
+      includeAssets: [
+        'favicon.svg',
+        'apple-touch-icon.png',
+        'sound/sound_goimonmoi.ogg',
+        'sound/sound_yeucauthanhtoan.ogg',
+      ],
       manifest: {
         name: 'Pro POS',
         short_name: 'Pro POS',
@@ -44,10 +52,8 @@ export default defineConfig({
           },
         ],
       },
-      workbox: {
+      injectManifest: {
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-        navigateFallbackDenylist: [/^\/api(?:\/|$)/],
-        runtimeCaching: [],
       },
     }),
   ],

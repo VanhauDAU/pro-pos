@@ -462,7 +462,7 @@ export class QrOrderRepository {
             ?, ?, 'pos.order.changed', ?, ?, NULL, NULL, ?, ?,
             json_array('guest.services'),
             json_object('reason', 'SERVICE_REQUEST_CREATED', 'serviceRequestId', ?,
-              'affectedTableIds', json_array(?)), ?
+              'serviceRequestType', ?, 'affectedTableIds', json_array(?)), ?
           )`,
         )
         .bind(
@@ -473,6 +473,7 @@ export class QrOrderRepository {
           input.id,
           input.id,
           input.id,
+          input.type,
           input.session.tableId,
           input.now,
         ),

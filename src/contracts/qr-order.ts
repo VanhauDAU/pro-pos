@@ -25,6 +25,14 @@ export const rejectGuestOrderSchema = z.object({
   reason: z.string().trim().min(1).max(300),
 });
 
+export const pushSubscriptionSchema = z.object({
+  endpoint: z.string().url().max(2000),
+  keys: z.object({
+    p256dh: z.string().min(20).max(512),
+    auth: z.string().min(8).max(512),
+  }),
+});
+
 export interface GuestMenuVariant {
   id: string;
   name: string;

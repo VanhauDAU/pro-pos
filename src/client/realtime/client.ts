@@ -7,6 +7,7 @@ import {
   type RealtimeSyncResponse,
 } from '@contracts/realtime';
 import { apiRequest } from '@client/lib/api';
+import { playPosSound } from '@client/lib/sound';
 
 export type RealtimeConnectionStatus = 'DISABLED' | 'CONNECTING' | 'CONNECTED' | 'RECONNECTING';
 
@@ -183,6 +184,21 @@ export class PosRealtimeClient {
   }
 
   private async routeEvent(event: RealtimeEventV1) {
+    // Play notification sound if the event happened recently (within 45s) to avoid blasting sound on historical sync
+    const isLive = Date.now() - event.occurredAtMs < 45_000;
+    if (isLive) {
+      if (event.data.reason === 'GUEST_ORDER_CREATED') {
+        playPosSound('NEW_QR_ORDER');
+      } else if (event.data.reason === 'SERVICE_REQUEST_CREATED') {
+        if (
+          event.data.serviceRequestType === 'CHECKOUT_REQUEST' ||
+          !event.data.serviceRequestType
+        ) {
+          playPosSound('CHECKOUT_REQUEST');
+        }
+      }
+    }
+
     const invalidations: Array<Promise<unknown>> = [];
     if (event.topics.includes('pos.orders')) {
       invalidations.push(this.queryClient.invalidateQueries({ queryKey: ['pos-orders'] }));

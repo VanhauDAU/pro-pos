@@ -221,6 +221,25 @@ describe('Owner and POS activation invariants', () => {
       .bind(store.storeId)
       .first<{ status: string }>();
     expect(row?.status).toBe('LOCKED');
+
+    const detailsResponse = await SELF.fetch(`${ORIGIN}/api/v1/platform/stores/${store.storeId}`, {
+      headers: {
+        Origin: ORIGIN,
+        Cookie: sessionCookie,
+      },
+    });
+    expect(detailsResponse.status).toBe(200);
+    const details = await jsonData<{
+      store: { id: string; name: string; status: string };
+      members: Array<{ roleCode: string; displayName: string }>;
+      devices: Array<{ name: string }>;
+      sessions: Array<{ sessionKind: string }>;
+      stats: { totalAreas: number; totalTables: number; totalProducts: number };
+    }>(detailsResponse);
+    expect(details.store.name).toBe('Store From Platform UI');
+    expect(details.members.length).toBeGreaterThanOrEqual(1);
+    expect(details.members[0]?.roleCode).toBe('OWNER');
+    expect(details.stats).toBeDefined();
   });
 
   it('allows Owner login on a fresh device without creating a POS device', async () => {

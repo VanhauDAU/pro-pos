@@ -133,4 +133,12 @@ export class PlatformService {
     if (!result) throw new AppError('STORE_NOT_FOUND', 'Không tìm thấy cửa hàng.', 404);
     return { storeId: input.storeId, capability: input.capability, enabled: result.enabled === 1 };
   }
+
+  async getStoreDetails(storeId: string) {
+    const details = await this.repository.getStoreDetails(storeId);
+    if (!details) {
+      throw new AppError('STORE_NOT_FOUND', 'Không tìm thấy cửa hàng.', 404);
+    }
+    return details;
+  }
 }

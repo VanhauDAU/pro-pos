@@ -39,6 +39,11 @@ platformRoutes.get('/stores', async (c) => {
   return success(c, result.results);
 });
 
+platformRoutes.get('/stores/:storeId', async (c) => {
+  const result = await new PlatformService(c.env).getStoreDetails(c.req.param('storeId'));
+  return success(c, result);
+});
+
 platformRoutes.post('/stores', async (c) => {
   const body = await parseJson(c.req.raw, createStoreSchema);
   return success(c, await new PlatformService(c.env).createStore(body), 201);

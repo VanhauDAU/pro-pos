@@ -264,7 +264,13 @@ export function LoginPage() {
   );
   const [isSwitchingAccount, setIsSwitchingAccount] = useState(false);
 
-  const [ownerUsername, setOwnerUsername] = useState('');
+  const [ownerUsername, setOwnerUsername] = useState(() => {
+    try {
+      return localStorage.getItem('pos_saved_owner_username') || '';
+    } catch {
+      return '';
+    }
+  });
   const [ownerPassword, setOwnerPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
 
@@ -300,6 +306,15 @@ export function LoginPage() {
         password: ownerPassword,
         rememberMe,
       });
+      try {
+        if (rememberMe) {
+          localStorage.setItem('pos_saved_owner_username', ownerUsername.trim());
+        } else {
+          localStorage.removeItem('pos_saved_owner_username');
+        }
+      } catch {
+        // ignore
+      }
       await queryClient.invalidateQueries({ queryKey: ['auth-context'] });
       navigate('/owner', { replace: true });
     } catch (loginError) {
@@ -385,7 +400,7 @@ export function LoginPage() {
                 }}
                 autoComplete="username"
                 disabled={submitting}
-                autoFocus
+                autoFocus={!ownerUsername}
               />
             </div>
 
@@ -401,6 +416,7 @@ export function LoginPage() {
                 }}
                 autoComplete="current-password"
                 disabled={submitting}
+                autoFocus={Boolean(ownerUsername)}
               />
             </div>
 
@@ -410,9 +426,7 @@ export function LoginPage() {
                 onChange={(e) => setRememberMe(e.target.checked)}
                 disabled={submitting}
               >
-                <span style={{ color: '#475569', fontSize: 13.5 }}>
-                  Duy trì đăng nhập trên thiết bị này
-                </span>
+                <span style={{ color: '#475569', fontSize: 13.5 }}>Duy trì đăng nhập</span>
               </Checkbox>
             </div>
 

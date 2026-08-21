@@ -553,4 +553,17 @@ describe('Owner and POS activation invariants', () => {
     });
     expect(loginShort.maxAgeSeconds).toBe(24 * 60 * 60);
   });
+
+  it('aggregates platform analytics and store performance data correctly', async () => {
+    const platform = new PlatformService(env);
+    const analytics = await platform.getPlatformAnalytics(14);
+
+    expect(analytics.summary).toBeDefined();
+    expect(analytics.summary.totalStores).toBeGreaterThanOrEqual(1);
+    expect(analytics.revenueTrend).toHaveLength(14);
+    expect(analytics.storePerformance.length).toBeGreaterThanOrEqual(1);
+    expect(analytics.hourlyDistribution).toHaveLength(24);
+    expect(Array.isArray(analytics.paymentMethods)).toBe(true);
+    expect(Array.isArray(analytics.topProducts)).toBe(true);
+  });
 });

@@ -612,4 +612,285 @@ export class PlatformRepository {
     await this.db.batch(statements);
     return { success: true };
   }
+
+  async getPlatformAnalytics(days = 14) {
+    const now = Date.now();
+    const todayStart = new Date(
+      new Date(now).toLocaleDateString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' }),
+    ).getTime();
+    const last7DaysStart = now - 7 * 24 * 60 * 60 * 1000;
+    const last30DaysStart = now - 30 * 24 * 60 * 60 * 1000;
+    const trendStart = now - days * 24 * 60 * 60 * 1000;
+
+    // 1. Stores stats
+    const storesStats = await this.db
+      .prepare(
+        `SELECT
+           COUNT(*) AS totalStores,
+           COALESCE(SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END), 0) AS activeStores,
+           COALESCE(SUM(CASE WHEN status = 'LOCKED' THEN 1 ELSE 0 END), 0) AS lockedStores
+         FROM stores`,
+      )
+      .first<{ totalStores: number; activeStores: number; lockedStores: number }>();
+
+    // 2. Invoices & Revenue stats
+    const invoicesStats = await this.db
+      .prepare(
+        `SELECT
+           COUNT(*) AS totalInvoices,
+           COALESCE(SUM(total), 0) AS totalRevenue,
+           COALESCE(SUM(CASE WHEN issued_at >= ? THEN total ELSE 0 END), 0) AS todayRevenue,
+           COALESCE(SUM(CASE WHEN issued_at >= ? THEN total ELSE 0 END), 0) AS last7DaysRevenue,
+           COALESCE(SUM(CASE WHEN issued_at >= ? THEN total ELSE 0 END), 0) AS last30DaysRevenue
+         FROM invoices
+         WHERE status = 'COMPLETED'`,
+      )
+      .bind(todayStart, last7DaysStart, last30DaysStart)
+      .first<{
+        totalInvoices: number;
+        totalRevenue: number;
+        todayRevenue: number;
+        last7DaysRevenue: number;
+        last30DaysRevenue: number;
+      }>();
+
+    // 3. Orders stats
+    const ordersStats = await this.db
+      .prepare(
+        `SELECT
+           COUNT(*) AS totalOrders,
+           COALESCE(SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END), 0) AS openOrders,
+           COALESCE(SUM(CASE WHEN status = 'PAID' THEN 1 ELSE 0 END), 0) AS paidOrders
+         FROM orders`,
+      )
+      .first<{ totalOrders: number; openOrders: number; paidOrders: number }>();
+
+    // 4. Tables stats
+    const tablesStats = await this.db
+      .prepare(
+        `SELECT
+           COUNT(*) AS totalTables,
+           COALESCE(SUM(CASE WHEN status = 'OCCUPIED' THEN 1 ELSE 0 END), 0) AS occupiedTables
+         FROM service_tables`,
+      )
+      .first<{ totalTables: number; occupiedTables: number }>();
+
+    // 5. Active devices
+    const devicesCount = await this.db
+      .prepare(`SELECT COUNT(*) AS totalActiveDevices FROM devices WHERE status = 'ACTIVE'`)
+      .first<{ totalActiveDevices: number }>();
+
+    // 6. Active members
+    const membersCount = await this.db
+      .prepare(`SELECT COUNT(*) AS totalMembers FROM store_memberships WHERE status = 'ACTIVE'`)
+      .first<{ totalMembers: number }>();
+
+    // 7. Store Performance Leaderboard
+    const storeRows = await this.db
+      .prepare(
+        `SELECT
+           s.id AS storeId,
+           s.name AS storeName,
+           s.status AS status,
+           s.created_at AS createdAt,
+           COALESCE(inv.totalRevenue, 0) AS totalRevenue,
+           COALESCE(inv.todayRevenue, 0) AS todayRevenue,
+           COALESCE(inv.totalInvoices, 0) AS totalInvoices,
+           COALESCE(ord.totalOrders, 0) AS totalOrders,
+           (SELECT COUNT(*) FROM devices d WHERE d.store_id = s.id AND d.status = 'ACTIVE') AS activeDevices,
+           (SELECT COUNT(*) FROM store_memberships sm WHERE sm.store_id = s.id AND sm.status = 'ACTIVE') AS activeMembers,
+           (SELECT COUNT(*) FROM service_tables st WHERE st.store_id = s.id) AS totalTables,
+           (SELECT COUNT(*) FROM service_tables st WHERE st.store_id = s.id AND st.status = 'OCCUPIED') AS occupiedTables,
+           ord.lastActivityAt AS lastActivityAt
+         FROM stores s
+         LEFT JOIN (
+           SELECT store_id,
+                  SUM(total) AS totalRevenue,
+                  SUM(CASE WHEN issued_at >= ? THEN total ELSE 0 END) AS todayRevenue,
+                  COUNT(*) AS totalInvoices
+           FROM invoices
+           WHERE status = 'COMPLETED'
+           GROUP BY store_id
+         ) inv ON inv.store_id = s.id
+         LEFT JOIN (
+           SELECT store_id,
+                  COUNT(*) AS totalOrders,
+                  MAX(created_at) AS lastActivityAt
+           FROM orders
+           GROUP BY store_id
+         ) ord ON ord.store_id = s.id
+         ORDER BY totalRevenue DESC, createdAt DESC`,
+      )
+      .bind(todayStart)
+      .all<{
+        storeId: string;
+        storeName: string;
+        status: 'ACTIVE' | 'LOCKED';
+        createdAt: number;
+        totalRevenue: number;
+        todayRevenue: number;
+        totalInvoices: number;
+        totalOrders: number;
+        activeDevices: number;
+        activeMembers: number;
+        totalTables: number;
+        occupiedTables: number;
+        lastActivityAt: number | null;
+      }>();
+
+    const storePerformance = (storeRows.results || []).map((row) =>
+      Object.assign(row, {
+        avgOrderValue: row.totalInvoices > 0 ? Math.round(row.totalRevenue / row.totalInvoices) : 0,
+      }),
+    );
+
+    // 8. Daily Revenue Trend (Aggregate by day)
+    const trendRows = await this.db
+      .prepare(
+        `SELECT
+           date(issued_at / 1000, 'unixepoch', '+7 hours') AS dayStr,
+           COALESCE(SUM(total), 0) AS revenue,
+           COUNT(*) AS invoiceCount
+         FROM invoices
+         WHERE status = 'COMPLETED' AND issued_at >= ?
+         GROUP BY dayStr
+         ORDER BY dayStr ASC`,
+      )
+      .bind(trendStart)
+      .all<{ dayStr: string; revenue: number; invoiceCount: number }>();
+
+    const trendMap = new Map(
+      (trendRows.results || []).map((r) => [
+        r.dayStr,
+        { revenue: r.revenue, invoiceCount: r.invoiceCount },
+      ]),
+    );
+
+    // Build a continuous array of days
+    const revenueTrend: Array<{
+      date: string;
+      dateLabel: string;
+      revenue: number;
+      invoiceCount: number;
+      orderCount: number;
+    }> = [];
+
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(now - i * 24 * 60 * 60 * 1000);
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      const dayKey = `${yyyy}-${mm}-${dd}`;
+      const data = trendMap.get(dayKey) || { revenue: 0, invoiceCount: 0 };
+      revenueTrend.push({
+        date: dayKey,
+        dateLabel: `${dd}/${mm}`,
+        revenue: data.revenue,
+        invoiceCount: data.invoiceCount,
+        orderCount: data.invoiceCount,
+      });
+    }
+
+    // 9. Payment Methods Breakdown
+    const paymentRows = await this.db
+      .prepare(
+        `SELECT
+           method,
+           COUNT(*) AS count,
+           COALESCE(SUM(amount), 0) AS totalAmount
+         FROM payments
+         WHERE status = 'SUCCEEDED'
+         GROUP BY method`,
+      )
+      .all<{ method: string; count: number; totalAmount: number }>();
+
+    const totalPaymentAmount = (paymentRows.results || []).reduce(
+      (acc, p) => acc + p.totalAmount,
+      0,
+    );
+    const paymentMethods = (paymentRows.results || []).map((p) => ({
+      method: p.method,
+      label:
+        p.method === 'CASH'
+          ? 'Tiền mặt'
+          : p.method === 'BANK_TRANSFER'
+            ? 'Chuyển khoản VietQR'
+            : p.method,
+      count: p.count,
+      totalAmount: p.totalAmount,
+      percentage:
+        totalPaymentAmount > 0 ? Math.round((p.totalAmount / totalPaymentAmount) * 100) : 0,
+    }));
+
+    // 10. Hourly Distribution
+    const hourlyRows = await this.db
+      .prepare(
+        `SELECT
+           CAST(strftime('%H', issued_at / 1000, 'unixepoch', '+7 hours') AS INTEGER) AS hr,
+           COUNT(*) AS orderCount,
+           COALESCE(SUM(total), 0) AS revenue
+         FROM invoices
+         WHERE status = 'COMPLETED'
+         GROUP BY hr`,
+      )
+      .all<{ hr: number; orderCount: number; revenue: number }>();
+
+    const hourlyMap = new Map((hourlyRows.results || []).map((h) => [h.hr, h]));
+    const hourlyDistribution = Array.from({ length: 24 }, (_, hour) => {
+      const entry = hourlyMap.get(hour);
+      return {
+        hour,
+        label: `${String(hour).padStart(2, '0')}:00`,
+        orderCount: entry?.orderCount ?? 0,
+        revenue: entry?.revenue ?? 0,
+      };
+    });
+
+    // 11. Top Selling Products across Platform
+    const productRows = await this.db
+      .prepare(
+        `SELECT
+           oi.product_name_snapshot AS name,
+           oi.product_type AS productType,
+           COALESCE(SUM(oi.quantity_milli) / 1000, 0) AS totalQuantity,
+           COALESCE(SUM(oi.line_total), 0) AS totalRevenue
+         FROM order_items oi
+         JOIN orders o ON o.id = oi.order_id AND o.status = 'PAID'
+         GROUP BY oi.product_name_snapshot, oi.product_type
+         ORDER BY totalRevenue DESC
+         LIMIT 10`,
+      )
+      .all<{ name: string; productType: string; totalQuantity: number; totalRevenue: number }>();
+
+    const topProducts = productRows.results || [];
+
+    const totalRev = invoicesStats?.totalRevenue ?? 0;
+    const totalInv = invoicesStats?.totalInvoices ?? 0;
+
+    return {
+      summary: {
+        totalStores: storesStats?.totalStores ?? 0,
+        activeStores: storesStats?.activeStores ?? 0,
+        lockedStores: storesStats?.lockedStores ?? 0,
+        totalRevenue: totalRev,
+        todayRevenue: invoicesStats?.todayRevenue ?? 0,
+        last7DaysRevenue: invoicesStats?.last7DaysRevenue ?? 0,
+        last30DaysRevenue: invoicesStats?.last30DaysRevenue ?? 0,
+        totalInvoices: totalInv,
+        totalOrders: ordersStats?.totalOrders ?? 0,
+        openOrders: ordersStats?.openOrders ?? 0,
+        paidOrders: ordersStats?.paidOrders ?? 0,
+        totalTables: tablesStats?.totalTables ?? 0,
+        occupiedTables: tablesStats?.occupiedTables ?? 0,
+        totalActiveDevices: devicesCount?.totalActiveDevices ?? 0,
+        totalMembers: membersCount?.totalMembers ?? 0,
+        avgOrderValue: totalInv > 0 ? Math.round(totalRev / totalInv) : 0,
+      },
+      revenueTrend,
+      storePerformance,
+      paymentMethods,
+      hourlyDistribution,
+      topProducts,
+    };
+  }
 }

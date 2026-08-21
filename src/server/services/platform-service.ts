@@ -192,4 +192,8 @@ export class PlatformService {
     }
     return { success: true };
   }
+
+  async getPlatformAnalytics(days?: number) {
+    return this.repository.getPlatformAnalytics(days);
+  }
 }

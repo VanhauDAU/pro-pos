@@ -34,6 +34,16 @@ platformRoutes.post('/bootstrap', async (c) => {
 
 platformRoutes.use('/stores/*', requireActor('SUPER_ADMIN'));
 platformRoutes.use('/stores', requireActor('SUPER_ADMIN'));
+platformRoutes.use('/analytics', requireActor('SUPER_ADMIN'));
+
+platformRoutes.get('/analytics', async (c) => {
+  const daysParam = c.req.query('days');
+  const days = daysParam ? parseInt(daysParam, 10) : 14;
+  const result = await new PlatformService(c.env).getPlatformAnalytics(
+    Number.isFinite(days) && days > 0 ? days : 14,
+  );
+  return success(c, result);
+});
 
 platformRoutes.get('/stores', async (c) => {
   const result = await new PlatformService(c.env).listStores();

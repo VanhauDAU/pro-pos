@@ -1,23 +1,28 @@
 import {
   AppstoreOutlined,
-  CheckCircleOutlined,
   ClockCircleOutlined,
   CreditCardOutlined,
   DesktopOutlined,
+  DollarOutlined,
   EditOutlined,
   EyeOutlined,
+  FireOutlined,
   InfoCircleOutlined,
   KeyOutlined,
+  LineChartOutlined,
   LockOutlined,
   LogoutOutlined,
   MailOutlined,
   PhoneOutlined,
   PlusOutlined,
   ReloadOutlined,
+  RiseOutlined,
   SearchOutlined,
   ShopOutlined,
   ShoppingOutlined,
+  StarOutlined,
   TeamOutlined,
+  TrophyOutlined,
   UnlockOutlined,
 } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -36,8 +41,10 @@ import {
   Layout,
   Modal,
   Popconfirm,
+  Progress,
   Radio,
   Row,
+  Segmented,
   Select,
   Space,
   Spin,
@@ -45,6 +52,7 @@ import {
   Table,
   Tabs,
   Tag,
+  Tooltip,
   Typography,
   message,
 } from 'antd';
@@ -54,6 +62,7 @@ import { Navigate } from 'react-router';
 import type { AuthContextResponse } from '@contracts/auth';
 import type {
   CreatePlatformStoreResponse,
+  PlatformAnalytics,
   PlatformStoreDetail,
   PlatformStoreSummary,
 } from '@contracts/platform';
@@ -94,6 +103,19 @@ function formatVnd(amount: number) {
   return new Intl.NumberFormat('vi-VN').format(amount) + ' ₫';
 }
 
+function formatCompactVnd(amount: number) {
+  if (amount >= 1_000_000_000) {
+    return (amount / 1_000_000_000).toFixed(1) + ' tỷ ₫';
+  }
+  if (amount >= 1_000_000) {
+    return (amount / 1_000_000).toFixed(1) + ' tr ₫';
+  }
+  if (amount >= 1_000) {
+    return (amount / 1_000).toFixed(0) + ' k ₫';
+  }
+  return formatVnd(amount);
+}
+
 function formatDateTime(timestamp: number | null | undefined) {
   if (!timestamp) return 'Chưa ghi nhận';
   return new Intl.DateTimeFormat('vi-VN', {
@@ -112,6 +134,515 @@ function getInitials(name: string) {
   return name.slice(0, 2).toUpperCase();
 }
 
+/* =========================================================================
+   Interactive SVG Revenue Trend Chart
+   ========================================================================= */
+function RevenueTrendChart({
+  data,
+  metric,
+}: {
+  data: PlatformAnalytics['revenueTrend'];
+  metric: 'revenue' | 'invoices';
+}) {
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+
+  const width = 760;
+  const height = 240;
+  const padLeft = 70;
+  const padRight = 30;
+  const padTop = 25;
+  const padBottom = 40;
+
+  const chartW = width - padLeft - padRight;
+  const chartH = height - padTop - padBottom;
+
+  const values = data.map((d) => (metric === 'revenue' ? d.revenue : d.invoiceCount));
+  const maxVal = Math.max(...values, metric === 'revenue' ? 1_000_000 : 10);
+
+  const points = data.map((d, idx) => {
+    const x = padLeft + (idx / Math.max(data.length - 1, 1)) * chartW;
+    const val = metric === 'revenue' ? d.revenue : d.invoiceCount;
+    const y = padTop + chartH - (val / maxVal) * chartH;
+    return { x, y, val, ...d };
+  });
+
+  // Area path
+  const areaPath = useMemo(() => {
+    const firstPt = points[0];
+    const lastPt = points[points.length - 1];
+    if (!firstPt || !lastPt) return '';
+    let p = `M ${firstPt.x} ${padTop + chartH} L ${firstPt.x} ${firstPt.y}`;
+    for (let i = 1; i < points.length; i++) {
+      const pt = points[i];
+      if (pt) p += ` L ${pt.x} ${pt.y}`;
+    }
+    p += ` L ${lastPt.x} ${padTop + chartH} Z`;
+    return p;
+  }, [points, padTop, chartH]);
+
+  // Line path
+  const linePath = useMemo(() => {
+    if (points.length === 0) return '';
+    return points.reduce((acc, pt, i) => `${acc} ${i === 0 ? 'M' : 'L'} ${pt.x} ${pt.y}`, '');
+  }, [points]);
+
+  const activePoint = hoverIndex !== null ? points[hoverIndex] : null;
+
+  return (
+    <div className="platform-chart-container" style={{ position: 'relative' }}>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="platform-chart-svg"
+        onMouseLeave={() => setHoverIndex(null)}
+      >
+        <defs>
+          <linearGradient id="revenueGradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.32" />
+            <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.0" />
+          </linearGradient>
+        </defs>
+
+        {/* Horizontal Grid lines */}
+        {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+          const y = padTop + chartH * (1 - ratio);
+          const labelVal = maxVal * ratio;
+          return (
+            <g key={ratio}>
+              <line
+                x1={padLeft}
+                y1={y}
+                x2={width - padRight}
+                y2={y}
+                className="platform-grid-line"
+              />
+              <text
+                x={padLeft - 10}
+                y={y + 4}
+                textAnchor="end"
+                fontSize="11"
+                fill="#94a3b8"
+                fontFamily="monospace"
+              >
+                {metric === 'revenue' ? formatCompactVnd(labelVal) : Math.round(labelVal)}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Gradient Area Fill */}
+        <path d={areaPath} fill="url(#revenueGradient)" />
+
+        {/* Line Stroke */}
+        <path d={linePath} fill="none" stroke="#2563eb" strokeWidth="2.5" strokeLinecap="round" />
+
+        {/* X-axis labels & vertical hover trigger columns */}
+        {points.map((pt, idx) => (
+          <g key={idx}>
+            <text
+              x={pt.x}
+              y={height - 12}
+              textAnchor="middle"
+              fontSize="11"
+              fill={hoverIndex === idx ? '#0f172a' : '#94a3b8'}
+              fontWeight={hoverIndex === idx ? 700 : 500}
+            >
+              {pt.dateLabel}
+            </text>
+
+            {/* Hover Dot */}
+            <circle
+              cx={pt.x}
+              cy={pt.y}
+              r={hoverIndex === idx ? 6 : 3.5}
+              fill="#ffffff"
+              stroke="#2563eb"
+              strokeWidth={hoverIndex === idx ? 3 : 2}
+              style={{ transition: 'all 0.15s ease' }}
+            />
+
+            {/* Transparent hover capture rect */}
+            <rect
+              x={pt.x - chartW / points.length / 2}
+              y={padTop}
+              width={chartW / points.length}
+              height={chartH}
+              fill="transparent"
+              style={{ cursor: 'pointer' }}
+              onMouseEnter={() => setHoverIndex(idx)}
+            />
+          </g>
+        ))}
+      </svg>
+
+      {/* Floating Tooltip */}
+      {activePoint ? (
+        <div
+          className="platform-chart-tooltip-box"
+          style={{
+            left: `${(activePoint.x / width) * 100}%`,
+            top: `${(activePoint.y / height) * 100}%`,
+          }}
+        >
+          <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>
+            Ngày {activePoint.date}
+          </div>
+          <div style={{ color: '#93c5fd' }}>
+            Doanh thu: <strong>{formatVnd(activePoint.revenue)}</strong>
+          </div>
+          <div style={{ color: '#cbd5e1', fontSize: 12 }}>
+            Số hóa đơn: <strong>{activePoint.invoiceCount}</strong> đơn
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/* =========================================================================
+   Interactive Payment Methods Donut Chart
+   ========================================================================= */
+function PaymentDonutChart({ data }: { data: PlatformAnalytics['paymentMethods'] }) {
+  const totalAmount = data.reduce((acc, d) => acc + d.totalAmount, 0);
+
+  const radius = 60;
+  const circ = 2 * Math.PI * radius;
+
+  const colorMap: Record<string, string> = {
+    CASH: '#10b981',
+    BANK_TRANSFER: '#3b82f6',
+    OTHER: '#8b5cf6',
+  };
+
+  let accumulated = 0;
+  const slices = data.map((d) => {
+    const ratio = totalAmount > 0 ? d.totalAmount / totalAmount : 0;
+    const strokeDasharray = `${ratio * circ} ${circ}`;
+    const strokeDashoffset = -accumulated * circ;
+    accumulated += ratio;
+    return {
+      ...d,
+      color: colorMap[d.method] || '#64748b',
+      strokeDasharray,
+      strokeDashoffset,
+    };
+  });
+
+  return (
+    <div className="platform-donut-wrapper">
+      <div style={{ position: 'relative', width: 150, height: 150 }}>
+        <svg viewBox="0 0 150 150" className="platform-donut-svg">
+          {/* Background circle */}
+          <circle cx="75" cy="75" r={radius} fill="none" stroke="#f1f5f9" strokeWidth="18" />
+          {slices.map((slice, i) => (
+            <circle
+              key={i}
+              cx="75"
+              cy="75"
+              r={radius}
+              fill="none"
+              stroke={slice.color}
+              strokeWidth="18"
+              strokeDasharray={slice.strokeDasharray}
+              strokeDashoffset={slice.strokeDashoffset}
+              strokeLinecap="round"
+              style={{ transition: 'all 0.3s ease' }}
+            />
+          ))}
+        </svg>
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            textAlign: 'center',
+          }}
+        >
+          <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600 }}>TỔNG GMV</div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: '#0f172a' }}>
+            {formatCompactVnd(totalAmount)}
+          </div>
+        </div>
+      </div>
+
+      <div className="platform-donut-legend">
+        {data.length === 0 ? (
+          <Typography.Text type="secondary">Chưa có dữ liệu thanh toán</Typography.Text>
+        ) : (
+          slices.map((slice) => (
+            <div key={slice.method} className="platform-donut-legend-item">
+              <div style={{ display: 'flex', alignItems: 'center' }}>
+                <span className="platform-donut-dot" style={{ background: slice.color }} />
+                <span style={{ fontWeight: 600, color: '#1e293b' }}>{slice.label}</span>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <strong style={{ color: '#0f172a' }}>{slice.percentage}%</strong>
+                <div style={{ fontSize: 11, color: '#64748b' }}>
+                  {formatCompactVnd(slice.totalAmount)} ({slice.count} GD)
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================================
+   24-Hour Peak Distribution Chart
+   ========================================================================= */
+function HourlyPeakChart({ data }: { data: PlatformAnalytics['hourlyDistribution'] }) {
+  const maxOrders = Math.max(...data.map((d) => d.orderCount), 1);
+
+  return (
+    <div>
+      <div className="platform-hourly-chart">
+        {data.map((item) => {
+          const heightPct = Math.max((item.orderCount / maxOrders) * 100, 4);
+          const isPeak = item.orderCount > 0 && item.orderCount >= maxOrders * 0.7;
+
+          return (
+            <Tooltip
+              key={item.hour}
+              title={
+                <div>
+                  <strong>{item.label}</strong>
+                  <div>Đơn hàng: {item.orderCount}</div>
+                  <div>Doanh thu: {formatVnd(item.revenue)}</div>
+                </div>
+              }
+            >
+              <div className="platform-hourly-col">
+                <div
+                  className={`platform-hourly-bar ${isPeak ? 'platform-hourly-bar--peak' : ''}`}
+                  style={{ height: `${heightPct}%` }}
+                />
+                <span className="platform-hourly-label">
+                  {item.hour % 3 === 0 ? String(item.hour).padStart(2, '0') : ''}
+                </span>
+              </div>
+            </Tooltip>
+          );
+        })}
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          fontSize: 12,
+          color: '#64748b',
+          marginTop: 6,
+        }}
+      >
+        <span>00:00 (Đêm)</span>
+        <span>12:00 (Trưa)</span>
+        <span>18:00 (Tối)</span>
+        <span>23:00 (Khuya)</span>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================================
+   Store Leaderboard / Performance Widget
+   ========================================================================= */
+function StoreLeaderboardWidget({
+  stores,
+  onSelectStore,
+}: {
+  stores: PlatformAnalytics['storePerformance'];
+  onSelectStore: (storeId: string) => void;
+}) {
+  const maxRevenue = Math.max(...stores.map((s) => s.totalRevenue), 1);
+
+  const columns = [
+    {
+      title: 'Hạng',
+      key: 'rank',
+      width: 65,
+      render: (_: unknown, __: unknown, idx: number) => {
+        const rank = idx + 1;
+        const cls =
+          rank === 1
+            ? 'platform-rank-1'
+            : rank === 2
+              ? 'platform-rank-2'
+              : rank === 3
+                ? 'platform-rank-3'
+                : 'platform-rank-default';
+        return <span className={`platform-rank-badge ${cls}`}>{rank}</span>;
+      },
+    },
+    {
+      title: 'Cửa hàng',
+      key: 'name',
+      render: (record: PlatformAnalytics['storePerformance'][number]) => (
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 14.5, color: '#0f172a' }}>
+            {record.storeName}
+          </div>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 3 }}>
+            <span className="platform-badge-id">{record.storeId.slice(0, 8)}</span>
+            <Tag
+              color={record.status === 'ACTIVE' ? 'success' : 'error'}
+              style={{ fontSize: 11, borderRadius: 4, margin: 0 }}
+            >
+              {record.status === 'ACTIVE' ? 'Hoạt động' : 'Đã khóa'}
+            </Tag>
+          </div>
+        </div>
+      ),
+    },
+    {
+      title: 'Doanh thu & Thị phần',
+      key: 'revenue',
+      render: (record: PlatformAnalytics['storePerformance'][number]) => {
+        const pct = Math.round((record.totalRevenue / maxRevenue) * 100);
+        return (
+          <div style={{ minWidth: 160 }}>
+            <div style={{ fontWeight: 800, color: '#0975f7', fontSize: 14.5 }}>
+              {formatVnd(record.totalRevenue)}
+            </div>
+            <Progress
+              percent={pct}
+              size="small"
+              strokeColor="#2563eb"
+              showInfo={false}
+              style={{ margin: '3px 0 0' }}
+            />
+            <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+              Hôm nay: {formatCompactVnd(record.todayRevenue)}
+            </div>
+          </div>
+        );
+      },
+    },
+    {
+      title: 'Đơn hàng & Giá trị TB',
+      key: 'orders',
+      render: (record: PlatformAnalytics['storePerformance'][number]) => (
+        <div>
+          <div style={{ fontWeight: 650, color: '#0f172a' }}>
+            {record.totalInvoices} HĐ ({record.totalOrders} đơn)
+          </div>
+          <div style={{ fontSize: 12, color: '#64748b' }}>
+            TB/đơn: {formatCompactVnd(record.avgOrderValue)}
+          </div>
+        </div>
+      ),
+    },
+    {
+      title: 'Quy mô',
+      key: 'scale',
+      render: (record: PlatformAnalytics['storePerformance'][number]) => (
+        <div style={{ fontSize: 12.5, color: '#475569' }}>
+          <div>
+            📱 <strong>{record.activeDevices}</strong> POS
+          </div>
+          <div>
+            🎱{' '}
+            <strong>
+              {record.occupiedTables}/{record.totalTables}
+            </strong>{' '}
+            bàn
+          </div>
+        </div>
+      ),
+    },
+    {
+      title: 'Thao tác',
+      key: 'action',
+      width: 110,
+      render: (record: PlatformAnalytics['storePerformance'][number]) => (
+        <Button type="link" icon={<EyeOutlined />} onClick={() => onSelectStore(record.storeId)}>
+          Chi tiết
+        </Button>
+      ),
+    },
+  ];
+
+  return (
+    <Table
+      columns={columns}
+      dataSource={stores}
+      rowKey="storeId"
+      pagination={{ pageSize: 5, hideOnSinglePage: true }}
+      locale={{ emptyText: 'Chưa có dữ liệu cửa hàng' }}
+    />
+  );
+}
+
+/* =========================================================================
+   Top Selling Products / Services Widget
+   ========================================================================= */
+function TopProductsWidget({ products }: { products: PlatformAnalytics['topProducts'] }) {
+  const columns = [
+    {
+      title: '#',
+      key: 'index',
+      width: 45,
+      render: (_: unknown, __: unknown, idx: number) => <strong>{idx + 1}</strong>,
+    },
+    {
+      title: 'Mặt hàng / Dịch vụ',
+      dataIndex: 'name',
+      key: 'name',
+      render: (name: string, record: PlatformAnalytics['topProducts'][number]) => (
+        <div>
+          <div style={{ fontWeight: 650, color: '#0f172a' }}>{name}</div>
+          <Tag
+            color={
+              record.productType === 'TIME'
+                ? 'blue'
+                : record.productType === 'WEIGHT'
+                  ? 'orange'
+                  : 'cyan'
+            }
+            style={{ fontSize: 11, borderRadius: 4, marginTop: 2 }}
+          >
+            {record.productType === 'TIME'
+              ? 'Giờ chơi'
+              : record.productType === 'WEIGHT'
+                ? 'Theo cân'
+                : 'Món / Đồ uống'}
+          </Tag>
+        </div>
+      ),
+    },
+    {
+      title: 'Số lượng bán',
+      dataIndex: 'totalQuantity',
+      key: 'totalQuantity',
+      render: (qty: number, record: PlatformAnalytics['topProducts'][number]) => (
+        <span style={{ fontWeight: 600 }}>
+          {qty}{' '}
+          {record.productType === 'TIME' ? 'giờ' : record.productType === 'WEIGHT' ? 'kg' : 'phần'}
+        </span>
+      ),
+    },
+    {
+      title: 'Doanh thu',
+      dataIndex: 'totalRevenue',
+      key: 'totalRevenue',
+      render: (rev: number) => <strong style={{ color: '#0975f7' }}>{formatVnd(rev)}</strong>,
+    },
+  ];
+
+  return (
+    <Table
+      columns={columns}
+      dataSource={products}
+      rowKey={(r) => `${r.name}_${r.productType}`}
+      pagination={{ pageSize: 5, hideOnSinglePage: true }}
+      locale={{ emptyText: 'Chưa có mặt hàng nào được bán' }}
+      size="middle"
+    />
+  );
+}
+
 export function SuperAdminPage() {
   const queryClient = useQueryClient();
   const [form] = Form.useForm<CreateStoreValues>();
@@ -123,7 +654,11 @@ export function SuperAdminPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Search & Filter state
+  // Navigation & Filter state
+  const [activeTab, setActiveTab] = useState<'analytics' | 'stores'>('analytics');
+  const [analyticsDays, setAnalyticsDays] = useState<number>(14);
+  const [trendMetric, setTrendMetric] = useState<'revenue' | 'invoices'>('revenue');
+
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'LOCKED'>('ALL');
 
@@ -135,9 +670,17 @@ export function SuperAdminPage() {
     queryKey: ['auth-context'],
     queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
   });
+
   const stores = useQuery({
     queryKey: ['platform-stores'],
     queryFn: () => apiRequest<PlatformStoreSummary[]>('/api/v1/platform/stores'),
+    enabled: context.data?.actor?.kind === 'SUPER_ADMIN',
+  });
+
+  const analytics = useQuery({
+    queryKey: ['platform-analytics', analyticsDays],
+    queryFn: () =>
+      apiRequest<PlatformAnalytics>(`/api/v1/platform/analytics?days=${analyticsDays}`),
     enabled: context.data?.actor?.kind === 'SUPER_ADMIN',
   });
 
@@ -380,24 +923,36 @@ export function SuperAdminPage() {
         <div className="platform-title-row">
           <div>
             <Typography.Title level={2} style={{ margin: 0, fontWeight: 800 }}>
-              Hệ thống cửa hàng
+              Quản trị Nền tảng Pro POS
             </Typography.Title>
             <Typography.Text type="secondary" style={{ fontSize: 14 }}>
-              Quản lý danh sách cửa hàng, phân quyền Chủ quán và theo dõi thiết bị POS hoạt động.
+              Theo dõi hiệu suất kinh doanh toàn hệ thống, quản lý cơ sở và cấp quyền tài khoản.
             </Typography.Text>
           </div>
-          <Button
-            type="primary"
-            size="large"
-            icon={<PlusOutlined />}
-            style={{ borderRadius: 10, fontWeight: 600, height: 44 }}
-            onClick={() => {
-              setError(null);
-              setCreateOpen(true);
-            }}
-          >
-            Tạo cửa hàng mới
-          </Button>
+          <Space>
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={() => {
+                void queryClient.invalidateQueries({ queryKey: ['platform-analytics'] });
+                void queryClient.invalidateQueries({ queryKey: ['platform-stores'] });
+                message.info('Đang làm mới dữ liệu...');
+              }}
+            >
+              Làm mới
+            </Button>
+            <Button
+              type="primary"
+              size="large"
+              icon={<PlusOutlined />}
+              style={{ borderRadius: 10, fontWeight: 600, height: 40 }}
+              onClick={() => {
+                setError(null);
+                setCreateOpen(true);
+              }}
+            >
+              Tạo cửa hàng mới
+            </Button>
+          </Space>
         </div>
 
         {error ? (
@@ -412,195 +967,416 @@ export function SuperAdminPage() {
           />
         ) : null}
 
-        {/* Hero Statistic Cards */}
-        <div className="platform-stats">
-          <Card className="platform-stat-card-v2" styles={{ body: { padding: '20px 24px' } }}>
-            <div className="stat-card-inner">
-              <div className="stat-icon-wrapper stat-icon-wrapper--blue">
-                <ShopOutlined />
-              </div>
-              <div>
-                <Typography.Text type="secondary" style={{ fontSize: 13, fontWeight: 600 }}>
-                  Tổng số cửa hàng
-                </Typography.Text>
-                <div style={{ fontSize: 28, fontWeight: 800, color: '#0f172a', lineHeight: 1.2 }}>
-                  {stats.total}
-                </div>
-              </div>
-            </div>
-          </Card>
-
-          <Card className="platform-stat-card-v2" styles={{ body: { padding: '20px 24px' } }}>
-            <div className="stat-card-inner">
-              <div className="stat-icon-wrapper stat-icon-wrapper--green">
-                <CheckCircleOutlined />
-              </div>
-              <div>
-                <Typography.Text type="secondary" style={{ fontSize: 13, fontWeight: 600 }}>
-                  Đang hoạt động
-                </Typography.Text>
-                <div style={{ fontSize: 28, fontWeight: 800, color: '#10b981', lineHeight: 1.2 }}>
-                  {stats.active}
-                </div>
-              </div>
-            </div>
-          </Card>
-
-          <Card className="platform-stat-card-v2" styles={{ body: { padding: '20px 24px' } }}>
-            <div className="stat-card-inner">
-              <div className="stat-icon-wrapper stat-icon-wrapper--red">
-                <LockOutlined />
-              </div>
-              <div>
-                <Typography.Text type="secondary" style={{ fontSize: 13, fontWeight: 600 }}>
-                  Đang bị khóa
-                </Typography.Text>
-                <div style={{ fontSize: 28, fontWeight: 800, color: '#ef4444', lineHeight: 1.2 }}>
-                  {stats.locked}
-                </div>
-              </div>
-            </div>
-          </Card>
-        </div>
-
-        {/* Stores Table Card */}
-        <Card className="platform-table-card" styles={{ body: { padding: '20px 24px' } }}>
-          <div className="platform-toolbar">
-            <div className="platform-toolbar-left">
-              <Input
-                placeholder="Tìm theo tên cửa hàng hoặc ID..."
-                prefix={<SearchOutlined style={{ color: '#94a3b8' }} />}
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                style={{ width: 280, borderRadius: 8 }}
-                allowClear
-              />
-              <Radio.Group
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                buttonStyle="solid"
-                style={{ borderRadius: 8 }}
-              >
-                <Radio.Button value="ALL">Tất cả ({stats.total})</Radio.Button>
-                <Radio.Button value="ACTIVE">Hoạt động ({stats.active})</Radio.Button>
-                <Radio.Button value="LOCKED">Đã khóa ({stats.locked})</Radio.Button>
-              </Radio.Group>
-            </div>
-            <Button
-              icon={<ReloadOutlined />}
-              onClick={() => queryClient.invalidateQueries({ queryKey: ['platform-stores'] })}
-            >
-              Làm mới
-            </Button>
-          </div>
-
-          <Table
-            rowKey="id"
-            loading={stores.isLoading}
-            dataSource={filteredStores}
-            pagination={{ pageSize: 10, showSizeChanger: false }}
-            columns={[
+        {/* Tab Navigation */}
+        <div style={{ marginTop: 24, marginBottom: 16 }}>
+          <Segmented
+            size="large"
+            value={activeTab}
+            onChange={(val) => setActiveTab(val as 'analytics' | 'stores')}
+            options={[
               {
-                title: 'Tên cửa hàng',
-                dataIndex: 'name',
-                key: 'name',
-                render: (val: string, record: PlatformStoreSummary) => (
-                  <div>
-                    <Typography.Text strong style={{ fontSize: 15 }}>
-                      {val}
-                    </Typography.Text>
-                    <div style={{ marginTop: 2 }}>
-                      <span className="platform-badge-id">ID: {record.id.slice(0, 8)}...</span>
-                    </div>
-                  </div>
-                ),
-              },
-              {
-                title: 'Trạng thái',
-                dataIndex: 'status',
-                key: 'status',
-                render: (status: 'ACTIVE' | 'LOCKED') => (
-                  <Badge
-                    status={status === 'ACTIVE' ? 'success' : 'error'}
-                    text={
-                      <span
-                        style={{
-                          fontWeight: 600,
-                          color: status === 'ACTIVE' ? '#10b981' : '#ef4444',
-                        }}
-                      >
-                        {status === 'ACTIVE' ? 'Đang hoạt động' : 'Đã khóa'}
-                      </span>
-                    }
-                  />
-                ),
-              },
-              {
-                title: 'Realtime POS',
-                dataIndex: 'posRealtimeEnabled',
-                key: 'posRealtimeEnabled',
-                render: (enabled: boolean, store: PlatformStoreSummary) => (
-                  <Button
-                    size="small"
-                    type={enabled ? 'primary' : 'default'}
-                    loading={submitting}
-                    onClick={() => toggleRealtime(store)}
-                    style={{ borderRadius: 6, fontSize: 12 }}
+                label: (
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '4px 12px',
+                      fontWeight: 700,
+                    }}
                   >
-                    {enabled ? 'Đang bật' : 'Đang tắt'}
-                  </Button>
+                    <LineChartOutlined
+                      style={{ color: activeTab === 'analytics' ? '#2563eb' : '#64748b' }}
+                    />
+                    Báo cáo & Hiệu suất Toàn Hệ Thống
+                  </span>
                 ),
+                value: 'analytics',
               },
               {
-                title: 'Ngày khởi tạo',
-                dataIndex: 'createdAt',
-                key: 'createdAt',
-                render: (val: number) => (
-                  <span style={{ color: '#64748b', fontSize: 13 }}>{formatDateTime(val)}</span>
+                label: (
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '4px 12px',
+                      fontWeight: 700,
+                    }}
+                  >
+                    <ShopOutlined
+                      style={{ color: activeTab === 'stores' ? '#10b981' : '#64748b' }}
+                    />
+                    Quản lý Cửa hàng ({stats.total})
+                  </span>
                 ),
-              },
-              {
-                title: 'Thao tác',
-                key: 'actions',
-                align: 'right',
-                render: (_, store: PlatformStoreSummary) => (
-                  <Space size="small">
-                    <Button
-                      type="primary"
-                      ghost
-                      icon={<EyeOutlined />}
-                      onClick={() => setSelectedStoreId(store.id)}
-                      style={{ borderRadius: 6 }}
-                    >
-                      Chi tiết
-                    </Button>
-                    <Popconfirm
-                      title={
-                        store.status === 'ACTIVE' ? 'Khóa cửa hàng này?' : 'Mở lại cửa hàng này?'
-                      }
-                      description={
-                        store.status === 'ACTIVE'
-                          ? 'Nhân viên và Owner sẽ không thể đăng nhập.'
-                          : 'Cho phép cửa hàng hoạt động lại bình thường.'
-                      }
-                      okText="Xác nhận"
-                      cancelText="Hủy"
-                      onConfirm={() => changeStatus(store)}
-                    >
-                      <Button
-                        danger={store.status === 'ACTIVE'}
-                        icon={store.status === 'ACTIVE' ? <LockOutlined /> : <UnlockOutlined />}
-                        style={{ borderRadius: 6 }}
-                      >
-                        {store.status === 'ACTIVE' ? 'Khóa' : 'Mở lại'}
-                      </Button>
-                    </Popconfirm>
-                  </Space>
-                ),
+                value: 'stores',
               },
             ]}
+            style={{
+              background: '#f8fafc',
+              border: '1px solid #e2e8f0',
+              padding: 4,
+              borderRadius: 12,
+            }}
           />
-        </Card>
+        </div>
+
+        {/* TAB 1: ANALYTICS & PERFORMANCE DASHBOARD */}
+        {activeTab === 'analytics' ? (
+          analytics.isLoading ? (
+            <Card
+              style={{ marginTop: 16, textAlign: 'center', padding: '60px 0', borderRadius: 16 }}
+            >
+              <Spin size="large" description="Đang tải dữ liệu phân tích hệ thống..." />
+            </Card>
+          ) : analytics.data ? (
+            <div className="platform-analytics-grid">
+              {/* 4 Hero KPI Cards */}
+              <div className="platform-kpi-grid">
+                <Card className="platform-stat-card-v2" styles={{ body: { padding: '20px 22px' } }}>
+                  <div className="stat-card-inner">
+                    <div className="stat-icon-wrapper stat-icon-wrapper--blue">
+                      <ShopOutlined />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <Typography.Text type="secondary" style={{ fontSize: 12.5, fontWeight: 650 }}>
+                        CỬA HÀNG HỆ THỐNG
+                      </Typography.Text>
+                      <div
+                        style={{ fontSize: 24, fontWeight: 800, color: '#0f172a', lineHeight: 1.2 }}
+                      >
+                        {analytics.data.summary.totalStores} Cơ sở
+                      </div>
+                      <div style={{ fontSize: 11.5, color: '#64748b', marginTop: 4 }}>
+                        <span style={{ color: '#10b981', fontWeight: 600 }}>
+                          {analytics.data.summary.activeStores} hoạt động
+                        </span>{' '}
+                        • {analytics.data.summary.lockedStores} đã khóa
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+
+                <Card className="platform-stat-card-v2" styles={{ body: { padding: '20px 22px' } }}>
+                  <div className="stat-card-inner">
+                    <div className="stat-icon-wrapper stat-icon-wrapper--green">
+                      <DollarOutlined />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <Typography.Text type="secondary" style={{ fontSize: 12.5, fontWeight: 650 }}>
+                        TỔNG DOANH THU (GMV)
+                      </Typography.Text>
+                      <div
+                        style={{ fontSize: 22, fontWeight: 800, color: '#10b981', lineHeight: 1.2 }}
+                      >
+                        {formatVnd(analytics.data.summary.totalRevenue)}
+                      </div>
+                      <div style={{ fontSize: 11.5, color: '#64748b', marginTop: 4 }}>
+                        Hôm nay:{' '}
+                        <strong>{formatCompactVnd(analytics.data.summary.todayRevenue)}</strong> • 7
+                        ngày:{' '}
+                        <strong>{formatCompactVnd(analytics.data.summary.last7DaysRevenue)}</strong>
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+
+                <Card className="platform-stat-card-v2" styles={{ body: { padding: '20px 22px' } }}>
+                  <div className="stat-card-inner">
+                    <div
+                      className="stat-icon-wrapper"
+                      style={{ background: '#f5f3ff', color: '#8b5cf6' }}
+                    >
+                      <CreditCardOutlined />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <Typography.Text type="secondary" style={{ fontSize: 12.5, fontWeight: 650 }}>
+                        HÓA ĐƠN & ĐƠN HÀNG
+                      </Typography.Text>
+                      <div
+                        style={{ fontSize: 24, fontWeight: 800, color: '#0f172a', lineHeight: 1.2 }}
+                      >
+                        {analytics.data.summary.totalInvoices} Hóa đơn
+                      </div>
+                      <div style={{ fontSize: 11.5, color: '#64748b', marginTop: 4 }}>
+                        TB/đơn:{' '}
+                        <strong>{formatCompactVnd(analytics.data.summary.avgOrderValue)}</strong> •{' '}
+                        {analytics.data.summary.openOrders} đơn đang mở
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+
+                <Card className="platform-stat-card-v2" styles={{ body: { padding: '20px 22px' } }}>
+                  <div className="stat-card-inner">
+                    <div
+                      className="stat-icon-wrapper"
+                      style={{ background: '#fffbeb', color: '#f59e0b' }}
+                    >
+                      <DesktopOutlined />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <Typography.Text type="secondary" style={{ fontSize: 12.5, fontWeight: 650 }}>
+                        THIẾT BỊ & BÀN PHỤC VỤ
+                      </Typography.Text>
+                      <div
+                        style={{ fontSize: 24, fontWeight: 800, color: '#0f172a', lineHeight: 1.2 }}
+                      >
+                        {analytics.data.summary.totalActiveDevices} POS Online
+                      </div>
+                      <div style={{ fontSize: 11.5, color: '#64748b', marginTop: 4 }}>
+                        Bàn chơi:{' '}
+                        <strong>
+                          {analytics.data.summary.occupiedTables}/
+                          {analytics.data.summary.totalTables}
+                        </strong>{' '}
+                        • {analytics.data.summary.totalMembers} nhân sự
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+              </div>
+
+              {/* Revenue & Invoices Trend Chart Card */}
+              <Card className="platform-chart-card" styles={{ body: { padding: '22px 24px' } }}>
+                <div className="platform-chart-header">
+                  <div className="platform-chart-title">
+                    <RiseOutlined style={{ color: '#2563eb', fontSize: 18 }} />
+                    <span>Biểu đồ Xu hướng Doanh thu & Giao dịch</span>
+                  </div>
+                  <Space wrap>
+                    <Segmented
+                      value={trendMetric}
+                      onChange={(val) => setTrendMetric(val as 'revenue' | 'invoices')}
+                      options={[
+                        { label: 'Doanh thu (VNĐ)', value: 'revenue' },
+                        { label: 'Số hóa đơn', value: 'invoices' },
+                      ]}
+                      size="small"
+                    />
+                    <Segmented
+                      value={analyticsDays}
+                      onChange={(val) => setAnalyticsDays(val as number)}
+                      options={[
+                        { label: '7 ngày', value: 7 },
+                        { label: '14 ngày', value: 14 },
+                        { label: '30 ngày', value: 30 },
+                      ]}
+                      size="small"
+                    />
+                  </Space>
+                </div>
+
+                <RevenueTrendChart data={analytics.data.revenueTrend} metric={trendMetric} />
+              </Card>
+
+              {/* Store Leaderboard / Ranking Card */}
+              <Card className="platform-chart-card" styles={{ body: { padding: '22px 24px' } }}>
+                <div className="platform-chart-header">
+                  <div>
+                    <div className="platform-chart-title">
+                      <TrophyOutlined style={{ color: '#f59e0b', fontSize: 18 }} />
+                      <span>Bảng Xếp Hạng & Hiệu Suất Cửa Hàng Toàn Hệ Thống</span>
+                    </div>
+                    <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+                      Xếp hạng doanh thu, tỷ lệ đóng góp GMV và quy mô vận hành của từng cơ sở
+                    </Typography.Text>
+                  </div>
+                </div>
+
+                <StoreLeaderboardWidget
+                  stores={analytics.data.storePerformance}
+                  onSelectStore={setSelectedStoreId}
+                />
+              </Card>
+
+              {/* Two Column Grid: Payment Breakdown & Hourly Peak */}
+              <div className="platform-two-col-grid">
+                {/* Payment Methods Card */}
+                <Card className="platform-chart-card" styles={{ body: { padding: '20px 24px' } }}>
+                  <div className="platform-chart-header" style={{ marginBottom: 10 }}>
+                    <div className="platform-chart-title">
+                      <CreditCardOutlined style={{ color: '#10b981', fontSize: 18 }} />
+                      <span>Phân Bổ Phương Thức Thanh Toán</span>
+                    </div>
+                  </div>
+                  <PaymentDonutChart data={analytics.data.paymentMethods} />
+                </Card>
+
+                {/* Hourly Peak Activity Card */}
+                <Card className="platform-chart-card" styles={{ body: { padding: '20px 24px' } }}>
+                  <div className="platform-chart-header" style={{ marginBottom: 4 }}>
+                    <div className="platform-chart-title">
+                      <FireOutlined style={{ color: '#f59e0b', fontSize: 18 }} />
+                      <span>Khung Giờ Hoạt Động Cao Điểm</span>
+                    </div>
+                  </div>
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    Tần suất giao dịch theo từng khung giờ trong ngày (0h - 23h)
+                  </Typography.Text>
+                  <HourlyPeakChart data={analytics.data.hourlyDistribution} />
+                </Card>
+              </div>
+
+              {/* Top Selling Products / Services */}
+              <Card className="platform-chart-card" styles={{ body: { padding: '20px 24px' } }}>
+                <div className="platform-chart-header">
+                  <div>
+                    <div className="platform-chart-title">
+                      <StarOutlined style={{ color: '#eab308', fontSize: 18 }} />
+                      <span>Top 10 Mặt Hàng & Dịch Vụ Tiêu Thụ Nhiều Nhất</span>
+                    </div>
+                    <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+                      Các dịch vụ giờ chơi, đồ uống và món ăn mang lại doanh thu cao nhất trên toàn
+                      hệ thống
+                    </Typography.Text>
+                  </div>
+                </div>
+                <TopProductsWidget products={analytics.data.topProducts} />
+              </Card>
+            </div>
+          ) : null
+        ) : (
+          /* TAB 2: STORES MANAGEMENT TABLE */
+          <Card className="platform-table-card" styles={{ body: { padding: '20px 24px' } }}>
+            <div className="platform-toolbar">
+              <div className="platform-toolbar-left">
+                <Input
+                  placeholder="Tìm theo tên cửa hàng hoặc ID..."
+                  prefix={<SearchOutlined style={{ color: '#94a3b8' }} />}
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  style={{ width: 280, borderRadius: 8 }}
+                  allowClear
+                />
+                <Radio.Group
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  buttonStyle="solid"
+                  style={{ borderRadius: 8 }}
+                >
+                  <Radio.Button value="ALL">Tất cả ({stats.total})</Radio.Button>
+                  <Radio.Button value="ACTIVE">Hoạt động ({stats.active})</Radio.Button>
+                  <Radio.Button value="LOCKED">Đã khóa ({stats.locked})</Radio.Button>
+                </Radio.Group>
+              </div>
+              <Button
+                icon={<ReloadOutlined />}
+                onClick={() => queryClient.invalidateQueries({ queryKey: ['platform-stores'] })}
+              >
+                Làm mới
+              </Button>
+            </div>
+
+            <Table
+              rowKey="id"
+              loading={stores.isLoading}
+              dataSource={filteredStores}
+              pagination={{ pageSize: 10, showSizeChanger: false }}
+              columns={[
+                {
+                  title: 'Tên cửa hàng',
+                  dataIndex: 'name',
+                  key: 'name',
+                  render: (val: string, record: PlatformStoreSummary) => (
+                    <div>
+                      <Typography.Text strong style={{ fontSize: 15 }}>
+                        {val}
+                      </Typography.Text>
+                      <div style={{ marginTop: 2 }}>
+                        <span className="platform-badge-id">ID: {record.id.slice(0, 8)}...</span>
+                      </div>
+                    </div>
+                  ),
+                },
+                {
+                  title: 'Trạng thái',
+                  dataIndex: 'status',
+                  key: 'status',
+                  render: (status: 'ACTIVE' | 'LOCKED') => (
+                    <Badge
+                      status={status === 'ACTIVE' ? 'success' : 'error'}
+                      text={
+                        <span
+                          style={{
+                            fontWeight: 600,
+                            color: status === 'ACTIVE' ? '#10b981' : '#ef4444',
+                          }}
+                        >
+                          {status === 'ACTIVE' ? 'Đang hoạt động' : 'Đã khóa'}
+                        </span>
+                      }
+                    />
+                  ),
+                },
+                {
+                  title: 'Realtime POS',
+                  dataIndex: 'posRealtimeEnabled',
+                  key: 'posRealtimeEnabled',
+                  render: (enabled: boolean, store: PlatformStoreSummary) => (
+                    <Button
+                      size="small"
+                      type={enabled ? 'primary' : 'default'}
+                      loading={submitting}
+                      onClick={() => toggleRealtime(store)}
+                      style={{ borderRadius: 6, fontSize: 12 }}
+                    >
+                      {enabled ? 'Đang bật' : 'Đang tắt'}
+                    </Button>
+                  ),
+                },
+                {
+                  title: 'Ngày khởi tạo',
+                  dataIndex: 'createdAt',
+                  key: 'createdAt',
+                  render: (val: number) => (
+                    <span style={{ color: '#64748b', fontSize: 13 }}>{formatDateTime(val)}</span>
+                  ),
+                },
+                {
+                  title: 'Thao tác',
+                  key: 'actions',
+                  align: 'right',
+                  render: (_, store: PlatformStoreSummary) => (
+                    <Space size="small">
+                      <Button
+                        type="primary"
+                        ghost
+                        icon={<EyeOutlined />}
+                        onClick={() => setSelectedStoreId(store.id)}
+                        style={{ borderRadius: 6 }}
+                      >
+                        Chi tiết
+                      </Button>
+                      <Popconfirm
+                        title={
+                          store.status === 'ACTIVE' ? 'Khóa cửa hàng này?' : 'Mở lại cửa hàng này?'
+                        }
+                        description={
+                          store.status === 'ACTIVE'
+                            ? 'Nhân viên và Owner sẽ không thể đăng nhập.'
+                            : 'Cho phép cửa hàng hoạt động lại bình thường.'
+                        }
+                        okText="Xác nhận"
+                        cancelText="Hủy"
+                        onConfirm={() => changeStatus(store)}
+                      >
+                        <Button
+                          danger={store.status === 'ACTIVE'}
+                          icon={store.status === 'ACTIVE' ? <LockOutlined /> : <UnlockOutlined />}
+                          style={{ borderRadius: 6 }}
+                        >
+                          {store.status === 'ACTIVE' ? 'Khóa' : 'Mở lại'}
+                        </Button>
+                      </Popconfirm>
+                    </Space>
+                  ),
+                },
+              ]}
+            />
+          </Card>
+        )}
       </main>
 
       {/* Drawer Xem & Quản lý Chi Tiết Cửa Hàng */}

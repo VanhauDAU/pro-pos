@@ -122,3 +122,66 @@ export interface PlatformStoreDetail {
     totalRevenue: number;
   };
 }
+
+export interface PlatformAnalytics {
+  summary: {
+    totalStores: number;
+    activeStores: number;
+    lockedStores: number;
+    totalRevenue: number;
+    todayRevenue: number;
+    last7DaysRevenue: number;
+    last30DaysRevenue: number;
+    totalInvoices: number;
+    totalOrders: number;
+    openOrders: number;
+    paidOrders: number;
+    totalTables: number;
+    occupiedTables: number;
+    totalActiveDevices: number;
+    totalMembers: number;
+    avgOrderValue: number;
+  };
+  revenueTrend: Array<{
+    date: string;
+    dateLabel: string;
+    revenue: number;
+    invoiceCount: number;
+    orderCount: number;
+  }>;
+  storePerformance: Array<{
+    storeId: string;
+    storeName: string;
+    status: 'ACTIVE' | 'LOCKED';
+    createdAt: number;
+    totalRevenue: number;
+    todayRevenue: number;
+    totalInvoices: number;
+    totalOrders: number;
+    activeDevices: number;
+    activeMembers: number;
+    totalTables: number;
+    occupiedTables: number;
+    avgOrderValue: number;
+    lastActivityAt: number | null;
+  }>;
+  paymentMethods: Array<{
+    method: string;
+    label: string;
+    count: number;
+    totalAmount: number;
+    percentage: number;
+  }>;
+  hourlyDistribution: Array<{
+    hour: number;
+    label: string;
+    orderCount: number;
+    revenue: number;
+  }>;
+  topProducts: Array<{
+    name: string;
+    productType: string;
+    totalQuantity: number;
+    totalRevenue: number;
+  }>;
+}

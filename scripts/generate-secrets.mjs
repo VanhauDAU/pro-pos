@@ -19,7 +19,7 @@ const vapid = webpush.generateVAPIDKeys();
 const lines = names.map((name) => `${name}=${randomBytes(48).toString('base64url')}`);
 lines.push(`VAPID_PUBLIC_KEY=${vapid.publicKey}`);
 lines.push(`VAPID_PRIVATE_KEY=${vapid.privateKey}`);
-lines.push(`VAPID_SUBJECT=mailto:admin@propos.vn`);
+lines.push(`VAPID_SUBJECT=mailto:vanhau.laravel@gmail.com`);
 
 const content = `${lines.join('\n')}\n`;
 

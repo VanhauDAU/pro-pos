@@ -1,6 +1,7 @@
 import {
   ArrowLeftOutlined,
   CheckCircleOutlined,
+  ClockCircleOutlined,
   CloseCircleOutlined,
   DeleteOutlined,
   DownloadOutlined,
@@ -12,6 +13,7 @@ import {
   SettingOutlined,
   ShopOutlined,
   ShoppingCartOutlined,
+  UserOutlined,
   WalletOutlined,
 } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -24,6 +26,7 @@ import {
   Form,
   Input,
   Modal,
+  Pagination,
   Popover,
   Select,
   Skeleton,
@@ -611,7 +614,7 @@ export function OwnerInvoicesPage({
         </div>
       </div>
 
-      {/* ── Table ── */}
+      {/* ── Content (Desktop Table + Mobile Cards) ── */}
       {invoiceQuery.isError ? (
         <div className="owner-invoices-error">
           <Typography.Text type="danger">Không thể tải danh sách hóa đơn.</Typography.Text>
@@ -622,30 +625,139 @@ export function OwnerInvoicesPage({
       ) : invoiceQuery.isLoading ? (
         <Skeleton active paragraph={{ rows: 8 }} />
       ) : (
-        <Table<Invoice>
-          rowKey="id"
-          dataSource={data?.results ?? []}
-          columns={tableColumns}
-          scroll={{ x: 'max-content' }}
-          className="owner-invoices-table"
-          locale={{
-            emptyText: (
+        <>
+          {/* Desktop Table View (>= 768px) */}
+          <div className="owner-invoices-desktop-view">
+            <Table<Invoice>
+              rowKey="id"
+              dataSource={data?.results ?? []}
+              columns={tableColumns}
+              scroll={{ x: 'max-content' }}
+              className="owner-invoices-table"
+              locale={{
+                emptyText: (
+                  <Empty
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    description="Không tìm thấy hóa đơn nào"
+                  />
+                ),
+              }}
+              pagination={{
+                current: page,
+                pageSize: limit,
+                total: data?.total ?? 0,
+                showTotal: (total, range) => `Hiển thị ${range[0]}–${range[1]} trên tổng ${total}`,
+                onChange: (p) => setPage(p),
+                showSizeChanger: false,
+                className: 'owner-invoices-pagination',
+              }}
+            />
+          </div>
+
+          {/* Mobile Card List View (< 768px) */}
+          <div className="owner-invoices-mobile-view">
+            {!data?.results || data.results.length === 0 ? (
               <Empty
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
                 description="Không tìm thấy hóa đơn nào"
+                style={{ padding: '32px 0' }}
               />
-            ),
-          }}
-          pagination={{
-            current: page,
-            pageSize: limit,
-            total: data?.total ?? 0,
-            showTotal: (total, range) => `Hiển thị ${range[0]}–${range[1]} trên tổng ${total}`,
-            onChange: (p) => setPage(p),
-            showSizeChanger: false,
-            className: 'owner-invoices-pagination',
-          }}
-        />
+            ) : (
+              <div className="pos-invoice-mobile-list">
+                {data.results.map((row) => (
+                  <div className="pos-invoice-mobile-card" key={row.id}>
+                    <div className="pos-invoice-mobile-card__header">
+                      <div className="pos-invoice-mobile-card__code">
+                        <Button
+                          type="link"
+                          style={{ padding: 0, height: 'auto', fontWeight: 700 }}
+                          onClick={() => setSelectedOrderId(row.orderId)}
+                        >
+                          <span className="owner-invoice-code">{row.displayCode}</span>
+                        </Button>
+                        {orderTypeTag(row.orderType)}
+                      </div>
+                      <strong className="pos-invoice-mobile-card__total">
+                        {formatMoney(row.total)}
+                      </strong>
+                    </div>
+
+                    <div className="pos-invoice-mobile-card__meta">
+                      <div className="pos-invoice-mobile-card__meta-item">
+                        <ClockCircleOutlined style={{ color: '#94a3b8' }} />
+                        <span>{formatDateTime(row.issuedAt)}</span>
+                      </div>
+                      {row.tableName ? (
+                        <div className="pos-invoice-mobile-card__meta-item">
+                          <ShopOutlined style={{ color: '#94a3b8' }} />
+                          <span>
+                            {row.tableName}
+                            {row.areaName ? ` · ${row.areaName}` : ''}
+                          </span>
+                        </div>
+                      ) : null}
+                      <div className="pos-invoice-mobile-card__meta-item">
+                        <WalletOutlined
+                          style={{ color: row.method === 'CASH' ? '#22c55e' : '#3b82f6' }}
+                        />
+                        <span>{methodLabel(row.method)}</span>
+                      </div>
+                      {row.actorName ? (
+                        <div className="pos-invoice-mobile-card__meta-item">
+                          <UserOutlined style={{ color: '#94a3b8' }} />
+                          <span>{row.actorName}</span>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="pos-invoice-mobile-card__footer">
+                      <div className="pos-invoice-mobile-card__status">
+                        {statusTag(row.status)}
+                        {row.discountTotal > 0 ? (
+                          <span className="pos-invoice-mobile-card__discount">
+                            Giảm: -{formatMoney(row.discountTotal)}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="pos-invoice-mobile-card__actions">
+                        <Button
+                          size="small"
+                          type="primary"
+                          ghost
+                          icon={<EyeOutlined />}
+                          onClick={() => setSelectedOrderId(row.orderId)}
+                        >
+                          Chi tiết
+                        </Button>
+                        {hasPermission('invoice.delete') ? (
+                          <Button
+                            size="small"
+                            danger
+                            icon={<DeleteOutlined />}
+                            onClick={() => setDeletingInvoice(row)}
+                          />
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+
+                {/* Mobile Pagination */}
+                {data.total > limit ? (
+                  <div style={{ display: 'flex', justifyContent: 'center', marginTop: 16 }}>
+                    <Pagination
+                      current={page}
+                      pageSize={limit}
+                      total={data.total}
+                      onChange={(p) => setPage(p)}
+                      simple
+                    />
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </div>
+        </>
       )}
 
       {/* ── Advanced filter drawer ── */}

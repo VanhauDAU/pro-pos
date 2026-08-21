@@ -6963,12 +6963,16 @@ export function StaffPosPortalPage() {
             {isInvoiceDetail ? (
               <InvoicePage />
             ) : isInvoicesList ? (
-              <OwnerInvoicesPage
-                apiPrefix="/api/v1/pos/invoices"
-                userPermissions={posContext.data?.permissions}
-                isOwner={false}
-                onBack={() => navigate('/pos/more')}
-              />
+              <div className="staff-invoices-shell">
+                <div className="staff-invoices-container">
+                  <OwnerInvoicesPage
+                    apiPrefix="/api/v1/pos/invoices"
+                    userPermissions={posContext.data?.permissions}
+                    isOwner={false}
+                    onBack={() => navigate('/pos/more')}
+                  />
+                </div>
+              </div>
             ) : isDetail && detailOrderId ? (
               <OrderDetailPage orderId={detailOrderId} />
             ) : isPayment && paymentOrderId ? (

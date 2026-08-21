@@ -1055,13 +1055,18 @@ function MorePage({ auth }: { auth: AuthContextResponse }) {
 
   const logout = useMutation({
     mutationFn: () =>
-      apiRequest('/api/v1/auth/logout', {
+      apiRequest<{ loggedOut: boolean; accessLogoutUrl: string | null }>('/api/v1/auth/logout', {
         method: 'POST',
         headers: { 'X-CSRF-Token': auth.csrfToken! },
       }),
-    onSuccess: async () => {
+    onSuccess: async (data) => {
       await queryClient.invalidateQueries({ queryKey: ['auth-context'] });
-      navigate('/?tab=employee', { replace: true });
+      queryClient.clear();
+      if (data?.accessLogoutUrl) {
+        window.location.assign(data.accessLogoutUrl);
+      } else {
+        navigate('/?tab=employee', { replace: true });
+      }
     },
     onError: (error) => messageApi.error(errorText(error)),
   });

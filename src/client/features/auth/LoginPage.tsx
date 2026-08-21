@@ -371,10 +371,12 @@ export function LoginPage() {
               type="button"
               className="owner-switch-account-btn"
               onClick={() => {
-                window.location.assign('/api/v1/auth/access/logout');
+                window.location.assign(
+                  `/api/v1/auth/access/logout?returnTo=${encodeURIComponent(window.location.origin + '/?tab=owner&loggedOut=1')}`,
+                );
               }}
             >
-              <SwapOutlined /> Đổi tài khoản Owner khác
+              <SwapOutlined /> Đổi tài khoản khác
             </button>
           </div>
         ),

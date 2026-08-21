@@ -40,4 +40,12 @@ export function clearCredentialCookie(c: Context<AppEnv>, kind: CredentialCookie
     httpOnly: true,
     sameSite: 'Lax',
   });
+  if (c.env.COOKIE_MODE === 'secure') {
+    deleteCookie(c, `propos-${kind}`, {
+      path: '/',
+      secure: true,
+      httpOnly: true,
+      sameSite: 'Lax',
+    });
+  }
 }

@@ -44,7 +44,7 @@ import { Navigate, useLocation, useNavigate } from 'react-router';
 import type { AuthContextResponse } from '@contracts/auth';
 
 import logo from '@client/assets/logo-white.svg';
-import { ApiError, apiRequest } from '@client/lib/api';
+import { apiRequest } from '@client/lib/api';
 
 import { OwnerStoreSettingsPage } from './OwnerStoreSettingsPage';
 import { OwnerAreaCreatePage, OwnerAreaSettingsPage } from './OwnerAreaSettingsPage';
@@ -480,7 +480,7 @@ export function OwnerPortalPage() {
     const section = findSection(location.pathname);
     return section ? [section] : [];
   });
-  const [messageApi, contextHolder] = message.useMessage();
+  const [, contextHolder] = message.useMessage();
 
   const context = useQuery({
     queryKey: ['auth-context'],
@@ -522,7 +522,7 @@ export function OwnerPortalPage() {
       return;
     }
     try {
-      const response = await apiRequest<{ loggedOut: boolean; accessLogoutUrl?: string | null }>(
+      const response = await apiRequest<{ loggedOut: boolean; accessLogoutUrl: string | null }>(
         '/api/v1/auth/logout',
         {
           method: 'POST',
@@ -530,13 +530,14 @@ export function OwnerPortalPage() {
         },
       );
       await queryClient.invalidateQueries({ queryKey: ['auth-context'] });
-      if (response.accessLogoutUrl) {
+      queryClient.clear();
+      if (response?.accessLogoutUrl) {
         window.location.assign(response.accessLogoutUrl);
       } else {
-        navigate('/?tab=owner&loggedOut=1', { replace: true });
+        window.location.assign('/?tab=owner&loggedOut=1');
       }
-    } catch (error) {
-      messageApi.error(error instanceof ApiError ? error.message : 'Không thể đăng xuất.');
+    } catch {
+      window.location.assign('/api/v1/auth/access/logout');
     }
   };
 

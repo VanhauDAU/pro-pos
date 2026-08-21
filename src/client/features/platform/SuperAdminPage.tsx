@@ -22,7 +22,7 @@ import {
   Typography,
 } from 'antd';
 import { useMemo, useState } from 'react';
-import { Navigate, useNavigate } from 'react-router';
+import { Navigate } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
 import type { CreatePlatformStoreResponse, PlatformStoreSummary } from '@contracts/platform';
@@ -43,7 +43,6 @@ function readableError(error: unknown) {
 }
 
 export function SuperAdminPage() {
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [form] = Form.useForm<CreateStoreValues>();
   const [createOpen, setCreateOpen] = useState(false);
@@ -115,7 +114,7 @@ export function SuperAdminPage() {
   const logout = async () => {
     setSubmitting(true);
     try {
-      const response = await apiRequest<{ loggedOut: boolean; accessLogoutUrl?: string | null }>(
+      const response = await apiRequest<{ loggedOut: boolean; accessLogoutUrl: string | null }>(
         '/api/v1/auth/logout',
         {
           method: 'POST',
@@ -123,14 +122,18 @@ export function SuperAdminPage() {
         },
       );
       await queryClient.invalidateQueries({ queryKey: ['auth-context'] });
-      if (response.accessLogoutUrl) {
-        window.location.assign(response.accessLogoutUrl);
+      queryClient.clear();
+      if (response?.accessLogoutUrl) {
+        window.location.assign(
+          `/api/v1/auth/access/logout?returnTo=${encodeURIComponent(window.location.origin + '/platform/login?loggedOut=1')}`,
+        );
       } else {
-        navigate('/platform/login', { replace: true });
+        window.location.assign('/platform/login?loggedOut=1');
       }
-    } catch (logoutError) {
-      setError(readableError(logoutError));
-      setSubmitting(false);
+    } catch {
+      window.location.assign(
+        `/api/v1/auth/access/logout?returnTo=${encodeURIComponent(window.location.origin + '/platform/login?loggedOut=1')}`,
+      );
     }
   };
 

@@ -124,6 +124,23 @@ authRoutes.post('/employee/login', async (c) => {
   return success(c, result.response);
 });
 
+function buildAccessLogoutUrl(env: CloudflareBindings, finalReturnTo: string): string | null {
+  const bridgeUrl = env.ACCESS_BRIDGE_URL;
+  if (!bridgeUrl) return null;
+
+  // Cloudflare Access strictly validates that returnTo is an approved Access application.
+  // Because ACCESS_BRIDGE_URL is registered in Access while the main app is not,
+  // we route through ${bridgeUrl}/logout-callback?target=... which Cloudflare Access permits.
+  const bridgeCallbackUrl = `${bridgeUrl}/logout-callback?target=${encodeURIComponent(finalReturnTo)}`;
+
+  const teamDomain = env.ACCESS_TEAM_DOMAIN?.trim();
+  if (teamDomain) {
+    return `${teamDomain}/cdn-cgi/access/logout?returnTo=${encodeURIComponent(bridgeCallbackUrl)}`;
+  }
+
+  return `${bridgeUrl}/cdn-cgi/access/logout?returnTo=${encodeURIComponent(bridgeCallbackUrl)}`;
+}
+
 authRoutes.post('/logout', async (c) => {
   const rawSession = readCredentialCookie(c, 'session');
   let isAccessUser = false;
@@ -150,9 +167,7 @@ authRoutes.post('/logout', async (c) => {
 
   const origin = new URL(c.req.url).origin;
   const returnTo = isAccessUser ? `${origin}/?tab=owner&loggedOut=1` : `${origin}/`;
-  const accessLogoutUrl = c.env.ACCESS_BRIDGE_URL
-    ? `${c.env.ACCESS_BRIDGE_URL}/cdn-cgi/access/logout?returnTo=${encodeURIComponent(returnTo)}`
-    : null;
+  const accessLogoutUrl = isAccessUser ? buildAccessLogoutUrl(c.env, returnTo) : null;
 
   return success(c, {
     loggedOut: true,
@@ -167,9 +182,7 @@ authRoutes.get('/access/logout', (c) => {
 
   const origin = new URL(c.req.url).origin;
   const returnTo = c.req.query('returnTo') || `${origin}/?tab=owner&loggedOut=1`;
-  const accessLogoutUrl = c.env.ACCESS_BRIDGE_URL
-    ? `${c.env.ACCESS_BRIDGE_URL}/cdn-cgi/access/logout?returnTo=${encodeURIComponent(returnTo)}`
-    : returnTo;
+  const accessLogoutUrl = buildAccessLogoutUrl(c.env, returnTo) || returnTo;
 
   return c.redirect(accessLogoutUrl, 303);
 });

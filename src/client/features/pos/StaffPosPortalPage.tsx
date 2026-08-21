@@ -76,8 +76,10 @@ import {
   printReceipt,
 } from '@client/lib/pos-receipt-printer';
 import { OrderDetailPage } from './OrderDetailPage';
+import { PushNotificationControl } from '@client/features/pwa/PushNotificationControl';
 
 import { apiRequest, jsonRequest } from '@client/lib/api';
+import { playPosSound } from '@client/lib/sound';
 import {
   RealtimeProvider,
   usePosPollingInterval,
@@ -542,6 +544,7 @@ function StaffHeader({
             ? 'Cập nhật định kỳ'
             : 'Đang kết nối lại'}
       </Tag>
+      <PushNotificationControl csrfToken={context?.csrfToken} />
       <Dropdown
         menu={{ items: menuItems }}
         trigger={['click']}
@@ -821,6 +824,7 @@ function QrOrderPage() {
   const [messageApi, holder] = message.useMessage();
   const [modal, modalHolder] = Modal.useModal();
   const previousPendingCount = React.useRef<number | null>(null);
+  const previousCheckoutRequestCount = React.useRef<number | null>(null);
   const auth = useQuery({
     queryKey: ['auth-context'],
     queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
@@ -835,27 +839,29 @@ function QrOrderPage() {
     queryFn: () => apiRequest<ServiceRequestDto[]>('/api/v1/pos/qr-orders/service-requests/list'),
     refetchInterval: 15_000,
   });
+
   useEffect(() => {
     const count = requests.data?.length;
     if (count === undefined) return;
     if (previousPendingCount.current !== null && count > previousPendingCount.current) {
-      try {
-        const audio = new AudioContext();
-        const oscillator = audio.createOscillator();
-        const gain = audio.createGain();
-        oscillator.frequency.value = 880;
-        gain.gain.setValueAtTime(0.12, audio.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + 0.35);
-        oscillator.connect(gain).connect(audio.destination);
-        oscillator.addEventListener('ended', () => void audio.close(), { once: true });
-        oscillator.start();
-        oscillator.stop(audio.currentTime + 0.35);
-      } catch {
-        // Browser autoplay policy may block sound; the visual inbox still updates.
-      }
+      playPosSound('NEW_QR_ORDER');
     }
     previousPendingCount.current = count;
   }, [requests.data?.length]);
+
+  useEffect(() => {
+    const checkoutCount = serviceRequests.data?.filter(
+      (sr) => sr.type === 'CHECKOUT_REQUEST' && sr.status === 'OPEN',
+    ).length;
+    if (checkoutCount === undefined) return;
+    if (
+      previousCheckoutRequestCount.current !== null &&
+      checkoutCount > previousCheckoutRequestCount.current
+    ) {
+      playPosSound('CHECKOUT_REQUEST');
+    }
+    previousCheckoutRequestCount.current = checkoutCount;
+  }, [serviceRequests.data]);
   const refresh = () =>
     Promise.all([
       queryClient.invalidateQueries({ queryKey: ['guest-order-requests'] }),

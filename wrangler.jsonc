@@ -14,6 +14,9 @@
       "DEVICE_TOKEN_PEPPER",
       "SESSION_TOKEN_PEPPER",
       "SYSTEM_BOOTSTRAP_SECRET",
+      "VAPID_PUBLIC_KEY",
+      "VAPID_PRIVATE_KEY",
+      "VAPID_SUBJECT",
     ],
   },
   "observability": {
@@ -65,6 +68,9 @@
           "DEVICE_TOKEN_PEPPER",
           "SESSION_TOKEN_PEPPER",
           "SYSTEM_BOOTSTRAP_SECRET",
+          "VAPID_PUBLIC_KEY",
+          "VAPID_PRIVATE_KEY",
+          "VAPID_SUBJECT",
         ],
       },
       "vars": {
@@ -105,6 +111,9 @@
           "DEVICE_TOKEN_PEPPER",
           "SESSION_TOKEN_PEPPER",
           "SYSTEM_BOOTSTRAP_SECRET",
+          "VAPID_PUBLIC_KEY",
+          "VAPID_PRIVATE_KEY",
+          "VAPID_SUBJECT",
         ],
       },
       "vars": {

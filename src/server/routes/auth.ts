@@ -126,11 +126,15 @@ authRoutes.post('/employee/login', async (c) => {
 
 authRoutes.post('/logout', async (c) => {
   const rawSession = readCredentialCookie(c, 'session');
+  let isAccessUser = false;
   if (rawSession) {
     await assertCsrf(c, rawSession);
     const authService = new AuthService(c.env);
     const context = await authService.context(rawSession, readCredentialCookie(c, 'device'));
     await authService.logout(rawSession);
+    if (context.actor?.kind === 'OWNER' || context.actor?.kind === 'SUPER_ADMIN') {
+      isAccessUser = true;
+    }
     if (context.actor?.storeId && context.sessionId) {
       const room = c.env.STORE_REALTIME.getByName(context.actor.storeId);
       c.executionCtx.waitUntil(
@@ -141,7 +145,33 @@ authRoutes.post('/logout', async (c) => {
     assertSameOrigin(c);
   }
   clearCredentialCookie(c, 'session');
-  return success(c, { loggedOut: true });
+  clearCredentialCookie(c, 'activation');
+  clearCredentialCookie(c, 'access');
+
+  const origin = new URL(c.req.url).origin;
+  const returnTo = isAccessUser ? `${origin}/?tab=owner&loggedOut=1` : `${origin}/`;
+  const accessLogoutUrl = c.env.ACCESS_BRIDGE_URL
+    ? `${c.env.ACCESS_BRIDGE_URL}/cdn-cgi/access/logout?returnTo=${encodeURIComponent(returnTo)}`
+    : null;
+
+  return success(c, {
+    loggedOut: true,
+    accessLogoutUrl,
+  });
+});
+
+authRoutes.get('/access/logout', (c) => {
+  clearCredentialCookie(c, 'session');
+  clearCredentialCookie(c, 'activation');
+  clearCredentialCookie(c, 'access');
+
+  const origin = new URL(c.req.url).origin;
+  const returnTo = c.req.query('returnTo') || `${origin}/?tab=owner&loggedOut=1`;
+  const accessLogoutUrl = c.env.ACCESS_BRIDGE_URL
+    ? `${c.env.ACCESS_BRIDGE_URL}/cdn-cgi/access/logout?returnTo=${encodeURIComponent(returnTo)}`
+    : returnTo;
+
+  return c.redirect(accessLogoutUrl, 303);
 });
 
 const activationRoutes = new Hono<AppEnv>();

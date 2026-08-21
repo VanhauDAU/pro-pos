@@ -337,6 +337,15 @@ export function LoginPage() {
         label: 'Chủ cửa hàng',
         children: (
           <div className="owner-otp-login">
+            {searchParams.get('loggedOut') === '1' ? (
+              <Alert
+                type="success"
+                showIcon
+                message="Đã đăng xuất tài khoản Owner"
+                description="Phiên Cloudflare Access đã được xóa. Bạn có thể nhập email mới khi nhận mã OTP."
+                style={{ marginBottom: 14 }}
+              />
+            ) : null}
             <Alert
               type="info"
               showIcon
@@ -352,6 +361,17 @@ export function LoginPage() {
               onClick={ownerLogin}
             >
               Nhận mã OTP qua email
+            </Button>
+            <Button
+              type="dashed"
+              block
+              icon={<SwapOutlined />}
+              onClick={() => {
+                window.location.assign('/api/v1/auth/access/logout');
+              }}
+              style={{ marginTop: 10 }}
+            >
+              Đổi tài khoản Owner khác (Xóa phiên cũ)
             </Button>
             <Typography.Paragraph className="login-help" type="secondary">
               Owner có thể đăng nhập trên điện thoại hoặc máy tính mà không cần thiết lập máy POS.

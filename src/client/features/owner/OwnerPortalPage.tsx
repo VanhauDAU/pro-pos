@@ -518,16 +518,23 @@ export function OwnerPortalPage() {
   const logout = async () => {
     const csrfToken = context.data?.csrfToken;
     if (!csrfToken) {
-      navigate('/?tab=owner', { replace: true });
+      window.location.assign('/api/v1/auth/access/logout');
       return;
     }
     try {
-      await apiRequest('/api/v1/auth/logout', {
-        method: 'POST',
-        headers: { 'X-CSRF-Token': csrfToken },
-      });
+      const response = await apiRequest<{ loggedOut: boolean; accessLogoutUrl?: string | null }>(
+        '/api/v1/auth/logout',
+        {
+          method: 'POST',
+          headers: { 'X-CSRF-Token': csrfToken },
+        },
+      );
       await queryClient.invalidateQueries({ queryKey: ['auth-context'] });
-      navigate('/?tab=owner', { replace: true });
+      if (response.accessLogoutUrl) {
+        window.location.assign(response.accessLogoutUrl);
+      } else {
+        navigate('/?tab=owner&loggedOut=1', { replace: true });
+      }
     } catch (error) {
       messageApi.error(error instanceof ApiError ? error.message : 'Không thể đăng xuất.');
     }

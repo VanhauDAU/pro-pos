@@ -115,12 +115,19 @@ export function SuperAdminPage() {
   const logout = async () => {
     setSubmitting(true);
     try {
-      await apiRequest('/api/v1/auth/logout', {
-        method: 'POST',
-        headers: csrfHeaders(),
-      });
+      const response = await apiRequest<{ loggedOut: boolean; accessLogoutUrl?: string | null }>(
+        '/api/v1/auth/logout',
+        {
+          method: 'POST',
+          headers: csrfHeaders(),
+        },
+      );
       await queryClient.invalidateQueries({ queryKey: ['auth-context'] });
-      navigate('/platform/login', { replace: true });
+      if (response.accessLogoutUrl) {
+        window.location.assign(response.accessLogoutUrl);
+      } else {
+        navigate('/platform/login', { replace: true });
+      }
     } catch (logoutError) {
       setError(readableError(logoutError));
       setSubmitting(false);

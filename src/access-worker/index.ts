@@ -18,6 +18,23 @@ function errorResponse(status: number, message: string) {
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+
+    if (url.pathname === '/logout' || url.pathname === '/cdn-cgi/access/logout') {
+      const returnTo =
+        url.searchParams.get('returnTo') ||
+        url.searchParams.get('return_to') ||
+        env.MAIN_APP_ORIGIN;
+      return new Response(null, {
+        status: 303,
+        headers: {
+          'Cache-Control': 'no-store',
+          Location: returnTo,
+          'Set-Cookie':
+            'CF_Authorization=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; Secure; SameSite=None',
+        },
+      });
+    }
+
     if (url.pathname !== '/complete' || request.method !== 'GET') {
       return errorResponse(404, 'Not found');
     }

@@ -2712,7 +2712,17 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                 onClick={() => setOrderedItemsCollapsed((prev) => !prev)}
               >
                 <span className="staff-order-mobile-section-title">
-                  Mặt hàng đã gọi ({allCurrentItems.length + (quote.data?.time || (isNew && orderType === 'DINE_IN' && selectedTable?.timeProductId && !timeRemoved) || timeRestoringDraft ? 1 : 0)})
+                  Mặt hàng đã gọi (
+                  {allCurrentItems.length +
+                    (quote.data?.time ||
+                    (isNew &&
+                      orderType === 'DINE_IN' &&
+                      selectedTable?.timeProductId &&
+                      !timeRemoved) ||
+                    timeRestoringDraft
+                      ? 1
+                      : 0)}
+                  )
                 </span>
                 <button
                   type="button"
@@ -2726,8 +2736,14 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
               {!orderedItemsCollapsed && (
                 <div className="staff-order-mobile-items-list">
                   {/* Small restore button if default time was deleted */}
-                  {((!isNew && quote.data?.order.orderType === 'DINE_IN' && !quote.data?.time && !timeRestoringDraft) ||
-                    (isNew && orderType === 'DINE_IN' && selectedTable?.timeProductId && timeRemoved)) ? (
+                  {(!isNew &&
+                    quote.data?.order.orderType === 'DINE_IN' &&
+                    !quote.data?.time &&
+                    !timeRestoringDraft) ||
+                  (isNew &&
+                    orderType === 'DINE_IN' &&
+                    selectedTable?.timeProductId &&
+                    timeRemoved) ? (
                     <div style={{ padding: '8px 16px 4px' }}>
                       <Button
                         size="small"
@@ -2795,7 +2811,10 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                           )}
                       </div>
                     </div>
-                  ) : isNew && orderType === 'DINE_IN' && selectedTable?.timeProductId && !timeRemoved ? (
+                  ) : isNew &&
+                    orderType === 'DINE_IN' &&
+                    selectedTable?.timeProductId &&
+                    !timeRemoved ? (
                     <div
                       className="staff-order-mobile-item staff-order-mobile-item--time"
                       onClick={() => {
@@ -2920,18 +2939,26 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                     </div>
                   ))}
 
-                  {allCurrentItems.length === 0 && !(isNew && orderType === 'DINE_IN' && selectedTable?.timeProductId && !timeRemoved) && !quote.data?.time && !timeRestoringDraft && (
-                    <div className="staff-order-mobile-empty">
-                      <p>Chưa có mặt hàng nào trong đơn</p>
-                      <Button
-                        type="dashed"
-                        icon={<PlusOutlined />}
-                        onClick={() => setMobileView('PRODUCTS')}
-                      >
-                        Chọn món ngay
-                      </Button>
-                    </div>
-                  )}
+                  {allCurrentItems.length === 0 &&
+                    !(
+                      isNew &&
+                      orderType === 'DINE_IN' &&
+                      selectedTable?.timeProductId &&
+                      !timeRemoved
+                    ) &&
+                    !quote.data?.time &&
+                    !timeRestoringDraft && (
+                      <div className="staff-order-mobile-empty">
+                        <p>Chưa có mặt hàng nào trong đơn</p>
+                        <Button
+                          type="dashed"
+                          icon={<PlusOutlined />}
+                          onClick={() => setMobileView('PRODUCTS')}
+                        >
+                          Chọn món ngay
+                        </Button>
+                      </div>
+                    )}
                 </div>
               )}
             </div>
@@ -3292,7 +3319,17 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   ) : null}
                   <div className="staff-cart-section-header">
                     <Typography.Title level={4} style={{ margin: 0 }}>
-                      Sản phẩm đã gọi ({displayedItems.length + (quote.data?.time || (isNew && orderType === 'DINE_IN' && selectedTable?.timeProductId && !timeRemoved) || timeRestoringDraft ? 1 : 0)})
+                      Sản phẩm đã gọi (
+                      {displayedItems.length +
+                        (quote.data?.time ||
+                        (isNew &&
+                          orderType === 'DINE_IN' &&
+                          selectedTable?.timeProductId &&
+                          !timeRemoved) ||
+                        timeRestoringDraft
+                          ? 1
+                          : 0)}
+                      )
                     </Typography.Title>
                     <Button
                       type="text"
@@ -3310,8 +3347,14 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   {!orderedItemsCollapsed ? (
                     <>
                       {/* Small restore button if default time was deleted */}
-                      {((!isNew && quote.data?.order.orderType === 'DINE_IN' && !quote.data?.time && !timeRestoringDraft) ||
-                        (isNew && orderType === 'DINE_IN' && selectedTable?.timeProductId && timeRemoved)) ? (
+                      {(!isNew &&
+                        quote.data?.order.orderType === 'DINE_IN' &&
+                        !quote.data?.time &&
+                        !timeRestoringDraft) ||
+                      (isNew &&
+                        orderType === 'DINE_IN' &&
+                        selectedTable?.timeProductId &&
+                        timeRemoved) ? (
                         <div style={{ margin: '0 0 14px' }}>
                           <Button
                             size="small"
@@ -3435,7 +3478,10 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                             </div>
                           </button>
                         )
-                      ) : isNew && orderType === 'DINE_IN' && selectedTable?.timeProductId && !timeRemoved ? (
+                      ) : isNew &&
+                        orderType === 'DINE_IN' &&
+                        selectedTable?.timeProductId &&
+                        !timeRemoved ? (
                         <button
                           type="button"
                           className="staff-time-line staff-time-line--editable"
@@ -3471,7 +3517,10 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                           <div className="staff-time-line__heading">
                             <span className="staff-order-quantity">1x</span>
                             <span className="staff-order-item-name">
-                              <strong>Tiền giờ · {quote.data?.order.tableName ?? selectedTable?.name ?? 'Bàn'}</strong>
+                              <strong>
+                                Tiền giờ ·{' '}
+                                {quote.data?.order.tableName ?? selectedTable?.name ?? 'Bàn'}
+                              </strong>
                               <small>
                                 {selectedTable?.defaultPriceVnd
                                   ? `${formatMoney(selectedTable.defaultPriceVnd)}/giờ`
@@ -3489,7 +3538,14 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       ) : null}
                       {quote.isLoading && !isNew ? (
                         <Skeleton active />
-                      ) : displayedItems.length === 0 && !(isNew && orderType === 'DINE_IN' && selectedTable?.timeProductId && !timeRemoved) && !timeRestoringDraft ? (
+                      ) : displayedItems.length === 0 &&
+                        !(
+                          isNew &&
+                          orderType === 'DINE_IN' &&
+                          selectedTable?.timeProductId &&
+                          !timeRemoved
+                        ) &&
+                        !timeRestoringDraft ? (
                         <Empty
                           image={Empty.PRESENTED_IMAGE_SIMPLE}
                           description="Chưa có mặt hàng"
@@ -3895,7 +3951,9 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         title={
           <div className="staff-time-modal-header">
             <ClockCircleOutlined />
-            <span>{timeRestoringDraft && !quote.data?.time ? 'Khôi phục tính giờ' : 'Chi tiết tính giờ'}</span>
+            <span>
+              {timeRestoringDraft && !quote.data?.time ? 'Khôi phục tính giờ' : 'Chi tiết tính giờ'}
+            </span>
           </div>
         }
         width={620}
@@ -3904,68 +3962,70 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         className="staff-time-detail-dialog"
         onCancel={() => setTimeDetailOpen(false)}
         footer={
-          quote.data?.time ? [
-            <Button
-              key="toggle"
-              icon={timeRangeDraft.endedAt ? <PlayCircleOutlined /> : <PauseCircleOutlined />}
-              onClick={
-                timeRangeDraft.endedAt ? handleResumeTimeInModal : handlePauseTimeInModal
-              }
-              className="staff-time-footer-btn"
-            >
-              {timeRangeDraft.endedAt ? 'Tiếp tục tính giờ' : 'Tạm dừng giờ'}
-            </Button>,
-            <Button
-              key="delete-time"
-              danger
-              icon={<DeleteOutlined />}
-              onClick={() => {
-                setDeleteTimeReason('');
-                setDeleteTimeModalOpen(true);
-              }}
-              className="staff-time-footer-btn"
-            >
-              Xóa tiền giờ
-            </Button>,
-            <Button
-              key="save"
-              type="primary"
-              loading={saving}
-              onClick={saveTimeRange}
-              className="staff-time-footer-btn staff-time-footer-btn--primary"
-            >
-              Lưu thay đổi
-            </Button>,
-          ] : [
-            <Button
-              key="cancel"
-              onClick={() => setTimeDetailOpen(false)}
-              className="staff-time-footer-btn"
-            >
-              Đóng
-            </Button>,
-            <Button
-              key="discard-restore"
-              danger
-              icon={<DeleteOutlined />}
-              onClick={() => {
-                setTimeRestoringDraft(false);
-                setTimeDetailOpen(false);
-              }}
-              className="staff-time-footer-btn"
-            >
-              Hủy khôi phục
-            </Button>,
-            <Button
-              key="save"
-              type="primary"
-              loading={saving}
-              onClick={saveTimeRange}
-              className="staff-time-footer-btn staff-time-footer-btn--primary"
-            >
-              Lưu thay đổi
-            </Button>,
-          ]
+          quote.data?.time
+            ? [
+                <Button
+                  key="toggle"
+                  icon={timeRangeDraft.endedAt ? <PlayCircleOutlined /> : <PauseCircleOutlined />}
+                  onClick={
+                    timeRangeDraft.endedAt ? handleResumeTimeInModal : handlePauseTimeInModal
+                  }
+                  className="staff-time-footer-btn"
+                >
+                  {timeRangeDraft.endedAt ? 'Tiếp tục tính giờ' : 'Tạm dừng giờ'}
+                </Button>,
+                <Button
+                  key="delete-time"
+                  danger
+                  icon={<DeleteOutlined />}
+                  onClick={() => {
+                    setDeleteTimeReason('');
+                    setDeleteTimeModalOpen(true);
+                  }}
+                  className="staff-time-footer-btn"
+                >
+                  Xóa tiền giờ
+                </Button>,
+                <Button
+                  key="save"
+                  type="primary"
+                  loading={saving}
+                  onClick={saveTimeRange}
+                  className="staff-time-footer-btn staff-time-footer-btn--primary"
+                >
+                  Lưu thay đổi
+                </Button>,
+              ]
+            : [
+                <Button
+                  key="cancel"
+                  onClick={() => setTimeDetailOpen(false)}
+                  className="staff-time-footer-btn"
+                >
+                  Đóng
+                </Button>,
+                <Button
+                  key="discard-restore"
+                  danger
+                  icon={<DeleteOutlined />}
+                  onClick={() => {
+                    setTimeRestoringDraft(false);
+                    setTimeDetailOpen(false);
+                  }}
+                  className="staff-time-footer-btn"
+                >
+                  Hủy khôi phục
+                </Button>,
+                <Button
+                  key="save"
+                  type="primary"
+                  loading={saving}
+                  onClick={saveTimeRange}
+                  className="staff-time-footer-btn staff-time-footer-btn--primary"
+                >
+                  Lưu thay đổi
+                </Button>,
+              ]
         }
       >
         {quote.data?.time ? (

@@ -1101,7 +1101,11 @@ export class PosService {
     }
     if (!session) {
       if (order.order_type !== 'DINE_IN' || !order.table_id) {
-        throw new AppError('ORDER_TIME_SESSION_MISSING', 'Đơn thiếu phiên tính giờ hoặc không phải đơn tại chỗ.', 409);
+        throw new AppError(
+          'ORDER_TIME_SESSION_MISSING',
+          'Đơn thiếu phiên tính giờ hoặc không phải đơn tại chỗ.',
+          409,
+        );
       }
       const pricing = await this.pricingSnapshot(input.storeId, order.table_id);
       const timeSessionId = crypto.randomUUID();

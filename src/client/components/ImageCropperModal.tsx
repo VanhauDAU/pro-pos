@@ -198,13 +198,7 @@ export function ImageCropperModal({
       const drawWidth = imgElement.naturalWidth * scale * exportRatio;
       const drawHeight = imgElement.naturalHeight * scale * exportRatio;
 
-      ctx.drawImage(
-        imgElement,
-        -drawWidth / 2,
-        -drawHeight / 2,
-        drawWidth,
-        drawHeight,
-      );
+      ctx.drawImage(imgElement, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
 
       ctx.restore();
 
@@ -251,7 +245,10 @@ export function ImageCropperModal({
       className="image-cropper-modal"
     >
       <div className="image-cropper-container">
-        <Typography.Text type="secondary" style={{ fontSize: 13, marginBottom: 12, display: 'block', textAlign: 'center' }}>
+        <Typography.Text
+          type="secondary"
+          style={{ fontSize: 13, marginBottom: 12, display: 'block', textAlign: 'center' }}
+        >
           Kéo ảnh để di chuyển, cuộn chuột hoặc dùng thanh trượt để phóng to/thu nhỏ ảnh.
         </Typography.Text>
 
@@ -302,7 +299,10 @@ export function ImageCropperModal({
         {/* Zoom & Quick Actions Slider */}
         <div className="image-cropper-controls-card">
           <div className="image-cropper-slider-row">
-            <ZoomOutOutlined style={{ color: '#64748b' }} onClick={() => setScale((s) => Math.max(0.3, s - 0.1))} />
+            <ZoomOutOutlined
+              style={{ color: '#64748b' }}
+              onClick={() => setScale((s) => Math.max(0.3, s - 0.1))}
+            />
             <Slider
               min={0.3}
               max={3.5}
@@ -311,7 +311,10 @@ export function ImageCropperModal({
               onChange={setScale}
               style={{ flex: 1, margin: '0 12px' }}
             />
-            <ZoomInOutlined style={{ color: '#64748b' }} onClick={() => setScale((s) => Math.min(3.5, s + 0.1))} />
+            <ZoomInOutlined
+              style={{ color: '#64748b' }}
+              onClick={() => setScale((s) => Math.min(3.5, s + 0.1))}
+            />
           </div>
 
           <div className="image-cropper-action-buttons">

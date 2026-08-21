@@ -7,6 +7,7 @@ import {
   EditOutlined,
   MenuOutlined,
   PlusCircleOutlined,
+  QrcodeOutlined,
 } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -26,6 +27,7 @@ import {
 } from 'antd';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
+import QRCode from 'qrcode';
 
 import type { AuthContextResponse } from '@contracts/auth';
 
@@ -115,6 +117,12 @@ export function OwnerAreaSettingsPage() {
   const [addingTable, setAddingTable] = useState(false);
   const [orderingAreaId, setOrderingAreaId] = useState<string | null>(null);
   const [pricingTableId, setPricingTableId] = useState<string | null>(null);
+  const [qrGeneratingTableId, setQrGeneratingTableId] = useState<string | null>(null);
+  const [qrPreview, setQrPreview] = useState<{
+    tableName: string;
+    url: string;
+    image: string;
+  } | null>(null);
   const [draggedTable, setDraggedTable] = useState<{ areaId: string; tableId: string } | null>(
     null,
   );
@@ -152,6 +160,30 @@ export function OwnerAreaSettingsPage() {
   const openRenameArea = (area: { id: string; name: string }) => {
     setRenamingArea(area);
     areaRenameForm.setFieldsValue({ name: area.name });
+  };
+
+  const generateTableQr = async (table: AreaTable) => {
+    setQrGeneratingTableId(table.id);
+    try {
+      const result = await apiRequest<{ path: string }>(
+        `/api/v1/owner/catalog/tables/${table.id}/qr-code/rotate`,
+        {
+          method: 'POST',
+          headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' },
+        },
+      );
+      const url = new URL(result.path, window.location.origin).toString();
+      setQrPreview({
+        tableName: table.name,
+        url,
+        image: await QRCode.toDataURL(url, { width: 640, margin: 2 }),
+      });
+      messageApi.success('Đã tạo mã QR mới. Mã cũ của bàn không còn hiệu lực.');
+    } catch (error) {
+      messageApi.error(errorMessage(error, 'Không thể tạo mã QR.'));
+    } finally {
+      setQrGeneratingTableId(null);
+    }
   };
 
   const saveAreaName = async ({ name }: { name: string }) => {
@@ -598,6 +630,15 @@ export function OwnerAreaSettingsPage() {
                       <Button
                         type="text"
                         size="small"
+                        aria-label={`Tạo QR Order cho ${table.name}`}
+                        icon={<QrcodeOutlined />}
+                        title="Tạo mã QR Order"
+                        loading={qrGeneratingTableId === table.id}
+                        onClick={() => void generateTableQr(table)}
+                      />
+                      <Button
+                        type="text"
+                        size="small"
                         disabled={tableIndex === 0 || orderingAreaId === detailArea.id}
                         aria-label={`Đưa ${table.name} lên`}
                         icon={<ArrowUpOutlined />}
@@ -664,6 +705,51 @@ export function OwnerAreaSettingsPage() {
                 style={{ margin: '30px 0' }}
               />
             )}
+          </div>
+        ) : null}
+      </Modal>
+
+      <Modal
+        title={`QR Order · ${qrPreview?.tableName ?? ''}`}
+        open={qrPreview !== null}
+        onCancel={() => setQrPreview(null)}
+        footer={[
+          <Button key="close" onClick={() => setQrPreview(null)}>
+            Đóng
+          </Button>,
+          <Button
+            key="download"
+            type="primary"
+            onClick={() => {
+              if (!qrPreview) return;
+              const link = document.createElement('a');
+              link.href = qrPreview.image;
+              link.download = `qr-order-${qrPreview.tableName}.png`;
+              link.click();
+            }}
+          >
+            Tải QR để in
+          </Button>,
+        ]}
+      >
+        {qrPreview ? (
+          <div style={{ textAlign: 'center' }}>
+            <img
+              src={qrPreview.image}
+              alt={`QR Order ${qrPreview.tableName}`}
+              style={{ width: 280, maxWidth: '100%' }}
+            />
+            <Input
+              value={qrPreview.url}
+              readOnly
+              onFocus={(event) => event.currentTarget.select()}
+            />
+            <Alert
+              style={{ marginTop: 12, textAlign: 'left' }}
+              type="warning"
+              showIcon
+              title="Hãy tải và lưu mã này ngay. Tạo mã mới sẽ vô hiệu hóa QR cũ."
+            />
           </div>
         ) : null}
       </Modal>

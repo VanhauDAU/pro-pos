@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 
 import { CatalogService } from '@server/services/catalog-service';
 import { OwnerDashboardService } from '@server/services/owner-dashboard-service';
+import { OwnerInvoiceService } from '@server/services/owner-invoice-service';
 import { PlatformService } from '@server/services/platform-service';
 import { PosService } from '@server/services/pos-service';
 
@@ -243,5 +244,54 @@ describe('Owner Dashboard Real Analytics (Acceptance Test)', () => {
     // Assert Staff Revenue
     expect(data.staffRevenue.length).toBeGreaterThanOrEqual(1);
     expect(data.staffRevenue.some((s) => s.userId === ownerUserId && s.amount > 0)).toBe(true);
+  });
+
+  it('allows owner to permanently delete an invoice and updates reports accordingly', async () => {
+    const invoiceService = new OwnerInvoiceService(env);
+    const dashboardService = new OwnerDashboardService(env);
+
+    // List invoices before deletion
+    const listBefore = await invoiceService.listInvoices({
+      storeId,
+      status: 'PAID',
+      search: '',
+      orderType: undefined,
+      method: undefined,
+      dateFrom: null,
+      dateTo: null,
+      page: 1,
+      limit: 20,
+    });
+    expect(listBefore.total).toBe(2);
+    const invoiceToDelete = listBefore.results[0]!;
+    expect(invoiceToDelete).toBeDefined();
+
+    // Delete invoice
+    const deleteResult = await invoiceService.deleteInvoice({
+      storeId,
+      targetId: invoiceToDelete.orderId,
+      actorUserId: ownerUserId,
+      requestId: 'req-test-delete-inv',
+    });
+    expect(deleteResult.deleted).toBe(true);
+    expect(deleteResult.orderId).toBe(invoiceToDelete.orderId);
+
+    // Verify invoice list after deletion
+    const listAfter = await invoiceService.listInvoices({
+      storeId,
+      status: 'PAID',
+      search: '',
+      orderType: undefined,
+      method: undefined,
+      dateFrom: null,
+      dateTo: null,
+      page: 1,
+      limit: 20,
+    });
+    expect(listAfter.total).toBe(1);
+
+    // Verify dashboard report reflects the deletion
+    const dataAfter = await dashboardService.getDashboardData(storeId, { range: 'today' });
+    expect(dataAfter.summary.invoiceCount).toBe(1);
   });
 });

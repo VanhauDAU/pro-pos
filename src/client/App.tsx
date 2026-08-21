@@ -8,6 +8,7 @@ import { PlatformAccessPage } from '@client/features/auth/PlatformAccessPage';
 import { PwaUpdatePrompt } from '@client/features/pwa/PwaUpdatePrompt';
 import { OwnerPortalPage } from '@client/features/owner/OwnerPortalPage';
 import { StaffPosPortalPage } from '@client/features/pos/StaffPosPortalPage';
+import { GuestOrderPage } from '@client/features/guest/GuestOrderPage';
 
 const SuperAdminPage = lazy(async () => {
   const module = await import('@client/features/platform/SuperAdminPage');
@@ -26,6 +27,7 @@ export function App() {
         <Route path="/platform/login" element={<PlatformAccessPage />} />
         <Route path="/owner/*" element={<OwnerPortalPage />} />
         <Route path="/pos/*" element={<StaffPosPortalPage />} />
+        <Route path="/q/:token" element={<GuestOrderPage />} />
         <Route
           path="/platform/*"
           element={

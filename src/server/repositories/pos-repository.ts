@@ -536,7 +536,11 @@ export class PosRepository {
                 u.id AS employeeId, u.display_name AS employeeName,
                 ss.phone AS storePhone, ss.address AS storeAddress,
                 ss.bank_name AS bankName, ss.bank_account_number AS bankAccountNumber,
-                ss.bank_account_name AS bankAccountName
+                ss.bank_account_name AS bankAccountName,
+                EXISTS (
+                  SELECT 1 FROM store_capabilities sc
+                  WHERE sc.store_id = s.id AND sc.capability = 'POS_REALTIME' AND sc.enabled = 1
+                ) AS posRealtimeEnabled
          FROM stores s
          JOIN store_memberships sm ON sm.store_id = s.id AND sm.user_id = ?
            AND sm.status = 'ACTIVE' AND sm.deleted_at IS NULL
@@ -555,6 +559,7 @@ export class PosRepository {
         bankName: string | null;
         bankAccountNumber: string | null;
         bankAccountName: string | null;
+        posRealtimeEnabled: 0 | 1;
       }>();
   }
 
@@ -882,49 +887,53 @@ export class PosRepository {
   }
 
   async removeTimeSession(input: {
+    commandId: string;
     storeId: string;
     orderId: string;
     sessionId: string;
     expectedOrderVersion: number;
     reason: string;
     actorId: string;
+    actorSessionId: string | null;
+    deviceId: string | null;
     requestId: string;
     issuedAt: number;
   }) {
-    await this.db.batch([
-      this.db
-        .prepare(`DELETE FROM time_pauses WHERE store_id = ? AND time_session_id = ?`)
-        .bind(input.storeId, input.sessionId),
-      this.db
-        .prepare(`DELETE FROM table_time_segments WHERE store_id = ? AND time_session_id = ?`)
-        .bind(input.storeId, input.sessionId),
-      this.db
-        .prepare(`DELETE FROM time_sessions WHERE store_id = ? AND id = ? AND order_id = ?`)
-        .bind(input.storeId, input.sessionId, input.orderId),
-      this.db
-        .prepare(
-          `UPDATE orders SET version = version + 1, updated_at = ? WHERE store_id = ? AND id = ? AND version = ?`,
-        )
-        .bind(input.issuedAt, input.storeId, input.orderId, input.expectedOrderVersion),
-      this.db
-        .prepare(
-          `INSERT INTO audit_logs (id, store_id, actor_user_id, action, entity_type, entity_id, request_id, before_json, after_json, created_at)
-           VALUES (?, ?, ?, 'TIME_SESSION_REMOVED', 'TIME_SESSION', ?, ?, ?, ?, ?)`,
-        )
-        .bind(
-          crypto.randomUUID(),
-          input.storeId,
-          input.actorId,
-          input.sessionId,
-          input.requestId,
-          JSON.stringify({ sessionId: input.sessionId, orderId: input.orderId }),
-          JSON.stringify({ reason: input.reason }),
-          input.issuedAt,
-        ),
-    ]);
+    await this.db
+      .prepare(
+        `INSERT INTO remove_time_session_commands (
+          id, store_id, order_id, time_session_id, expected_order_version,
+          reason, actor_user_id, actor_session_id, device_id, request_id, issued_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        input.commandId,
+        input.storeId,
+        input.orderId,
+        input.sessionId,
+        input.expectedOrderVersion,
+        input.reason,
+        input.actorId,
+        input.actorSessionId,
+        input.deviceId,
+        input.requestId,
+        input.issuedAt,
+      )
+      .run();
+  }
+
+  findRemoveTimeSessionCommand(storeId: string, commandId: string) {
+    return this.db
+      .prepare(
+        `SELECT order_id AS orderId, time_session_id AS timeSessionId
+         FROM remove_time_session_commands WHERE store_id = ? AND id = ? LIMIT 1`,
+      )
+      .bind(storeId, commandId)
+      .first<{ orderId: string; timeSessionId: string }>();
   }
 
   async createTimeSessionForOrder(input: {
+    commandId: string;
     storeId: string;
     orderId: string;
     timeSessionId: string;
@@ -938,6 +947,8 @@ export class PosRepository {
     status: 'RUNNING' | 'ENDED' | 'PAUSED';
     expectedOrderVersion: number;
     actorId: string;
+    actorSessionId: string | null;
+    deviceId: string | null;
     requestId: string;
     now: number;
   }) {
@@ -949,72 +960,53 @@ export class PosRepository {
       basePrice = 0;
     }
 
-    await this.db.batch([
-      this.db
-        .prepare(
-          `INSERT INTO time_sessions (
-            id, store_id, order_id, table_id, time_product_id, status, started_at, ended_at,
-            pricing_snapshot_json, pricing_version, opened_by, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .bind(
-          input.timeSessionId,
-          input.storeId,
-          input.orderId,
-          input.tableId,
-          input.timeProductId,
-          input.status,
-          input.startedAtMs,
-          input.endedAtMs,
-          input.pricingSnapshotJson,
-          input.pricingVersion,
-          input.actorId,
-          input.now,
-        ),
-      this.db
-        .prepare(
-          `INSERT INTO table_time_segments (
-            id, store_id, order_id, time_session_id, table_id, time_product_id,
-            table_name_snapshot, started_at, ended_at, pricing_snapshot_json,
-            pricing_version, unit_price_snapshot, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .bind(
-          crypto.randomUUID(),
-          input.storeId,
-          input.orderId,
-          input.timeSessionId,
-          input.tableId,
-          input.timeProductId,
-          input.tableName,
-          input.startedAtMs,
-          input.endedAtMs,
-          input.pricingSnapshotJson,
-          input.pricingVersion,
-          basePrice,
-          input.now,
-          input.now,
-        ),
-      this.db
-        .prepare(
-          `UPDATE orders SET version = version + 1, updated_at = ? WHERE store_id = ? AND id = ? AND version = ?`,
-        )
-        .bind(input.now, input.storeId, input.orderId, input.expectedOrderVersion),
-      this.db
-        .prepare(
-          `INSERT INTO audit_logs (id, store_id, actor_user_id, action, entity_type, entity_id, request_id, before_json, after_json, created_at)
-           VALUES (?, ?, ?, 'TIME_SESSION_RESTORED', 'TIME_SESSION', ?, ?, NULL, ?, ?)`,
-        )
-        .bind(
-          crypto.randomUUID(),
-          input.storeId,
-          input.actorId,
-          input.timeSessionId,
-          input.requestId,
-          JSON.stringify({ startedAtMs: input.startedAtMs, endedAtMs: input.endedAtMs }),
-          input.now,
-        ),
-    ]);
+    await this.db
+      .prepare(
+        `INSERT INTO create_time_session_commands (
+          id, store_id, order_id, time_session_id, table_id, time_product_id,
+          table_name_snapshot, expected_order_version, pricing_snapshot_json,
+          pricing_version, unit_price_snapshot, started_at, ended_at, session_status,
+          actor_user_id, actor_session_id, device_id, request_id, issued_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        input.commandId,
+        input.storeId,
+        input.orderId,
+        input.timeSessionId,
+        input.tableId,
+        input.timeProductId,
+        input.tableName,
+        input.expectedOrderVersion,
+        input.pricingSnapshotJson,
+        input.pricingVersion,
+        basePrice,
+        input.startedAtMs,
+        input.endedAtMs,
+        input.status,
+        input.actorId,
+        input.actorSessionId,
+        input.deviceId,
+        input.requestId,
+        input.now,
+      )
+      .run();
+  }
+
+  findCreateTimeSessionCommand(storeId: string, commandId: string) {
+    return this.db
+      .prepare(
+        `SELECT order_id AS orderId, time_session_id AS timeSessionId,
+                started_at AS startedAtMs, ended_at AS endedAtMs
+         FROM create_time_session_commands WHERE store_id = ? AND id = ? LIMIT 1`,
+      )
+      .bind(storeId, commandId)
+      .first<{
+        orderId: string;
+        timeSessionId: string;
+        startedAtMs: number;
+        endedAtMs: number | null;
+      }>();
   }
 
   findUpdateOrderNoteCommand(storeId: string, commandId: string) {

@@ -1,8 +1,10 @@
 import {
   AppstoreOutlined,
+  BellOutlined,
   CheckCircleOutlined,
   CheckOutlined,
   ClockCircleOutlined,
+  CloseCircleFilled,
   CloseCircleOutlined,
   CloseOutlined,
   CopyOutlined,
@@ -51,6 +53,7 @@ import {
   Segmented,
   Select,
   Skeleton,
+  Space,
   Spin,
   Switch,
   Tag,
@@ -60,10 +63,11 @@ import {
 } from 'antd';
 import type { MenuProps } from 'antd';
 import * as React from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
+import type { GuestOrderRequestDto, ServiceRequestDto } from '@contracts/qr-order';
 import type { StorePrintSettings } from '@contracts/store';
 import type { PricingConfigSnapshot } from '@domain/pricing/types';
 import {
@@ -73,7 +77,12 @@ import {
 } from '@client/lib/pos-receipt-printer';
 import { OrderDetailPage } from './OrderDetailPage';
 
-import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
+import { apiRequest, jsonRequest } from '@client/lib/api';
+import {
+  RealtimeProvider,
+  usePosPollingInterval,
+  useRealtime,
+} from '@client/realtime/RealtimeProvider';
 
 const BRAND = '#0975f7';
 
@@ -87,6 +96,7 @@ interface StaffContext {
   bankName?: string | null;
   bankAccountNumber?: string | null;
   bankAccountName?: string | null;
+  capabilities?: { posRealtime: boolean };
 }
 
 interface PosOrder {
@@ -412,7 +422,9 @@ function formatDateTimeInput(timestamp: number) {
 }
 
 function errorText(error: unknown) {
-  return error instanceof ApiError ? error.message : 'Không thể xử lý yêu cầu. Vui lòng thử lại.';
+  return error instanceof Error && error.message
+    ? error.message
+    : 'Không thể xử lý yêu cầu. Vui lòng thử lại.';
 }
 
 function mutationHeaders(csrfToken: string) {
@@ -426,6 +438,7 @@ function StaffHeader({
   context: AuthContextResponse | undefined;
   searchSlot?: React.ReactNode;
 }) {
+  const { status } = useRealtime();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [modal, holder] = Modal.useModal();
@@ -519,6 +532,16 @@ function StaffHeader({
         </div>
         {searchSlot ? <div className="staff-pos-header__search">{searchSlot}</div> : null}
       </div>
+      <Tag
+        color={status === 'CONNECTED' ? 'success' : status === 'DISABLED' ? 'default' : 'warning'}
+        style={{ marginLeft: 'auto', marginRight: 8 }}
+      >
+        {status === 'CONNECTED'
+          ? 'Đồng bộ trực tiếp'
+          : status === 'DISABLED'
+            ? 'Cập nhật định kỳ'
+            : 'Đang kết nối lại'}
+      </Tag>
       <Dropdown
         menu={{ items: menuItems }}
         trigger={['click']}
@@ -576,10 +599,11 @@ function StaffBottomNav({ active }: { active: (typeof navItems)[number]['key'] }
 function OrdersPage({ search }: { search: string }) {
   const navigate = useNavigate();
   const [filter, setFilter] = useState<'ALL' | 'DINE_IN' | 'TAKEAWAY'>('ALL');
+  const pollingInterval = usePosPollingInterval(30_000);
   const orders = useQuery({
     queryKey: ['pos-orders'],
     queryFn: () => apiRequest<PosOrder[]>('/api/v1/pos/orders'),
-    refetchInterval: 30_000,
+    refetchInterval: pollingInterval,
   });
   const filtered = useMemo(() => {
     const term = search.trim().toLocaleLowerCase('vi-VN');
@@ -695,10 +719,11 @@ function OrdersPage({ search }: { search: string }) {
 
 function AreasPage() {
   const navigate = useNavigate();
+  const pollingInterval = usePosPollingInterval(20_000);
   const tables = useQuery({
     queryKey: ['pos-tables'],
     queryFn: () => apiRequest<PosTable[]>('/api/v1/pos/tables'),
-    refetchInterval: 20_000,
+    refetchInterval: pollingInterval,
   });
   const areas = useMemo(() => {
     const map = new Map<string, { id: string; name: string; tables: PosTable[] }>();
@@ -792,15 +817,203 @@ function AreasPage() {
 }
 
 function QrOrderPage() {
+  const queryClient = useQueryClient();
+  const [messageApi, holder] = message.useMessage();
+  const [modal, modalHolder] = Modal.useModal();
+  const previousPendingCount = React.useRef<number | null>(null);
+  const auth = useQuery({
+    queryKey: ['auth-context'],
+    queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
+  });
+  const requests = useQuery({
+    queryKey: ['guest-order-requests'],
+    queryFn: () => apiRequest<GuestOrderRequestDto[]>('/api/v1/pos/qr-orders?status=PENDING'),
+    refetchInterval: 15_000,
+  });
+  const serviceRequests = useQuery({
+    queryKey: ['service-requests'],
+    queryFn: () => apiRequest<ServiceRequestDto[]>('/api/v1/pos/qr-orders/service-requests/list'),
+    refetchInterval: 15_000,
+  });
+  useEffect(() => {
+    const count = requests.data?.length;
+    if (count === undefined) return;
+    if (previousPendingCount.current !== null && count > previousPendingCount.current) {
+      try {
+        const audio = new AudioContext();
+        const oscillator = audio.createOscillator();
+        const gain = audio.createGain();
+        oscillator.frequency.value = 880;
+        gain.gain.setValueAtTime(0.12, audio.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + 0.35);
+        oscillator.connect(gain).connect(audio.destination);
+        oscillator.addEventListener('ended', () => void audio.close(), { once: true });
+        oscillator.start();
+        oscillator.stop(audio.currentTime + 0.35);
+      } catch {
+        // Browser autoplay policy may block sound; the visual inbox still updates.
+      }
+    }
+    previousPendingCount.current = count;
+  }, [requests.data?.length]);
+  const refresh = () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['guest-order-requests'] }),
+      queryClient.invalidateQueries({ queryKey: ['service-requests'] }),
+      queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
+      queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
+    ]);
+  const accept = useMutation({
+    mutationFn: (request: GuestOrderRequestDto) =>
+      jsonRequest(
+        `/api/v1/pos/qr-orders/${request.id}/accept`,
+        { expectedOrderVersion: request.orderVersion },
+        { headers: mutationHeaders(auth.data?.csrfToken ?? '') },
+      ),
+    onSuccess: async () => {
+      messageApi.success('Đã xác nhận món vào hóa đơn.');
+      await refresh();
+    },
+    onError: (error) => messageApi.error(errorText(error)),
+  });
+  const rejectRequest = (request: GuestOrderRequestDto) => {
+    let reason = '';
+    modal.confirm({
+      title: `Từ chối yêu cầu ${request.tableName}`,
+      content: (
+        <Input.TextArea
+          autoFocus
+          placeholder="Nhập lý do để khách biết"
+          maxLength={300}
+          onChange={(event) => {
+            reason = event.target.value;
+          }}
+        />
+      ),
+      okText: 'Từ chối',
+      okButtonProps: { danger: true },
+      cancelText: 'Quay lại',
+      onOk: async () => {
+        if (!reason.trim()) throw new Error('Vui lòng nhập lý do.');
+        await jsonRequest(
+          `/api/v1/pos/qr-orders/${request.id}/reject`,
+          { reason: reason.trim() },
+          { headers: mutationHeaders(auth.data?.csrfToken ?? '') },
+        );
+        messageApi.success('Đã từ chối yêu cầu.');
+        await refresh();
+      },
+    });
+  };
+  const updateService = async (request: ServiceRequestDto, action: 'ACKNOWLEDGE' | 'COMPLETE') => {
+    try {
+      await jsonRequest(
+        `/api/v1/pos/qr-orders/service-requests/${request.id}/status`,
+        { action },
+        { headers: mutationHeaders(auth.data?.csrfToken ?? '') },
+      );
+      await refresh();
+    } catch (error) {
+      messageApi.error(errorText(error));
+    }
+  };
+
   return (
-    <div className="staff-coming-soon">
-      <div className="staff-coming-soon__art">
-        <QrcodeOutlined />
+    <div style={{ padding: 16, maxWidth: 1100, margin: '0 auto' }}>
+      {holder}
+      {modalHolder}
+      <div style={{ marginBottom: 18 }}>
+        <Typography.Title level={2} style={{ marginBottom: 2 }}>
+          QR Order
+        </Typography.Title>
+        <Typography.Text type="secondary">
+          Yêu cầu gọi món và hỗ trợ từ khách tại bàn
+        </Typography.Text>
       </div>
-      <Typography.Title level={2}>QR Order sẽ sớm ra mắt</Typography.Title>
-      <Typography.Text type="secondary">
-        Yêu cầu gọi món từ QR sẽ được phát triển ở giai đoạn tiếp theo.
-      </Typography.Text>
+
+      {(serviceRequests.data ?? []).length > 0 ? (
+        <Card title="Yêu cầu hỗ trợ" style={{ marginBottom: 16 }}>
+          <Space orientation="vertical" style={{ width: '100%' }}>
+            {(serviceRequests.data ?? []).map((request) => (
+              <Card key={request.id} size="small">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <BellOutlined style={{ color: '#fa8c16', fontSize: 20 }} />
+                  <div style={{ flex: 1 }}>
+                    <strong>
+                      {request.tableName} · {request.areaName}
+                    </strong>
+                    <div>
+                      {request.type === 'CALL_STAFF' ? 'Gọi nhân viên' : 'Yêu cầu thanh toán'}
+                    </div>
+                  </div>
+                  {request.status === 'OPEN' ? (
+                    <Button
+                      type="primary"
+                      onClick={() => void updateService(request, 'ACKNOWLEDGE')}
+                    >
+                      Đã nhận
+                    </Button>
+                  ) : (
+                    <Button onClick={() => void updateService(request, 'COMPLETE')}>
+                      Hoàn tất
+                    </Button>
+                  )}
+                </div>
+              </Card>
+            ))}
+          </Space>
+        </Card>
+      ) : null}
+
+      <Card title={`Đơn chờ xác nhận (${requests.data?.length ?? 0})`} loading={requests.isLoading}>
+        {(requests.data ?? []).length === 0 ? (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Chưa có yêu cầu gọi món mới" />
+        ) : (
+          <Space orientation="vertical" style={{ width: '100%' }} size={12}>
+            {(requests.data ?? []).map((request) => (
+              <Card
+                key={request.id}
+                size="small"
+                title={
+                  <span>
+                    {request.tableName} · {request.areaName}
+                  </span>
+                }
+                extra={<Tag color="processing">Chờ xác nhận</Tag>}
+              >
+                {request.items.map((item) => (
+                  <div
+                    key={item.id}
+                    style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0' }}
+                  >
+                    <span>
+                      <strong>{item.quantity} ×</strong> {item.productName}
+                      {item.variantName ? ` (${item.variantName})` : ''}
+                    </span>
+                    <strong>{formatMoney(item.lineTotalVnd)}</strong>
+                  </div>
+                ))}
+                {request.note ? (
+                  <Alert type="info" title={`Ghi chú: ${request.note}`} style={{ marginTop: 8 }} />
+                ) : null}
+                <Space style={{ marginTop: 12 }}>
+                  <Button danger onClick={() => rejectRequest(request)}>
+                    Từ chối
+                  </Button>
+                  <Button
+                    type="primary"
+                    icon={<CheckCircleOutlined />}
+                    loading={accept.isPending}
+                    onClick={() => accept.mutate(request)}
+                  >
+                    Xác nhận vào hóa đơn
+                  </Button>
+                </Space>
+              </Card>
+            ))}
+          </Space>
+        )}
+      </Card>
     </div>
   );
 }
@@ -1384,6 +1597,220 @@ function StaffItemDetailModal({
   );
 }
 
+function WeightInputSection({
+  unitName,
+  unitPriceVnd,
+  quantityMilli,
+  onChangeQuantityMilli,
+  grossTotal,
+}: {
+  unitName?: string | null;
+  unitPriceVnd: number;
+  quantityMilli: number;
+  onChangeQuantityMilli: (milli: number) => void;
+  grossTotal: number;
+}) {
+  const unit = getWeightUnit(unitName);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Buffer input as text so typing "0.", "1,", "0.5" works smoothly without premature clamping or jumping
+  const [inputText, setInputText] = useState<string>(() => {
+    const qty = quantityMilli / 1000;
+    return qty > 0 ? qty.toString() : '';
+  });
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Auto focus & select text when mounted so user can immediately type without backspacing
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (inputRef.current) {
+        inputRef.current.focus();
+        inputRef.current.select();
+      }
+    }, 80);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const handleInputChange = (raw: string) => {
+    // Only allow digits, comma, period
+    const cleaned = raw.replace(/[^\d.,]/g, '');
+    setInputText(cleaned);
+
+    const normalized = cleaned.replace(',', '.');
+    if (!normalized || normalized === '.') {
+      setErrorMsg('Vui lòng nhập trọng lượng');
+      onChangeQuantityMilli(0);
+      return;
+    }
+
+    const val = parseFloat(normalized);
+    if (isNaN(val) || val <= 0) {
+      setErrorMsg('Trọng lượng phải lớn hơn 0');
+      onChangeQuantityMilli(0);
+    } else if (val > 9999.999) {
+      setErrorMsg('Trọng lượng vượt quá giới hạn (tối đa 9.999)');
+      onChangeQuantityMilli(0);
+    } else {
+      setErrorMsg(null);
+      onChangeQuantityMilli(Math.round(val * 1000));
+    }
+  };
+
+  const handleApplyPreset = (presetVal: number) => {
+    setInputText(presetVal.toString());
+    setErrorMsg(null);
+    onChangeQuantityMilli(Math.round(presetVal * 1000));
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  };
+
+  const handleAdjust = (delta: number) => {
+    const currentVal = quantityMilli / 1000;
+    const newVal = Math.max(0.001, Math.round((currentVal + delta) * 1000) / 1000);
+    setInputText(newVal.toString());
+    setErrorMsg(null);
+    onChangeQuantityMilli(Math.round(newVal * 1000));
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  };
+
+  const isKg = unit.toLowerCase() === 'kg';
+  const presets = isKg ? [0.1, 0.2, 0.5, 1, 1.5, 2, 3, 5] : [50, 100, 200, 500, 1000];
+
+  return (
+    <div className="staff-weight-section">
+      <div className="staff-weight-section__header">
+        <div className="staff-item-modal__section-title">Trọng lượng ({unit})</div>
+        <div className="staff-item-modal__section-subtitle">
+          Nhập trực tiếp hoặc bấm chọn nhanh mức cân bên dưới
+        </div>
+      </div>
+
+      {/* Main Large Input */}
+      <div className="staff-weight-input-wrapper">
+        <div className={`staff-weight-input-box ${errorMsg ? 'has-error' : ''}`}>
+          <input
+            ref={inputRef}
+            type="text"
+            inputMode="decimal"
+            className="staff-weight-input-field"
+            value={inputText}
+            placeholder="0.000"
+            onChange={(e) => handleInputChange(e.target.value)}
+            onFocus={(e) => e.target.select()}
+          />
+          <span className="staff-weight-input-unit-badge">{unit}</span>
+          {inputText ? (
+            <button
+              type="button"
+              className="staff-weight-input-clear-btn"
+              onClick={() => {
+                setInputText('');
+                setErrorMsg('Vui lòng nhập trọng lượng');
+                onChangeQuantityMilli(0);
+                inputRef.current?.focus();
+              }}
+              title="Xóa nhập lại"
+            >
+              <CloseCircleFilled />
+            </button>
+          ) : null}
+        </div>
+
+        {/* Stepper adjustment buttons */}
+        <div className="staff-weight-stepper-row">
+          <button
+            type="button"
+            className="staff-weight-adjust-btn"
+            onClick={() => handleAdjust(-0.5)}
+            title="Giảm 0.5"
+          >
+            -0.5
+          </button>
+          <button
+            type="button"
+            className="staff-weight-adjust-btn"
+            onClick={() => handleAdjust(-0.1)}
+            title="Giảm 0.1"
+          >
+            -0.1
+          </button>
+          <button
+            type="button"
+            className="staff-weight-adjust-btn staff-weight-adjust-btn--add"
+            onClick={() => handleAdjust(0.1)}
+            title="Tăng 0.1"
+          >
+            +0.1
+          </button>
+          <button
+            type="button"
+            className="staff-weight-adjust-btn staff-weight-adjust-btn--add"
+            onClick={() => handleAdjust(0.5)}
+            title="Tăng 0.5"
+          >
+            +0.5
+          </button>
+          <button
+            type="button"
+            className="staff-weight-adjust-btn staff-weight-adjust-btn--add"
+            onClick={() => handleAdjust(1.0)}
+            title="Tăng 1.0"
+          >
+            +1.0
+          </button>
+        </div>
+      </div>
+
+      {errorMsg ? <div className="staff-weight-error-alert">{errorMsg}</div> : null}
+
+      {/* Quick Presets */}
+      <div className="staff-weight-presets-wrap">
+        <div className="staff-weight-presets-label">Mức cân nhanh:</div>
+        <div className="staff-weight-presets-list">
+          {presets.map((p) => {
+            const isSelected = Math.abs(quantityMilli / 1000 - p) < 0.0001;
+            return (
+              <button
+                key={p}
+                type="button"
+                className={`staff-weight-preset-chip ${isSelected ? 'is-active' : ''}`}
+                onClick={() => handleApplyPreset(p)}
+              >
+                {p} {unit}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Live Calculation Preview Banner */}
+      <div className="staff-weight-calc-summary">
+        <div className="staff-weight-calc-formula">
+          {quantityMilli > 0 ? (
+            <>
+              <span className="staff-weight-calc-qty">
+                {(quantityMilli / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 3 })}{' '}
+                {unit}
+              </span>
+              <span className="staff-weight-calc-cross">×</span>
+              <span className="staff-weight-calc-rate">
+                {formatMoney(unitPriceVnd)}/{unit}
+              </span>
+            </>
+          ) : (
+            <span className="staff-weight-calc-empty">Chưa có trọng lượng</span>
+          )}
+        </div>
+        <div className="staff-weight-calc-result">
+          <span className="staff-weight-calc-equals">=</span>
+          <strong className="staff-weight-calc-total">{formatMoney(grossTotal)}</strong>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function OrderItemDetailModal({
   item,
   product,
@@ -1421,6 +1848,11 @@ function OrderItemDetailModal({
   const netTotal = grossTotal - discountAmount;
 
   const handleSave = () => {
+    if (item.productType === 'WEIGHT' && itemQuantityMilli <= 0) {
+      message.warning('Vui lòng nhập trọng lượng lớn hơn 0');
+      return;
+    }
+
     const saveDiscountAmount = calculateDiscountAmount(grossTotal, discountType, discountValue);
     const saveNetTotal = grossTotal - saveDiscountAmount;
 
@@ -1445,6 +1877,8 @@ function OrderItemDetailModal({
       currentVariant,
     );
   };
+
+  const isNewPick = Boolean(item.discardOnCancel);
 
   return (
     <Modal
@@ -1511,6 +1945,17 @@ function OrderItemDetailModal({
             })}
           </div>
         </div>
+
+        {/* Dedicated Weight Input Section for WEIGHT items */}
+        {item.productType === 'WEIGHT' ? (
+          <WeightInputSection
+            unitName={item.unitName}
+            unitPriceVnd={unitPriceVnd}
+            quantityMilli={itemQuantityMilli}
+            onChangeQuantityMilli={setItemQuantityMilli}
+            grossTotal={grossTotal}
+          />
+        ) : null}
 
         <div className="staff-item-modal__section">
           <div className="staff-item-modal__section-title">Ghi chú</div>
@@ -1584,23 +2029,13 @@ function OrderItemDetailModal({
         <div className="staff-item-modal__footer">
           <div className="staff-item-modal__qty-row">
             <span className="staff-item-modal__qty-label">
-              {item.productType === 'WEIGHT'
-                ? `Trọng lượng (${getWeightUnit(item.unitName)})`
-                : 'Số lượng'}
+              {item.productType === 'WEIGHT' ? `Tổng trọng lượng:` : 'Số lượng:'}
             </span>
             {item.productType === 'WEIGHT' ? (
-              <InputNumber
-                min={0.001}
-                step={0.001}
-                precision={3}
-                decimalSeparator=","
-                value={itemQuantityMilli / 1000}
-                onChange={(val) =>
-                  setItemQuantityMilli(Math.max(1, Math.round(Number(val ?? 0) * 1000)))
-                }
-                suffix={getWeightUnit(item.unitName)}
-                style={{ width: 140 }}
-              />
+              <span style={{ fontSize: 16, fontWeight: 700, color: '#0877ee' }}>
+                {(itemQuantityMilli / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 3 })}{' '}
+                {getWeightUnit(item.unitName)}
+              </span>
             ) : (
               <div className="staff-item-modal__stepper">
                 <button
@@ -1624,22 +2059,33 @@ function OrderItemDetailModal({
           </div>
 
           <div className="staff-item-modal__actions">
-            <Button
-              danger
-              size="large"
-              icon={<DeleteOutlined />}
-              className="staff-item-modal__delete-action-btn"
-              onClick={onDelete}
-            >
-              Xóa
-            </Button>
+            {isNewPick ? (
+              <Button
+                size="large"
+                className="staff-item-modal__cancel-action-btn"
+                onClick={onCancel}
+              >
+                Hủy
+              </Button>
+            ) : (
+              <Button
+                danger
+                size="large"
+                icon={<DeleteOutlined />}
+                className="staff-item-modal__delete-action-btn"
+                onClick={onDelete}
+              >
+                {item.source === 'SAVED' ? 'Xóa món' : 'Xóa khỏi giỏ'}
+              </Button>
+            )}
             <Button
               type="primary"
               size="large"
               className="staff-item-modal__save-btn"
+              disabled={item.productType === 'WEIGHT' && itemQuantityMilli <= 0}
               onClick={handleSave}
             >
-              Lưu
+              {isNewPick ? 'Thêm vào đơn' : 'Lưu'}
             </Button>
           </div>
         </div>
@@ -1655,6 +2101,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const quotePollingInterval = usePosPollingInterval(5_000);
+  const { serverTimeOffsetMs } = useRealtime();
   const [messageApi, holder] = message.useMessage();
   const preselectedTableId = searchParams.get('tableId');
   const typeParam = searchParams.get('type');
@@ -1784,7 +2232,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     queryKey: ['pos-order-quote', orderId],
     queryFn: () => apiRequest<OrderQuote>(`/api/v1/pos/orders/${orderId}/quote`),
     enabled: !isNew,
-    refetchInterval: 5_000,
+    refetchInterval: quotePollingInterval,
   });
   const printSettings = useQuery({
     queryKey: ['pos-print-settings'],
@@ -1803,9 +2251,9 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   useEffect(() => {
     const hasRunningTime = quote.data?.time?.status === 'RUNNING';
     if (!hasRunningTime) return undefined;
-    const timer = window.setInterval(() => setClockNow(Date.now()), 1000);
+    const timer = window.setInterval(() => setClockNow(Date.now() + serverTimeOffsetMs), 1000);
     return () => window.clearInterval(timer);
-  }, [quote.data?.time?.status]);
+  }, [quote.data?.time?.status, serverTimeOffsetMs]);
 
   useEffect(() => {
     if (!isNew && quote.data && searchParams.get('checkout') === '1') {
@@ -4104,6 +4552,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           min={0}
           step={1000}
           value={promptPrice}
+          onFocus={(e) => e.target.select()}
           formatter={(value) => `${value ?? ''}`.replace(/\B(?=(\d{3})+(?!\d))/gu, '.')}
           parser={(value) => Number((value ?? '').replaceAll('.', ''))}
           onChange={(value) => setPromptPrice(value === null ? null : Number(value))}
@@ -4201,6 +4650,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         }}
         onDelete={() => {
           if (!editingItem) return;
+          if (editingItem.discardOnCancel || editingItem.source === 'DRAFT') {
+            setDraftLines((lines) => lines.filter((line) => line.id !== editingItem.id));
+            setEditingItem(null);
+            return;
+          }
           setDeleteItemTarget({
             id: editingItem.id,
             name: editingItem.productName,
@@ -5612,6 +6066,7 @@ const PAYMENT_METHODS: PaymentMethodItem[] = [
 function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResponse }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const quotePollingInterval = usePosPollingInterval(5_000);
   const [messageApi, holder] = message.useMessage();
   const [selectedMethod, setSelectedMethod] = useState<PaymentMethodType>('CASH');
   const [isMultiMethod, setIsMultiMethod] = useState(false);
@@ -5633,7 +6088,7 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
   const quote = useQuery({
     queryKey: ['pos-order-quote', orderId],
     queryFn: () => apiRequest<OrderQuote>(`/api/v1/pos/orders/${orderId}/quote`),
-    refetchInterval: 5_000,
+    refetchInterval: quotePollingInterval,
   });
 
   const printSettings = useQuery({
@@ -6382,45 +6837,47 @@ export function StaffPosPortalPage() {
 
   return (
     <ConfigProvider theme={{ token: { colorPrimary: BRAND, borderRadius: 8 } }}>
-      <div className={`staff-pos-shell${isFullScreen ? ' staff-pos-shell--editor' : ''}`}>
-        {!isFullScreen ? (
-          <StaffHeader
-            context={auth.data}
-            searchSlot={
-              active === 'orders' ? (
-                <Input
-                  size="large"
-                  allowClear
-                  prefix={<SearchOutlined style={{ color: '#8c8c8c' }} />}
-                  placeholder="Tìm kiếm đơn hàng..."
-                  value={ordersSearch}
-                  onChange={(event) => setOrdersSearch(event.target.value)}
-                />
-              ) : null
-            }
-          />
-        ) : null}
-        <div className="staff-pos-main">
-          {isInvoice ? (
-            <InvoicePage />
-          ) : isDetail && detailOrderId ? (
-            <OrderDetailPage orderId={detailOrderId} />
-          ) : isPayment && paymentOrderId ? (
-            <PaymentPage orderId={paymentOrderId} auth={auth.data} />
-          ) : isEditor ? (
-            <OrderEditor auth={auth.data} />
-          ) : active === 'areas' ? (
-            <AreasPage />
-          ) : active === 'qr' ? (
-            <QrOrderPage />
-          ) : active === 'more' ? (
-            <MorePage auth={auth.data} />
-          ) : (
-            <OrdersPage search={ordersSearch} />
-          )}
+      <RealtimeProvider>
+        <div className={`staff-pos-shell${isFullScreen ? ' staff-pos-shell--editor' : ''}`}>
+          {!isFullScreen ? (
+            <StaffHeader
+              context={auth.data}
+              searchSlot={
+                active === 'orders' ? (
+                  <Input
+                    size="large"
+                    allowClear
+                    prefix={<SearchOutlined style={{ color: '#8c8c8c' }} />}
+                    placeholder="Tìm kiếm đơn hàng..."
+                    value={ordersSearch}
+                    onChange={(event) => setOrdersSearch(event.target.value)}
+                  />
+                ) : null
+              }
+            />
+          ) : null}
+          <div className="staff-pos-main">
+            {isInvoice ? (
+              <InvoicePage />
+            ) : isDetail && detailOrderId ? (
+              <OrderDetailPage orderId={detailOrderId} />
+            ) : isPayment && paymentOrderId ? (
+              <PaymentPage orderId={paymentOrderId} auth={auth.data} />
+            ) : isEditor ? (
+              <OrderEditor auth={auth.data} />
+            ) : active === 'areas' ? (
+              <AreasPage />
+            ) : active === 'qr' ? (
+              <QrOrderPage />
+            ) : active === 'more' ? (
+              <MorePage auth={auth.data} />
+            ) : (
+              <OrdersPage search={ordersSearch} />
+            )}
+          </div>
+          {!isFullScreen ? <StaffBottomNav active={active} /> : null}
         </div>
-        {!isFullScreen ? <StaffBottomNav active={active} /> : null}
-      </div>
+      </RealtimeProvider>
     </ConfigProvider>
   );
 }

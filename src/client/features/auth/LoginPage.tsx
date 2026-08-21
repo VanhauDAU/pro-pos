@@ -4,7 +4,8 @@ import {
   DesktopOutlined,
   EyeInvisibleOutlined,
   EyeOutlined,
-  MailOutlined,
+  LockOutlined,
+  LoginOutlined,
   SwapOutlined,
   UserOutlined,
 } from '@ant-design/icons';
@@ -13,7 +14,7 @@ import { Alert, Avatar, Button, Form, Input, Spin, Tabs, Typography } from 'antd
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router';
 
-import type { AccessStartResponse, AuthContextResponse, LoginResponse } from '@contracts/auth';
+import type { AuthContextResponse, LoginResponse } from '@contracts/auth';
 
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 
@@ -279,16 +280,27 @@ export function LoginPage() {
     setPinValue('');
   };
 
-  const ownerLogin = async () => {
+  const [ownerUsername, setOwnerUsername] = useState('');
+  const [ownerPassword, setOwnerPassword] = useState('');
+
+  const executeOwnerLogin = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!ownerUsername.trim() || !ownerPassword) {
+      setError('Vui lòng nhập tên đăng nhập và mật khẩu.');
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
-      const response = await jsonRequest<AccessStartResponse>('/api/v1/auth/access/start', {
-        purpose: 'OWNER_LOGIN',
+      await jsonRequest<LoginResponse>('/api/v1/auth/owner/login', {
+        username: ownerUsername.trim(),
+        password: ownerPassword,
       });
-      window.location.assign(response.loginUrl);
+      await queryClient.invalidateQueries({ queryKey: ['auth-context'] });
+      navigate('/owner', { replace: true });
     } catch (loginError) {
       setError(errorMessage(loginError));
+    } finally {
       setSubmitting(false);
     }
   };
@@ -336,26 +348,50 @@ export function LoginPage() {
         key: 'owner',
         label: 'Chủ cửa hàng',
         children: (
-          <div className="owner-otp-login">
-            <Alert
-              type="info"
-              showIcon
-              title="Đăng nhập bảo mật bằng email OTP"
-              description="Cloudflare Access sẽ gửi mã dùng một lần đến email đã được cấp quyền. Pro POS không lưu mật khẩu Owner."
-            />
-            <Button
-              type="primary"
-              size="large"
-              block
-              icon={<MailOutlined />}
-              loading={submitting}
-              onClick={ownerLogin}
-            >
-              Nhận mã OTP qua email
-            </Button>
-            <Typography.Paragraph className="login-help" type="secondary">
-              Owner có thể đăng nhập trên điện thoại hoặc máy tính mà không cần thiết lập máy POS.
-            </Typography.Paragraph>
+          <div className="owner-login-clean">
+            <form onSubmit={executeOwnerLogin} className="owner-password-form">
+              <div style={{ marginBottom: 16 }}>
+                <Input
+                  size="large"
+                  prefix={<UserOutlined style={{ color: '#94a3b8' }} />}
+                  placeholder="Tên đăng nhập hoặc Email"
+                  value={ownerUsername}
+                  onChange={(e) => {
+                    setOwnerUsername(e.target.value);
+                    if (error) setError(null);
+                  }}
+                  autoComplete="username"
+                  disabled={submitting}
+                />
+              </div>
+
+              <div style={{ marginBottom: 20 }}>
+                <Input.Password
+                  size="large"
+                  prefix={<LockOutlined style={{ color: '#94a3b8' }} />}
+                  placeholder="Mật khẩu"
+                  value={ownerPassword}
+                  onChange={(e) => {
+                    setOwnerPassword(e.target.value);
+                    if (error) setError(null);
+                  }}
+                  autoComplete="current-password"
+                  disabled={submitting}
+                />
+              </div>
+
+              <Button
+                type="primary"
+                size="large"
+                htmlType="submit"
+                block
+                icon={<LoginOutlined />}
+                loading={submitting}
+                className="owner-login-btn"
+              >
+                Đăng nhập Chủ cửa hàng
+              </Button>
+            </form>
           </div>
         ),
       },
@@ -509,25 +545,27 @@ export function LoginPage() {
             </Form>
           )
         ) : (
-          <div className="activation-required">
-            <Alert
-              type={context.data?.device?.status === 'REVOKED' ? 'warning' : 'info'}
-              showIcon
-              title={
-                context.data?.device?.status === 'REVOKED'
-                  ? 'Thiết bị POS đã bị thu hồi'
-                  : 'Máy này chưa được thiết lập làm POS'
-              }
-              description="Owner cần xác nhận máy tại quầy trước khi nhân viên có thể đăng nhập bằng PIN."
-            />
+          <div className="activation-clean-box">
+            <div className="activation-icon-wrap">
+              <DesktopOutlined />
+            </div>
+            <div className="activation-title">
+              {context.data?.device?.status === 'REVOKED'
+                ? 'Thiết bị POS đã bị thu hồi'
+                : 'Thiết bị chưa liên kết POS'}
+            </div>
+            <div className="activation-subtitle">
+              Chủ cửa hàng cần kích hoạt thiết bị tại quầy để nhân viên vào ca.
+            </div>
             <Button
               type="primary"
               size="large"
               block
               icon={<DesktopOutlined />}
               onClick={() => navigate('/device-activation')}
+              className="activation-primary-btn"
             >
-              Thiết lập máy POS
+              Kích hoạt máy POS
             </Button>
           </div>
         ),

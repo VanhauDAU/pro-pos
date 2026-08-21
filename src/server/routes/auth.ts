@@ -3,7 +3,11 @@ import { Hono } from 'hono';
 import {
   accessStartRequestSchema,
   activationConfirmRequestSchema,
+  changePasswordRequestSchema,
+  directDeviceActivationRequestSchema,
   employeeLoginRequestSchema,
+  ownerLoginRequestSchema,
+  platformLoginRequestSchema,
 } from '@contracts/auth';
 import { AppError } from '@server/lib/app-error';
 import {
@@ -34,6 +38,42 @@ authRoutes.get('/context', async (c) => {
   }
   const { sessionId: _sessionId, ...publicContext } = context;
   return success(c, publicContext);
+});
+
+authRoutes.post('/owner/login', async (c) => {
+  assertSameOrigin(c);
+  const body = await parseJson(c.req.raw, ownerLoginRequestSchema);
+  const result = await new AuthService(c.env).ownerLogin(body);
+  setCredentialCookie(c, 'session', result.rawToken, 7 * 24 * 60 * 60);
+  return success(c, result.response);
+});
+
+authRoutes.post('/platform/login', async (c) => {
+  assertSameOrigin(c);
+  const body = await parseJson(c.req.raw, platformLoginRequestSchema);
+  const result = await new AuthService(c.env).platformLogin(body);
+  setCredentialCookie(c, 'session', result.rawToken, 24 * 60 * 60);
+  return success(c, result.response);
+});
+
+authRoutes.post('/change-password', async (c) => {
+  const rawSession = readCredentialCookie(c, 'session');
+  if (!rawSession) {
+    throw new AppError('UNAUTHORIZED', 'Cần đăng nhập để đổi mật khẩu.', 401);
+  }
+  await assertCsrf(c, rawSession);
+  const authService = new AuthService(c.env);
+  const context = await authService.context(rawSession);
+  if (!context.actor) {
+    throw new AppError('UNAUTHORIZED', 'Cần đăng nhập để đổi mật khẩu.', 401);
+  }
+  const body = await parseJson(c.req.raw, changePasswordRequestSchema);
+  const result = await authService.changePassword({
+    userId: context.actor.id,
+    currentPassword: body.currentPassword,
+    newPassword: body.newPassword,
+  });
+  return success(c, result);
 });
 
 authRoutes.post('/access/start', async (c) => {
@@ -124,13 +164,30 @@ authRoutes.post('/employee/login', async (c) => {
   return success(c, result.response);
 });
 
+function buildAccessLogoutUrl(env: CloudflareBindings, finalReturnTo: string): string | null {
+  const bridgeUrl = env.ACCESS_BRIDGE_URL;
+  if (!bridgeUrl) return null;
+
+  const bridgeCallbackUrl = `${bridgeUrl}/logout-callback?target=${encodeURIComponent(finalReturnTo)}`;
+  const teamDomain = env.ACCESS_TEAM_DOMAIN?.trim();
+  if (teamDomain) {
+    return `${teamDomain}/cdn-cgi/access/logout?returnTo=${encodeURIComponent(bridgeCallbackUrl)}`;
+  }
+
+  return `${bridgeUrl}/cdn-cgi/access/logout?returnTo=${encodeURIComponent(bridgeCallbackUrl)}`;
+}
+
 authRoutes.post('/logout', async (c) => {
   const rawSession = readCredentialCookie(c, 'session');
+  let isAccessUser = false;
   if (rawSession) {
     await assertCsrf(c, rawSession);
     const authService = new AuthService(c.env);
     const context = await authService.context(rawSession, readCredentialCookie(c, 'device'));
     await authService.logout(rawSession);
+    if (context.actor?.kind === 'OWNER' || context.actor?.kind === 'SUPER_ADMIN') {
+      isAccessUser = true;
+    }
     if (context.actor?.storeId && context.sessionId) {
       const room = c.env.STORE_REALTIME.getByName(context.actor.storeId);
       c.executionCtx.waitUntil(
@@ -141,10 +198,42 @@ authRoutes.post('/logout', async (c) => {
     assertSameOrigin(c);
   }
   clearCredentialCookie(c, 'session');
-  return success(c, { loggedOut: true });
+  clearCredentialCookie(c, 'activation');
+  clearCredentialCookie(c, 'access');
+
+  const origin = new URL(c.req.url).origin;
+  const returnTo = isAccessUser ? `${origin}/?tab=owner&loggedOut=1` : `${origin}/`;
+  const accessLogoutUrl = isAccessUser ? buildAccessLogoutUrl(c.env, returnTo) : null;
+
+  return success(c, {
+    loggedOut: true,
+    accessLogoutUrl,
+  });
+});
+
+authRoutes.get('/access/logout', (c) => {
+  clearCredentialCookie(c, 'session');
+  clearCredentialCookie(c, 'activation');
+  clearCredentialCookie(c, 'access');
+
+  const origin = new URL(c.req.url).origin;
+  const returnTo = c.req.query('returnTo') || `${origin}/?tab=owner&loggedOut=1`;
+  const accessLogoutUrl = buildAccessLogoutUrl(c.env, returnTo) || returnTo;
+
+  return c.redirect(accessLogoutUrl, 303);
 });
 
 const activationRoutes = new Hono<AppEnv>();
+
+activationRoutes.post('/direct', async (c) => {
+  assertSameOrigin(c);
+  const body = await parseJson(c.req.raw, directDeviceActivationRequestSchema);
+  const result = await new AuthService(c.env).directDeviceActivation(body);
+  setCredentialCookie(c, 'device', result.rawDeviceSecret, 365 * 24 * 60 * 60);
+  clearCredentialCookie(c, 'activation');
+  clearCredentialCookie(c, 'session');
+  return success(c, result.response, 201);
+});
 
 activationRoutes.get('/context', async (c) => {
   const rawGrant = readCredentialCookie(c, 'activation');

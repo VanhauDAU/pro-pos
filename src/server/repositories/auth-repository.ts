@@ -11,6 +11,33 @@ export interface PinIdentityRow {
   credential_version: number;
 }
 
+export interface OwnerPasswordIdentityRow {
+  user_id: string;
+  display_name: string;
+  user_status: 'ACTIVE' | 'DISABLED';
+  store_id: string;
+  store_status: 'ACTIVE' | 'LOCKED';
+  membership_status: 'ACTIVE' | 'DISABLED';
+  algorithm: 'PBKDF2-HMAC-SHA256' | null;
+  salt: string | null;
+  digest: string | null;
+  work_factor: number | null;
+  pepper_version: number | null;
+  credential_version: number | null;
+}
+
+export interface SuperAdminPasswordIdentityRow {
+  user_id: string;
+  display_name: string;
+  user_status: 'ACTIVE' | 'DISABLED';
+  algorithm: 'PBKDF2-HMAC-SHA256' | null;
+  salt: string | null;
+  digest: string | null;
+  work_factor: number | null;
+  pepper_version: number | null;
+  credential_version: number | null;
+}
+
 export interface DeviceContextRow {
   device_id: string;
   device_name: string;
@@ -51,6 +78,94 @@ export interface ActivationGrantRow {
 
 export class AuthRepository {
   constructor(private readonly db: D1Database) {}
+
+  findOwnerByUsernameOrEmail(identifier: string) {
+    return this.db
+      .prepare(
+        `SELECT
+          u.id AS user_id, u.display_name, u.status AS user_status,
+          s.id AS store_id, s.status AS store_status,
+          sm.status AS membership_status,
+          pc.algorithm, pc.salt, pc.digest, pc.work_factor,
+          pc.pepper_version, pc.credential_version
+        FROM users u
+        JOIN store_memberships sm ON sm.user_id = u.id
+        JOIN roles r ON r.id = sm.role_id AND r.code = 'OWNER'
+        JOIN stores s ON s.id = sm.store_id
+        LEFT JOIN password_credentials pc ON pc.user_id = u.id
+        WHERE (u.username = ? COLLATE NOCASE OR u.email = ? COLLATE NOCASE)
+        LIMIT 1`,
+      )
+      .bind(identifier, identifier)
+      .first<OwnerPasswordIdentityRow>();
+  }
+
+  findSuperAdminByUsernameOrEmail(identifier: string) {
+    return this.db
+      .prepare(
+        `SELECT
+          u.id AS user_id, u.display_name, u.status AS user_status,
+          pc.algorithm, pc.salt, pc.digest, pc.work_factor,
+          pc.pepper_version, pc.credential_version
+        FROM users u
+        LEFT JOIN password_credentials pc ON pc.user_id = u.id
+        WHERE u.platform_role = 'SUPER_ADMIN'
+          AND (u.username = ? COLLATE NOCASE OR u.email = ? COLLATE NOCASE)
+        LIMIT 1`,
+      )
+      .bind(identifier, identifier)
+      .first<SuperAdminPasswordIdentityRow>();
+  }
+
+  findPasswordCredential(userId: string) {
+    return this.db
+      .prepare(
+        `SELECT algorithm, work_factor, salt, digest, pepper_version, credential_version
+         FROM password_credentials WHERE user_id = ? LIMIT 1`,
+      )
+      .bind(userId)
+      .first<{
+        algorithm: 'PBKDF2-HMAC-SHA256';
+        work_factor: number;
+        salt: string;
+        digest: string;
+        pepper_version: number;
+        credential_version: number;
+      }>();
+  }
+
+  async savePasswordCredential(input: {
+    userId: string;
+    salt: string;
+    digest: string;
+    workFactor: number;
+    pepperVersion: number;
+    now: number;
+  }) {
+    await this.db
+      .prepare(
+        `INSERT INTO password_credentials (
+          user_id, algorithm, work_factor, salt, digest, pepper_version, credential_version, updated_at
+        ) VALUES (?, 'PBKDF2-HMAC-SHA256', ?, ?, ?, ?, 1, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+          algorithm = excluded.algorithm,
+          work_factor = excluded.work_factor,
+          salt = excluded.salt,
+          digest = excluded.digest,
+          pepper_version = excluded.pepper_version,
+          credential_version = credential_version + 1,
+          updated_at = excluded.updated_at`,
+      )
+      .bind(
+        input.userId,
+        input.workFactor,
+        input.salt,
+        input.digest,
+        input.pepperVersion,
+        input.now,
+      )
+      .run();
+  }
 
   findEmployeeByUsernameAndStore(username: string, storeId: string) {
     return this.db
@@ -115,10 +230,13 @@ export class AuthRepository {
           s.credential_version AS session_credential_version,
           CASE
             WHEN s.session_kind = 'EMPLOYEE' THEN pv.credential_version
-            ELSE ai.credential_version
+            WHEN s.session_kind = 'OWNER' THEN COALESCE(pc.credential_version, ai.credential_version, s.credential_version)
+            WHEN s.session_kind = 'SUPER_ADMIN' THEN COALESCE(pc.credential_version, ai.credential_version, s.credential_version)
+            ELSE s.credential_version
           END AS current_credential_version
         FROM auth_sessions s
         JOIN users u ON u.id = s.user_id
+        LEFT JOIN password_credentials pc ON pc.user_id = s.user_id
         LEFT JOIN access_identities ai ON ai.user_id = s.user_id
         LEFT JOIN pin_verifiers pv ON pv.user_id = s.user_id
         WHERE s.token_hash = ?

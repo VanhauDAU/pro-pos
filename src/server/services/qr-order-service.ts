@@ -150,7 +150,14 @@ export class QrOrderService {
       session.guestSessionId,
       input.clientRequestId,
     );
-    if (replay) return { requestId: replay.id, replayed: true, storeId: session.storeId };
+    if (replay) {
+      return {
+        requestId: replay.id,
+        replayed: true,
+        storeId: session.storeId,
+        tableName: session.tableName,
+      };
+    }
 
     const items = await Promise.all(
       input.items.map(async (requested) => {
@@ -196,11 +203,16 @@ export class QrOrderService {
         input.clientRequestId,
       );
       if (concurrentReplay) {
-        return { requestId: concurrentReplay.id, replayed: true, storeId: session.storeId };
+        return {
+          requestId: concurrentReplay.id,
+          replayed: true,
+          storeId: session.storeId,
+          tableName: session.tableName,
+        };
       }
       mapDatabaseError(error);
     }
-    return { requestId, replayed: false, storeId: session.storeId };
+    return { requestId, replayed: false, storeId: session.storeId, tableName: session.tableName };
   }
 
   async listGuestRequests(rawGuest: string) {
@@ -226,7 +238,12 @@ export class QrOrderService {
     } catch (error) {
       mapDatabaseError(error);
     }
-    return { id, status: 'OPEN' as const, storeId: session.storeId };
+    return {
+      id,
+      status: 'OPEN' as const,
+      storeId: session.storeId,
+      tableName: session.tableName,
+    };
   }
 
   listStaffRequests(storeId: string, status?: string) {

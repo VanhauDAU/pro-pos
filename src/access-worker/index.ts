@@ -15,9 +15,104 @@ function errorResponse(status: number, message: string) {
   });
 }
 
+function handleLogout(url: URL, env: AccessWorkerBindings): Response {
+  const targetParam =
+    url.searchParams.get('target') ||
+    url.searchParams.get('returnTo') ||
+    url.searchParams.get('return_to');
+
+  let destination = `${env.MAIN_APP_ORIGIN}/?tab=owner&loggedOut=1`;
+  if (targetParam) {
+    try {
+      const parsed = new URL(targetParam, env.MAIN_APP_ORIGIN);
+      const appOrigin = new URL(env.MAIN_APP_ORIGIN).origin;
+      if (parsed.origin === appOrigin) {
+        destination = parsed.toString();
+      }
+    } catch {
+      // keep default destination
+    }
+  }
+
+  const headers = new Headers();
+  headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  headers.set('Pragma', 'no-cache');
+  headers.set('Location', destination);
+  headers.set('Referrer-Policy', 'no-referrer');
+
+  const cookieNames = [
+    'CF_Authorization',
+    'CF_AppSession',
+    'cf_clearance',
+    'cf_use_ob',
+    'cf_ob_info',
+  ];
+  const host = url.hostname;
+  const isLocal = host === '127.0.0.1' || host === 'localhost';
+  const secure = isLocal ? '' : ' Secure;';
+
+  for (const name of cookieNames) {
+    // 1. Host-only Lax
+    headers.append(
+      'Set-Cookie',
+      `${name}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; HttpOnly;${secure} SameSite=Lax`,
+    );
+    // 2. Host-only None
+    if (!isLocal) {
+      headers.append(
+        'Set-Cookie',
+        `${name}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; HttpOnly; Secure; SameSite=None`,
+      );
+    }
+    // 3. Host-only Strict
+    headers.append(
+      'Set-Cookie',
+      `${name}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; HttpOnly;${secure} SameSite=Strict`,
+    );
+    // 4. Host-only without SameSite
+    headers.append(
+      'Set-Cookie',
+      `${name}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; HttpOnly;${secure}`,
+    );
+    // 5. Domain-scoped
+    if (!isLocal) {
+      headers.append(
+        'Set-Cookie',
+        `${name}=; Domain=${host}; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; HttpOnly; Secure; SameSite=Lax`,
+      );
+      headers.append(
+        'Set-Cookie',
+        `${name}=; Domain=.${host}; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; HttpOnly; Secure; SameSite=Lax`,
+      );
+      headers.append(
+        'Set-Cookie',
+        `${name}=; Domain=${host}; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; HttpOnly; Secure; SameSite=None`,
+      );
+      headers.append(
+        'Set-Cookie',
+        `${name}=; Domain=.${host}; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; HttpOnly; Secure; SameSite=None`,
+      );
+    }
+  }
+
+  return new Response(null, {
+    status: 303,
+    headers,
+  });
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+
+    if (
+      url.pathname === '/logout' ||
+      url.pathname === '/logout-callback' ||
+      url.pathname === '/cdn-cgi/access/logout'
+    ) {
+      return handleLogout(url, env);
+    }
+
     if (url.pathname !== '/complete' || request.method !== 'GET') {
       return errorResponse(404, 'Not found');
     }

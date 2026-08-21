@@ -88,3 +88,48 @@ export function safeEqualSecret(left: string, right: string): boolean {
   const rightDigest = createHash('sha256').update(right).digest();
   return timingSafeEqual(leftDigest, rightDigest);
 }
+
+export const DEFAULT_PASSWORD_WORK_FACTOR = 100_000;
+
+export async function derivePasswordDigest(input: {
+  password: string;
+  salt: string;
+  pepper: string;
+  workFactor?: number | undefined;
+}): Promise<string> {
+  const workFactor = input.workFactor ?? DEFAULT_PASSWORD_WORK_FACTOR;
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(`${input.password}\u0000${input.pepper}`),
+    { name: 'PBKDF2' },
+    false,
+    ['deriveBits'],
+  );
+  const derivedBits = await crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      salt: encoder.encode(input.salt),
+      iterations: workFactor,
+      hash: 'SHA-256',
+    },
+    keyMaterial,
+    256,
+  );
+  return bytesToBase64Url(new Uint8Array(derivedBits));
+}
+
+export async function verifyPasswordDigest(input: {
+  password: string;
+  salt: string;
+  pepper: string;
+  expectedDigest: string;
+  workFactor?: number | undefined;
+}): Promise<boolean> {
+  const actual = await derivePasswordDigest({
+    password: input.password,
+    salt: input.salt,
+    pepper: input.pepper,
+    workFactor: input.workFactor,
+  });
+  return safeEqualSecret(actual, input.expectedDigest);
+}

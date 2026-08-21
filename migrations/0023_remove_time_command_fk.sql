@@ -37,15 +37,15 @@ DROP TABLE remove_time_session_commands_old;
 CREATE TRIGGER trg_remove_time_session_validate
 BEFORE INSERT ON remove_time_session_commands
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT RAISE(ABORT, 'ORDER_VERSION_CONFLICT') WHERE NOT EXISTS (
     SELECT 1 FROM orders
     WHERE id = NEW.order_id AND store_id = NEW.store_id
       AND status = 'OPEN' AND version = NEW.expected_order_version
-  ) THEN RAISE(ABORT, 'ORDER_VERSION_CONFLICT') END;
-  SELECT CASE WHEN NOT EXISTS (
+  );
+  SELECT RAISE(ABORT, 'TIME_SESSION_NOT_FOUND') WHERE NOT EXISTS (
     SELECT 1 FROM time_sessions
     WHERE id = NEW.time_session_id AND order_id = NEW.order_id AND store_id = NEW.store_id
-  ) THEN RAISE(ABORT, 'TIME_SESSION_NOT_FOUND') END;
+  );
 END;
 
 CREATE TRIGGER trg_remove_time_session_execute
@@ -73,7 +73,9 @@ BEGIN
   );
 END;
 
-CREATE TRIGGER trg_rt_remove_time AFTER INSERT ON remove_time_session_commands BEGIN
+CREATE TRIGGER trg_rt_remove_time
+AFTER INSERT ON remove_time_session_commands
+BEGIN
   INSERT INTO realtime_event_requests VALUES (
     lower(hex(randomblob(16))), NEW.store_id, 'pos.order.changed', NEW.order_id,
     NEW.expected_order_version + 1, NEW.actor_user_id, NEW.device_id, NEW.id, NEW.request_id,

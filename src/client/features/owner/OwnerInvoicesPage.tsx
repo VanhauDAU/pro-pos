@@ -1,5 +1,7 @@
 import {
+  ArrowLeftOutlined,
   CheckCircleOutlined,
+  ClockCircleOutlined,
   CloseCircleOutlined,
   DeleteOutlined,
   DownloadOutlined,
@@ -11,6 +13,7 @@ import {
   SettingOutlined,
   ShopOutlined,
   ShoppingCartOutlined,
+  UserOutlined,
   WalletOutlined,
 } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -23,6 +26,7 @@ import {
   Form,
   Input,
   Modal,
+  Pagination,
   Popover,
   Select,
   Skeleton,
@@ -147,7 +151,19 @@ const ALL_OPTIONAL_COLUMNS: ColumnConfig[] = [
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export function OwnerInvoicesPage() {
+export interface InvoicesPageProps {
+  apiPrefix?: string | undefined;
+  userPermissions?: string[] | undefined;
+  isOwner?: boolean | undefined;
+  onBack?: (() => void | Promise<void>) | undefined;
+}
+
+export function OwnerInvoicesPage({
+  apiPrefix = '/api/v1/owner/invoices',
+  userPermissions,
+  isOwner,
+  onBack,
+}: InvoicesPageProps = {}) {
   const [messageApi, contextHolder] = message.useMessage();
   const queryClient = useQueryClient();
 
@@ -155,6 +171,10 @@ export function OwnerInvoicesPage() {
     queryKey: ['auth-context'],
     queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
   });
+
+  const isOwnerRole = isOwner ?? authQuery.data?.actor?.kind === 'OWNER';
+  const hasPermission = (perm: string) =>
+    isOwnerRole || (userPermissions ? userPermissions.includes(perm) : true);
 
   // ── Filter state ──────────────────────────────────────────────────────────
   const [tabStatus, setTabStatus] = useState<FilterStatus>('ALL');
@@ -183,13 +203,14 @@ export function OwnerInvoicesPage() {
   // ── Delete Mutation ────────────────────────────────────────────────────────
   const deleteMutation = useMutation({
     mutationFn: (targetId: string) =>
-      apiRequest<{ deleted: boolean }>(`/api/v1/owner/invoices/${targetId}`, {
+      apiRequest<{ deleted: boolean }>(`${apiPrefix}/${targetId}`, {
         method: 'DELETE',
         headers: { 'X-CSRF-Token': authQuery.data?.csrfToken ?? '' },
       }),
     onSuccess: () => {
       void messageApi.success('Đã xóa hóa đơn thành công.');
       setDeletingInvoice(null);
+      void queryClient.invalidateQueries({ queryKey: [apiPrefix] });
       void queryClient.invalidateQueries({ queryKey: ['owner-invoices'] });
       void queryClient.invalidateQueries({ queryKey: ['owner-dashboard'] });
       void queryClient.invalidateQueries({ queryKey: ['owner-analytics'] });
@@ -216,8 +237,8 @@ export function OwnerInvoicesPage() {
   }, [tabStatus, search, filterOrderType, filterMethod, filterDateFrom, filterDateTo, page, limit]);
 
   const invoiceQuery = useQuery({
-    queryKey: ['owner-invoices', params],
-    queryFn: () => apiRequest<InvoiceListResponse>(`/api/v1/owner/invoices?${params}`),
+    queryKey: [apiPrefix, params],
+    queryFn: () => apiRequest<InvoiceListResponse>(`${apiPrefix}?${params}`),
   });
 
   const data = invoiceQuery.data;
@@ -390,7 +411,7 @@ export function OwnerInvoicesPage() {
       key: 'actions',
       title: 'Thao tác',
       fixed: 'right',
-      width: 145,
+      width: hasPermission('invoice.delete') ? 145 : 95,
       align: 'center',
       render: (_: unknown, row: Invoice) => (
         <Space size={4}>
@@ -402,15 +423,17 @@ export function OwnerInvoicesPage() {
           >
             Chi tiết
           </Button>
-          <Button
-            type="link"
-            size="small"
-            danger
-            icon={<DeleteOutlined />}
-            onClick={() => setDeletingInvoice(row)}
-          >
-            Xóa
-          </Button>
+          {hasPermission('invoice.delete') ? (
+            <Button
+              type="link"
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+              onClick={() => setDeletingInvoice(row)}
+            >
+              Xóa
+            </Button>
+          ) : null}
         </Space>
       ),
     });
@@ -505,24 +528,38 @@ export function OwnerInvoicesPage() {
 
       {/* ── Page header ── */}
       <div className="owner-page-heading">
-        <div>
-          <Typography.Title level={2} style={{ margin: 0 }}>
-            <FileTextOutlined style={{ marginRight: 10, color: '#0975F7' }} />
-            Hóa đơn bán hàng
-          </Typography.Title>
-          <Typography.Text type="secondary">
-            Xem và tìm kiếm tất cả hóa đơn được lập trong hệ thống.
-          </Typography.Text>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {onBack ? (
+            <Button
+              icon={<ArrowLeftOutlined />}
+              onClick={onBack}
+              size="middle"
+              style={{ fontWeight: 600 }}
+            >
+              Quay lại
+            </Button>
+          ) : null}
+          <div>
+            <Typography.Title level={2} style={{ margin: 0 }}>
+              <FileTextOutlined style={{ marginRight: 10, color: '#0975F7' }} />
+              Hóa đơn bán hàng
+            </Typography.Title>
+            <Typography.Text type="secondary">
+              Xem và tìm kiếm tất cả hóa đơn được lập trong hệ thống.
+            </Typography.Text>
+          </div>
         </div>
-        <Button
-          type="primary"
-          icon={<DownloadOutlined />}
-          onClick={handleExport}
-          disabled={!data?.results.length}
-          className="owner-invoices-export-btn"
-        >
-          Xuất Excel
-        </Button>
+        {hasPermission('invoice.export') ? (
+          <Button
+            type="primary"
+            icon={<DownloadOutlined />}
+            onClick={handleExport}
+            disabled={!data?.results.length}
+            className="owner-invoices-export-btn"
+          >
+            Xuất Excel
+          </Button>
+        ) : null}
       </div>
 
       {/* ── Tabs ── */}
@@ -577,7 +614,7 @@ export function OwnerInvoicesPage() {
         </div>
       </div>
 
-      {/* ── Table ── */}
+      {/* ── Content (Desktop Table + Mobile Cards) ── */}
       {invoiceQuery.isError ? (
         <div className="owner-invoices-error">
           <Typography.Text type="danger">Không thể tải danh sách hóa đơn.</Typography.Text>
@@ -588,30 +625,139 @@ export function OwnerInvoicesPage() {
       ) : invoiceQuery.isLoading ? (
         <Skeleton active paragraph={{ rows: 8 }} />
       ) : (
-        <Table<Invoice>
-          rowKey="id"
-          dataSource={data?.results ?? []}
-          columns={tableColumns}
-          scroll={{ x: 'max-content' }}
-          className="owner-invoices-table"
-          locale={{
-            emptyText: (
+        <>
+          {/* Desktop Table View (>= 768px) */}
+          <div className="owner-invoices-desktop-view">
+            <Table<Invoice>
+              rowKey="id"
+              dataSource={data?.results ?? []}
+              columns={tableColumns}
+              scroll={{ x: 'max-content' }}
+              className="owner-invoices-table"
+              locale={{
+                emptyText: (
+                  <Empty
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    description="Không tìm thấy hóa đơn nào"
+                  />
+                ),
+              }}
+              pagination={{
+                current: page,
+                pageSize: limit,
+                total: data?.total ?? 0,
+                showTotal: (total, range) => `Hiển thị ${range[0]}–${range[1]} trên tổng ${total}`,
+                onChange: (p) => setPage(p),
+                showSizeChanger: false,
+                className: 'owner-invoices-pagination',
+              }}
+            />
+          </div>
+
+          {/* Mobile Card List View (< 768px) */}
+          <div className="owner-invoices-mobile-view">
+            {!data?.results || data.results.length === 0 ? (
               <Empty
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
                 description="Không tìm thấy hóa đơn nào"
+                style={{ padding: '32px 0' }}
               />
-            ),
-          }}
-          pagination={{
-            current: page,
-            pageSize: limit,
-            total: data?.total ?? 0,
-            showTotal: (total, range) => `Hiển thị ${range[0]}–${range[1]} trên tổng ${total}`,
-            onChange: (p) => setPage(p),
-            showSizeChanger: false,
-            className: 'owner-invoices-pagination',
-          }}
-        />
+            ) : (
+              <div className="pos-invoice-mobile-list">
+                {data.results.map((row) => (
+                  <div className="pos-invoice-mobile-card" key={row.id}>
+                    <div className="pos-invoice-mobile-card__header">
+                      <div className="pos-invoice-mobile-card__code">
+                        <Button
+                          type="link"
+                          style={{ padding: 0, height: 'auto', fontWeight: 700 }}
+                          onClick={() => setSelectedOrderId(row.orderId)}
+                        >
+                          <span className="owner-invoice-code">{row.displayCode}</span>
+                        </Button>
+                        {orderTypeTag(row.orderType)}
+                      </div>
+                      <strong className="pos-invoice-mobile-card__total">
+                        {formatMoney(row.total)}
+                      </strong>
+                    </div>
+
+                    <div className="pos-invoice-mobile-card__meta">
+                      <div className="pos-invoice-mobile-card__meta-item">
+                        <ClockCircleOutlined style={{ color: '#94a3b8' }} />
+                        <span>{formatDateTime(row.issuedAt)}</span>
+                      </div>
+                      {row.tableName ? (
+                        <div className="pos-invoice-mobile-card__meta-item">
+                          <ShopOutlined style={{ color: '#94a3b8' }} />
+                          <span>
+                            {row.tableName}
+                            {row.areaName ? ` · ${row.areaName}` : ''}
+                          </span>
+                        </div>
+                      ) : null}
+                      <div className="pos-invoice-mobile-card__meta-item">
+                        <WalletOutlined
+                          style={{ color: row.method === 'CASH' ? '#22c55e' : '#3b82f6' }}
+                        />
+                        <span>{methodLabel(row.method)}</span>
+                      </div>
+                      {row.actorName ? (
+                        <div className="pos-invoice-mobile-card__meta-item">
+                          <UserOutlined style={{ color: '#94a3b8' }} />
+                          <span>{row.actorName}</span>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="pos-invoice-mobile-card__footer">
+                      <div className="pos-invoice-mobile-card__status">
+                        {statusTag(row.status)}
+                        {row.discountTotal > 0 ? (
+                          <span className="pos-invoice-mobile-card__discount">
+                            Giảm: -{formatMoney(row.discountTotal)}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="pos-invoice-mobile-card__actions">
+                        <Button
+                          size="small"
+                          type="primary"
+                          ghost
+                          icon={<EyeOutlined />}
+                          onClick={() => setSelectedOrderId(row.orderId)}
+                        >
+                          Chi tiết
+                        </Button>
+                        {hasPermission('invoice.delete') ? (
+                          <Button
+                            size="small"
+                            danger
+                            icon={<DeleteOutlined />}
+                            onClick={() => setDeletingInvoice(row)}
+                          />
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+
+                {/* Mobile Pagination */}
+                {data.total > limit ? (
+                  <div style={{ display: 'flex', justifyContent: 'center', marginTop: 16 }}>
+                    <Pagination
+                      current={page}
+                      pageSize={limit}
+                      total={data.total}
+                      onChange={(p) => setPage(p)}
+                      simple
+                    />
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </div>
+        </>
       )}
 
       {/* ── Advanced filter drawer ── */}

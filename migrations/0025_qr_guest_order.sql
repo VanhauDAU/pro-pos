@@ -91,7 +91,7 @@ CREATE TABLE create_guest_order_request_commands (
 CREATE TRIGGER trg_create_guest_order_validate
 BEFORE INSERT ON create_guest_order_request_commands
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT RAISE(ABORT, 'TABLE_SESSION_NOT_ACTIVE') WHERE NOT EXISTS (
     SELECT 1 FROM guest_order_sessions gs
     JOIN time_sessions ts ON ts.id = gs.time_session_id AND ts.store_id = gs.store_id
     JOIN orders o ON o.id = ts.order_id AND o.store_id = ts.store_id
@@ -100,25 +100,25 @@ BEGIN
       AND ts.order_id = NEW.order_id AND gs.status = 'ACTIVE'
       AND gs.expires_at > NEW.issued_at AND ts.status IN ('RUNNING', 'PAUSED')
       AND o.status = 'OPEN'
-  ) THEN RAISE(ABORT, 'TABLE_SESSION_NOT_ACTIVE') END;
-  SELECT CASE WHEN EXISTS (
+  );
+  SELECT RAISE(ABORT, 'GUEST_ORDER_TOO_FAST') WHERE EXISTS (
     SELECT 1 FROM guest_order_requests
     WHERE guest_session_id = NEW.guest_session_id AND created_at > NEW.issued_at - 3000
-  ) THEN RAISE(ABORT, 'GUEST_ORDER_TOO_FAST') END;
-  SELECT CASE WHEN (
+  );
+  SELECT RAISE(ABORT, 'GUEST_ORDER_RATE_LIMITED') WHERE (
     SELECT COUNT(*) FROM guest_order_requests
     WHERE guest_session_id = NEW.guest_session_id AND created_at > NEW.issued_at - 60000
-  ) >= 5 THEN RAISE(ABORT, 'GUEST_ORDER_RATE_LIMITED') END;
-  SELECT CASE WHEN (
+  ) >= 5;
+  SELECT RAISE(ABORT, 'TABLE_ORDER_RATE_LIMITED') WHERE (
     SELECT COUNT(*) FROM guest_order_requests
     WHERE store_id = NEW.store_id AND table_id = NEW.table_id
       AND created_at > NEW.issued_at - 300000
-  ) >= 10 THEN RAISE(ABORT, 'TABLE_ORDER_RATE_LIMITED') END;
-  SELECT CASE WHEN NEW.ip_hash IS NOT NULL AND (
+  ) >= 10;
+  SELECT RAISE(ABORT, 'GUEST_IP_RATE_LIMITED') WHERE NEW.ip_hash IS NOT NULL AND (
     SELECT COUNT(*) FROM guest_order_requests gor
     JOIN guest_order_sessions gs ON gs.id = gor.guest_session_id
     WHERE gs.ip_hash = NEW.ip_hash AND gor.created_at > NEW.issued_at - 60000
-  ) >= 60 THEN RAISE(ABORT, 'GUEST_IP_RATE_LIMITED') END;
+  ) >= 60;
 END;
 
 CREATE TRIGGER trg_create_guest_order_execute
@@ -165,7 +165,7 @@ CREATE TABLE accept_guest_order_request_commands (
 CREATE TRIGGER trg_accept_guest_order_validate
 BEFORE INSERT ON accept_guest_order_request_commands
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT RAISE(ABORT, 'GUEST_ORDER_NOT_ACCEPTABLE') WHERE NOT EXISTS (
     SELECT 1 FROM guest_order_requests gor
     JOIN guest_order_sessions gs ON gs.id = gor.guest_session_id
     JOIN time_sessions ts ON ts.id = gor.time_session_id
@@ -174,7 +174,7 @@ BEGIN
       AND gor.status = 'PENDING' AND gs.status = 'ACTIVE'
       AND gs.expires_at > NEW.issued_at AND ts.status IN ('RUNNING', 'PAUSED')
       AND o.status = 'OPEN' AND o.version = NEW.expected_order_version
-  ) THEN RAISE(ABORT, 'GUEST_ORDER_NOT_ACCEPTABLE') END;
+  );
 END;
 
 CREATE TRIGGER trg_accept_guest_order_execute
@@ -243,10 +243,10 @@ CREATE TABLE reject_guest_order_request_commands (
 CREATE TRIGGER trg_reject_guest_order_validate
 BEFORE INSERT ON reject_guest_order_request_commands
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT RAISE(ABORT, 'GUEST_ORDER_ALREADY_DECIDED') WHERE NOT EXISTS (
     SELECT 1 FROM guest_order_requests
     WHERE id = NEW.guest_request_id AND store_id = NEW.store_id AND status = 'PENDING'
-  ) THEN RAISE(ABORT, 'GUEST_ORDER_ALREADY_DECIDED') END;
+  );
 END;
 
 CREATE TRIGGER trg_reject_guest_order_execute
@@ -295,7 +295,9 @@ CREATE INDEX idx_service_requests_store_status
   ON service_requests(store_id, status, created_at);
 
 -- Closing or moving the table invalidates all guest authority from the old session/table.
-CREATE TRIGGER trg_qr_revoke_on_stop_time AFTER INSERT ON stop_time_commands BEGIN
+CREATE TRIGGER trg_qr_revoke_on_stop_time
+AFTER INSERT ON stop_time_commands
+BEGIN
   UPDATE guest_order_sessions SET status = 'REVOKED'
   WHERE store_id = NEW.store_id AND time_session_id IN (
     SELECT id FROM time_sessions WHERE order_id = NEW.order_id
@@ -307,7 +309,9 @@ CREATE TRIGGER trg_qr_revoke_on_stop_time AFTER INSERT ON stop_time_commands BEG
     AND status IN ('OPEN', 'ACKNOWLEDGED');
 END;
 
-CREATE TRIGGER trg_qr_revoke_on_transfer AFTER INSERT ON transfer_table_commands BEGIN
+CREATE TRIGGER trg_qr_revoke_on_transfer
+AFTER INSERT ON transfer_table_commands
+BEGIN
   UPDATE guest_order_sessions SET status = 'REVOKED'
   WHERE store_id = NEW.store_id AND time_session_id IN (
     SELECT id FROM time_sessions WHERE order_id = NEW.order_id
@@ -316,14 +320,18 @@ CREATE TRIGGER trg_qr_revoke_on_transfer AFTER INSERT ON transfer_table_commands
   WHERE store_id = NEW.store_id AND order_id = NEW.order_id AND status = 'PENDING';
 END;
 
-CREATE TRIGGER trg_qr_revoke_on_checkout AFTER INSERT ON checkout_commands BEGIN
+CREATE TRIGGER trg_qr_revoke_on_checkout
+AFTER INSERT ON checkout_commands
+BEGIN
   UPDATE guest_order_sessions SET status = 'REVOKED'
   WHERE store_id = NEW.store_id AND time_session_id IN (
     SELECT id FROM time_sessions WHERE order_id = NEW.order_id
   ) AND status = 'ACTIVE';
 END;
 
-CREATE TRIGGER trg_qr_revoke_on_cancel AFTER INSERT ON cancel_order_commands BEGIN
+CREATE TRIGGER trg_qr_revoke_on_cancel
+AFTER INSERT ON cancel_order_commands
+BEGIN
   UPDATE guest_order_sessions SET status = 'REVOKED'
   WHERE store_id = NEW.store_id AND time_session_id IN (
     SELECT id FROM time_sessions WHERE order_id = NEW.order_id

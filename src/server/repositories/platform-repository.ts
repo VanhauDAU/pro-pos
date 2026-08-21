@@ -8,15 +8,36 @@ export class PlatformRepository {
     return row?.found === 1;
   }
 
-  async createSuperAdmin(input: { id: string; email: string; displayName: string; now: number }) {
-    await this.db.batch([
+  async createSuperAdmin(input: {
+    id: string;
+    username?: string | undefined;
+    email: string;
+    displayName: string;
+    password?:
+      | {
+          salt: string;
+          digest: string;
+          workFactor: number;
+          pepperVersion: number;
+        }
+      | undefined;
+    now: number;
+  }) {
+    const statements = [
       this.db
         .prepare(
           `INSERT INTO users (
             id, platform_role, username, email, display_name, status, created_at, updated_at
           ) VALUES (?, 'SUPER_ADMIN', ?, ?, ?, 'ACTIVE', ?, ?)`,
         )
-        .bind(input.id, input.email, input.email, input.displayName, input.now, input.now),
+        .bind(
+          input.id,
+          input.username || input.email,
+          input.email,
+          input.displayName,
+          input.now,
+          input.now,
+        ),
       this.db
         .prepare(
           `INSERT INTO access_identities (
@@ -24,7 +45,28 @@ export class PlatformRepository {
           ) VALUES (?, 'CLOUDFLARE_ACCESS', ?, 1, ?, ?)`,
         )
         .bind(input.id, input.email, input.now, input.now),
-    ]);
+    ];
+
+    if (input.password) {
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO password_credentials (
+              user_id, algorithm, work_factor, salt, digest, pepper_version, credential_version, updated_at
+            ) VALUES (?, 'PBKDF2-HMAC-SHA256', ?, ?, ?, ?, 1, ?)`,
+          )
+          .bind(
+            input.id,
+            input.password.workFactor,
+            input.password.salt,
+            input.password.digest,
+            input.password.pepperVersion,
+            input.now,
+          ),
+      );
+    }
+
+    await this.db.batch(statements);
   }
 
   async createStoreWithOwner(input: {
@@ -36,6 +78,15 @@ export class PlatformRepository {
     ownerMembershipId: string;
     ownerDisplayName: string;
     ownerEmail: string;
+    ownerUsername?: string | undefined;
+    ownerPassword?:
+      | {
+          salt: string;
+          digest: string;
+          workFactor: number;
+          pepperVersion: number;
+        }
+      | undefined;
     now: number;
   }) {
     const employeePermissions = [
@@ -47,7 +98,7 @@ export class PlatformRepository {
       'invoice.view',
       'invoice.print',
     ];
-    await this.db.batch([
+    const statements = [
       this.db
         .prepare(
           `INSERT INTO stores (id, name, status, timezone, created_at, updated_at)
@@ -94,7 +145,7 @@ export class PlatformRepository {
         )
         .bind(
           input.ownerUserId,
-          input.ownerEmail,
+          input.ownerUsername || input.ownerEmail,
           input.ownerEmail,
           input.ownerDisplayName,
           input.now,
@@ -121,7 +172,28 @@ export class PlatformRepository {
           input.now,
           input.now,
         ),
-    ]);
+    ];
+
+    if (input.ownerPassword) {
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO password_credentials (
+              user_id, algorithm, work_factor, salt, digest, pepper_version, credential_version, updated_at
+            ) VALUES (?, 'PBKDF2-HMAC-SHA256', ?, ?, ?, ?, 1, ?)`,
+          )
+          .bind(
+            input.ownerUserId,
+            input.ownerPassword.workFactor,
+            input.ownerPassword.salt,
+            input.ownerPassword.digest,
+            input.ownerPassword.pepperVersion,
+            input.now,
+          ),
+      );
+    }
+
+    await this.db.batch(statements);
   }
 
   async listStores() {

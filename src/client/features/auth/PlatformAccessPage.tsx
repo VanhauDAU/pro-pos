@@ -49,13 +49,24 @@ export function PlatformAccessPage() {
         <Typography.Title level={2}>Quản trị nền tảng</Typography.Title>
         <Typography.Text type="secondary">Chỉ dành cho SUPER_ADMIN Pro POS</Typography.Text>
       </div>
-      {error ? <Alert className="login-error" type="error" showIcon title={error} /> : null}
+
+      {error ? (
+        <Alert
+          className="login-error"
+          type="error"
+          showIcon
+          message={error}
+          style={{ marginBottom: 20 }}
+        />
+      ) : null}
+
       <div className="owner-otp-login">
         <Alert
           type="info"
           showIcon
           title="Xác thực email bằng Cloudflare Access"
-          description="Mã OTP chỉ được gửi tới email SUPER_ADMIN đã có trong Access policy và D1."
+          description="Mã OTP chỉ được gửi tới email SUPER_ADMIN đã có trong Cloudflare Access policy và cơ sở dữ liệu."
+          style={{ marginBottom: 20 }}
         />
         <Button
           type="primary"
@@ -64,6 +75,7 @@ export function PlatformAccessPage() {
           icon={<MailOutlined />}
           loading={submitting}
           onClick={login}
+          className="owner-login-btn"
         >
           Nhận mã OTP qua email
         </Button>

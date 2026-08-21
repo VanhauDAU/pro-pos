@@ -44,7 +44,7 @@ import { Navigate, useLocation, useNavigate } from 'react-router';
 import type { AuthContextResponse } from '@contracts/auth';
 
 import logo from '@client/assets/logo-white.svg';
-import { ApiError, apiRequest } from '@client/lib/api';
+import { apiRequest } from '@client/lib/api';
 
 import { OwnerStoreSettingsPage } from './OwnerStoreSettingsPage';
 import { OwnerAreaCreatePage, OwnerAreaSettingsPage } from './OwnerAreaSettingsPage';
@@ -480,7 +480,7 @@ export function OwnerPortalPage() {
     const section = findSection(location.pathname);
     return section ? [section] : [];
   });
-  const [messageApi, contextHolder] = message.useMessage();
+  const [, contextHolder] = message.useMessage();
 
   const context = useQuery({
     queryKey: ['auth-context'],
@@ -518,18 +518,26 @@ export function OwnerPortalPage() {
   const logout = async () => {
     const csrfToken = context.data?.csrfToken;
     if (!csrfToken) {
-      navigate('/?tab=owner', { replace: true });
+      window.location.assign('/api/v1/auth/access/logout');
       return;
     }
     try {
-      await apiRequest('/api/v1/auth/logout', {
-        method: 'POST',
-        headers: { 'X-CSRF-Token': csrfToken },
-      });
+      const response = await apiRequest<{ loggedOut: boolean; accessLogoutUrl: string | null }>(
+        '/api/v1/auth/logout',
+        {
+          method: 'POST',
+          headers: { 'X-CSRF-Token': csrfToken },
+        },
+      );
       await queryClient.invalidateQueries({ queryKey: ['auth-context'] });
-      navigate('/?tab=owner', { replace: true });
-    } catch (error) {
-      messageApi.error(error instanceof ApiError ? error.message : 'Không thể đăng xuất.');
+      queryClient.clear();
+      if (response?.accessLogoutUrl) {
+        window.location.assign(response.accessLogoutUrl);
+      } else {
+        window.location.assign('/?tab=owner&loggedOut=1');
+      }
+    } catch {
+      window.location.assign('/api/v1/auth/access/logout');
     }
   };
 

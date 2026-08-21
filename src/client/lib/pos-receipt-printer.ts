@@ -59,12 +59,8 @@ export function generateThermalReceiptHtml(options: PosReceiptPrintOptions): str
 
   // Resolve Logo URL
   let logoUrl: string | null = null;
-  if (template.showLogo) {
-    if (printSettings?.logoMediaId) {
-      logoUrl = `/api/v1/media/${printSettings.logoMediaId}`;
-    } else {
-      logoUrl = '/logo-black.svg';
-    }
+  if (template.showLogo && printSettings?.logoMediaId) {
+    logoUrl = `/api/v1/media/${printSettings.logoMediaId}`;
   }
 
   // Resolve Bottom Image / VietQR URL
@@ -104,7 +100,7 @@ export function generateThermalReceiptHtml(options: PosReceiptPrintOptions): str
     html += `
       <div class="thermal-receipt-header-horizontal">
         <div class="thermal-receipt-logo-thumb">
-          <img src="${logoUrl}" alt="Logo" style="width: ${isK58 ? '32px' : '44px'}; height: ${isK58 ? '32px' : '44px'}; object-fit: contain;" />
+          <img src="${logoUrl}" alt="" onerror="this.style.display='none'" style="width: ${isK58 ? '32px' : '44px'}; height: ${isK58 ? '32px' : '44px'}; object-fit: contain;" />
         </div>
         <div class="thermal-receipt-store-info">
           <div class="thermal-receipt-store-name">${storeName}</div>
@@ -119,7 +115,7 @@ export function generateThermalReceiptHtml(options: PosReceiptPrintOptions): str
         ${
           logoUrl
             ? `<div class="thermal-receipt-logo-centered">
-                <img src="${logoUrl}" alt="Logo" style="max-width: ${isK58 ? '70px' : '90px'}; max-height: 45px; object-fit: contain; margin: 0 auto 4px; display: block;" />
+                <img src="${logoUrl}" alt="" onerror="this.style.display='none'" style="max-width: ${isK58 ? '70px' : '90px'}; max-height: 45px; object-fit: contain; margin: 0 auto 4px; display: block;" />
               </div>`
             : ''
         }
@@ -401,7 +397,7 @@ export function generateThermalReceiptHtml(options: PosReceiptPrintOptions): str
   if (bottomImageUrl) {
     html += `
       <div class="thermal-receipt-bottom-qr-container" style="text-align: center; margin: 6px 0 3px;">
-        <img src="${bottomImageUrl}" alt="QR Bill" class="thermal-receipt-bottom-qr-img" style="width: ${profile.maxQrSizePx}px; height: ${profile.maxQrSizePx}px; object-fit: contain; margin: 0 auto; display: block;" />
+        <img src="${bottomImageUrl}" alt="" onerror="this.style.display='none'" class="thermal-receipt-bottom-qr-img" style="width: ${profile.maxQrSizePx}px; height: ${profile.maxQrSizePx}px; object-fit: contain; margin: 0 auto; display: block;" />
         ${printSettings?.bottomImageDescription ? `<div class="thermal-receipt-qr-desc" style="font-size: 9px; margin-top: 2px;">${printSettings.bottomImageDescription}</div>` : ''}
       </div>
     `;

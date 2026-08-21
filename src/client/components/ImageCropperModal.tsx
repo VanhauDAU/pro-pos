@@ -2,13 +2,14 @@ import {
   CheckOutlined,
   CompressOutlined,
   ExpandOutlined,
+  ExperimentOutlined,
   ReloadOutlined,
   RotateRightOutlined,
   ScissorOutlined,
   ZoomInOutlined,
   ZoomOutOutlined,
 } from '@ant-design/icons';
-import { Button, Modal, Radio, Slider, Typography } from 'antd';
+import { Button, message, Modal, Radio, Slider, Typography } from 'antd';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 export interface ImageCropperModalProps {
@@ -21,6 +22,121 @@ export interface ImageCropperModalProps {
 
 type AspectRatioMode = '1:1' | '4:3' | '3:4' | 'FREE';
 
+function removeContiguousBackground(img: HTMLImageElement): Promise<string> {
+  return new Promise((resolve) => {
+    const canvas = document.createElement('canvas');
+    const w = img.naturalWidth;
+    const h = img.naturalHeight;
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      resolve(img.src);
+      return;
+    }
+
+    ctx.drawImage(img, 0, 0);
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const data = imgData.data;
+
+    // Helper: is color background-like (white, near-white, light gray checkerboard)?
+    const isBgColor = (idx: number) => {
+      const a = data[idx + 3] ?? 255;
+      if (a < 25) return true; // already transparent
+      const r = data[idx] ?? 0;
+      const g = data[idx + 1] ?? 0;
+      const b = data[idx + 2] ?? 0;
+
+      // Pure white or very near white
+      if (r > 225 && g > 225 && b > 225) return true;
+
+      // Low saturation light gray / fake checkerboard (diff between RGB channels <= 20 and lightness > 175)
+      const maxC = Math.max(r, g, b);
+      const minC = Math.min(r, g, b);
+      if (maxC - minC <= 20 && minC > 175) return true;
+
+      return false;
+    };
+
+    // Breadth-First-Search flood fill from all 4 borders
+    const visited = new Uint8Array(w * h);
+    const queue = new Int32Array(w * h);
+    let head = 0;
+    let tail = 0;
+
+    // Initialize with border pixels
+    for (let x = 0; x < w; x++) {
+      const topIdx = x;
+      if (isBgColor(topIdx * 4)) {
+        visited[topIdx] = 1;
+        queue[tail++] = topIdx;
+      }
+      const botIdx = (h - 1) * w + x;
+      if (isBgColor(botIdx * 4)) {
+        visited[botIdx] = 1;
+        queue[tail++] = botIdx;
+      }
+    }
+
+    for (let y = 0; y < h; y++) {
+      const leftIdx = y * w;
+      if (!visited[leftIdx] && isBgColor(leftIdx * 4)) {
+        visited[leftIdx] = 1;
+        queue[tail++] = leftIdx;
+      }
+      const rightIdx = y * w + (w - 1);
+      if (!visited[rightIdx] && isBgColor(rightIdx * 4)) {
+        visited[rightIdx] = 1;
+        queue[tail++] = rightIdx;
+      }
+    }
+
+    // Flood fill
+    while (head < tail) {
+      const p = queue[head++];
+      if (p === undefined) break;
+      const pIdx = p * 4;
+      data[pIdx + 3] = 0; // Set alpha to 0 (fully transparent)
+
+      const px = p % w;
+      const py = Math.floor(p / w);
+
+      // 4-way neighbors
+      if (px > 0) {
+        const n = p - 1;
+        if (!visited[n] && isBgColor(n * 4)) {
+          visited[n] = 1;
+          queue[tail++] = n;
+        }
+      }
+      if (px < w - 1) {
+        const n = p + 1;
+        if (!visited[n] && isBgColor(n * 4)) {
+          visited[n] = 1;
+          queue[tail++] = n;
+        }
+      }
+      if (py > 0) {
+        const n = p - w;
+        if (!visited[n] && isBgColor(n * 4)) {
+          visited[n] = 1;
+          queue[tail++] = n;
+        }
+      }
+      if (py < h - 1) {
+        const n = p + w;
+        if (!visited[n] && isBgColor(n * 4)) {
+          visited[n] = 1;
+          queue[tail++] = n;
+        }
+      }
+    }
+
+    ctx.putImageData(imgData, 0, 0);
+    resolve(canvas.toDataURL('image/png'));
+  });
+}
+
 export function ImageCropperModal({
   open,
   imageSrc,
@@ -30,6 +146,9 @@ export function ImageCropperModal({
 }: ImageCropperModalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [imgElement, setImgElement] = useState<HTMLImageElement | null>(null);
+  const [originalSrc, setOriginalSrc] = useState<string | null>(null);
+  const [isRemovingBg, setIsRemovingBg] = useState(false);
+  const [bgRemoved, setBgRemoved] = useState(false);
 
   const [scale, setScale] = useState(1);
   const [rotation, setRotation] = useState(0);
@@ -43,12 +162,16 @@ export function ImageCropperModal({
   useEffect(() => {
     if (!imageSrc || !open) {
       setImgElement(null);
+      setOriginalSrc(null);
+      setBgRemoved(false);
       setScale(1);
       setRotation(0);
       setPosition({ x: 0, y: 0 });
       return;
     }
 
+    setOriginalSrc(imageSrc);
+    setBgRemoved(false);
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.addEventListener(
@@ -177,9 +300,8 @@ export function ImageCropperModal({
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('Không thể khởi tạo bộ dựng ảnh.');
 
-      // Background fill (pure white or transparent)
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, outW, outH);
+      // Clear canvas to preserve full transparency for PNG / WebP images
+      ctx.clearRect(0, 0, outW, outH);
 
       // Scale factor from preview frame to export canvas
       const exportRatio = outW / frameWidth;
@@ -203,11 +325,11 @@ export function ImageCropperModal({
       ctx.restore();
 
       const blob = await new Promise<Blob | null>((resolve) =>
-        canvas.toBlob(resolve, 'image/jpeg', 0.92),
+        canvas.toBlob(resolve, 'image/webp', 0.95),
       );
       if (!blob) throw new Error('Không thể xuất tệp ảnh.');
 
-      const file = new File([blob], `product_${Date.now()}.jpg`, { type: 'image/jpeg' });
+      const file = new File([blob], `product_${Date.now()}.webp`, { type: 'image/webp' });
       await onConfirm(file);
       onClose();
     } catch (err) {
@@ -226,6 +348,48 @@ export function ImageCropperModal({
       return { width: `${baseWidth}px`, height: `${(baseWidth * 4) / 3}px` };
     }
     return { width: `${baseWidth}px`, height: `${baseWidth}px` };
+  };
+
+  const handleAutoRemoveBackground = async () => {
+    if (!imgElement) return;
+    setIsRemovingBg(true);
+    try {
+      const transparentDataUrl = await removeContiguousBackground(imgElement);
+      const newImg = new Image();
+      newImg.crossOrigin = 'anonymous';
+      newImg.addEventListener(
+        'load',
+        () => {
+          setImgElement(newImg);
+          setBgRemoved(true);
+          setIsRemovingBg(false);
+          void message.success('Đã tách nền và chuyển sang PNG trong suốt!');
+        },
+        { once: true },
+      );
+      newImg.src = transparentDataUrl;
+    } catch {
+      setIsRemovingBg(false);
+      void message.error('Không thể tự động xóa phông ảnh.');
+    }
+  };
+
+  const handleResetOriginal = () => {
+    if (!originalSrc) return;
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.addEventListener(
+      'load',
+      () => {
+        setImgElement(img);
+        setBgRemoved(false);
+        setScale(1);
+        setRotation(0);
+        setPosition({ x: 0, y: 0 });
+      },
+      { once: true },
+    );
+    img.src = originalSrc;
   };
 
   return (
@@ -320,11 +484,26 @@ export function ImageCropperModal({
           <div className="image-cropper-action-buttons">
             <Button
               size="small"
+              type={bgRemoved ? 'default' : 'primary'}
+              ghost={!bgRemoved}
+              icon={<ExperimentOutlined />}
+              loading={isRemovingBg}
+              onClick={bgRemoved ? handleResetOriginal : handleAutoRemoveBackground}
+              style={{
+                borderColor: bgRemoved ? '#10b981' : '#0975f7',
+                color: bgRemoved ? '#10b981' : '#0975f7',
+                fontWeight: 600,
+              }}
+            >
+              {bgRemoved ? '✓ Đã tách nền (Hoàn tác)' : '✨ Tách nền trắng / Xóa phông'}
+            </Button>
+            <Button
+              size="small"
               icon={<CompressOutlined />}
               onClick={fitToFrame}
               title="Thu nhỏ để thấy trọn vẹn cả sản phẩm"
             >
-              Vừa khung (Không cắt ảnh)
+              Vừa khung
             </Button>
             <Button
               size="small"

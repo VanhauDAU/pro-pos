@@ -163,20 +163,21 @@ const productTypeLabels: Record<ProductType, string> = {
 };
 
 const avatarColors = [
+  '#ffffff',
+  '#f1f5f9',
+  '#fef3c7',
+  '#e0f2fe',
+  '#dcfce7',
+  '#fce7f3',
   '#facc15',
-  '#f59e0b',
-  '#fb923c',
-  '#bef264',
-  '#e879f9',
-  '#a78bfa',
-  '#60a5fa',
-  '#818cf8',
-  '#f87171',
-  '#f472b6',
-  '#14b8a6',
-  '#6366f1',
-  '#fdba74',
-  '#38bdf8',
+  '#f97316',
+  '#ef4444',
+  '#ec4899',
+  '#a855f7',
+  '#0ea5e9',
+  '#10b981',
+  '#334155',
+  '#0f172a',
 ];
 
 function errorMessage(error: unknown, fallback: string) {
@@ -249,20 +250,19 @@ function ProductAvatar({
   product: Pick<ProductSummary, 'name' | 'avatarColor' | 'avatarType' | 'mediaId'>;
   size?: number;
 }) {
+  const isImage = product.avatarType === 'IMAGE' && Boolean(product.mediaId);
   return (
     <Avatar
       shape="square"
       size={size}
-      src={
-        product.avatarType === 'IMAGE' && product.mediaId
-          ? `/api/v1/media/${product.mediaId}`
-          : undefined
-      }
+      src={isImage ? `/api/v1/media/${product.mediaId}` : undefined}
       style={{
-        background: product.avatarColor || '#facc15',
+        background: product.avatarColor || (isImage ? '#ffffff' : '#f8fafc'),
         color: '#172235',
         fontWeight: 700,
-        borderRadius: 6,
+        borderRadius: 8,
+        border: '1px solid #e2e8f0',
+        overflow: 'hidden',
       }}
     >
       {initials(product.name)}
@@ -967,7 +967,7 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
         categoryId: values.categoryId || null,
         unitId: values.productType === 'TIME' ? null : values.unitId || null,
         avatarType: values.avatarType,
-        avatarColor: values.avatarType === 'COLOR' ? values.avatarColor : null,
+        avatarColor: values.avatarColor || null,
         mediaId: values.avatarType === 'IMAGE' ? currentMediaId : null,
         variants:
           values.productType === 'TIME'
@@ -1559,7 +1559,9 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
               <Form.Item
                 noStyle
                 shouldUpdate={(prev, next) =>
-                  prev.avatarType !== next.avatarType || prev.mediaId !== next.mediaId
+                  prev.avatarType !== next.avatarType ||
+                  prev.mediaId !== next.mediaId ||
+                  prev.avatarColor !== next.avatarColor
                 }
               >
                 {({ getFieldValue }) =>
@@ -1567,11 +1569,27 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
                     <div className="owner-image-single-container">
                       {getFieldValue('mediaId') ? (
                         <div className="owner-product-single-image-card">
-                          <div className="owner-product-image-preview-wrap">
+                          <div
+                            className="owner-product-image-preview-wrap"
+                            style={{
+                              background: getFieldValue('avatarColor') || '#ffffff',
+                              border: '1.5px solid #e2e8f0',
+                              borderRadius: 12,
+                              overflow: 'hidden',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
+                          >
                             <img
                               src={`/api/v1/media/${getFieldValue('mediaId')}`}
                               alt="Ảnh đại diện mặt hàng"
                               className="owner-product-image-preview"
+                              style={{
+                                backgroundColor: 'transparent',
+                                maxHeight: 180,
+                                objectFit: 'contain',
+                              }}
                             />
                             <div className="owner-product-image-badge">
                               <CheckOutlined /> 1 ảnh duy nhất
@@ -1694,10 +1712,37 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
                           display: 'block',
                           textAlign: 'center',
                           marginTop: 10,
+                          marginBottom: 12,
                         }}
                       >
                         Lưu lên Cloudflare R2 · PNG, JPEG hoặc WebP (tối đa 5 MB).
                       </Typography.Text>
+
+                      <div
+                        style={{ marginTop: 14, paddingTop: 14, borderTop: '1px dashed #e2e8f0' }}
+                      >
+                        <Form.Item
+                          name="avatarColor"
+                          label="Màu nền ảnh (hữu ích cho ảnh PNG trong suốt / không nền)"
+                          tooltip="Màu này sẽ làm nền phía sau ảnh sản phẩm trên thực đơn và trang gọi món."
+                        >
+                          <Radio.Group className="owner-avatar-grid">
+                            {avatarColors.map((color) => (
+                              <Radio.Button
+                                key={color}
+                                value={color}
+                                style={{
+                                  background: color,
+                                  border: color === '#ffffff' ? '1.5px solid #cbd5e1' : undefined,
+                                }}
+                                aria-label={`Màu ${color}`}
+                              >
+                                <span />
+                              </Radio.Button>
+                            ))}
+                          </Radio.Group>
+                        </Form.Item>
+                      </div>
                     </div>
                   ) : (
                     <Form.Item name="avatarColor" label="Chọn màu hiển thị">
@@ -1706,7 +1751,10 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
                           <Radio.Button
                             key={color}
                             value={color}
-                            style={{ background: color }}
+                            style={{
+                              background: color,
+                              border: color === '#ffffff' ? '1.5px solid #cbd5e1' : undefined,
+                            }}
                             aria-label={`Màu ${color}`}
                           >
                             <span />

@@ -19,6 +19,27 @@ export const employeeLoginRequestSchema = z.object({
   pin: z.string().regex(/^\d{4}$/),
 });
 
+export const ownerLoginRequestSchema = z.object({
+  username: z.string().trim().min(1).max(254),
+  password: z.string().min(1).max(128),
+});
+
+export const platformLoginRequestSchema = z.object({
+  username: z.string().trim().min(1).max(254),
+  password: z.string().min(1).max(128),
+});
+
+export const directDeviceActivationRequestSchema = z.object({
+  username: z.string().trim().min(1).max(254),
+  password: z.string().min(1).max(128),
+  deviceName: z.string().trim().min(1).max(80),
+});
+
+export const changePasswordRequestSchema = z.object({
+  currentPassword: z.string().min(1).max(128),
+  newPassword: z.string().min(6).max(128),
+});
+
 export const activationConfirmRequestSchema = z.object({
   deviceName: z.string().trim().min(1).max(80),
 });

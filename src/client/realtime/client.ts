@@ -25,6 +25,8 @@ export class PosRealtimeClient {
   private readonly seenEventIds = new Set<string>();
   private cursor: number | null;
 
+  private serverTimeOffset = 0;
+
   constructor(
     private readonly storeId: string,
     private readonly queryClient: QueryClient,
@@ -83,7 +85,8 @@ export class PosRealtimeClient {
         return;
       }
       if (frame.type === 'ready') {
-        this.onServerTime(frame.serverNowMs - Date.now());
+        this.serverTimeOffset = frame.serverNowMs - Date.now();
+        this.onServerTime(this.serverTimeOffset);
         const reconnectIn = Math.max(1_000, frame.reauthAtMs - Date.now() - 5_000);
         this.reauthTimer = window.setTimeout(() => this.connect(true), reconnectIn);
         this.pingTimer = window.setInterval(() => {
@@ -136,7 +139,7 @@ export class PosRealtimeClient {
         await this.synchronize();
         return;
       }
-      await this.routeEvent(event);
+      await this.routeEvent(event, true);
       this.advanceCursor(event.sequence, event.eventId);
       return processAt(index + 1);
     };
@@ -149,7 +152,8 @@ export class PosRealtimeClient {
     try {
       const query = this.cursor === null ? '' : `?after=${this.cursor}`;
       const response = await apiRequest<RealtimeSyncResponse>(`/api/v1/pos/realtime/sync${query}`);
-      this.onServerTime(response.serverNowMs - Date.now());
+      this.serverTimeOffset = response.serverNowMs - Date.now();
+      this.onServerTime(this.serverTimeOffset);
       if (response.mode === 'FULL_SYNC') {
         await this.fullSync();
         this.setCursor(response.cursor);
@@ -176,16 +180,15 @@ export class PosRealtimeClient {
       const event = events[index];
       if (!event) return;
       if (this.seenEventIds.has(event.eventId)) return processAt(index + 1);
-      await this.routeEvent(event);
+      const isRecent = Date.now() + this.serverTimeOffset - event.occurredAtMs < 20_000;
+      await this.routeEvent(event, isRecent);
       this.advanceCursor(event.sequence, event.eventId);
       return processAt(index + 1);
     };
     await processAt(0);
   }
 
-  private async routeEvent(event: RealtimeEventV1) {
-    // Play notification sound if the event happened recently (within 45s) to avoid blasting sound on historical sync
-    const isLive = Date.now() - event.occurredAtMs < 45_000;
+  private async routeEvent(event: RealtimeEventV1, isLive: boolean) {
     if (isLive) {
       if (event.data.reason === 'GUEST_ORDER_CREATED') {
         playPosSound('NEW_QR_ORDER');

@@ -2,7 +2,15 @@ export const POS_SOUNDS = {
   NEW_QR_ORDER: '/sound/sound_goimonmoi.ogg',
   CHECKOUT_REQUEST: '/sound/sound_yeucauthanhtoan.ogg',
   TABLE_OPEN_REQUEST: '/sound/sound_yeuccaumoban.ogg',
+  PAYMENT_SUCCESS: '/sound/sound_thanhtoanthanhcong.ogg',
 } as const;
+
+export const POS_SOUND_FALLBACKS: Record<PosSoundType, string> = {
+  NEW_QR_ORDER: '/api/v1/pos/sound/sound_goimonmoi.ogg',
+  CHECKOUT_REQUEST: '/api/v1/pos/sound/sound_yeucauthanhtoan.ogg',
+  TABLE_OPEN_REQUEST: '/api/v1/pos/sound/sound_yeuccaumoban.ogg',
+  PAYMENT_SUCCESS: '/api/v1/pos/sound/sound_thanhtoanthanhcong.ogg',
+};
 
 export type PosSoundType = keyof typeof POS_SOUNDS;
 
@@ -109,8 +117,14 @@ class PosSoundEngine {
       (Object.entries(POS_SOUNDS) as Array<[PosSoundType, string]>).map(async ([key, url]) => {
         if (this.bufferCache.has(key)) return;
         try {
-          const response = await fetch(url);
-          if (!response.ok) return;
+          let response = await fetch(url).catch(() => null);
+          if (!response || !response.ok) {
+            const fallbackUrl = POS_SOUND_FALLBACKS[key];
+            if (fallbackUrl) {
+              response = await fetch(fallbackUrl).catch(() => null);
+            }
+          }
+          if (!response || !response.ok) return;
           const arrayBuffer = await response.arrayBuffer();
           const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
           this.bufferCache.set(key, audioBuffer);
@@ -142,6 +156,8 @@ class PosSoundEngine {
           navigator.vibrate([200, 100, 200]);
         } else if (type === 'TABLE_OPEN_REQUEST') {
           navigator.vibrate([250, 100, 250, 100, 250]);
+        } else if (type === 'PAYMENT_SUCCESS') {
+          navigator.vibrate([100, 60, 100, 60, 250]);
         } else {
           navigator.vibrate([400, 150, 400]);
         }

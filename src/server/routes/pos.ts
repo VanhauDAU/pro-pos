@@ -74,6 +74,24 @@ posRoutes.get('/onboarding/audio/:track', async (c) => {
   return new Response(object.body, { headers });
 });
 
+posRoutes.get('/sound/:soundName', async (c) => {
+  const soundName = c.req.param('soundName');
+  if (!/^[a-zA-Z0-9_\-.]+\.(ogg|mp3|wav|m4a)$/i.test(soundName)) {
+    throw new AppError('SOUND_NOT_FOUND', 'Không tìm thấy file âm thanh.', 404);
+  }
+  const object =
+    (await c.env.MEDIA.get(`sound/${soundName}`)) ?? (await c.env.MEDIA.get(soundName));
+  if (!object) {
+    throw new AppError('SOUND_NOT_FOUND', 'Không tìm thấy file âm thanh trong R2.', 404);
+  }
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set('Content-Type', soundName.endsWith('.ogg') ? 'audio/ogg' : 'audio/mpeg');
+  headers.set('ETag', object.httpEtag);
+  headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+  return new Response(object.body, { headers });
+});
+
 function idempotencyKey(c: Parameters<typeof success>[0]) {
   const value = c.req.header('Idempotency-Key');
   if (!value || value.length < 8 || value.length > 128) {

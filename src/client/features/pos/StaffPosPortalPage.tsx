@@ -1146,10 +1146,10 @@ function StaffNotificationCenter({ open, onClose }: { open: boolean; onClose: ()
                     size="small"
                     onClick={() => {
                       onClose();
-                      navigate(`/pos/orders/${event.orderId}`);
+                      navigate('/pos/qr-order');
                     }}
                   >
-                    Mở đơn liên quan
+                    Mở tab QR Order
                   </Button>
                 </div>
               </article>
@@ -2538,6 +2538,113 @@ function StaffItemDetailModal({
       onSave={onSave}
       onDelete={onDelete}
     />
+  );
+}
+
+function SwipeableOrderItemRow({
+  children,
+  onClick,
+  onDelete,
+  className = '',
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  onDelete: () => void;
+  className?: string;
+}) {
+  const [offsetX, setOffsetX] = useState(0);
+  const [isSwiping, setIsSwiping] = useState(false);
+  const touchStartRef = useRef<{ x: number; y: number; startOffset: number } | null>(null);
+  const isHorizontalSwipeRef = useRef<boolean | null>(null);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    if (!touch) return;
+    touchStartRef.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      startOffset: offsetX,
+    };
+    isHorizontalSwipeRef.current = null;
+    setIsSwiping(true);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!touchStartRef.current) return;
+    const touch = e.touches[0];
+    if (!touch) return;
+    const diffX = touch.clientX - touchStartRef.current.x;
+    const diffY = touch.clientY - touchStartRef.current.y;
+
+    if (isHorizontalSwipeRef.current === null) {
+      if (Math.abs(diffX) > 8 || Math.abs(diffY) > 8) {
+        isHorizontalSwipeRef.current = Math.abs(diffX) > Math.abs(diffY);
+      }
+    }
+
+    if (isHorizontalSwipeRef.current) {
+      const rawOffset = touchStartRef.current.startOffset + diffX;
+      // Allow swiping left between -90px and 0px
+      const clampedOffset = Math.min(0, Math.max(-90, rawOffset));
+      setOffsetX(clampedOffset);
+    }
+  };
+
+  const handleTouchEnd = () => {
+    setIsSwiping(false);
+    touchStartRef.current = null;
+    if (isHorizontalSwipeRef.current) {
+      if (offsetX < -35) {
+        setOffsetX(-76);
+      } else {
+        setOffsetX(0);
+      }
+    }
+    isHorizontalSwipeRef.current = null;
+  };
+
+  const handleClick = () => {
+    if (offsetX !== 0) {
+      setOffsetX(0);
+      return;
+    }
+    onClick();
+  };
+
+  const handleDeleteClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setOffsetX(0);
+    onDelete();
+  };
+
+  return (
+    <div className="staff-swipeable-item-wrapper">
+      <div className="staff-swipeable-delete-action">
+        <button
+          type="button"
+          className="staff-swipeable-delete-btn"
+          onClick={handleDeleteClick}
+          aria-label="Xóa món"
+        >
+          <DeleteOutlined />
+          <span>Xóa</span>
+        </button>
+      </div>
+      <button
+        type="button"
+        className={`staff-compact-order-row staff-compact-order-row--editable ${className}`}
+        style={{
+          transform: `translateX(${offsetX}px)`,
+          transition: isSwiping ? 'none' : 'transform 0.22s cubic-bezier(0.2, 0.9, 0.4, 1)',
+        }}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onClick={handleClick}
+      >
+        {children}
+      </button>
+    </div>
   );
 }
 
@@ -4301,21 +4408,25 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                               getProductInitials(product.productName)
                             )}
                           </div>
-                          <strong className="staff-product-mobile-card__name">
-                            {product.productName}
-                          </strong>
-                          {product.variants.length > 1 ? (
-                            <small className="staff-product-mobile-card__variant">
-                              {product.variants.length} phiên bản
-                            </small>
-                          ) : null}
-                          <b className="staff-product-mobile-card__price">
-                            {minPrice === null
-                              ? 'Nhập giá'
-                              : minPrice === maxPrice
-                                ? `${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`
-                                : `Từ ${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`}
-                          </b>
+                          <div className="staff-product-mobile-card__info">
+                            <strong className="staff-product-mobile-card__name">
+                              {product.productName}
+                            </strong>
+                            <div className="staff-product-mobile-card__meta">
+                              {product.variants.length > 1 ? (
+                                <small className="staff-product-mobile-card__variant">
+                                  {product.variants.length} phiên bản
+                                </small>
+                              ) : null}
+                            </div>
+                            <b className="staff-product-mobile-card__price">
+                              {minPrice === null
+                                ? 'Nhập giá'
+                                : minPrice === maxPrice
+                                  ? `${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`
+                                  : `Từ ${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`}
+                            </b>
+                          </div>
                         </button>
                       );
                     })}
@@ -5021,17 +5132,21 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                             getProductInitials(product.productName)
                           )}
                         </span>
-                        <strong>{product.productName}</strong>
-                        {product.variants.length > 1 ? (
-                          <small>{product.variants.length} phiên bản</small>
-                        ) : null}
-                        <b>
-                          {minPrice === null
-                            ? 'Nhập giá'
-                            : minPrice === maxPrice
-                              ? `${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`
-                              : `Từ ${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`}
-                        </b>
+                        <div className="staff-product-card__info">
+                          <strong className="staff-product-card__name">{product.productName}</strong>
+                          <div className="staff-product-card__meta">
+                            {product.variants.length > 1 ? (
+                              <small>{product.variants.length} phiên bản</small>
+                            ) : null}
+                          </div>
+                          <b className="staff-product-card__price">
+                            {minPrice === null
+                              ? 'Nhập giá'
+                              : minPrice === maxPrice
+                                ? `${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`
+                                : `Từ ${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`}
+                          </b>
+                        </div>
                       </button>
                     );
                   })}
@@ -5100,16 +5215,17 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                         </div>
                         <div className="staff-compact-order-list">
                           {draftDisplayItems.map((item) => (
-                            <button
-                              type="button"
+                            <SwipeableOrderItemRow
                               key={item.id}
-                              className="staff-compact-order-row staff-compact-order-row--editable"
                               onClick={() =>
                                 setEditingItem({
                                   source: 'DRAFT',
                                   ...item,
                                   note: item.note ?? '',
                                 })
+                              }
+                              onDelete={() =>
+                                setDraftLines((lines) => lines.filter((line) => line.id !== item.id))
                               }
                             >
                               <span className="staff-order-quantity">
@@ -5124,7 +5240,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                                 <small>{item.variantName}</small>
                               </span>
                               <b>{formatMoney(item.netLineTotalVnd)}</b>
-                            </button>
+                            </SwipeableOrderItemRow>
                           ))}
                         </div>
                       </section>
@@ -5366,10 +5482,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                         ) : (
                           <div className="staff-compact-order-list">
                             {displayedItems.map((item) => (
-                              <button
-                                type="button"
+                              <SwipeableOrderItemRow
                                 key={item.id}
-                                className="staff-compact-order-row staff-compact-order-row--editable"
                                 onClick={() =>
                                   setEditingItem({
                                     source: 'SAVED',
@@ -5390,6 +5504,21 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                                     netLineTotalVnd: item.netLineTotalVnd,
                                   })
                                 }
+                                onDelete={() => {
+                                  if (isNew) {
+                                    setDraftLines((lines) =>
+                                      lines.filter((line) => line.id !== item.id),
+                                    );
+                                  } else {
+                                    setDeleteItemTarget({
+                                      id: item.id,
+                                      name: item.productName,
+                                      source: 'SAVED',
+                                    });
+                                    setDeleteItemReason('');
+                                    setDeleteItemModalOpen(true);
+                                  }
+                                }}
                               >
                                 <span className="staff-order-quantity">
                                   {formatItemQuantity(
@@ -5404,7 +5533,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                                   {item.note ? <small>Ghi chú: {item.note}</small> : null}
                                 </span>
                                 <b>{formatMoney(item.netLineTotalVnd)}</b>
-                              </button>
+                              </SwipeableOrderItemRow>
                             ))}
                           </div>
                         )}
@@ -5481,8 +5610,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       <div className="staff-action-buttons-group">
                         {(quote.data?.order.tableId || selectedTable?.id || preselectedTableId) && (
                           <Button
-                            size="large"
-                            block
                             icon={<QrcodeOutlined />}
                             loading={tableQrLoading}
                             onClick={() => void handleOpenTableQrModal()}
@@ -5493,45 +5620,38 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                               fontWeight: 600,
                             }}
                           >
-                            Lấy mã QR Order của bàn
+                            Mã QR bàn
                           </Button>
                         )}
                         {!isNew ? (
                           <>
                             <Button
-                              size="large"
-                              block
                               icon={<PrinterOutlined />}
                               disabled={printSettings.data?.allowProvisionalPrint === false}
                               onClick={() => void printProvisionalReceipt()}
                               className="staff-action-provisional-btn"
                             >
-                              In phiếu tạm tính
+                              In tạm tính
                             </Button>
                             <Button
-                              size="large"
-                              block
                               icon={<FileTextOutlined />}
                               disabled={printSettings.data?.allowProvisionalPrint === false}
                               onClick={() => setProvisionalBillOpen(true)}
+                              className="staff-action-preview-btn"
                             >
-                              Xem trước phiếu tạm tính
+                              Xem tạm tính
                             </Button>
                             {quote.data?.order.orderType === 'DINE_IN' ? (
                               <Button
-                                size="large"
-                                block
                                 icon={<SwapOutlined />}
                                 onClick={() => setTransferOpen(true)}
                                 className="staff-action-transfer-btn"
                               >
-                                Chuyển bàn/phòng
+                                Chuyển bàn
                               </Button>
                             ) : null}
                             <Button
                               danger
-                              size="large"
-                              block
                               icon={<StopOutlined />}
                               onClick={() => setCancelOpen(true)}
                               className="staff-action-cancel-btn"
@@ -5543,7 +5663,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                           <Alert
                             type="info"
                             showIcon
-                            description="In phiếu tạm tính, Chuyển bàn và Hủy đơn sẽ khả dụng sau khi đơn hàng được lưu."
+                            className="staff-action-alert"
+                            description="In tạm tính, Chuyển bàn và Hủy đơn sẽ khả dụng sau khi lưu đơn."
                           />
                         )}
                       </div>
@@ -7595,6 +7716,7 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
         },
         { headers: mutationHeaders(csrf) },
       );
+      playPosSound('PAYMENT_SUCCESS');
       void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
       void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
 
@@ -8353,7 +8475,7 @@ export function StaffPosPortalPage() {
           {!isFullScreen ? (
             <StaffHeader
               context={auth.data}
-              onOpenNotifications={() => setNotificationCenterOpen(true)}
+              onOpenNotifications={() => navigate('/pos/qr-order')}
               searchSlot={
                 active === 'orders' ? (
                   <Input

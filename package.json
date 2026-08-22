@@ -42,7 +42,10 @@
     "secrets:generate:production": "node scripts/generate-secrets.mjs production",
     "bootstrap:local": "node scripts/bootstrap-platform.mjs local",
     "bootstrap:staging": "node scripts/bootstrap-platform.mjs staging",
-    "bootstrap:production": "node scripts/bootstrap-platform.mjs production"
+    "bootstrap:production": "node scripts/bootstrap-platform.mjs production",
+    "sound:upload:local": "node scripts/upload-sounds-r2.mjs local",
+    "sound:upload:staging": "node scripts/upload-sounds-r2.mjs staging",
+    "sound:upload:production": "node scripts/upload-sounds-r2.mjs production"
   },
   "dependencies": {
     "@ant-design/icons": "^6.3.2",

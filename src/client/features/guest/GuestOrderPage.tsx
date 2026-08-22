@@ -1,10 +1,8 @@
 import {
-  BellOutlined,
   CheckCircleFilled,
   ClockCircleFilled,
   CloseCircleFilled,
   CloseOutlined,
-  CreditCardOutlined,
   DeleteOutlined,
   EditOutlined,
   FileTextOutlined,
@@ -33,7 +31,7 @@ import {
   Tag,
   message,
 } from 'antd';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router';
 
 import type {
@@ -43,6 +41,8 @@ import type {
   GuestOrderRequestDto,
 } from '@contracts/qr-order';
 import { apiRequest, jsonRequest } from '@client/lib/api';
+import { GuestRobotAssistant } from './GuestRobotAssistant';
+import type { GuestAssistantAction, GuestAssistantFeedback } from './guest-assistant';
 
 interface CartLine {
   id: string; // variantId
@@ -71,6 +71,8 @@ export function GuestOrderPage() {
   const { token } = useParams<{ token: string }>();
   const queryClient = useQueryClient();
   const [messageApi, holder] = message.useMessage();
+  const assistantFeedbackId = useRef(0);
+  const menuAnchorRef = useRef<HTMLDivElement>(null);
 
   // State
   const [cart, setCart] = useState<Record<string, CartLine>>({});
@@ -98,6 +100,15 @@ export function GuestOrderPage() {
     open: boolean;
     type: 'CALL_STAFF' | 'CHECKOUT_REQUEST';
   }>({ open: false, type: 'CALL_STAFF' });
+  const [assistantFeedback, setAssistantFeedback] = useState<GuestAssistantFeedback | null>(null);
+
+  const showAssistantFeedback = useCallback(
+    (tone: GuestAssistantFeedback['tone'], feedbackMessage: string) => {
+      assistantFeedbackId.current += 1;
+      setAssistantFeedback({ id: assistantFeedbackId.current, tone, message: feedbackMessage });
+    },
+    [],
+  );
 
   // Queries
   const context = useQuery({
@@ -308,10 +319,18 @@ export function GuestOrderPage() {
       setOrderNote('');
       setCartDrawerOpen(false);
       setOrderSuccessModalOpen(true);
+      showAssistantFeedback(
+        'success',
+        'Đã gửi gọi món thành công. Quán đang chuẩn bị món cho bạn.',
+      );
       messageApi.success('Đã gửi gọi món thành công! Quán đang chuẩn bị món cho bạn.');
       await queryClient.invalidateQueries({ queryKey: ['guest-order-own-requests'] });
     },
     onError: (error) => {
+      showAssistantFeedback(
+        'error',
+        error instanceof Error ? error.message : 'Không thể gửi yêu cầu gọi món.',
+      );
       messageApi.error(error instanceof Error ? error.message : 'Không thể gửi yêu cầu.');
     },
   });
@@ -327,10 +346,20 @@ export function GuestOrderPage() {
           ? 'Đã gửi yêu cầu gọi nhân viên tới bàn.'
           : 'Đã gửi yêu cầu thanh toán. Nhân viên sẽ mang hóa đơn tới bàn.',
       );
+      showAssistantFeedback(
+        'success',
+        type === 'CALL_STAFF'
+          ? 'Đã gọi nhân viên. Bạn vui lòng chờ trong giây lát.'
+          : 'Đã gửi yêu cầu thanh toán. Nhân viên sẽ mang hóa đơn tới bàn.',
+      );
       void queryClient.invalidateQueries({ queryKey: ['guest-order-own-requests'] });
     },
     onError: (error) => {
       setServiceConfirm({ open: false, type: 'CALL_STAFF' });
+      showAssistantFeedback(
+        'error',
+        error instanceof Error ? error.message : 'Không thể gửi yêu cầu.',
+      );
       messageApi.warning(error instanceof Error ? error.message : 'Không thể gửi yêu cầu.');
     },
   });
@@ -347,9 +376,19 @@ export function GuestOrderPage() {
           ? 'Bàn đã được mở. Đang tải phiên gọi món...'
           : 'Đã báo nhân viên. Bạn có thể chọn món trong lúc chờ.',
       );
+      showAssistantFeedback(
+        'success',
+        result.alreadyOpen
+          ? 'Bàn đã sẵn sàng. Bạn có thể gọi món ngay.'
+          : 'Đã gửi yêu cầu mở bàn. Nhân viên sẽ hỗ trợ bạn ngay.',
+      );
       await context.refetch();
     },
     onError: (error) => {
+      showAssistantFeedback(
+        'error',
+        error instanceof Error ? error.message : 'Không thể gửi yêu cầu mở bàn.',
+      );
       messageApi.error(error instanceof Error ? error.message : 'Không thể gửi yêu cầu mở bàn.');
     },
   });
@@ -390,6 +429,24 @@ export function GuestOrderPage() {
       ? `/api/v1/guest-order/media/${mediaId}`
       : `/api/v1/guest-order/resolve/${token}/media/${mediaId}`;
 
+  const handleAssistantAction = (action: GuestAssistantAction) => {
+    if (action === 'BROWSE_MENU') {
+      window.setTimeout(() => {
+        menuAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 80);
+      return;
+    }
+    if (action === 'OPEN_TABLE') {
+      if (!requestTableOpen.isPending && !isWaitingForOpen) requestTableOpen.mutate();
+      return;
+    }
+    if (!isTableOpen) return;
+    setServiceConfirm({
+      open: true,
+      type: action === 'CALL_STAFF' ? 'CALL_STAFF' : 'CHECKOUT_REQUEST',
+    });
+  };
+
   return (
     <div className="qr-guest-layout">
       {holder}
@@ -420,39 +477,6 @@ export function GuestOrderPage() {
               ) : null}
             </div>
           </div>
-
-          {/* Quick Service Action Buttons */}
-          <div className="qr-guest-services">
-            <button
-              type="button"
-              className="qr-guest-service-btn qr-guest-service-btn--staff"
-              disabled={!isTableOpen}
-              onClick={() => setServiceConfirm({ open: true, type: 'CALL_STAFF' })}
-            >
-              <div className="qr-guest-service-btn__icon">
-                <BellOutlined />
-              </div>
-              <div>
-                <div className="qr-guest-service-btn__text">Gọi nhân viên</div>
-                <div className="qr-guest-service-btn__sub">Hỗ trợ tại bàn</div>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              className="qr-guest-service-btn qr-guest-service-btn--bill"
-              disabled={!isTableOpen}
-              onClick={() => setServiceConfirm({ open: true, type: 'CHECKOUT_REQUEST' })}
-            >
-              <div className="qr-guest-service-btn__icon">
-                <CreditCardOutlined />
-              </div>
-              <div>
-                <div className="qr-guest-service-btn__text">Thanh toán</div>
-                <div className="qr-guest-service-btn__sub">Tính tiền & in bill</div>
-              </div>
-            </button>
-          </div>
         </header>
 
         {!isTableOpen ? (
@@ -467,20 +491,22 @@ export function GuestOrderPage() {
                 <span>
                   {isWaitingForOpen
                     ? 'Bạn cứ chọn món vào giỏ. Trang sẽ tự cập nhật ngay khi bàn được mở.'
-                    : 'Gửi yêu cầu để nhân viên mở bàn. Bạn vẫn có thể xem menu và chọn món trước.'}
+                    : 'Chạm trợ lý Pro POS phía dưới để yêu cầu mở bàn. Bạn vẫn có thể xem menu và chọn món trước.'}
                 </span>
-                <Button
-                  type="primary"
-                  loading={requestTableOpen.isPending}
-                  disabled={isWaitingForOpen}
-                  onClick={() => requestTableOpen.mutate()}
-                >
-                  {isWaitingForOpen ? 'Đã gửi yêu cầu' : 'Yêu cầu mở bàn'}
-                </Button>
               </div>
             }
           />
         ) : null}
+
+        <GuestRobotAssistant
+          key={token}
+          token={token ?? 'unknown'}
+          tableStatus={context.data.tableStatus}
+          hasCart={totalItemCount > 0}
+          actionPending={requestTableOpen.isPending || submitService.isPending}
+          feedback={assistantFeedback}
+          onAction={handleAssistantAction}
+        />
 
         {/* ── 2. Live Order Status Tracker (If previous requests exist) ─── */}
         {latestRequest ? (
@@ -525,7 +551,12 @@ export function GuestOrderPage() {
         ) : null}
 
         {/* ── 3. Quick Search Bar ─────────────────────────────────────────── */}
-        <div className="qr-guest-search-wrap" style={{ marginTop: latestRequest ? 0 : 14 }}>
+        <div
+          ref={menuAnchorRef}
+          id="qr-guest-menu"
+          className="qr-guest-search-wrap"
+          style={{ marginTop: latestRequest ? 0 : 14 }}
+        >
           <div className="qr-guest-search-box">
             <SearchOutlined style={{ fontSize: 16, color: '#94a3b8' }} />
             <input

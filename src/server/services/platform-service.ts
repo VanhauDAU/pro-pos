@@ -196,4 +196,14 @@ export class PlatformService {
   async getPlatformAnalytics(days?: number) {
     return this.repository.getPlatformAnalytics(days);
   }
+
+  async revokeSession(input: { storeId: string; sessionId: string }) {
+    await this.repository.revokeSession(input.storeId, input.sessionId, Date.now());
+    return { success: true };
+  }
+
+  async revokeDevice(input: { storeId: string; deviceId: string }) {
+    await this.repository.revokeDevice(input.storeId, input.deviceId, Date.now());
+    return { success: true };
+  }
 }

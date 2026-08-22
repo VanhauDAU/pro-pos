@@ -13,6 +13,7 @@ import { assertSameOrigin } from '@server/lib/security';
 import { parseJson } from '@server/lib/validation';
 import { requireActor } from '@server/middleware/authorization';
 import { PlatformService } from '@server/services/platform-service';
+import { MaintenanceService } from '@server/services/maintenance-service';
 import type { AppEnv } from '@server/types';
 
 const platformRoutes = new Hono<AppEnv>();
@@ -35,6 +36,8 @@ platformRoutes.post('/bootstrap', async (c) => {
 platformRoutes.use('/stores/*', requireActor('SUPER_ADMIN'));
 platformRoutes.use('/stores', requireActor('SUPER_ADMIN'));
 platformRoutes.use('/analytics', requireActor('SUPER_ADMIN'));
+platformRoutes.use('/maintenance/*', requireActor('SUPER_ADMIN'));
+platformRoutes.use('/maintenance', requireActor('SUPER_ADMIN'));
 
 platformRoutes.get('/analytics', async (c) => {
   const daysParam = c.req.query('days');
@@ -97,6 +100,37 @@ platformRoutes.patch('/stores/:storeId/members/:userId', async (c) => {
       newPassword: body.newPassword,
     }),
   );
+});
+
+platformRoutes.delete('/stores/:storeId/sessions/:sessionId', async (c) => {
+  return success(
+    c,
+    await new PlatformService(c.env).revokeSession({
+      storeId: c.req.param('storeId'),
+      sessionId: c.req.param('sessionId'),
+    }),
+  );
+});
+
+platformRoutes.delete('/stores/:storeId/devices/:deviceId', async (c) => {
+  return success(
+    c,
+    await new PlatformService(c.env).revokeDevice({
+      storeId: c.req.param('storeId'),
+      deviceId: c.req.param('deviceId'),
+    }),
+  );
+});
+
+platformRoutes.post('/maintenance/cleanup', async (c) => {
+  const body = await parseJson(
+    c.req.raw,
+    z.object({ retentionDays: z.number().int().min(1).max(365).optional() }),
+  ).catch(() => ({ retentionDays: 7 }));
+  const result = await new MaintenanceService(c.env).runRetentionCleanup(
+    body?.retentionDays ?? 7,
+  );
+  return success(c, result);
 });
 
 export { platformRoutes };

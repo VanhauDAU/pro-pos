@@ -28,6 +28,7 @@
     "src/server",
     "src/contracts",
     "src/domain",
+    "src/client/features/guest/guest-assistant.ts",
     "src/client/lib/qz-tray-service.ts",
     "src/client/lib/pos-receipt-printer.ts",
     "worker-configuration.d.ts"

@@ -729,7 +729,7 @@ function StaffHeader({
           </span>
         </div>
       </Tooltip>
-      <Tooltip title="Mở trung tâm thông báo 3 ngày gần nhất">
+      <Tooltip title="Trung tâm thông báo">
         <Button
           type="text"
           className="staff-header-notification-btn"
@@ -2400,9 +2400,8 @@ function StaffTableTransferModal({
                         <div className="staff-transfer-card__header">
                           <strong className="staff-transfer-card__name">{table.name}</strong>
                           <span
-                            className={`staff-transfer-card__status-badge ${
-                              isCurrent ? 'is-current' : isOccupied ? 'is-occupied' : 'is-available'
-                            }`}
+                            className={`staff-transfer-card__status-badge ${isCurrent ? 'is-current' : isOccupied ? 'is-occupied' : 'is-available'
+                              }`}
                           >
                             {isCurrent ? 'Bàn hiện tại' : isOccupied ? 'Đang chơi' : 'Bàn trống'}
                           </span>
@@ -2520,13 +2519,13 @@ function StaffItemDetailModal({
     product?.variants && product.variants.length > 0
       ? product.variants
       : [
-          {
-            id: item.variantId ?? 'default',
-            name: item.variantName || 'Giá thường',
-            salePriceVnd: item.unitPriceVnd,
-            promptPrice: 0,
-          },
-        ];
+        {
+          id: item.variantId ?? 'default',
+          name: item.variantName || 'Giá thường',
+          salePriceVnd: item.unitPriceVnd,
+          promptPrice: 0,
+        },
+      ];
 
   return (
     <OrderItemDetailModal
@@ -3923,8 +3922,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         image: qrImage,
         ...(quote.data?.order.displayCode || (orderId && orderId !== 'new')
           ? {
-              orderCode: quote.data?.order.displayCode || `D-${orderId!.slice(0, 8).toUpperCase()}`,
-            }
+            orderCode: quote.data?.order.displayCode || `D-${orderId!.slice(0, 8).toUpperCase()}`,
+          }
           : {}),
       });
       setTableQrModalOpen(true);
@@ -4292,9 +4291,9 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const displayedTotal = isNew ? pendingTotal : (quote.data?.totalVnd ?? 0) + pendingTotal;
   const liveElapsedSeconds = quote.data?.time
     ? quote.data.time.elapsedSeconds +
-      (quote.data.time.status === 'RUNNING'
-        ? Math.max(0, Math.floor((clockNow - quote.dataUpdatedAt) / 1000))
-        : 0)
+    (quote.data.time.status === 'RUNNING'
+      ? Math.max(0, Math.floor((clockNow - quote.dataUpdatedAt) / 1000))
+      : 0)
     : 0;
 
   return (
@@ -4366,7 +4365,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       : (categories.find((c) => c.id === selectedCategory)?.name ?? 'Danh sách')}
                   </span>
                   {auth.actor?.kind === 'OWNER' ||
-                  (staffContext.data?.permissions ?? []).includes('catalog.manage') ? (
+                    (staffContext.data?.permissions ?? []).includes('catalog.manage') ? (
                     <Button
                       type="link"
                       size="small"
@@ -4513,7 +4512,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       ? selectedTable.name
                       : 'Tạo đơn mới'
                     : quote.data?.order.displayCode ||
-                      (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
+                    (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
                 </div>
                 <div className="staff-order-mobile-sub">
                   <span className="staff-order-mobile-type-icon">
@@ -4621,11 +4620,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   Mặt hàng đã gọi (
                   {allCurrentItems.length +
                     (quote.data?.time ||
-                    (isNew &&
-                      orderType === 'DINE_IN' &&
-                      selectedTable?.timeProductId &&
-                      !timeRemoved) ||
-                    timeRestoringDraft
+                      (isNew &&
+                        orderType === 'DINE_IN' &&
+                        selectedTable?.timeProductId &&
+                        !timeRemoved) ||
+                      timeRestoringDraft
                       ? 1
                       : 0)}
                   )
@@ -4646,10 +4645,10 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                     quote.data?.order.orderType === 'DINE_IN' &&
                     !quote.data?.time &&
                     !timeRestoringDraft) ||
-                  (isNew &&
-                    orderType === 'DINE_IN' &&
-                    selectedTable?.timeProductId &&
-                    timeRemoved) ? (
+                    (isNew &&
+                      orderType === 'DINE_IN' &&
+                      selectedTable?.timeProductId &&
+                      timeRemoved) ? (
                     <div style={{ padding: '8px 16px 4px' }}>
                       <Button
                         size="small"
@@ -4688,7 +4687,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                         <span className="staff-order-mobile-item__name">
                           <strong>
                             {quote.data.time.tableSegments &&
-                            quote.data.time.tableSegments.length > 1
+                              quote.data.time.tableSegments.length > 1
                               ? 'Tiền giờ (Chuyển bàn)'
                               : 'Giờ'}
                           </strong>
@@ -4995,11 +4994,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   {[
                     quote.data.order.orderType === 'DINE_IN'
                       ? [quote.data.order.areaName, quote.data.order.tableName]
-                          .filter(Boolean)
-                          .join(' - ')
+                        .filter(Boolean)
+                        .join(' - ')
                       : 'Mang đi',
                     quote.data.order.displayCode ||
-                      (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : null),
+                    (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : null),
                   ]
                     .filter(Boolean)
                     .join(' · ')}
@@ -5054,7 +5053,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   {isNew
                     ? 'Sinh khi lưu'
                     : quote.data?.order.displayCode ||
-                      (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
+                    (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
                 </strong>
               </div>
               {!isNew && orderId && (
@@ -5250,11 +5249,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                         Sản phẩm đã gọi (
                         {displayedItems.length +
                           (quote.data?.time ||
-                          (isNew &&
-                            orderType === 'DINE_IN' &&
-                            selectedTable?.timeProductId &&
-                            !timeRemoved) ||
-                          timeRestoringDraft
+                            (isNew &&
+                              orderType === 'DINE_IN' &&
+                              selectedTable?.timeProductId &&
+                              !timeRemoved) ||
+                            timeRestoringDraft
                             ? 1
                             : 0)}
                         )
@@ -5279,10 +5278,10 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                           quote.data?.order.orderType === 'DINE_IN' &&
                           !quote.data?.time &&
                           !timeRestoringDraft) ||
-                        (isNew &&
-                          orderType === 'DINE_IN' &&
-                          selectedTable?.timeProductId &&
-                          timeRemoved) ? (
+                          (isNew &&
+                            orderType === 'DINE_IN' &&
+                            selectedTable?.timeProductId &&
+                            timeRemoved) ? (
                           <div style={{ margin: '0 0 14px' }}>
                             <Button
                               size="small"
@@ -5312,7 +5311,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
 
                         {quote.data?.time ? (
                           quote.data.time.tableSegments &&
-                          quote.data.time.tableSegments.length > 1 ? (
+                            quote.data.time.tableSegments.length > 1 ? (
                             <button
                               type="button"
                               className="staff-time-line staff-time-line--editable staff-time-line--transfer"
@@ -5398,9 +5397,9 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                                     ? formatClock(quote.data.time.endedAtMs)
                                     : quote.data.time.status === 'PAUSED'
                                       ? formatClock(
-                                          quote.data.time.startedAtMs +
-                                            quote.data.time.elapsedSeconds * 1000,
-                                        )
+                                        quote.data.time.startedAtMs +
+                                        quote.data.time.elapsedSeconds * 1000,
+                                      )
                                       : 'Hiện tại'}{' '}
                                   · Tổng: <strong>{formatElapsed(liveElapsedSeconds)}</strong>
                                 </span>
@@ -5597,7 +5596,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                             {isNew
                               ? 'Sinh khi lưu'
                               : quote.data?.order.displayCode ||
-                                (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
+                              (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
                           </strong>
                         </div>
                       </div>
@@ -5887,8 +5886,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   : (updated.variantId ?? null),
               discount:
                 updated.discountType &&
-                updated.discountInputValue !== null &&
-                updated.discountInputValue !== undefined
+                  updated.discountInputValue !== null &&
+                  updated.discountInputValue !== undefined
                   ? { type: updated.discountType, value: updated.discountInputValue }
                   : null,
               note: updated.note.trim() || null,
@@ -5930,68 +5929,68 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         footer={
           quote.data?.time
             ? [
-                <Button
-                  key="toggle"
-                  icon={timeRangeDraft.endedAt ? <PlayCircleOutlined /> : <PauseCircleOutlined />}
-                  onClick={
-                    timeRangeDraft.endedAt ? handleResumeTimeInModal : handlePauseTimeInModal
-                  }
-                  className="staff-time-footer-btn"
-                >
-                  {timeRangeDraft.endedAt ? 'Tiếp tục tính giờ' : 'Tạm dừng giờ'}
-                </Button>,
-                <Button
-                  key="delete-time"
-                  danger
-                  icon={<DeleteOutlined />}
-                  onClick={() => {
-                    setDeleteTimeReason('');
-                    setDeleteTimeModalOpen(true);
-                  }}
-                  className="staff-time-footer-btn"
-                >
-                  Xóa tiền giờ
-                </Button>,
-                <Button
-                  key="save"
-                  type="primary"
-                  loading={saving}
-                  onClick={saveTimeRange}
-                  className="staff-time-footer-btn staff-time-footer-btn--primary"
-                >
-                  Lưu thay đổi
-                </Button>,
-              ]
+              <Button
+                key="toggle"
+                icon={timeRangeDraft.endedAt ? <PlayCircleOutlined /> : <PauseCircleOutlined />}
+                onClick={
+                  timeRangeDraft.endedAt ? handleResumeTimeInModal : handlePauseTimeInModal
+                }
+                className="staff-time-footer-btn"
+              >
+                {timeRangeDraft.endedAt ? 'Tiếp tục tính giờ' : 'Tạm dừng giờ'}
+              </Button>,
+              <Button
+                key="delete-time"
+                danger
+                icon={<DeleteOutlined />}
+                onClick={() => {
+                  setDeleteTimeReason('');
+                  setDeleteTimeModalOpen(true);
+                }}
+                className="staff-time-footer-btn"
+              >
+                Xóa tiền giờ
+              </Button>,
+              <Button
+                key="save"
+                type="primary"
+                loading={saving}
+                onClick={saveTimeRange}
+                className="staff-time-footer-btn staff-time-footer-btn--primary"
+              >
+                Lưu thay đổi
+              </Button>,
+            ]
             : [
-                <Button
-                  key="cancel"
-                  onClick={() => setTimeDetailOpen(false)}
-                  className="staff-time-footer-btn"
-                >
-                  Đóng
-                </Button>,
-                <Button
-                  key="discard-restore"
-                  danger
-                  icon={<DeleteOutlined />}
-                  onClick={() => {
-                    setTimeRestoringDraft(false);
-                    setTimeDetailOpen(false);
-                  }}
-                  className="staff-time-footer-btn"
-                >
-                  Hủy khôi phục
-                </Button>,
-                <Button
-                  key="save"
-                  type="primary"
-                  loading={saving}
-                  onClick={saveTimeRange}
-                  className="staff-time-footer-btn staff-time-footer-btn--primary"
-                >
-                  Lưu thay đổi
-                </Button>,
-              ]
+              <Button
+                key="cancel"
+                onClick={() => setTimeDetailOpen(false)}
+                className="staff-time-footer-btn"
+              >
+                Đóng
+              </Button>,
+              <Button
+                key="discard-restore"
+                danger
+                icon={<DeleteOutlined />}
+                onClick={() => {
+                  setTimeRestoringDraft(false);
+                  setTimeDetailOpen(false);
+                }}
+                className="staff-time-footer-btn"
+              >
+                Hủy khôi phục
+              </Button>,
+              <Button
+                key="save"
+                type="primary"
+                loading={saving}
+                onClick={saveTimeRange}
+                className="staff-time-footer-btn staff-time-footer-btn--primary"
+              >
+                Lưu thay đổi
+              </Button>,
+            ]
         }
       >
         {quote.data?.time ? (
@@ -6623,7 +6622,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                 {isNew
                   ? 'Chưa tạo'
                   : quote.data?.order.displayCode ||
-                    (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
+                  (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
               </strong>
             </div>
             <div className="staff-mobile-actions-info-row">
@@ -7227,10 +7226,10 @@ function InvoicePage() {
                 <span>
                   {line.lineType === 'PRODUCT' && snapshot.productType !== 'TIME'
                     ? formatItemQuantity(
-                        snapshot.productType ?? 'QUANTITY',
-                        line.quantityMilli,
-                        snapshot.unitName ?? null,
-                      )
+                      snapshot.productType ?? 'QUANTITY',
+                      line.quantityMilli,
+                      snapshot.unitName ?? null,
+                    )
                     : ''}
                 </span>
                 <b>{formatMoney(line.lineTotal)}</b>
@@ -7589,19 +7588,19 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
     method: 'CASH' | 'BANK_TRANSFER' | 'DEBT';
     amountVnd: number;
   }> = isMultiMethod
-    ? [
+      ? [
         ...(cashApplied > 0 ? [{ method: 'CASH' as const, amountVnd: cashApplied }] : []),
         ...(bankApplied > 0 ? [{ method: 'BANK_TRANSFER' as const, amountVnd: bankApplied }] : []),
         ...(debtAmount > 0 ? [{ method: 'DEBT' as const, amountVnd: debtAmount }] : []),
       ]
-    : isDebtMethod
-      ? [
+      : isDebtMethod
+        ? [
           ...(cashApplied > 0 ? [{ method: 'CASH' as const, amountVnd: cashApplied }] : []),
           ...(currentDebtAmount > 0
             ? [{ method: 'DEBT' as const, amountVnd: currentDebtAmount }]
             : []),
         ]
-      : [
+        : [
           {
             method: selectedMethod === 'CASH' ? ('CASH' as const) : ('BANK_TRANSFER' as const),
             amountVnd: totalVnd,
@@ -7622,17 +7621,17 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
   };
   const paymentPreviewOptions = quote.data
     ? {
-        data: buildCurrentPaymentPrintData()!,
-        printSettings: printSettings.data,
-        storeInfo: {
-          storeName: staffContext.data?.storeName ?? null,
-          phone: staffContext.data?.storePhone ?? null,
-          address: staffContext.data?.storeAddress ?? null,
-          bankName: staffContext.data?.bankName ?? null,
-          bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
-          bankAccountName: staffContext.data?.bankAccountName ?? null,
-        },
-      }
+      data: buildCurrentPaymentPrintData()!,
+      printSettings: printSettings.data,
+      storeInfo: {
+        storeName: staffContext.data?.storeName ?? null,
+        phone: staffContext.data?.storePhone ?? null,
+        address: staffContext.data?.storeAddress ?? null,
+        bankName: staffContext.data?.bankName ?? null,
+        bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
+        bankAccountName: staffContext.data?.bankAccountName ?? null,
+      },
+    }
     : null;
 
   const resumeCheckoutForReturn = async () => {
@@ -7694,17 +7693,17 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
           cashReceivedVnd: currentMethodItem.backendMethod === 'CASH' ? cashReceived : null,
           allocations: isMultiMethod
             ? [
-                ...(cashApplied > 0
-                  ? [
-                      {
-                        method: 'CASH',
-                        amountVnd: cashApplied,
-                        tenderedVnd: cashReceived ?? cashApplied,
-                      },
-                    ]
-                  : []),
-                ...(bankApplied > 0 ? [{ method: 'BANK_TRANSFER', amountVnd: bankApplied }] : []),
-              ]
+              ...(cashApplied > 0
+                ? [
+                  {
+                    method: 'CASH',
+                    amountVnd: cashApplied,
+                    tenderedVnd: cashReceived ?? cashApplied,
+                  },
+                ]
+                : []),
+              ...(bankApplied > 0 ? [{ method: 'BANK_TRANSFER', amountVnd: bankApplied }] : []),
+            ]
             : isDebtMethod
               ? cashApplied > 0
                 ? [{ method: 'CASH', amountVnd: cashApplied, tenderedVnd: cashApplied }]
@@ -7949,128 +7948,128 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
 
             {selectedMethod === 'BANK_TRANSFER'
               ? (() => {
-                  const bankSettings = quote.data?.bankSettings;
-                  const hasBank = Boolean(
-                    bankSettings?.bankName && bankSettings?.bankAccountNumber,
-                  );
-                  const transferNote =
-                    `TT ${quote.data?.order.tableName ? `${quote.data.order.tableName} ` : ''}${quote.data?.order.displayCode || quote.data?.order.id.slice(0, 6) || ''}`.trim();
+                const bankSettings = quote.data?.bankSettings;
+                const hasBank = Boolean(
+                  bankSettings?.bankName && bankSettings?.bankAccountNumber,
+                );
+                const transferNote =
+                  `TT ${quote.data?.order.tableName ? `${quote.data.order.tableName} ` : ''}${quote.data?.order.displayCode || quote.data?.order.id.slice(0, 6) || ''}`.trim();
 
-                  return (
-                    <section className="staff-payment-page__section staff-vietqr-card">
-                      <div className="staff-vietqr-card__header">
-                        <div className="staff-vietqr-card__title">
-                          <QrcodeOutlined style={{ color: '#0877ee', fontSize: 18 }} />
-                          <span>Thông tin chuyển khoản</span>
-                        </div>
-                        <Tag color="processing" style={{ borderRadius: 12, margin: 0 }}>
-                          Tự động điền số tiền
-                        </Tag>
+                return (
+                  <section className="staff-payment-page__section staff-vietqr-card">
+                    <div className="staff-vietqr-card__header">
+                      <div className="staff-vietqr-card__title">
+                        <QrcodeOutlined style={{ color: '#0877ee', fontSize: 18 }} />
+                        <span>Thông tin chuyển khoản</span>
                       </div>
+                      <Tag color="processing" style={{ borderRadius: 12, margin: 0 }}>
+                        Tự động điền số tiền
+                      </Tag>
+                    </div>
 
-                      {hasBank ? (
-                        <div className="staff-vietqr-details" style={{ width: '100%' }}>
+                    {hasBank ? (
+                      <div className="staff-vietqr-details" style={{ width: '100%' }}>
+                        <div className="staff-vietqr-detail-item">
+                          <span className="staff-vietqr-detail-label">Số tài khoản</span>
+                          <div className="staff-vietqr-detail-value">
+                            <strong className="staff-vietqr-copyable">
+                              {bankSettings?.bankAccountNumber}
+                            </strong>
+                            <Tooltip title="Sao chép STK">
+                              <Button
+                                type="text"
+                                size="small"
+                                icon={<CopyOutlined />}
+                                onClick={() =>
+                                  handleCopy(
+                                    bankSettings?.bankAccountNumber || '',
+                                    'số tài khoản',
+                                  )
+                                }
+                              />
+                            </Tooltip>
+                          </div>
+                        </div>
+
+                        {bankSettings?.bankAccountName ? (
                           <div className="staff-vietqr-detail-item">
-                            <span className="staff-vietqr-detail-label">Số tài khoản</span>
+                            <span className="staff-vietqr-detail-label">Chủ tài khoản</span>
                             <div className="staff-vietqr-detail-value">
-                              <strong className="staff-vietqr-copyable">
-                                {bankSettings?.bankAccountNumber}
-                              </strong>
-                              <Tooltip title="Sao chép STK">
+                              <strong>{bankSettings.bankAccountName}</strong>
+                              <Tooltip title="Sao chép tên chủ TK">
                                 <Button
                                   type="text"
                                   size="small"
                                   icon={<CopyOutlined />}
                                   onClick={() =>
                                     handleCopy(
-                                      bankSettings?.bankAccountNumber || '',
-                                      'số tài khoản',
+                                      bankSettings.bankAccountName || '',
+                                      'tên chủ tài khoản',
                                     )
                                   }
                                 />
                               </Tooltip>
                             </div>
                           </div>
+                        ) : null}
 
-                          {bankSettings?.bankAccountName ? (
-                            <div className="staff-vietqr-detail-item">
-                              <span className="staff-vietqr-detail-label">Chủ tài khoản</span>
-                              <div className="staff-vietqr-detail-value">
-                                <strong>{bankSettings.bankAccountName}</strong>
-                                <Tooltip title="Sao chép tên chủ TK">
-                                  <Button
-                                    type="text"
-                                    size="small"
-                                    icon={<CopyOutlined />}
-                                    onClick={() =>
-                                      handleCopy(
-                                        bankSettings.bankAccountName || '',
-                                        'tên chủ tài khoản',
-                                      )
-                                    }
-                                  />
-                                </Tooltip>
-                              </div>
-                            </div>
-                          ) : null}
-
-                          <div className="staff-vietqr-detail-item">
-                            <span className="staff-vietqr-detail-label">Số tiền cần chuyển</span>
-                            <div className="staff-vietqr-detail-value">
-                              <strong style={{ color: '#0877ee', fontSize: 16 }}>
-                                {formatMoney(totalVnd)}
-                              </strong>
-                              <Tooltip title="Sao chép số tiền">
-                                <Button
-                                  type="text"
-                                  size="small"
-                                  icon={<CopyOutlined />}
-                                  onClick={() => handleCopy(String(totalVnd), 'số tiền')}
-                                />
-                              </Tooltip>
-                            </div>
-                          </div>
-
-                          <div className="staff-vietqr-detail-item">
-                            <span className="staff-vietqr-detail-label">Nội dung CK</span>
-                            <div className="staff-vietqr-detail-value">
-                              <strong style={{ color: '#d97706' }}>{transferNote}</strong>
-                              <Tooltip title="Sao chép nội dung">
-                                <Button
-                                  type="text"
-                                  size="small"
-                                  icon={<CopyOutlined />}
-                                  onClick={() => handleCopy(transferNote, 'nội dung')}
-                                />
-                              </Tooltip>
-                            </div>
+                        <div className="staff-vietqr-detail-item">
+                          <span className="staff-vietqr-detail-label">Số tiền cần chuyển</span>
+                          <div className="staff-vietqr-detail-value">
+                            <strong style={{ color: '#0877ee', fontSize: 16 }}>
+                              {formatMoney(totalVnd)}
+                            </strong>
+                            <Tooltip title="Sao chép số tiền">
+                              <Button
+                                type="text"
+                                size="small"
+                                icon={<CopyOutlined />}
+                                onClick={() => handleCopy(String(totalVnd), 'số tiền')}
+                              />
+                            </Tooltip>
                           </div>
                         </div>
-                      ) : (
-                        <Alert
-                          type="warning"
-                          showIcon
-                          title="Chưa cấu hình tài khoản ngân hàng"
-                          description={
-                            <div style={{ marginTop: 6 }}>
-                              <p style={{ margin: '0 0 10px', color: '#64748b', fontSize: 13 }}>
-                                Vui lòng cấu hình tài khoản ngân hàng trong Thiết lập để tự động tạo
-                                mã VietQR cho khách quét chuyển khoản.
-                              </p>
+
+                        <div className="staff-vietqr-detail-item">
+                          <span className="staff-vietqr-detail-label">Nội dung CK</span>
+                          <div className="staff-vietqr-detail-value">
+                            <strong style={{ color: '#d97706' }}>{transferNote}</strong>
+                            <Tooltip title="Sao chép nội dung">
                               <Button
+                                type="text"
                                 size="small"
-                                type="primary"
-                                onClick={() => navigate('/owner/settings/store')}
-                              >
-                                Đến trang Cấu hình ngân hàng
-                              </Button>
-                            </div>
-                          }
-                        />
-                      )}
-                    </section>
-                  );
-                })()
+                                icon={<CopyOutlined />}
+                                onClick={() => handleCopy(transferNote, 'nội dung')}
+                              />
+                            </Tooltip>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <Alert
+                        type="warning"
+                        showIcon
+                        title="Chưa cấu hình tài khoản ngân hàng"
+                        description={
+                          <div style={{ marginTop: 6 }}>
+                            <p style={{ margin: '0 0 10px', color: '#64748b', fontSize: 13 }}>
+                              Vui lòng cấu hình tài khoản ngân hàng trong Thiết lập để tự động tạo
+                              mã VietQR cho khách quét chuyển khoản.
+                            </p>
+                            <Button
+                              size="small"
+                              type="primary"
+                              onClick={() => navigate('/owner/settings/store')}
+                            >
+                              Đến trang Cấu hình ngân hàng
+                            </Button>
+                          </div>
+                        }
+                      />
+                    )}
+                  </section>
+                );
+              })()
               : null}
           </div>
 
@@ -8457,9 +8456,9 @@ export function StaffPosPortalPage() {
     : location.pathname.startsWith('/pos/qr-order')
       ? 'qr'
       : location.pathname.startsWith('/pos/more') ||
-          isInvoicesList ||
-          isCatalog ||
-          isPrinterSettings
+        isInvoicesList ||
+        isCatalog ||
+        isPrinterSettings
         ? 'more'
         : 'orders';
 

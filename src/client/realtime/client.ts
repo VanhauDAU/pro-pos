@@ -225,11 +225,8 @@ export class PosRealtimeClient {
             ? `table-open-request:${event.data.tableOpenRequestId}`
             : event.eventId,
         );
-      } else if (event.data.reason === 'CHECKOUT_COMPLETED' || event.data.reason === 'ORDER_CHECKED_OUT') {
-        playPosSound(
-          'PAYMENT_SUCCESS',
-          event.data.invoiceId ? `invoice:${event.data.invoiceId}` : event.eventId,
-        );
+      } else if (event.data.reason === 'CHECKOUT_COMPLETED') {
+        playPosSound('PAYMENT_SUCCESS', event.eventId);
       }
     }
 

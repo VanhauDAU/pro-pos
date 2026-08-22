@@ -142,9 +142,7 @@ describe('Owner area and table settings', () => {
     await env.DB.prepare("UPDATE service_tables SET status = 'OCCUPIED' WHERE id = ?")
       .bind(table.id)
       .run();
-    await expect(
-      catalog.updateTableStatus(storeId, table.id, 'DISABLED'),
-    ).rejects.toMatchObject({
+    await expect(catalog.updateTableStatus(storeId, table.id, 'DISABLED')).rejects.toMatchObject({
       code: 'SERVICE_TABLE_OCCUPIED',
     });
     await env.DB.prepare("UPDATE service_tables SET status = 'AVAILABLE' WHERE id = ?")

@@ -11366,19 +11366,19 @@ body {
 .staff-order-mobile-fab {
   position: fixed;
   right: 16px;
-  bottom: 110px;
+  bottom: calc(125px + env(safe-area-inset-bottom, 0px));
   z-index: 25;
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 20px;
+  padding: 13px 22px;
   background: #007aff;
   color: #ffffff;
   border: none;
-  border-radius: 28px;
-  font-size: 15px;
-  font-weight: 650;
-  box-shadow: 0 6px 20px rgba(0, 122, 255, 0.4);
+  border-radius: 30px;
+  font-size: 16px;
+  font-weight: 700;
+  box-shadow: 0 8px 24px rgba(0, 122, 255, 0.45);
   cursor: pointer;
   touch-action: manipulation;
   transition:
@@ -11388,20 +11388,21 @@ body {
 
 .staff-order-mobile-fab:active {
   transform: scale(0.96);
-  box-shadow: 0 3px 12px rgba(0, 122, 255, 0.5);
+  box-shadow: 0 4px 14px rgba(0, 122, 255, 0.55);
 }
 
 .staff-order-mobile-fab .anticon {
-  font-size: 17px;
+  font-size: 19px;
 }
 
 /* In-Flow Summary Card on Mobile */
 .staff-order-mobile-summary-card {
-  margin: 12px 16px 0;
-  padding: 12px 14px;
+  margin: 8px 0 0;
+  padding: 14px 16px;
   background: #ffffff;
-  border-radius: 12px;
-  border: 1px solid #edf2f7;
+  border-radius: 0;
+  border-top: 1px solid #f1f5f9;
+  border-bottom: 1px solid #f1f5f9;
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -12106,24 +12107,25 @@ body {
 }
 
 .staff-mobile-actions-buttons {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
   gap: 10px;
 }
 
 .staff-mobile-actions-buttons .ant-btn {
-  height: 46px !important;
+  height: 48px !important;
   font-weight: 600 !important;
-  font-size: 14.5px !important;
-  border-radius: 8px !important;
+  font-size: 13.5px !important;
+  border-radius: 10px !important;
   display: flex !important;
   align-items: center !important;
-  justify-content: flex-start !important;
-  padding: 0 16px !important;
+  justify-content: center !important;
+  padding: 0 10px !important;
 }
 
 .staff-mobile-actions-buttons .ant-btn .anticon {
-  margin-right: 8px !important;
+  margin-right: 6px !important;
+  font-size: 16px !important;
 }
 
 /* ─── Camera Capture Modal ─────────────────────────────────────── */
@@ -16959,35 +16961,86 @@ body {
   transform: translateY(-50%);
 }
 
-.owner-promotion-ticket::before { left: -14px; }
-.owner-promotion-ticket::after { right: -14px; }
-.owner-promotion-ticket span { font-size: clamp(28px, 4vw, 48px); font-weight: 800; }
-.owner-promotion-ticket small { padding-top: 20px; border-top: 1px dashed rgb(255 255 255 / 65%); font-size: 14px; }
-.owner-promotion-timeline { margin: 16px 0 12px; }
-.owner-promotion-timeline p { display: flex; gap: 12px; color: #8b97a8; }
-.owner-promotion-timeline strong { color: #25324a; font-weight: 600; }
-.owner-promotion-preview ul { margin: 0; padding-left: 22px; color: #334155; }
+.owner-promotion-ticket::before {
+  left: -14px;
+}
+.owner-promotion-ticket::after {
+  right: -14px;
+}
+.owner-promotion-ticket span {
+  font-size: clamp(28px, 4vw, 48px);
+  font-weight: 800;
+}
+.owner-promotion-ticket small {
+  padding-top: 20px;
+  border-top: 1px dashed rgb(255 255 255 / 65%);
+  font-size: 14px;
+}
+.owner-promotion-timeline {
+  margin: 16px 0 12px;
+}
+.owner-promotion-timeline p {
+  display: flex;
+  gap: 12px;
+  color: #8b97a8;
+}
+.owner-promotion-timeline strong {
+  color: #25324a;
+  font-weight: 600;
+}
+.owner-promotion-preview ul {
+  margin: 0;
+  padding-left: 22px;
+  color: #334155;
+}
 
 @media (max-width: 960px) {
-  .owner-promotion-form-layout { grid-template-columns: 1fr; }
-  .owner-promotion-preview { position: static; }
+  .owner-promotion-form-layout {
+    grid-template-columns: 1fr;
+  }
+  .owner-promotion-preview {
+    position: static;
+  }
 }
 
 @media (max-width: 720px) {
-  .owner-promotion-filters { grid-template-columns: 1fr; }
-  .owner-promotion-form-main .ant-card-body { padding: 16px; }
-  .owner-promotion-time-range { grid-template-columns: 1fr 1fr auto; }
-  .owner-product-picker__filters { grid-template-columns: 1fr; gap: 8px; }
-  .owner-selected-products__head { display: none; }
+  .owner-promotion-filters {
+    grid-template-columns: 1fr;
+  }
+  .owner-promotion-form-main .ant-card-body {
+    padding: 16px;
+  }
+  .owner-promotion-time-range {
+    grid-template-columns: 1fr 1fr auto;
+  }
+  .owner-product-picker__filters {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .owner-selected-products__head {
+    display: none;
+  }
   .owner-selected-products__row,
   .owner-selected-products__row:has(.owner-selected-products__name + span + .ant-btn) {
     grid-template-columns: minmax(0, 1fr) auto;
   }
-  .owner-selected-products__name { grid-column: 1 / -1; }
-  .owner-product-picker__variants { padding-left: 28px; }
-  .owner-promotion-form-header { top: 64px; align-items: flex-start; }
-  .owner-promotion-header-actions { flex-wrap: wrap; justify-content: flex-end; }
-  .owner-promotion-header-actions .ant-btn { min-width: auto; }
+  .owner-selected-products__name {
+    grid-column: 1 / -1;
+  }
+  .owner-product-picker__variants {
+    padding-left: 28px;
+  }
+  .owner-promotion-form-header {
+    top: 64px;
+    align-items: flex-start;
+  }
+  .owner-promotion-header-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .owner-promotion-header-actions .ant-btn {
+    min-width: auto;
+  }
 }
 
 .staff-promotion-trigger {
@@ -17027,7 +17080,9 @@ body {
   cursor: pointer;
   width: 100% !important;
   box-sizing: border-box;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
 }
 
 .staff-applied-promotions-box:hover {
@@ -17151,9 +17206,18 @@ body {
   gap: 4px;
 }
 
-.staff-promotion-option__copy strong { font-size: 15px; }
-.staff-promotion-option__copy small { color: #737e90; font-size: 13px; }
-.staff-promotion-option__copy em { color: #ef3131; font-size: 13px; font-style: normal; }
+.staff-promotion-option__copy strong {
+  font-size: 15px;
+}
+.staff-promotion-option__copy small {
+  color: #737e90;
+  font-size: 13px;
+}
+.staff-promotion-option__copy em {
+  color: #ef3131;
+  font-size: 13px;
+  font-style: normal;
+}
 
 .staff-item-modal__discount-reason {
   margin-top: 10px;
@@ -17186,7 +17250,7 @@ body {
   overflow: hidden;
   margin: 0;
   color: #111;
-  font-family: "Courier New", monospace;
+  font-family: 'Courier New', monospace;
   font-size: 11px;
   line-height: 1.32;
   white-space: pre-wrap;
@@ -17200,7 +17264,7 @@ body {
   text-align: center;
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: .04em;
+  letter-spacing: 0.04em;
 }
 .owner-print-template-scope-bar {
   position: sticky;
@@ -17225,5 +17289,5 @@ body {
   text-align: center;
   font-size: 11px;
   font-weight: 800;
-  letter-spacing: .06em;
+  letter-spacing: 0.06em;
 }

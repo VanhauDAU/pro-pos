@@ -705,7 +705,9 @@ export function OwnerAreaSettingsPage() {
                             aria-label={`Tạm ngưng ${table.name}`}
                             icon={
                               <PauseCircleOutlined
-                                style={{ color: table.status === 'OCCUPIED' ? undefined : '#faad14' }}
+                                style={{
+                                  color: table.status === 'OCCUPIED' ? undefined : '#faad14',
+                                }}
                               />
                             }
                             title={

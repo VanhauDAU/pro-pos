@@ -127,9 +127,7 @@ platformRoutes.post('/maintenance/cleanup', async (c) => {
     c.req.raw,
     z.object({ retentionDays: z.number().int().min(1).max(365).optional() }),
   ).catch(() => ({ retentionDays: 7 }));
-  const result = await new MaintenanceService(c.env).runRetentionCleanup(
-    body?.retentionDays ?? 7,
-  );
+  const result = await new MaintenanceService(c.env).runRetentionCleanup(body?.retentionDays ?? 7);
   return success(c, result);
 });
 

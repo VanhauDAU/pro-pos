@@ -20,7 +20,6 @@ import {
   PlusOutlined,
   ReloadOutlined,
   RiseOutlined,
-  SafetyCertificateOutlined,
   SearchOutlined,
   ShopOutlined,
   ShoppingOutlined,
@@ -29,7 +28,6 @@ import {
   TeamOutlined,
   TrophyOutlined,
   UnlockOutlined,
-  UserSwitchOutlined,
 } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -706,10 +704,16 @@ export function SuperAdminPage() {
   // Member editing state
   const [editingMember, setEditingMember] = useState<StoreMember | null>(null);
   const [resetPasswordMember, setResetPasswordMember] = useState<StoreMember | null>(null);
-  const [selectedMemberForHistory, setSelectedMemberForHistory] = useState<StoreMember | null>(null);
-  const [sessionStatusFilter, setSessionStatusFilter] = useState<'ALL' | 'ACTIVE' | 'REVOKED' | 'EXPIRED'>('ALL');
+  const [selectedMemberForHistory, setSelectedMemberForHistory] = useState<StoreMember | null>(
+    null,
+  );
+  const [sessionStatusFilter, setSessionStatusFilter] = useState<
+    'ALL' | 'ACTIVE' | 'REVOKED' | 'EXPIRED'
+  >('ALL');
   const [sessionSearchTerm, setSessionSearchTerm] = useState('');
-  const [memberHistoryFilter, setMemberHistoryFilter] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL');
+  const [memberHistoryFilter, setMemberHistoryFilter] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>(
+    'ALL',
+  );
   const [cleaningDb, setCleaningDb] = useState(false);
 
   const context = useQuery({
@@ -1714,7 +1718,9 @@ export function SuperAdminPage() {
                 children: (
                   <div>
                     <div style={{ marginBottom: 14, color: '#64748b', fontSize: 13 }}>
-                      Danh sách tài khoản Chủ quán và Nhân sự. Bấm vào <strong>Lịch sử thiết bị</strong> để xem chi tiết tất cả các lần đăng nhập, thiết bị sử dụng và trạng thái phiên làm việc.
+                      Danh sách tài khoản Chủ quán và Nhân sự. Bấm vào{' '}
+                      <strong>Lịch sử thiết bị</strong> để xem chi tiết tất cả các lần đăng nhập,
+                      thiết bị sử dụng và trạng thái phiên làm việc.
                     </div>
                     <Table
                       rowKey="id"
@@ -1800,7 +1806,9 @@ export function SuperAdminPage() {
                           title: 'Thiết bị & Phiên',
                           key: 'deviceSummary',
                           render: (_, m) => {
-                            const userSessions = detail.sessions.filter((s) => s.userId === m.userId);
+                            const userSessions = detail.sessions.filter(
+                              (s) => s.userId === m.userId,
+                            );
                             const activeSessions = userSessions.filter(
                               (s) => s.status === 'ACTIVE' && Date.now() < s.expiresAt,
                             );
@@ -1817,16 +1825,25 @@ export function SuperAdminPage() {
                                       gap: 4,
                                     }}
                                   >
-                                    <Badge status="processing" color="#10b981" /> {activeSessions.length} máy đang online
+                                    <Badge status="processing" color="#10b981" />{' '}
+                                    {activeSessions.length} máy đang online
                                   </Tag>
                                 ) : (
-                                  <Tag color="default" style={{ borderRadius: 6, color: '#64748b' }}>
-                                    {userSessions.length > 0 ? `${userSessions.length} lịch sử phiên` : 'Chưa có phiên'}
+                                  <Tag
+                                    color="default"
+                                    style={{ borderRadius: 6, color: '#64748b' }}
+                                  >
+                                    {userSessions.length > 0
+                                      ? `${userSessions.length} lịch sử phiên`
+                                      : 'Chưa có phiên'}
                                   </Tag>
                                 )}
                                 {userSessions.length > 0 && userSessions[0] ? (
                                   <div style={{ fontSize: 11.5, color: '#94a3b8', marginTop: 3 }}>
-                                    Gần nhất: {formatRelativeTime(userSessions[0].lastSeenAt || userSessions[0].createdAt)}
+                                    Gần nhất:{' '}
+                                    {formatRelativeTime(
+                                      userSessions[0].lastSeenAt || userSessions[0].createdAt,
+                                    )}
                                   </div>
                                 ) : null}
                               </div>
@@ -1930,7 +1947,9 @@ export function SuperAdminPage() {
                           render: (val: number | null) => (
                             <div>
                               <div>{formatDateTime(val)}</div>
-                              <div style={{ fontSize: 11, color: '#10b981' }}>{formatRelativeTime(val)}</div>
+                              <div style={{ fontSize: 11, color: '#10b981' }}>
+                                {formatRelativeTime(val)}
+                              </div>
                             </div>
                           ),
                         },
@@ -1990,9 +2009,13 @@ export function SuperAdminPage() {
                   const filtered = detail.sessions.filter((s) => {
                     const matchesStatus =
                       sessionStatusFilter === 'ALL' ||
-                      (sessionStatusFilter === 'ACTIVE' && s.status === 'ACTIVE' && Date.now() < s.expiresAt) ||
+                      (sessionStatusFilter === 'ACTIVE' &&
+                        s.status === 'ACTIVE' &&
+                        Date.now() < s.expiresAt) ||
                       (sessionStatusFilter === 'REVOKED' && s.status === 'REVOKED') ||
-                      (sessionStatusFilter === 'EXPIRED' && (s.status === 'EXPIRED' || (s.status === 'ACTIVE' && Date.now() >= s.expiresAt)));
+                      (sessionStatusFilter === 'EXPIRED' &&
+                        (s.status === 'EXPIRED' ||
+                          (s.status === 'ACTIVE' && Date.now() >= s.expiresAt)));
 
                     const term = sessionSearchTerm.trim().toLowerCase();
                     const matchesSearch =
@@ -2019,7 +2042,9 @@ export function SuperAdminPage() {
                       >
                         <Segmented
                           value={sessionStatusFilter}
-                          onChange={(val) => setSessionStatusFilter(val as typeof sessionStatusFilter)}
+                          onChange={(val) =>
+                            setSessionStatusFilter(val as typeof sessionStatusFilter)
+                          }
                           options={[
                             { label: `Tất cả (${detail.sessions.length})`, value: 'ALL' },
                             {
@@ -2053,7 +2078,11 @@ export function SuperAdminPage() {
                           rowKey="id"
                           size="small"
                           dataSource={filtered}
-                          pagination={{ pageSize: 10, size: 'small', showTotal: (t) => `Tổng ${t} phiên` }}
+                          pagination={{
+                            pageSize: 10,
+                            size: 'small',
+                            showTotal: (t) => `Tổng ${t} phiên`,
+                          }}
                           scroll={{ x: 750 }}
                           columns={[
                             {
@@ -2078,9 +2107,15 @@ export function SuperAdminPage() {
                                 <div>
                                   {s.deviceId ? (
                                     <div>
-                                      <DesktopOutlined style={{ marginRight: 6, color: '#2563eb' }} />
-                                      <Typography.Text strong>{s.deviceName || 'Máy POS'}</Typography.Text>
-                                      <div style={{ fontSize: 11, color: '#94a3b8' }}>ID: {s.deviceId}</div>
+                                      <DesktopOutlined
+                                        style={{ marginRight: 6, color: '#2563eb' }}
+                                      />
+                                      <Typography.Text strong>
+                                        {s.deviceName || 'Máy POS'}
+                                      </Typography.Text>
+                                      <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                                        ID: {s.deviceId}
+                                      </div>
                                       {s.deviceStatus === 'REVOKED' && (
                                         <Tag color="error" style={{ fontSize: 10, marginTop: 2 }}>
                                           Máy đã thu hồi
@@ -2089,9 +2124,15 @@ export function SuperAdminPage() {
                                     </div>
                                   ) : (
                                     <div>
-                                      <GlobalOutlined style={{ marginRight: 6, color: '#0ea5e9' }} />
-                                      <Typography.Text>{s.deviceName || 'Trình duyệt trực tiếp'}</Typography.Text>
-                                      <div style={{ fontSize: 11, color: '#94a3b8' }}>Web Session</div>
+                                      <GlobalOutlined
+                                        style={{ marginRight: 6, color: '#0ea5e9' }}
+                                      />
+                                      <Typography.Text>
+                                        {s.deviceName || 'Trình duyệt trực tiếp'}
+                                      </Typography.Text>
+                                      <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                                        Web Session
+                                      </div>
                                     </div>
                                   )}
                                 </div>
@@ -2104,7 +2145,9 @@ export function SuperAdminPage() {
                               render: (val: number) => (
                                 <div>
                                   <div>{formatDateTimeFull(val)}</div>
-                                  <div style={{ fontSize: 11, color: '#64748b' }}>{formatRelativeTime(val)}</div>
+                                  <div style={{ fontSize: 11, color: '#64748b' }}>
+                                    {formatRelativeTime(val)}
+                                  </div>
                                 </div>
                               ),
                             },
@@ -2115,7 +2158,9 @@ export function SuperAdminPage() {
                               render: (val: number) => (
                                 <div>
                                   <div>{formatDateTimeFull(val)}</div>
-                                  <div style={{ fontSize: 11, color: '#10b981' }}>{formatRelativeTime(val)}</div>
+                                  <div style={{ fontSize: 11, color: '#10b981' }}>
+                                    {formatRelativeTime(val)}
+                                  </div>
                                 </div>
                               ),
                             },
@@ -2144,7 +2189,9 @@ export function SuperAdminPage() {
                                         🔴 Đã thu hồi
                                       </Tag>
                                       {s.revokedAt ? (
-                                        <div style={{ fontSize: 11, color: '#ef4444', marginTop: 2 }}>
+                                        <div
+                                          style={{ fontSize: 11, color: '#ef4444', marginTop: 2 }}
+                                        >
                                           {formatDateTime(s.revokedAt)}
                                         </div>
                                       ) : null}
@@ -2282,8 +2329,7 @@ export function SuperAdminPage() {
               <Avatar
                 size={36}
                 style={{
-                  background:
-                    selectedMemberForHistory.roleCode === 'OWNER' ? '#f59e0b' : '#3b82f6',
+                  background: selectedMemberForHistory.roleCode === 'OWNER' ? '#f59e0b' : '#3b82f6',
                   fontWeight: 700,
                 }}
               >
@@ -2318,222 +2364,251 @@ export function SuperAdminPage() {
         onCancel={() => setSelectedMemberForHistory(null)}
         destroyOnClose
       >
-        {selectedMemberForHistory && detail ? (() => {
-          const userSessions = detail.sessions.filter(
-            (s) => s.userId === selectedMemberForHistory.userId,
-          );
-          const activeSessions = userSessions.filter(
-            (s) => s.status === 'ACTIVE' && Date.now() < s.expiresAt,
-          );
-          const inactiveSessions = userSessions.filter(
-            (s) => s.status !== 'ACTIVE' || Date.now() >= s.expiresAt,
-          );
+        {selectedMemberForHistory && detail
+          ? (() => {
+              const userSessions = detail.sessions.filter(
+                (s) => s.userId === selectedMemberForHistory.userId,
+              );
+              const activeSessions = userSessions.filter(
+                (s) => s.status === 'ACTIVE' && Date.now() < s.expiresAt,
+              );
+              const inactiveSessions = userSessions.filter(
+                (s) => s.status !== 'ACTIVE' || Date.now() >= s.expiresAt,
+              );
 
-          const displayedSessions =
-            memberHistoryFilter === 'ACTIVE'
-              ? activeSessions
-              : memberHistoryFilter === 'INACTIVE'
-                ? inactiveSessions
-                : userSessions;
+              const displayedSessions =
+                memberHistoryFilter === 'ACTIVE'
+                  ? activeSessions
+                  : memberHistoryFilter === 'INACTIVE'
+                    ? inactiveSessions
+                    : userSessions;
 
-          return (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 12 }}>
-              <Row gutter={[12, 12]}>
-                <Col xs={12} sm={8}>
-                  <Card size="small" style={{ background: '#f8fafc', borderRadius: 8 }}>
-                    <Statistic
-                      title="Tổng lượt đăng nhập"
-                      value={userSessions.length}
-                      prefix={<HistoryOutlined style={{ color: '#2563eb' }} />}
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 12 }}>
+                  <Row gutter={[12, 12]}>
+                    <Col xs={12} sm={8}>
+                      <Card size="small" style={{ background: '#f8fafc', borderRadius: 8 }}>
+                        <Statistic
+                          title="Tổng lượt đăng nhập"
+                          value={userSessions.length}
+                          prefix={<HistoryOutlined style={{ color: '#2563eb' }} />}
+                        />
+                      </Card>
+                    </Col>
+                    <Col xs={12} sm={8}>
+                      <Card size="small" style={{ background: '#f0fdf4', borderRadius: 8 }}>
+                        <Statistic
+                          title="Thiết bị đang Online"
+                          value={activeSessions.length}
+                          prefix={<Badge status="processing" color="#10b981" />}
+                          valueStyle={{ color: '#10b981', fontWeight: 700 }}
+                        />
+                      </Card>
+                    </Col>
+                    <Col xs={24} sm={8}>
+                      <Card size="small" style={{ background: '#f8fafc', borderRadius: 8 }}>
+                        <div style={{ fontSize: 12, color: '#64748b' }}>Thiết bị gần nhất</div>
+                        <div
+                          style={{
+                            fontSize: 14,
+                            fontWeight: 650,
+                            marginTop: 4,
+                            color: '#0f172a',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                        >
+                          {userSessions[0]?.deviceName ||
+                            (userSessions[0] ? 'Trình duyệt Web' : '—')}
+                        </div>
+                        <div style={{ fontSize: 11.5, color: '#94a3b8', marginTop: 2 }}>
+                          {userSessions[0]
+                            ? formatRelativeTime(
+                                userSessions[0]?.lastSeenAt || userSessions[0]?.createdAt,
+                              )
+                            : 'Chưa có'}
+                        </div>
+                      </Card>
+                    </Col>
+                  </Row>
+
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                      gap: 10,
+                    }}
+                  >
+                    <Segmented
+                      value={memberHistoryFilter}
+                      onChange={(val) => setMemberHistoryFilter(val as typeof memberHistoryFilter)}
+                      options={[
+                        { label: `Tất cả (${userSessions.length})`, value: 'ALL' },
+                        { label: `Đang Online (${activeSessions.length})`, value: 'ACTIVE' },
+                        {
+                          label: `Đã kết thúc / Hết hạn (${inactiveSessions.length})`,
+                          value: 'INACTIVE',
+                        },
+                      ]}
                     />
-                  </Card>
-                </Col>
-                <Col xs={12} sm={8}>
-                  <Card size="small" style={{ background: '#f0fdf4', borderRadius: 8 }}>
-                    <Statistic
-                      title="Thiết bị đang Online"
-                      value={activeSessions.length}
-                      prefix={<Badge status="processing" color="#10b981" />}
-                      valueStyle={{ color: '#10b981', fontWeight: 700 }}
+                    <span style={{ fontSize: 12, color: '#64748b' }}>
+                      SuperAdmin có thể thu hồi phiên từ xa để đăng xuất thiết bị ngay lập tức
+                    </span>
+                  </div>
+
+                  {displayedSessions.length === 0 ? (
+                    <Empty
+                      description="Không có phiên đăng nhập nào trong bộ lọc này."
+                      style={{ margin: '24px 0' }}
                     />
-                  </Card>
-                </Col>
-                <Col xs={24} sm={8}>
-                  <Card size="small" style={{ background: '#f8fafc', borderRadius: 8 }}>
-                    <div style={{ fontSize: 12, color: '#64748b' }}>Thiết bị gần nhất</div>
-                    <div
-                      style={{
-                        fontSize: 14,
-                        fontWeight: 650,
-                        marginTop: 4,
-                        color: '#0f172a',
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
+                  ) : (
+                    <Table
+                      rowKey="id"
+                      size="small"
+                      dataSource={displayedSessions}
+                      pagination={{
+                        pageSize: 5,
+                        size: 'small',
+                        showTotal: (t) => `Tổng ${t} phiên`,
                       }}
-                    >
-                      {userSessions[0]?.deviceName || (userSessions[0] ? 'Trình duyệt Web' : '—')}
-                    </div>
-                    <div style={{ fontSize: 11.5, color: '#94a3b8', marginTop: 2 }}>
-                      {userSessions[0] ? formatRelativeTime(userSessions[0]?.lastSeenAt || userSessions[0]?.createdAt) : 'Chưa có'}
-                    </div>
-                  </Card>
-                </Col>
-              </Row>
-
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  flexWrap: 'wrap',
-                  gap: 10,
-                }}
-              >
-                <Segmented
-                  value={memberHistoryFilter}
-                  onChange={(val) => setMemberHistoryFilter(val as typeof memberHistoryFilter)}
-                  options={[
-                    { label: `Tất cả (${userSessions.length})`, value: 'ALL' },
-                    { label: `Đang Online (${activeSessions.length})`, value: 'ACTIVE' },
-                    { label: `Đã kết thúc / Hết hạn (${inactiveSessions.length})`, value: 'INACTIVE' },
-                  ]}
-                />
-                <span style={{ fontSize: 12, color: '#64748b' }}>
-                  SuperAdmin có thể thu hồi phiên từ xa để đăng xuất thiết bị ngay lập tức
-                </span>
-              </div>
-
-              {displayedSessions.length === 0 ? (
-                <Empty description="Không có phiên đăng nhập nào trong bộ lọc này." style={{ margin: '24px 0' }} />
-              ) : (
-                <Table
-                  rowKey="id"
-                  size="small"
-                  dataSource={displayedSessions}
-                  pagination={{ pageSize: 5, size: 'small', showTotal: (t) => `Tổng ${t} phiên` }}
-                  scroll={{ x: 680 }}
-                  columns={[
-                    {
-                      title: 'Thiết bị & Nền tảng',
-                      key: 'device',
-                      render: (_, s) => (
-                        <div>
-                          {s.deviceId ? (
+                      scroll={{ x: 680 }}
+                      columns={[
+                        {
+                          title: 'Thiết bị & Nền tảng',
+                          key: 'device',
+                          render: (_, s) => (
                             <div>
-                              <DesktopOutlined style={{ marginRight: 6, color: '#2563eb' }} />
-                              <Typography.Text strong>{s.deviceName || 'Máy POS'}</Typography.Text>
-                              <div style={{ fontSize: 11, color: '#94a3b8' }}>Mã POS: {s.deviceId}</div>
-                              {s.deviceStatus === 'REVOKED' && (
-                                <Tag color="error" style={{ fontSize: 10, marginTop: 2 }}>
-                                  Máy POS đã thu hồi
-                                </Tag>
+                              {s.deviceId ? (
+                                <div>
+                                  <DesktopOutlined style={{ marginRight: 6, color: '#2563eb' }} />
+                                  <Typography.Text strong>
+                                    {s.deviceName || 'Máy POS'}
+                                  </Typography.Text>
+                                  <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                                    Mã POS: {s.deviceId}
+                                  </div>
+                                  {s.deviceStatus === 'REVOKED' && (
+                                    <Tag color="error" style={{ fontSize: 10, marginTop: 2 }}>
+                                      Máy POS đã thu hồi
+                                    </Tag>
+                                  )}
+                                </div>
+                              ) : (
+                                <div>
+                                  <GlobalOutlined style={{ marginRight: 6, color: '#0ea5e9' }} />
+                                  <Typography.Text strong>
+                                    {s.deviceName || 'Trình duyệt Web / POS Trực tiếp'}
+                                  </Typography.Text>
+                                  <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                                    Web Browser Session
+                                  </div>
+                                </div>
                               )}
                             </div>
-                          ) : (
+                          ),
+                        },
+                        {
+                          title: 'Thời gian đăng nhập',
+                          dataIndex: 'createdAt',
+                          key: 'createdAt',
+                          render: (val: number) => (
                             <div>
-                              <GlobalOutlined style={{ marginRight: 6, color: '#0ea5e9' }} />
-                              <Typography.Text strong>{s.deviceName || 'Trình duyệt Web / POS Trực tiếp'}</Typography.Text>
-                              <div style={{ fontSize: 11, color: '#94a3b8' }}>Web Browser Session</div>
-                            </div>
-                          )}
-                        </div>
-                      ),
-                    },
-                    {
-                      title: 'Thời gian đăng nhập',
-                      dataIndex: 'createdAt',
-                      key: 'createdAt',
-                      render: (val: number) => (
-                        <div>
-                          <div style={{ fontWeight: 500 }}>{formatDateTimeFull(val)}</div>
-                          <div style={{ fontSize: 11, color: '#64748b' }}>{formatRelativeTime(val)}</div>
-                        </div>
-                      ),
-                    },
-                    {
-                      title: 'Hoạt động lần cuối',
-                      dataIndex: 'lastSeenAt',
-                      key: 'lastSeenAt',
-                      render: (val: number) => (
-                        <div>
-                          <div>{formatDateTimeFull(val)}</div>
-                          <div style={{ fontSize: 11, color: '#10b981' }}>{formatRelativeTime(val)}</div>
-                        </div>
-                      ),
-                    },
-                    {
-                      title: 'Trạng thái phiên',
-                      key: 'sessionStatus',
-                      render: (_, s) => {
-                        const isLive = s.status === 'ACTIVE' && Date.now() < s.expiresAt;
-                        const isRevoked = s.status === 'REVOKED';
-                        if (isLive) {
-                          return (
-                            <div>
-                              <Tag color="success" style={{ fontWeight: 600 }}>
-                                🟢 Đang hoạt động
-                              </Tag>
-                              <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
-                                Hết hạn: {formatDateTime(s.expiresAt)}
+                              <div style={{ fontWeight: 500 }}>{formatDateTimeFull(val)}</div>
+                              <div style={{ fontSize: 11, color: '#64748b' }}>
+                                {formatRelativeTime(val)}
                               </div>
                             </div>
-                          );
-                        }
-                        if (isRevoked) {
-                          return (
+                          ),
+                        },
+                        {
+                          title: 'Hoạt động lần cuối',
+                          dataIndex: 'lastSeenAt',
+                          key: 'lastSeenAt',
+                          render: (val: number) => (
                             <div>
-                              <Tag color="error" style={{ fontWeight: 600 }}>
-                                🔴 Đã thu hồi
-                              </Tag>
-                              {s.revokedAt ? (
-                                <div style={{ fontSize: 11, color: '#ef4444', marginTop: 2 }}>
-                                  {formatDateTime(s.revokedAt)}
+                              <div>{formatDateTimeFull(val)}</div>
+                              <div style={{ fontSize: 11, color: '#10b981' }}>
+                                {formatRelativeTime(val)}
+                              </div>
+                            </div>
+                          ),
+                        },
+                        {
+                          title: 'Trạng thái phiên',
+                          key: 'sessionStatus',
+                          render: (_, s) => {
+                            const isLive = s.status === 'ACTIVE' && Date.now() < s.expiresAt;
+                            const isRevoked = s.status === 'REVOKED';
+                            if (isLive) {
+                              return (
+                                <div>
+                                  <Tag color="success" style={{ fontWeight: 600 }}>
+                                    🟢 Đang hoạt động
+                                  </Tag>
+                                  <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                                    Hết hạn: {formatDateTime(s.expiresAt)}
+                                  </div>
                                 </div>
-                              ) : null}
-                            </div>
-                          );
-                        }
-                        return (
-                          <div>
-                            <Tag color="default">⚪ Hết hạn</Tag>
-                            <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
-                              {formatDateTime(s.expiresAt)}
-                            </div>
-                          </div>
-                        );
-                      },
-                    },
-                    {
-                      title: 'Hành động',
-                      key: 'actions',
-                      align: 'right',
-                      render: (_, s) => {
-                        const isLive = s.status === 'ACTIVE' && Date.now() < s.expiresAt;
-                        return isLive ? (
-                          <Popconfirm
-                            title="Đăng xuất thiết bị này từ xa?"
-                            description="Phiên làm việc trên thiết bị sẽ bị hủy ngay lập tức và buộc người dùng đăng nhập lại."
-                            okText="Đăng xuất"
-                            cancelText="Hủy"
-                            okButtonProps={{ danger: true, loading: submitting }}
-                            onConfirm={() => handleRevokeSession(s.id)}
-                          >
-                            <Button size="small" danger icon={<StopOutlined />}>
-                              Thu hồi phiên
-                            </Button>
-                          </Popconfirm>
-                        ) : (
-                          <span style={{ color: '#cbd5e1' }}>—</span>
-                        );
-                      },
-                    },
-                  ]}
-                />
-              )}
-            </div>
-          );
-        })() : null}
+                              );
+                            }
+                            if (isRevoked) {
+                              return (
+                                <div>
+                                  <Tag color="error" style={{ fontWeight: 600 }}>
+                                    🔴 Đã thu hồi
+                                  </Tag>
+                                  {s.revokedAt ? (
+                                    <div style={{ fontSize: 11, color: '#ef4444', marginTop: 2 }}>
+                                      {formatDateTime(s.revokedAt)}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              );
+                            }
+                            return (
+                              <div>
+                                <Tag color="default">⚪ Hết hạn</Tag>
+                                <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
+                                  {formatDateTime(s.expiresAt)}
+                                </div>
+                              </div>
+                            );
+                          },
+                        },
+                        {
+                          title: 'Hành động',
+                          key: 'actions',
+                          align: 'right',
+                          render: (_, s) => {
+                            const isLive = s.status === 'ACTIVE' && Date.now() < s.expiresAt;
+                            return isLive ? (
+                              <Popconfirm
+                                title="Đăng xuất thiết bị này từ xa?"
+                                description="Phiên làm việc trên thiết bị sẽ bị hủy ngay lập tức và buộc người dùng đăng nhập lại."
+                                okText="Đăng xuất"
+                                cancelText="Hủy"
+                                okButtonProps={{ danger: true, loading: submitting }}
+                                onConfirm={() => handleRevokeSession(s.id)}
+                              >
+                                <Button size="small" danger icon={<StopOutlined />}>
+                                  Thu hồi phiên
+                                </Button>
+                              </Popconfirm>
+                            ) : (
+                              <span style={{ color: '#cbd5e1' }}>—</span>
+                            );
+                          },
+                        },
+                      ]}
+                    />
+                  )}
+                </div>
+              );
+            })()
+          : null}
       </Modal>
 
       {/* Modal Chỉnh Sửa Thông Tin Tài Khoản */}

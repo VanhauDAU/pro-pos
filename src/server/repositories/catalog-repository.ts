@@ -356,7 +356,7 @@ export class CatalogRepository {
 
   deleteServiceTable(storeId: string, tableId: string) {
     return this.db
-      .prepare('DELETE FROM service_tables WHERE id = ? AND store_id = ? AND status != \'OCCUPIED\'')
+      .prepare("DELETE FROM service_tables WHERE id = ? AND store_id = ? AND status != 'OCCUPIED'")
       .bind(tableId, storeId)
       .run();
   }

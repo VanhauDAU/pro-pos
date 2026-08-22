@@ -324,16 +324,12 @@ export function OwnerProductListPage({
     queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
   });
 
-  const isOwnerUser = isOwner ?? (authContext.data?.actor?.kind === 'OWNER');
+  const isOwnerUser = isOwner ?? authContext.data?.actor?.kind === 'OWNER';
   const perms = userPermissions ?? [];
   const canDeleteProduct =
-    isOwnerUser ||
-    perms.includes('catalog.products.delete') ||
-    perms.includes('catalog.manage');
+    isOwnerUser || perms.includes('catalog.products.delete') || perms.includes('catalog.manage');
   const canEditProduct =
-    isOwnerUser ||
-    perms.includes('catalog.products.edit') ||
-    perms.includes('catalog.manage');
+    isOwnerUser || perms.includes('catalog.products.edit') || perms.includes('catalog.manage');
 
   const rows = useMemo(() => {
     const value = search.trim().toLowerCase();
@@ -694,12 +690,10 @@ export function OwnerProductFormPage({
     queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
   });
   const [deleting, setDeleting] = useState(false);
-  const isOwnerUser = isOwner ?? (authContext.data?.actor?.kind === 'OWNER');
+  const isOwnerUser = isOwner ?? authContext.data?.actor?.kind === 'OWNER';
   const perms = userPermissions ?? [];
   const canDeleteProduct =
-    isOwnerUser ||
-    perms.includes('catalog.products.delete') ||
-    perms.includes('catalog.manage');
+    isOwnerUser || perms.includes('catalog.products.delete') || perms.includes('catalog.manage');
 
   const removeProduct = async () => {
     if (!productId) return;

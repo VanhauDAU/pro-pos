@@ -80,11 +80,6 @@ interface ProductSummaryInfo {
   isSystem?: boolean | number;
 }
 
-interface EmployeeSummaryInfo {
-  id: string;
-  displayName: string;
-}
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function formatMoney(value: number) {
@@ -451,11 +446,7 @@ interface OnboardingTask {
   actionText: string;
 }
 
-function OwnerOnboardingChecklist({
-  settings,
-}: {
-  settings: StoreSettings | undefined;
-}) {
+function OwnerOnboardingChecklist({ settings }: { settings: StoreSettings | undefined }) {
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
 
@@ -476,7 +467,7 @@ function OwnerOnboardingChecklist({
 
   const hasAreas = Boolean(
     (areaLayouts.data ?? []).length > 0 &&
-      areaLayouts.data?.some((a) => a.tables && a.tables.length > 0),
+    areaLayouts.data?.some((a) => a.tables && a.tables.length > 0),
   );
   const hasProducts = Boolean(
     (products.data ?? []).some((p) => !p.isSystem) || (products.data ?? []).length > 0,
@@ -613,7 +604,12 @@ function OwnerOnboardingChecklist({
                     Xem lại <RightOutlined />
                   </Button>
                 ) : (
-                  <Button type="primary" ghost size="small" className="owner-onboarding-item__btn-start">
+                  <Button
+                    type="primary"
+                    ghost
+                    size="small"
+                    className="owner-onboarding-item__btn-start"
+                  >
                     {task.actionText} <ArrowRightOutlined />
                   </Button>
                 )}

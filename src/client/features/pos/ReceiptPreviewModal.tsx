@@ -12,8 +12,10 @@ function escPosPreviewText(raw: string) {
     const code = raw.charCodeAt(index);
     const command = raw.charCodeAt(index + 1);
     if (code === 27) {
-      if (command === 64) index += 1; // ESC @
-      else if (command === 97 || command === 69) index += 2; // ESC a / ESC E
+      if (command === 64)
+        index += 1; // ESC @
+      else if (command === 97 || command === 69)
+        index += 2; // ESC a / ESC E
       else if (command === 112) index += 4; // ESC p
       continue;
     }

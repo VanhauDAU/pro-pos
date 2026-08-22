@@ -15,7 +15,6 @@ import {
   EllipsisOutlined,
   FileTextOutlined,
   FullscreenOutlined,
-  GiftOutlined,
   HistoryOutlined,
   LeftOutlined,
   LogoutOutlined,
@@ -5068,6 +5067,17 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
               )}
             </div>
 
+            {/* Mobile Order Note Row */}
+            <div className="staff-order-mobile-note" onClick={() => setOrderNoteOpen(true)}>
+              <div className="staff-order-mobile-note__content">
+                <strong>Ghi chú đơn hàng</strong>
+                {orderNote ? (
+                  <div className="staff-order-mobile-note__text">{orderNote}</div>
+                ) : null}
+              </div>
+              <EditOutlined className="staff-order-mobile-note__icon" />
+            </div>
+
             {/* Mobile Order Financial Summary Details (In-Flow / Non-Sticky) */}
             <div className="staff-order-mobile-summary-card">
               <div className="staff-order-mobile-summary__title">Tổng tiền</div>
@@ -5114,17 +5124,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                 <strong>Khách phải trả</strong>
                 <strong>{formatMoney(displayedTotal)}</strong>
               </div>
-            </div>
-
-            {/* Mobile Order Note Row */}
-            <div className="staff-order-mobile-note" onClick={() => setOrderNoteOpen(true)}>
-              <div className="staff-order-mobile-note__content">
-                <strong>Ghi chú đơn hàng</strong>
-                {orderNote ? (
-                  <div className="staff-order-mobile-note__text">{orderNote}</div>
-                ) : null}
-              </div>
-              <EditOutlined className="staff-order-mobile-note__icon" />
             </div>
 
             {/* Floating "+ Thêm món" Button */}
@@ -5953,9 +5952,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                     >
                       {appliedPromotions.map((promotion) => (
                         <div key={promotion.id} className="staff-applied-promotion-row-item">
-                          <span className="staff-applied-promotion-name">
-                            {promotion.name}
-                          </span>
+                          <span className="staff-applied-promotion-name">{promotion.name}</span>
                           <span className="staff-applied-promotion-amount">
                             {promotion.discountAmountVnd > 0
                               ? `-${formatMoney(promotion.discountAmountVnd)}`
@@ -6567,90 +6564,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                 },
               }}
             />
-            <Alert
-              type="info"
-              showIcon
-              message="Số tiền có thể tiếp tục thay đổi do bàn vẫn đang tính giờ."
-              style={{ marginBottom: 14 }}
-            />
-            <div className="staff-provisional-info-card">
-              <div className="staff-provisional-row">
-                <span>Bàn</span>
-                <strong>{quote.data.order.tableName}</strong>
-              </div>
-              {quote.data.time ? (
-                <>
-                  <div className="staff-provisional-row">
-                    <span>Giờ vào</span>
-                    <span>{formatDateTime(quote.data.time.startedAtMs)}</span>
-                  </div>
-                  <div className="staff-provisional-row">
-                    <span>Thời gian hiện tại</span>
-                    <strong>{formatElapsed(liveElapsedSeconds)}</strong>
-                  </div>
-                  <div className="staff-provisional-row">
-                    <span>Tiền giờ tạm tính</span>
-                    <b>{formatMoney(quote.data.time.amountAfterRoundingVnd)}</b>
-                  </div>
-                </>
-              ) : null}
-            </div>
-
-            <div className="staff-provisional-items-list">
-              {displayedItems.map((item) => (
-                <div key={item.id} className="staff-provisional-item-row">
-                  <span>
-                    {item.productName} ({item.quantityMilli / 1000} {item.unitName ?? ''})
-                  </span>
-                  <b>{formatMoney(item.netLineTotalVnd)}</b>
-                </div>
-              ))}
-            </div>
-
-            <div className="staff-provisional-totals-card">
-              <div className="staff-provisional-row">
-                <span>Tổng tiền hàng</span>
-                <span>{formatMoney(regularProductGross)}</span>
-              </div>
-              {totalTimeGross > 0 ? (
-                <div className="staff-provisional-row">
-                  <span>Tiền giờ</span>
-                  <span>{formatMoney(totalTimeGross)}</span>
-                </div>
-              ) : null}
-              {totalDiscount > 0 ? (
-                <>
-                  <div className="staff-provisional-row">
-                    <span>Giảm giá</span>
-                    <span className="staff-cart-discount-amount">
-                      -{formatMoney(totalDiscount)}
-                    </span>
-                  </div>
-                  {appliedPromotions.length > 0 ? (
-                    <div className="staff-applied-promotions-box">
-                      {appliedPromotions.map((promotion) => (
-                        <div key={promotion.id} className="staff-applied-promotion-row-item">
-                          <span className="staff-applied-promotion-name">
-                            {promotion.name}
-                          </span>
-                          <span className="staff-applied-promotion-amount">
-                            {promotion.discountAmountVnd > 0
-                              ? `-${formatMoney(promotion.discountAmountVnd)}`
-                              : promotion.type === 'GIFT'
-                                ? 'Tặng món'
-                                : '-0đ'}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                </>
-              ) : null}
-              <div className="staff-provisional-row staff-provisional-row--total">
-                <span>TỔNG TẠM TÍNH</span>
-                <b>{formatMoney(displayedTotal)}</b>
-              </div>
-            </div>
           </div>
         ) : null}
       </Modal>
@@ -6957,7 +6870,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   fontWeight: 600,
                 }}
               >
-                Lấy mã QR Order của bàn
+                Mã QR bàn
               </Button>
             )}
             {!isNew && (
@@ -6972,7 +6885,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                     void printProvisionalReceipt();
                   }}
                 >
-                  In phiếu tạm tính
+                  In tạm tính
                 </Button>
                 <Button
                   size="large"
@@ -6984,7 +6897,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                     setProvisionalBillOpen(true);
                   }}
                 >
-                  Xem trước phiếu tạm tính
+                  Xem tạm tính
                 </Button>
 
                 {quote.data?.order.orderType === 'DINE_IN' && (
@@ -6997,7 +6910,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       setTransferOpen(true);
                     }}
                   >
-                    Chuyển bàn/phòng
+                    Chuyển bàn
                   </Button>
                 )}
 
@@ -7011,21 +6924,9 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       navigate(`/pos/orders/${orderId}/detail`);
                     }}
                   >
-                    Chi tiết & Lịch sử đơn
+                    Lịch sử đơn
                   </Button>
                 )}
-
-                <Button
-                  size="large"
-                  block
-                  icon={<UserOutlined />}
-                  onClick={() => {
-                    setMobileActionsOpen(false);
-                    setGuestModalOpen(true);
-                  }}
-                >
-                  Đổi số lượng khách ({guestCount} khách)
-                </Button>
 
                 <Button
                   size="large"
@@ -7036,7 +6937,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                     setCustomerModalOpen(true);
                   }}
                 >
-                  {customerName ? `Khách hàng: ${customerName}` : 'Thêm / Đổi khách hàng'}
+                  {customerName ? customerName : 'Chọn khách'}
                 </Button>
 
                 <Button
@@ -7049,7 +6950,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                     setCancelOpen(true);
                   }}
                 >
-                  Hủy đơn hàng
+                  Hủy đơn
                 </Button>
               </>
             )}
@@ -7064,7 +6965,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   handleExit();
                 }}
               >
-                Hủy tạo đơn & Thoát
+                Thoát tạo đơn
               </Button>
             )}
           </div>

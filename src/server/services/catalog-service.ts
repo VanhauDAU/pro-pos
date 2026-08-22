@@ -309,11 +309,7 @@ export class CatalogService {
       throw new AppError('SERVICE_TABLE_NOT_FOUND', 'Không tìm thấy bàn/phòng.', 404);
     }
     if (status === 'DISABLED' && before.status === 'OCCUPIED') {
-      throw new AppError(
-        'SERVICE_TABLE_OCCUPIED',
-        'Không thể tạm ngưng bàn đang sử dụng.',
-        409,
-      );
+      throw new AppError('SERVICE_TABLE_OCCUPIED', 'Không thể tạm ngưng bàn đang sử dụng.', 409);
     }
     const now = Date.now();
     await this.repository.updateServiceTableStatus(storeId, tableId, status, now);

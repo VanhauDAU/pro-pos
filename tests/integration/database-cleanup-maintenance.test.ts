@@ -1,7 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 import { MaintenanceService } from '@server/services/maintenance-service';
-import { MaintenanceRepository } from '@server/repositories/maintenance-repository';
 
 describe('7-Day Database Retention Cleanup Maintenance', () => {
   it('cleans up logs, sessions, and events older than 7 days while keeping active data', async () => {
@@ -123,16 +122,7 @@ describe('7-Day Database Retention Cleanup Maintenance', () => {
          credential_version, expires_at, idle_expires_at, last_seen_at, created_at
        ) VALUES (?, ?, ?, ?, 'OWNER', 'ACTIVE', 1, ?, ?, ?, ?)`,
     )
-      .bind(
-        newSessionId,
-        `hash-${Math.random()}`,
-        userId,
-        storeId,
-        inTwoDays,
-        inTwoDays,
-        now,
-        now,
-      )
+      .bind(newSessionId, `hash-${Math.random()}`, userId, storeId, inTwoDays, inTwoDays, now, now)
       .run();
 
     // 5. Login attempts: 1 old, 1 fresh
@@ -166,35 +156,59 @@ describe('7-Day Database Retention Cleanup Maintenance', () => {
     expect(result.tables['login_attempts']).toBeGreaterThanOrEqual(1);
 
     // Verify Old rows are DELETED
-    const oldAudit = await env.DB.prepare('SELECT id FROM audit_logs WHERE id = ?').bind(oldAuditId).first();
+    const oldAudit = await env.DB.prepare('SELECT id FROM audit_logs WHERE id = ?')
+      .bind(oldAuditId)
+      .first();
     expect(oldAudit).toBeNull();
 
-    const oldNotif = await env.DB.prepare('SELECT id FROM staff_notification_events WHERE id = ?').bind(oldNotifId).first();
+    const oldNotif = await env.DB.prepare('SELECT id FROM staff_notification_events WHERE id = ?')
+      .bind(oldNotifId)
+      .first();
     expect(oldNotif).toBeNull();
 
-    const oldRt = await env.DB.prepare('SELECT event_id FROM realtime_events WHERE event_id = ?').bind(oldRtId).first();
+    const oldRt = await env.DB.prepare('SELECT event_id FROM realtime_events WHERE event_id = ?')
+      .bind(oldRtId)
+      .first();
     expect(oldRt).toBeNull();
 
-    const oldSess = await env.DB.prepare('SELECT id FROM auth_sessions WHERE id = ?').bind(oldSessionId).first();
+    const oldSess = await env.DB.prepare('SELECT id FROM auth_sessions WHERE id = ?')
+      .bind(oldSessionId)
+      .first();
     expect(oldSess).toBeNull();
 
-    const oldAttempt = await env.DB.prepare('SELECT subject_key FROM login_attempts WHERE subject_key = ?').bind(oldAttemptKey).first();
+    const oldAttempt = await env.DB.prepare(
+      'SELECT subject_key FROM login_attempts WHERE subject_key = ?',
+    )
+      .bind(oldAttemptKey)
+      .first();
     expect(oldAttempt).toBeNull();
 
     // Verify New rows are PRESERVED
-    const newAudit = await env.DB.prepare('SELECT id FROM audit_logs WHERE id = ?').bind(newAuditId).first();
+    const newAudit = await env.DB.prepare('SELECT id FROM audit_logs WHERE id = ?')
+      .bind(newAuditId)
+      .first();
     expect(newAudit).not.toBeNull();
 
-    const newNotif = await env.DB.prepare('SELECT id FROM staff_notification_events WHERE id = ?').bind(newNotifId).first();
+    const newNotif = await env.DB.prepare('SELECT id FROM staff_notification_events WHERE id = ?')
+      .bind(newNotifId)
+      .first();
     expect(newNotif).not.toBeNull();
 
-    const newRt = await env.DB.prepare('SELECT event_id FROM realtime_events WHERE event_id = ?').bind(newRtId).first();
+    const newRt = await env.DB.prepare('SELECT event_id FROM realtime_events WHERE event_id = ?')
+      .bind(newRtId)
+      .first();
     expect(newRt).not.toBeNull();
 
-    const newSess = await env.DB.prepare('SELECT id FROM auth_sessions WHERE id = ?').bind(newSessionId).first();
+    const newSess = await env.DB.prepare('SELECT id FROM auth_sessions WHERE id = ?')
+      .bind(newSessionId)
+      .first();
     expect(newSess).not.toBeNull();
 
-    const newAttempt = await env.DB.prepare('SELECT subject_key FROM login_attempts WHERE subject_key = ?').bind(newAttemptKey).first();
+    const newAttempt = await env.DB.prepare(
+      'SELECT subject_key FROM login_attempts WHERE subject_key = ?',
+    )
+      .bind(newAttemptKey)
+      .first();
     expect(newAttempt).not.toBeNull();
   });
 });

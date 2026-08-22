@@ -11,7 +11,9 @@ if (!['local', 'staging', 'production'].includes(environment)) {
 const nowMs = Date.now();
 const cutoffMs = nowMs - retentionDays * 24 * 60 * 60 * 1000;
 
-console.log(`🧹 Running ${retentionDays}-day retention database cleanup for environment: "${environment}"...`);
+console.log(
+  `🧹 Running ${retentionDays}-day retention database cleanup for environment: "${environment}"...`,
+);
 console.log(`Cutoff timestamp: ${cutoffMs} (${new Date(cutoffMs).toISOString()})`);
 
 const queries = [

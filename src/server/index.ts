@@ -20,7 +20,6 @@ import { guestOrderRoutes } from '@server/routes/guest-order';
 import type { AppEnv } from '@server/types';
 import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
 import { MaintenanceService } from '@server/services/maintenance-service';
-import { QrOrderRepository } from '@server/repositories/qr-order-repository';
 
 export { StoreRealtimeRoom } from '@server/realtime/store-realtime-room';
 

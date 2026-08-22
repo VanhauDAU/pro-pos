@@ -244,18 +244,14 @@ function ProductPickerModal({
       product.variants.some((variant) => variant.name.toLocaleLowerCase('vi').includes(term))
     );
   });
-  const selected = new Set(
-    draft.map((item) => productTargetKey(item.productId, item.variantId)),
-  );
+  const selected = new Set(draft.map((item) => productTargetKey(item.productId, item.variantId)));
   const toggle = (productId: string, variantId: string | null, checked: boolean) => {
     const targetKey = productTargetKey(productId, variantId);
     if (checked && draft.length >= 50) return;
     setDraft((current) =>
       checked
         ? [...current, { productId, variantId, quantity: 1 }]
-        : current.filter(
-            (item) => productTargetKey(item.productId, item.variantId) !== targetKey,
-          ),
+        : current.filter((item) => productTargetKey(item.productId, item.variantId) !== targetKey),
     );
   };
   return (
@@ -848,7 +844,8 @@ export function OwnerPromotionFormPage({ promotionId }: { promotionId?: string }
                 <div className="owner-promotion-note">
                   <div className="owner-promotion-note__title">* Lưu ý :</div>
                   <div className="owner-promotion-note__item">
-                    - Chương trình đồng giá chỉ điều chỉnh giá bán của mặt hàng trong thời gian được chọn và không ghi nhận giá trị khuyến mại
+                    - Chương trình đồng giá chỉ điều chỉnh giá bán của mặt hàng trong thời gian được
+                    chọn và không ghi nhận giá trị khuyến mại
                   </div>
                   <div className="owner-promotion-note__item">
                     - Không áp dụng cho mặt hàng có giá trị thấp hơn giá trị đồng giá được thiết lập

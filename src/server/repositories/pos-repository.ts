@@ -125,6 +125,7 @@ export interface OrderItemRow {
   discountType: 'FIXED' | 'PERCENT' | null;
   discountInputValue: number | null;
   discountAmountVnd: number;
+  discountReason: string | null;
   grossLineTotalVnd: number;
   netLineTotalVnd: number;
   lineTotalVnd: number;
@@ -377,7 +378,7 @@ export class PosRepository {
           unit_name_snapshot AS unitName, unit_price_snapshot AS unitPriceVnd,
           quantity_milli AS quantityMilli, discount_type AS discountType,
           discount_input_value AS discountInputValue,
-          discount_amount AS discountAmountVnd,
+          discount_amount AS discountAmountVnd, discount_reason AS discountReason,
           gross_line_total AS grossLineTotalVnd,
           net_line_total AS netLineTotalVnd,
           net_line_total AS lineTotalVnd, note,
@@ -612,7 +613,7 @@ export class PosRepository {
           unit_name_snapshot AS unitName, unit_price_snapshot AS unitPriceVnd,
           quantity_milli AS quantityMilli, discount_type AS discountType,
           discount_input_value AS discountInputValue,
-          discount_amount AS discountAmountVnd,
+          discount_amount AS discountAmountVnd, discount_reason AS discountReason,
           gross_line_total AS grossLineTotalVnd,
           net_line_total AS netLineTotalVnd,
           line_total AS lineTotalVnd, note,
@@ -646,6 +647,7 @@ export class PosRepository {
           discount_type AS discountType,
           discount_input_value AS discountInputValue,
           discount_amount AS discountAmount,
+          discount_reason AS discountReason,
           gross_line_total AS grossLineTotal,
           net_line_total AS netLineTotal,
           ${timeCols}
@@ -663,11 +665,29 @@ export class PosRepository {
         discountType: 'FIXED' | 'PERCENT' | null;
         discountInputValue: number | null;
         discountAmount: number;
+        discountReason: string | null;
         grossLineTotal: number;
         netLineTotal: number;
         timeStartedAtMs: number | null;
         timeEndedAtMs: number | null;
       }>();
+  }
+
+  setOrderItemDiscountReason(input: {
+    storeId: string;
+    orderType: 'DINE_IN' | 'TAKEAWAY';
+    orderId: string;
+    itemId: string;
+    reason: string | null;
+  }) {
+    const table = input.orderType === 'DINE_IN' ? 'order_items' : 'takeaway_order_items';
+    return this.db
+      .prepare(
+        `UPDATE ${table} SET discount_reason = ?
+         WHERE store_id = ? AND order_id = ? AND id = ?`,
+      )
+      .bind(input.reason, input.storeId, input.orderId, input.itemId)
+      .run();
   }
 
   findSaleVariant(storeId: string, productId: string, variantId: string | null | undefined) {
@@ -1936,6 +1956,7 @@ export class PosRepository {
             oi.discount_type AS discountType,
             oi.discount_input_value AS discountInputValue,
             oi.discount_amount AS discountAmountVnd,
+            oi.discount_reason AS discountReason,
             oi.net_line_total AS netLineTotalVnd,
             oi.note,
             oi.added_by AS addedById,
@@ -1967,6 +1988,7 @@ export class PosRepository {
           discountType: 'FIXED' | 'PERCENT' | null;
           discountInputValue: number | null;
           discountAmountVnd: number;
+          discountReason: string | null;
           netLineTotalVnd: number;
           note: string | null;
           addedById: string | null;
@@ -1996,6 +2018,7 @@ export class PosRepository {
           oi.discount_type AS discountType,
           oi.discount_input_value AS discountInputValue,
           COALESCE(oi.discount_amount, oi.discount_value, 0) AS discountAmountVnd,
+          oi.discount_reason AS discountReason,
           COALESCE(oi.net_line_total, oi.line_total) AS netLineTotalVnd,
           oi.note,
           oi.added_by AS addedById,
@@ -2027,6 +2050,7 @@ export class PosRepository {
         discountType: 'FIXED' | 'PERCENT' | null;
         discountInputValue: number | null;
         discountAmountVnd: number;
+        discountReason: string | null;
         netLineTotalVnd: number;
         note: string | null;
         addedById: string | null;

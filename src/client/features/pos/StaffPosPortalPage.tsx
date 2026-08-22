@@ -15,6 +15,7 @@ import {
   EllipsisOutlined,
   FileTextOutlined,
   FullscreenOutlined,
+  GiftOutlined,
   HistoryOutlined,
   LeftOutlined,
   LogoutOutlined,
@@ -47,6 +48,7 @@ import {
   Avatar,
   Button,
   Card,
+  Checkbox,
   ConfigProvider,
   Drawer,
   Dropdown,
@@ -94,6 +96,7 @@ import { PosCustomerSelector } from './PosCustomerSelector';
 import { ReceiptPreviewModal, ReceiptPreviewPaper } from './ReceiptPreviewModal';
 import { TableQrModal } from '@client/components/TableQrModal';
 import type { CustomerSummary } from '@contracts/customer';
+import type { PosPromotionOption } from '@contracts/promotion';
 import { PushNotificationControl } from '@client/features/pwa/PushNotificationControl';
 import { OwnerInvoicesPage } from '@client/features/owner/OwnerInvoicesPage';
 import {
@@ -210,6 +213,7 @@ interface OrderQuote {
     note: string | null;
     discountType: 'FIXED' | 'PERCENT' | null;
     discountInputValue: number | null;
+    discountReason: string | null;
     grossLineTotalVnd: number;
     discountAmountVnd: number;
     netLineTotalVnd: number;
@@ -245,12 +249,118 @@ interface OrderQuote {
   };
   subtotalVnd: number;
   discountTotalVnd: number;
+  itemDiscountTotalVnd: number;
+  promotionDiscountVnd: number;
+  promotions: PosPromotionOption[];
+  promotion: PosPromotionOption | null;
+  promotionOptions: PosPromotionOption[];
   totalVnd: number;
   bankSettings?: {
     bankName: string | null;
     bankAccountNumber: string | null;
     bankAccountName: string | null;
   } | null;
+}
+
+const promotionTypeCopy: Record<PosPromotionOption['type'], string> = {
+  FIXED_AMOUNT: 'Giảm theo số tiền',
+  PERCENT: 'Giảm theo phần trăm',
+  FLAT_PRICE: 'Đồng giá',
+  GIFT: 'Tặng món',
+};
+
+function PosPromotionModal({
+  open,
+  options,
+  appliedIds,
+  loading,
+  onClose,
+  onApply,
+}: {
+  open: boolean;
+  options: PosPromotionOption[];
+  appliedIds: string[];
+  loading: boolean;
+  onClose: () => void;
+  onApply: (ids: string[]) => void;
+}) {
+  const [selected, setSelected] = useState<string[]>(appliedIds);
+  useEffect(() => setSelected(appliedIds), [appliedIds, open]);
+  return (
+    <Modal
+      open={open}
+      width={760}
+      title="Giảm giá"
+      onCancel={onClose}
+      className="staff-promotion-modal"
+      footer={[
+        <Button
+          key="remove"
+          danger
+          disabled={selected.length === 0 || loading}
+          onClick={() => onApply([])}
+        >
+          Bỏ tất cả khuyến mại
+        </Button>,
+        <Button key="save" type="primary" loading={loading} onClick={() => onApply(selected)}>
+          Lưu
+        </Button>,
+      ]}
+    >
+      <div className="staff-promotion-modal__tab">
+        <strong>Chương trình khuyến mại · Đã chọn {selected.length}</strong>
+        <small>Có thể chọn đồng thời nhiều chương trình đủ điều kiện</small>
+      </div>
+      <div className="staff-promotion-modal__list">
+        {options.length === 0 ? (
+          <Empty description="Không có chương trình đang hoạt động" />
+        ) : (
+          options.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              className={`staff-promotion-option${selected.includes(option.id) ? ' staff-promotion-option--selected' : ''}`}
+              disabled={!option.eligible}
+              onClick={() =>
+                setSelected((current) =>
+                  current.includes(option.id)
+                    ? current.filter((id) => id !== option.id)
+                    : [...current, option.id],
+                )
+              }
+            >
+              <Checkbox checked={selected.includes(option.id)} disabled={!option.eligible} />
+              <span className="staff-promotion-option__copy">
+                <strong>{option.name}</strong>
+                <small>
+                  {promotionTypeCopy[option.type]}
+                  {option.minimumOrderVnd > 0
+                    ? ` · Hóa đơn tối thiểu ${formatMoney(option.minimumOrderVnd)}`
+                    : ''}
+                </small>
+                {option.type === 'GIFT' && option.giftProductNames.length > 0 ? (
+                  <small>Tặng: {option.giftProductNames.join(', ')}</small>
+                ) : null}
+                {!option.eligible ? (
+                  <em>
+                    <CloseCircleFilled /> ! Không đủ điều kiện
+                    {option.reason ? ` · ${option.reason}` : ''}
+                  </em>
+                ) : null}
+              </span>
+              <b>
+                {option.discountAmountVnd > 0
+                  ? `-${formatMoney(option.discountAmountVnd)}`
+                  : option.type === 'GIFT'
+                    ? 'Tặng món'
+                    : ''}
+              </b>
+            </button>
+          ))
+        )}
+      </div>
+    </Modal>
+  );
 }
 
 interface DraftLine {
@@ -261,6 +371,7 @@ interface DraftLine {
   note: string | null;
   discountType: 'FIXED' | 'PERCENT' | null;
   discountInputValue: number | null;
+  discountReason: string | null;
 }
 
 interface EditingOrderItem {
@@ -279,6 +390,7 @@ interface EditingOrderItem {
   discountAmountVnd: number;
   discountType: 'FIXED' | 'PERCENT' | null;
   discountInputValue: number | null;
+  discountReason: string | null;
   netLineTotalVnd: number;
   discardOnCancel?: boolean | undefined;
 }
@@ -332,6 +444,16 @@ function calculateLineTotal(unitPriceVnd: number, quantityMilli: number) {
 
 function formatMoney(value: number) {
   return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(value);
+}
+
+function ItemDiscountDetail({ amount, reason }: { amount: number; reason: string | null }) {
+  if (amount <= 0) return null;
+  return (
+    <span className="staff-item-discount-detail">
+      <strong>Giảm thủ công: -{formatMoney(amount)}</strong>
+      <small>Lý do: {reason || 'Chưa có lý do'}</small>
+    </span>
+  );
 }
 
 function calculateDiscountAmount(
@@ -2410,8 +2532,9 @@ function StaffTableTransferModal({
                         <div className="staff-transfer-card__header">
                           <strong className="staff-transfer-card__name">{table.name}</strong>
                           <span
-                            className={`staff-transfer-card__status-badge ${isCurrent ? 'is-current' : isOccupied ? 'is-occupied' : 'is-available'
-                              }`}
+                            className={`staff-transfer-card__status-badge ${
+                              isCurrent ? 'is-current' : isOccupied ? 'is-occupied' : 'is-available'
+                            }`}
                           >
                             {isCurrent ? 'Bàn hiện tại' : isOccupied ? 'Đang chơi' : 'Bàn trống'}
                           </span>
@@ -2529,13 +2652,13 @@ function StaffItemDetailModal({
     product?.variants && product.variants.length > 0
       ? product.variants
       : [
-        {
-          id: item.variantId ?? 'default',
-          name: item.variantName || 'Giá thường',
-          salePriceVnd: item.unitPriceVnd,
-          promptPrice: 0,
-        },
-      ];
+          {
+            id: item.variantId ?? 'default',
+            name: item.variantName || 'Giá thường',
+            salePriceVnd: item.unitPriceVnd,
+            promptPrice: 0,
+          },
+        ];
 
   return (
     <OrderItemDetailModal
@@ -2896,6 +3019,7 @@ function OrderItemDetailModal({
   const [itemQuantityMilli, setItemQuantityMilli] = useState<number>(item.quantityMilli);
   const [discountType, setDiscountType] = useState<'FIXED' | 'PERCENT' | null>(item.discountType);
   const [discountValue, setDiscountValue] = useState<number | null>(item.discountInputValue);
+  const [discountReason, setDiscountReason] = useState(item.discountReason ?? '');
   const [showDiscountInput, setShowDiscountInput] = useState<boolean>(
     Boolean(item.discountType && item.discountInputValue),
   );
@@ -2910,6 +3034,10 @@ function OrderItemDetailModal({
   const handleSave = () => {
     if (item.productType === 'WEIGHT' && itemQuantityMilli <= 0) {
       message.warning('Vui lòng nhập trọng lượng lớn hơn 0');
+      return;
+    }
+    if (discountAmount > 0 && !discountReason.trim()) {
+      message.warning('Vui lòng nhập lý do giảm giá');
       return;
     }
 
@@ -2932,6 +3060,7 @@ function OrderItemDetailModal({
         discountAmountVnd: saveDiscountAmount,
         discountType,
         discountInputValue: discountValue,
+        discountReason: discountAmount > 0 ? discountReason.trim() : null,
         netLineTotalVnd: saveNetTotal,
       },
       currentVariant,
@@ -3070,6 +3199,7 @@ function OrderItemDetailModal({
                   onClick={() => {
                     setDiscountType(null);
                     setDiscountValue(null);
+                    setDiscountReason('');
                     setShowDiscountInput(false);
                   }}
                 />
@@ -3079,6 +3209,16 @@ function OrderItemDetailModal({
                   Giảm: -{formatMoney(discountAmount)} (Còn {formatMoney(netTotal)})
                 </div>
               ) : null}
+              <Input.TextArea
+                rows={2}
+                maxLength={300}
+                showCount
+                value={discountReason}
+                status={discountAmount > 0 && !discountReason.trim() ? 'error' : ''}
+                placeholder="Nhập lý do giảm giá (*)"
+                onChange={(event) => setDiscountReason(event.target.value)}
+                className="staff-item-modal__discount-reason"
+              />
             </div>
           )}
         </div>
@@ -3223,6 +3363,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const [guestCount, setGuestCount] = useState<number>(1);
   const [guestModalOpen, setGuestModalOpen] = useState(false);
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
+  const [promotionModalOpen, setPromotionModalOpen] = useState(false);
+  const [promotionSaving, setPromotionSaving] = useState(false);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerId, setCustomerId] = useState<string | null>(null);
@@ -3463,6 +3605,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         note: null,
         discountType: null,
         discountInputValue: null,
+        discountReason: null,
       };
       setDraftLines((lines) => [...lines, line]);
       setEditingItem({
@@ -3481,6 +3624,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         discountAmountVnd: 0,
         discountType: null,
         discountInputValue: null,
+        discountReason: null,
         netLineTotalVnd: effectiveVariant.salePriceVnd,
         discardOnCancel: true,
       });
@@ -3507,6 +3651,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           note: null,
           discountType: null,
           discountInputValue: null,
+          discountReason: null,
         },
       ];
     });
@@ -3530,6 +3675,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         note: null,
         discountType: null,
         discountInputValue: null,
+        discountReason: null,
       };
       setPickingCart((lines) => [...lines, line]);
       return;
@@ -3555,6 +3701,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           note: null,
           discountType: null,
           discountInputValue: null,
+          discountReason: null,
         },
       ];
     });
@@ -3670,7 +3817,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           note: line.note,
           discount:
             line.discountType && line.discountInputValue !== null
-              ? { type: line.discountType, value: line.discountInputValue }
+              ? {
+                  type: line.discountType,
+                  value: line.discountInputValue,
+                  reason: line.discountReason ?? '',
+                }
               : null,
         },
         { headers: mutationHeaders(csrf) },
@@ -3932,8 +4083,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         image: qrImage,
         ...(quote.data?.order.displayCode || (orderId && orderId !== 'new')
           ? {
-            orderCode: quote.data?.order.displayCode || `D-${orderId!.slice(0, 8).toUpperCase()}`,
-          }
+              orderCode: quote.data?.order.displayCode || `D-${orderId!.slice(0, 8).toUpperCase()}`,
+            }
           : {}),
       });
       setTableQrModalOpen(true);
@@ -4027,7 +4178,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     id: string;
     quantityMilli: number;
     variantId?: string | null | undefined;
-    discount?: null | { type: 'FIXED' | 'PERCENT'; value: number } | undefined;
+    discount?: null | { type: 'FIXED' | 'PERCENT'; value: number; reason: string } | undefined;
     note: string | null;
   }) => {
     if (!quote.data) return;
@@ -4260,6 +4411,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       discountAmountVnd: discount,
       discountType: line.discountType,
       discountInputValue: line.discountInputValue,
+      discountReason: line.discountReason,
       netLineTotalVnd: net,
       note: line.note,
     };
@@ -4270,14 +4422,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const displayedItems = isNew ? draftDisplayItems : (quote.data?.items ?? []);
 
   // 1. Tiền hàng (mặt hàng số lượng và trọng lượng)
-  const regularProductGross = allCurrentItems.reduce(
-    (sum, item) => sum + item.grossLineTotalVnd,
-    0,
-  );
-  const regularProductDiscount = allCurrentItems.reduce(
-    (sum, item) => sum + item.discountAmountVnd,
-    0,
-  );
+  const regularProductGross = allCurrentItems.reduce((sum, item) => sum + item.netLineTotalVnd, 0);
   const regularProductCount = allCurrentItems.length;
 
   // Tiền trong giỏ hàng tạm khi chọn món
@@ -4296,19 +4441,51 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const totalTimeGross = quote.data?.time ? quote.data.time.amountAfterRoundingVnd : 0;
 
   // 3. Giảm giá và Tổng khách phải trả
-  const totalDiscount = regularProductDiscount;
+  const totalDiscount = isNew ? 0 : (quote.data?.promotionDiscountVnd ?? 0);
+  const appliedPromotions = isNew ? [] : (quote.data?.promotions ?? []);
   const pendingTotal = draftDisplayItems.reduce((sum, item) => sum + item.netLineTotalVnd, 0);
   const displayedTotal = isNew ? pendingTotal : (quote.data?.totalVnd ?? 0) + pendingTotal;
   const liveElapsedSeconds = quote.data?.time
     ? quote.data.time.elapsedSeconds +
-    (quote.data.time.status === 'RUNNING'
-      ? Math.max(0, Math.floor((clockNow - quote.dataUpdatedAt) / 1000))
-      : 0)
+      (quote.data.time.status === 'RUNNING'
+        ? Math.max(0, Math.floor((clockNow - quote.dataUpdatedAt) / 1000))
+        : 0)
     : 0;
+
+  const applyPromotion = async (promotionIds: string[]) => {
+    if (!quote.data || isNew) return;
+    setPromotionSaving(true);
+    try {
+      await jsonRequest(
+        `/api/v1/pos/orders/${quote.data.order.id}/promotion`,
+        { promotionIds, expectedOrderVersion: quote.data.order.version },
+        { method: 'PUT', headers: mutationHeaders(csrf) },
+      );
+      setPromotionModalOpen(false);
+      await refreshOrder();
+      messageApi.success(
+        promotionIds.length > 0
+          ? `Đã áp dụng ${promotionIds.length} chương trình khuyến mại.`
+          : 'Đã bỏ tất cả khuyến mại.',
+      );
+    } catch (error) {
+      messageApi.error(errorText(error));
+    } finally {
+      setPromotionSaving(false);
+    }
+  };
 
   return (
     <div className="staff-order-editor">
       {holder}
+      <PosPromotionModal
+        open={promotionModalOpen}
+        options={quote.data?.promotionOptions ?? []}
+        appliedIds={(quote.data?.promotions ?? []).map((promotion) => promotion.id)}
+        loading={promotionSaving}
+        onClose={() => setPromotionModalOpen(false)}
+        onApply={(ids) => void applyPromotion(ids)}
+      />
 
       {isMobile ? (
         mobileView === 'PRODUCTS' ? (
@@ -4375,7 +4552,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       : (categories.find((c) => c.id === selectedCategory)?.name ?? 'Danh sách')}
                   </span>
                   {auth.actor?.kind === 'OWNER' ||
-                    (staffContext.data?.permissions ?? []).includes('catalog.manage') ? (
+                  (staffContext.data?.permissions ?? []).includes('catalog.manage') ? (
                     <Button
                       type="link"
                       size="small"
@@ -4522,7 +4699,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       ? selectedTable.name
                       : 'Tạo đơn mới'
                     : quote.data?.order.displayCode ||
-                    (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
+                      (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
                 </div>
                 <div className="staff-order-mobile-sub">
                   <span className="staff-order-mobile-type-icon">
@@ -4630,11 +4807,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   Mặt hàng đã gọi (
                   {allCurrentItems.length +
                     (quote.data?.time ||
-                      (isNew &&
-                        orderType === 'DINE_IN' &&
-                        selectedTable?.timeProductId &&
-                        !timeRemoved) ||
-                      timeRestoringDraft
+                    (isNew &&
+                      orderType === 'DINE_IN' &&
+                      selectedTable?.timeProductId &&
+                      !timeRemoved) ||
+                    timeRestoringDraft
                       ? 1
                       : 0)}
                   )
@@ -4655,10 +4832,10 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                     quote.data?.order.orderType === 'DINE_IN' &&
                     !quote.data?.time &&
                     !timeRestoringDraft) ||
-                    (isNew &&
-                      orderType === 'DINE_IN' &&
-                      selectedTable?.timeProductId &&
-                      timeRemoved) ? (
+                  (isNew &&
+                    orderType === 'DINE_IN' &&
+                    selectedTable?.timeProductId &&
+                    timeRemoved) ? (
                     <div style={{ padding: '8px 16px 4px' }}>
                       <Button
                         size="small"
@@ -4697,7 +4874,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                         <span className="staff-order-mobile-item__name">
                           <strong>
                             {quote.data.time.tableSegments &&
-                              quote.data.time.tableSegments.length > 1
+                            quote.data.time.tableSegments.length > 1
                               ? 'Tiền giờ (Chuyển bàn)'
                               : 'Giờ'}
                           </strong>
@@ -4798,6 +4975,10 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                               Ghi chú: {item.note}
                             </div>
                           )}
+                          <ItemDiscountDetail
+                            amount={item.discountAmountVnd}
+                            reason={item.discountReason}
+                          />
                         </span>
                         <span className="staff-order-mobile-item__price">
                           {formatMoney(item.netLineTotalVnd)}
@@ -4828,6 +5009,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                           discountAmountVnd: item.discountAmountVnd,
                           discountType: item.discountType,
                           discountInputValue: item.discountInputValue,
+                          discountReason: item.discountReason,
                           netLineTotalVnd: item.netLineTotalVnd,
                         })
                       }
@@ -4846,6 +5028,10 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                               Ghi chú: {item.note}
                             </div>
                           )}
+                          <ItemDiscountDetail
+                            amount={item.discountAmountVnd}
+                            reason={item.discountReason}
+                          />
                         </span>
                         <span className="staff-order-mobile-item__price">
                           {formatMoney(item.netLineTotalVnd)}
@@ -4882,6 +5068,54 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
               )}
             </div>
 
+            {/* Mobile Order Financial Summary Details (In-Flow / Non-Sticky) */}
+            <div className="staff-order-mobile-summary-card">
+              <div className="staff-order-mobile-summary__title">Tổng tiền</div>
+              <div className="staff-order-mobile-summary__row">
+                <span>Tổng tiền hàng ({regularProductCount} món)</span>
+                <span>{formatMoney(regularProductGross)}</span>
+              </div>
+              {totalTimeGross > 0 && (
+                <div className="staff-order-mobile-summary__row">
+                  <span>Tiền giờ</span>
+                  <span>{formatMoney(totalTimeGross)}</span>
+                </div>
+              )}
+              <div
+                className="staff-order-mobile-summary__row staff-promotion-trigger"
+                onClick={() => !isNew && setPromotionModalOpen(true)}
+              >
+                <span>Giảm giá {!isNew ? <EditOutlined /> : null}</span>
+                <span className="staff-cart-discount-amount">
+                  {totalDiscount > 0 ? `-${formatMoney(totalDiscount)}` : '0đ'}
+                </span>
+              </div>
+              {appliedPromotions.length > 0 ? (
+                <div
+                  className="staff-applied-promotions-box"
+                  onClick={() => !isNew && setPromotionModalOpen(true)}
+                >
+                  {appliedPromotions.map((promotion) => (
+                    <div key={promotion.id} className="staff-applied-promotion-row-item">
+                      <span className="staff-applied-promotion-name">{promotion.name}</span>
+                      <span className="staff-applied-promotion-amount">
+                        {promotion.discountAmountVnd > 0
+                          ? `-${formatMoney(promotion.discountAmountVnd)}`
+                          : promotion.type === 'GIFT'
+                            ? 'Tặng món'
+                            : '-0đ'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <div className="staff-order-mobile-divider" />
+              <div className="staff-order-mobile-summary__total-row">
+                <strong>Khách phải trả</strong>
+                <strong>{formatMoney(displayedTotal)}</strong>
+              </div>
+            </div>
+
             {/* Mobile Order Note Row */}
             <div className="staff-order-mobile-note" onClick={() => setOrderNoteOpen(true)}>
               <div className="staff-order-mobile-note__content">
@@ -4907,26 +5141,9 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
               <span>Thêm món</span>
             </button>
 
-            {/* Sticky Bottom Billing Summary & Actions */}
+            {/* Sticky Bottom Billing Summary & Actions (Only Khách phải trả) */}
             <div className="staff-order-mobile-footer">
-              <div className="staff-order-mobile-summary">
-                <div className="staff-order-mobile-summary__title">Tổng tiền</div>
-                <div className="staff-order-mobile-summary__row">
-                  <span>Tổng tiền hàng ({regularProductCount} món)</span>
-                  <span>{formatMoney(regularProductGross)}</span>
-                </div>
-                {totalTimeGross > 0 && (
-                  <div className="staff-order-mobile-summary__row">
-                    <span>Tiền giờ</span>
-                    <span>{formatMoney(totalTimeGross)}</span>
-                  </div>
-                )}
-                {totalDiscount > 0 && (
-                  <div className="staff-order-mobile-summary__row">
-                    <span>Giảm giá</span>
-                    <span className="text-danger">-{formatMoney(totalDiscount)}</span>
-                  </div>
-                )}
+              <div className="staff-order-mobile-summary-compact">
                 <div className="staff-order-mobile-summary__total-row">
                   <strong>Khách phải trả</strong>
                   <strong>{formatMoney(displayedTotal)}</strong>
@@ -5004,11 +5221,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   {[
                     quote.data.order.orderType === 'DINE_IN'
                       ? [quote.data.order.areaName, quote.data.order.tableName]
-                        .filter(Boolean)
-                        .join(' - ')
+                          .filter(Boolean)
+                          .join(' - ')
                       : 'Mang đi',
                     quote.data.order.displayCode ||
-                    (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : null),
+                      (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : null),
                   ]
                     .filter(Boolean)
                     .join(' · ')}
@@ -5063,7 +5280,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   {isNew
                     ? 'Sinh khi lưu'
                     : quote.data?.order.displayCode ||
-                    (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
+                      (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
                 </strong>
               </div>
               {!isNew && orderId && (
@@ -5142,7 +5359,9 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                           )}
                         </span>
                         <div className="staff-product-card__info">
-                          <strong className="staff-product-card__name">{product.productName}</strong>
+                          <strong className="staff-product-card__name">
+                            {product.productName}
+                          </strong>
                           <div className="staff-product-card__meta">
                             {product.variants.length > 1 ? (
                               <small>{product.variants.length} phiên bản</small>
@@ -5234,7 +5453,9 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                                 })
                               }
                               onDelete={() =>
-                                setDraftLines((lines) => lines.filter((line) => line.id !== item.id))
+                                setDraftLines((lines) =>
+                                  lines.filter((line) => line.id !== item.id),
+                                )
                               }
                             >
                               <span className="staff-order-quantity">
@@ -5247,6 +5468,10 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                               <span className="staff-order-item-name">
                                 <strong>{item.productName}</strong>
                                 <small>{item.variantName}</small>
+                                <ItemDiscountDetail
+                                  amount={item.discountAmountVnd}
+                                  reason={item.discountReason}
+                                />
                               </span>
                               <b>{formatMoney(item.netLineTotalVnd)}</b>
                             </SwipeableOrderItemRow>
@@ -5259,11 +5484,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                         Sản phẩm đã gọi (
                         {displayedItems.length +
                           (quote.data?.time ||
-                            (isNew &&
-                              orderType === 'DINE_IN' &&
-                              selectedTable?.timeProductId &&
-                              !timeRemoved) ||
-                            timeRestoringDraft
+                          (isNew &&
+                            orderType === 'DINE_IN' &&
+                            selectedTable?.timeProductId &&
+                            !timeRemoved) ||
+                          timeRestoringDraft
                             ? 1
                             : 0)}
                         )
@@ -5288,10 +5513,10 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                           quote.data?.order.orderType === 'DINE_IN' &&
                           !quote.data?.time &&
                           !timeRestoringDraft) ||
-                          (isNew &&
-                            orderType === 'DINE_IN' &&
-                            selectedTable?.timeProductId &&
-                            timeRemoved) ? (
+                        (isNew &&
+                          orderType === 'DINE_IN' &&
+                          selectedTable?.timeProductId &&
+                          timeRemoved) ? (
                           <div style={{ margin: '0 0 14px' }}>
                             <Button
                               size="small"
@@ -5321,7 +5546,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
 
                         {quote.data?.time ? (
                           quote.data.time.tableSegments &&
-                            quote.data.time.tableSegments.length > 1 ? (
+                          quote.data.time.tableSegments.length > 1 ? (
                             <button
                               type="button"
                               className="staff-time-line staff-time-line--editable staff-time-line--transfer"
@@ -5407,9 +5632,9 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                                     ? formatClock(quote.data.time.endedAtMs)
                                     : quote.data.time.status === 'PAUSED'
                                       ? formatClock(
-                                        quote.data.time.startedAtMs +
-                                        quote.data.time.elapsedSeconds * 1000,
-                                      )
+                                          quote.data.time.startedAtMs +
+                                            quote.data.time.elapsedSeconds * 1000,
+                                        )
                                       : 'Hiện tại'}{' '}
                                   · Tổng: <strong>{formatElapsed(liveElapsedSeconds)}</strong>
                                 </span>
@@ -5510,6 +5735,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                                     discountAmountVnd: item.discountAmountVnd,
                                     discountType: item.discountType,
                                     discountInputValue: item.discountInputValue,
+                                    discountReason: item.discountReason,
                                     netLineTotalVnd: item.netLineTotalVnd,
                                   })
                                 }
@@ -5540,6 +5766,10 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                                   <strong>{item.productName}</strong>
                                   <small>{item.variantName}</small>
                                   {item.note ? <small>Ghi chú: {item.note}</small> : null}
+                                  <ItemDiscountDetail
+                                    amount={item.discountAmountVnd}
+                                    reason={item.discountReason}
+                                  />
                                 </span>
                                 <b>{formatMoney(item.netLineTotalVnd)}</b>
                               </SwipeableOrderItemRow>
@@ -5606,7 +5836,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                             {isNew
                               ? 'Sinh khi lưu'
                               : quote.data?.order.displayCode ||
-                              (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
+                                (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
                           </strong>
                         </div>
                       </div>
@@ -5707,10 +5937,36 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       <b>{formatMoney(totalTimeGross)}</b>
                     </div>
                   ) : null}
-                  <div>
-                    <span>Giảm giá</span>
-                    <b>{totalDiscount > 0 ? `-${formatMoney(totalDiscount)}` : '0đ'}</b>
+                  <div
+                    className="staff-promotion-trigger"
+                    onClick={() => !isNew && setPromotionModalOpen(true)}
+                  >
+                    <span>Giảm giá {!isNew ? <EditOutlined /> : null}</span>
+                    <span className="staff-cart-discount-amount">
+                      {totalDiscount > 0 ? `-${formatMoney(totalDiscount)}` : '0đ'}
+                    </span>
                   </div>
+                  {appliedPromotions.length > 0 ? (
+                    <div
+                      className="staff-applied-promotions-box"
+                      onClick={() => !isNew && setPromotionModalOpen(true)}
+                    >
+                      {appliedPromotions.map((promotion) => (
+                        <div key={promotion.id} className="staff-applied-promotion-row-item">
+                          <span className="staff-applied-promotion-name">
+                            {promotion.name}
+                          </span>
+                          <span className="staff-applied-promotion-amount">
+                            {promotion.discountAmountVnd > 0
+                              ? `-${formatMoney(promotion.discountAmountVnd)}`
+                              : promotion.type === 'GIFT'
+                                ? 'Tặng món'
+                                : '-0đ'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                   <div className="staff-cart-total">
                     <span>Khách phải trả</span>
                     <b>{formatMoney(displayedTotal)}</b>
@@ -5882,6 +6138,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   note: updated.note.trim() || null,
                   discountType: updated.discountType,
                   discountInputValue: updated.discountInputValue,
+                  discountReason: updated.discountReason,
                 };
               }),
             );
@@ -5896,9 +6153,13 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   : (updated.variantId ?? null),
               discount:
                 updated.discountType &&
-                  updated.discountInputValue !== null &&
-                  updated.discountInputValue !== undefined
-                  ? { type: updated.discountType, value: updated.discountInputValue }
+                updated.discountInputValue !== null &&
+                updated.discountInputValue !== undefined
+                  ? {
+                      type: updated.discountType,
+                      value: updated.discountInputValue,
+                      reason: updated.discountReason ?? '',
+                    }
                   : null,
               note: updated.note.trim() || null,
             });
@@ -5939,68 +6200,68 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         footer={
           quote.data?.time
             ? [
-              <Button
-                key="toggle"
-                icon={timeRangeDraft.endedAt ? <PlayCircleOutlined /> : <PauseCircleOutlined />}
-                onClick={
-                  timeRangeDraft.endedAt ? handleResumeTimeInModal : handlePauseTimeInModal
-                }
-                className="staff-time-footer-btn"
-              >
-                {timeRangeDraft.endedAt ? 'Tiếp tục tính giờ' : 'Tạm dừng giờ'}
-              </Button>,
-              <Button
-                key="delete-time"
-                danger
-                icon={<DeleteOutlined />}
-                onClick={() => {
-                  setDeleteTimeReason('');
-                  setDeleteTimeModalOpen(true);
-                }}
-                className="staff-time-footer-btn"
-              >
-                Xóa tiền giờ
-              </Button>,
-              <Button
-                key="save"
-                type="primary"
-                loading={saving}
-                onClick={saveTimeRange}
-                className="staff-time-footer-btn staff-time-footer-btn--primary"
-              >
-                Lưu thay đổi
-              </Button>,
-            ]
+                <Button
+                  key="toggle"
+                  icon={timeRangeDraft.endedAt ? <PlayCircleOutlined /> : <PauseCircleOutlined />}
+                  onClick={
+                    timeRangeDraft.endedAt ? handleResumeTimeInModal : handlePauseTimeInModal
+                  }
+                  className="staff-time-footer-btn"
+                >
+                  {timeRangeDraft.endedAt ? 'Tiếp tục tính giờ' : 'Tạm dừng giờ'}
+                </Button>,
+                <Button
+                  key="delete-time"
+                  danger
+                  icon={<DeleteOutlined />}
+                  onClick={() => {
+                    setDeleteTimeReason('');
+                    setDeleteTimeModalOpen(true);
+                  }}
+                  className="staff-time-footer-btn"
+                >
+                  Xóa tiền giờ
+                </Button>,
+                <Button
+                  key="save"
+                  type="primary"
+                  loading={saving}
+                  onClick={saveTimeRange}
+                  className="staff-time-footer-btn staff-time-footer-btn--primary"
+                >
+                  Lưu thay đổi
+                </Button>,
+              ]
             : [
-              <Button
-                key="cancel"
-                onClick={() => setTimeDetailOpen(false)}
-                className="staff-time-footer-btn"
-              >
-                Đóng
-              </Button>,
-              <Button
-                key="discard-restore"
-                danger
-                icon={<DeleteOutlined />}
-                onClick={() => {
-                  setTimeRestoringDraft(false);
-                  setTimeDetailOpen(false);
-                }}
-                className="staff-time-footer-btn"
-              >
-                Hủy khôi phục
-              </Button>,
-              <Button
-                key="save"
-                type="primary"
-                loading={saving}
-                onClick={saveTimeRange}
-                className="staff-time-footer-btn staff-time-footer-btn--primary"
-              >
-                Lưu thay đổi
-              </Button>,
-            ]
+                <Button
+                  key="cancel"
+                  onClick={() => setTimeDetailOpen(false)}
+                  className="staff-time-footer-btn"
+                >
+                  Đóng
+                </Button>,
+                <Button
+                  key="discard-restore"
+                  danger
+                  icon={<DeleteOutlined />}
+                  onClick={() => {
+                    setTimeRestoringDraft(false);
+                    setTimeDetailOpen(false);
+                  }}
+                  className="staff-time-footer-btn"
+                >
+                  Hủy khôi phục
+                </Button>,
+                <Button
+                  key="save"
+                  type="primary"
+                  loading={saving}
+                  onClick={saveTimeRange}
+                  className="staff-time-footer-btn staff-time-footer-btn--primary"
+                >
+                  Lưu thay đổi
+                </Button>,
+              ]
         }
       >
         {quote.data?.time ? (
@@ -6358,10 +6619,32 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                 </div>
               ) : null}
               {totalDiscount > 0 ? (
-                <div className="staff-provisional-row">
-                  <span>Giảm giá</span>
-                  <span>-{formatMoney(totalDiscount)}</span>
-                </div>
+                <>
+                  <div className="staff-provisional-row">
+                    <span>Giảm giá</span>
+                    <span className="staff-cart-discount-amount">
+                      -{formatMoney(totalDiscount)}
+                    </span>
+                  </div>
+                  {appliedPromotions.length > 0 ? (
+                    <div className="staff-applied-promotions-box">
+                      {appliedPromotions.map((promotion) => (
+                        <div key={promotion.id} className="staff-applied-promotion-row-item">
+                          <span className="staff-applied-promotion-name">
+                            {promotion.name}
+                          </span>
+                          <span className="staff-applied-promotion-amount">
+                            {promotion.discountAmountVnd > 0
+                              ? `-${formatMoney(promotion.discountAmountVnd)}`
+                              : promotion.type === 'GIFT'
+                                ? 'Tặng món'
+                                : '-0đ'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </>
               ) : null}
               <div className="staff-provisional-row staff-provisional-row--total">
                 <span>TỔNG TẠM TÍNH</span>
@@ -6632,7 +6915,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                 {isNew
                   ? 'Chưa tạo'
                   : quote.data?.order.displayCode ||
-                  (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
+                    (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
               </strong>
             </div>
             <div className="staff-mobile-actions-info-row">
@@ -7135,6 +7418,7 @@ function InvoicePage() {
         </header>
         <div className="staff-invoice-lines">
           {data.lines.map((line) => {
+            const printLine = invoicePrintData.lines.find((item) => item.id === line.id);
             const snapshot = JSON.parse(line.snapshotJson) as {
               productType?: 'QUANTITY' | 'WEIGHT' | 'TIME';
               unitName?: string | null;
@@ -7232,14 +7516,18 @@ function InvoicePage() {
                       {formatMoney(segment.amountBeforeRoundingVnd)}
                     </small>
                   ))}
+                  <ItemDiscountDetail
+                    amount={printLine?.discountAmount ?? 0}
+                    reason={printLine?.discountReason ?? null}
+                  />
                 </span>
                 <span>
                   {line.lineType === 'PRODUCT' && snapshot.productType !== 'TIME'
                     ? formatItemQuantity(
-                      snapshot.productType ?? 'QUANTITY',
-                      line.quantityMilli,
-                      snapshot.unitName ?? null,
-                    )
+                        snapshot.productType ?? 'QUANTITY',
+                        line.quantityMilli,
+                        snapshot.unitName ?? null,
+                      )
                     : ''}
                 </span>
                 <b>{formatMoney(line.lineTotal)}</b>
@@ -7249,13 +7537,15 @@ function InvoicePage() {
         </div>
         <footer>
           <div>
-            <span>Tạm tính</span>
-            <b>{formatMoney(data.invoice.subtotal)}</b>
+            <span>Tạm tính trước khuyến mại</span>
+            <b>{formatMoney(data.invoice.total + (invoicePrintData.promotionDiscount ?? 0))}</b>
           </div>
-          <div>
-            <span>Giảm giá</span>
-            <b>{formatMoney(data.invoice.discountTotal)}</b>
-          </div>
+          {(invoicePrintData.promotions ?? []).map((promotion) => (
+            <div key={promotion.name}>
+              <span>Khuyến mại · {promotion.name}</span>
+              <b>-{formatMoney(promotion.discountAmountVnd)}</b>
+            </div>
+          ))}
           <div className="staff-invoice-grand-total">
             <span>Khách đã trả</span>
             <b>{formatMoney(data.invoice.total)}</b>
@@ -7598,19 +7888,19 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
     method: 'CASH' | 'BANK_TRANSFER' | 'DEBT';
     amountVnd: number;
   }> = isMultiMethod
-      ? [
+    ? [
         ...(cashApplied > 0 ? [{ method: 'CASH' as const, amountVnd: cashApplied }] : []),
         ...(bankApplied > 0 ? [{ method: 'BANK_TRANSFER' as const, amountVnd: bankApplied }] : []),
         ...(debtAmount > 0 ? [{ method: 'DEBT' as const, amountVnd: debtAmount }] : []),
       ]
-      : isDebtMethod
-        ? [
+    : isDebtMethod
+      ? [
           ...(cashApplied > 0 ? [{ method: 'CASH' as const, amountVnd: cashApplied }] : []),
           ...(currentDebtAmount > 0
             ? [{ method: 'DEBT' as const, amountVnd: currentDebtAmount }]
             : []),
         ]
-        : [
+      : [
           {
             method: selectedMethod === 'CASH' ? ('CASH' as const) : ('BANK_TRANSFER' as const),
             amountVnd: totalVnd,
@@ -7631,17 +7921,17 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
   };
   const paymentPreviewOptions = quote.data
     ? {
-      data: buildCurrentPaymentPrintData()!,
-      printSettings: printSettings.data,
-      storeInfo: {
-        storeName: staffContext.data?.storeName ?? null,
-        phone: staffContext.data?.storePhone ?? null,
-        address: staffContext.data?.storeAddress ?? null,
-        bankName: staffContext.data?.bankName ?? null,
-        bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
-        bankAccountName: staffContext.data?.bankAccountName ?? null,
-      },
-    }
+        data: buildCurrentPaymentPrintData()!,
+        printSettings: printSettings.data,
+        storeInfo: {
+          storeName: staffContext.data?.storeName ?? null,
+          phone: staffContext.data?.storePhone ?? null,
+          address: staffContext.data?.storeAddress ?? null,
+          bankName: staffContext.data?.bankName ?? null,
+          bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
+          bankAccountName: staffContext.data?.bankAccountName ?? null,
+        },
+      }
     : null;
 
   const resumeCheckoutForReturn = async () => {
@@ -7703,17 +7993,17 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
           cashReceivedVnd: currentMethodItem.backendMethod === 'CASH' ? cashReceived : null,
           allocations: isMultiMethod
             ? [
-              ...(cashApplied > 0
-                ? [
-                  {
-                    method: 'CASH',
-                    amountVnd: cashApplied,
-                    tenderedVnd: cashReceived ?? cashApplied,
-                  },
-                ]
-                : []),
-              ...(bankApplied > 0 ? [{ method: 'BANK_TRANSFER', amountVnd: bankApplied }] : []),
-            ]
+                ...(cashApplied > 0
+                  ? [
+                      {
+                        method: 'CASH',
+                        amountVnd: cashApplied,
+                        tenderedVnd: cashReceived ?? cashApplied,
+                      },
+                    ]
+                  : []),
+                ...(bankApplied > 0 ? [{ method: 'BANK_TRANSFER', amountVnd: bankApplied }] : []),
+              ]
             : isDebtMethod
               ? cashApplied > 0
                 ? [{ method: 'CASH', amountVnd: cashApplied, tenderedVnd: cashApplied }]
@@ -7958,128 +8248,128 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
 
             {selectedMethod === 'BANK_TRANSFER'
               ? (() => {
-                const bankSettings = quote.data?.bankSettings;
-                const hasBank = Boolean(
-                  bankSettings?.bankName && bankSettings?.bankAccountNumber,
-                );
-                const transferNote =
-                  `TT ${quote.data?.order.tableName ? `${quote.data.order.tableName} ` : ''}${quote.data?.order.displayCode || quote.data?.order.id.slice(0, 6) || ''}`.trim();
+                  const bankSettings = quote.data?.bankSettings;
+                  const hasBank = Boolean(
+                    bankSettings?.bankName && bankSettings?.bankAccountNumber,
+                  );
+                  const transferNote =
+                    `TT ${quote.data?.order.tableName ? `${quote.data.order.tableName} ` : ''}${quote.data?.order.displayCode || quote.data?.order.id.slice(0, 6) || ''}`.trim();
 
-                return (
-                  <section className="staff-payment-page__section staff-vietqr-card">
-                    <div className="staff-vietqr-card__header">
-                      <div className="staff-vietqr-card__title">
-                        <QrcodeOutlined style={{ color: '#0877ee', fontSize: 18 }} />
-                        <span>Thông tin chuyển khoản</span>
-                      </div>
-                      <Tag color="processing" style={{ borderRadius: 12, margin: 0 }}>
-                        Tự động điền số tiền
-                      </Tag>
-                    </div>
-
-                    {hasBank ? (
-                      <div className="staff-vietqr-details" style={{ width: '100%' }}>
-                        <div className="staff-vietqr-detail-item">
-                          <span className="staff-vietqr-detail-label">Số tài khoản</span>
-                          <div className="staff-vietqr-detail-value">
-                            <strong className="staff-vietqr-copyable">
-                              {bankSettings?.bankAccountNumber}
-                            </strong>
-                            <Tooltip title="Sao chép STK">
-                              <Button
-                                type="text"
-                                size="small"
-                                icon={<CopyOutlined />}
-                                onClick={() =>
-                                  handleCopy(
-                                    bankSettings?.bankAccountNumber || '',
-                                    'số tài khoản',
-                                  )
-                                }
-                              />
-                            </Tooltip>
-                          </div>
+                  return (
+                    <section className="staff-payment-page__section staff-vietqr-card">
+                      <div className="staff-vietqr-card__header">
+                        <div className="staff-vietqr-card__title">
+                          <QrcodeOutlined style={{ color: '#0877ee', fontSize: 18 }} />
+                          <span>Thông tin chuyển khoản</span>
                         </div>
+                        <Tag color="processing" style={{ borderRadius: 12, margin: 0 }}>
+                          Tự động điền số tiền
+                        </Tag>
+                      </div>
 
-                        {bankSettings?.bankAccountName ? (
+                      {hasBank ? (
+                        <div className="staff-vietqr-details" style={{ width: '100%' }}>
                           <div className="staff-vietqr-detail-item">
-                            <span className="staff-vietqr-detail-label">Chủ tài khoản</span>
+                            <span className="staff-vietqr-detail-label">Số tài khoản</span>
                             <div className="staff-vietqr-detail-value">
-                              <strong>{bankSettings.bankAccountName}</strong>
-                              <Tooltip title="Sao chép tên chủ TK">
+                              <strong className="staff-vietqr-copyable">
+                                {bankSettings?.bankAccountNumber}
+                              </strong>
+                              <Tooltip title="Sao chép STK">
                                 <Button
                                   type="text"
                                   size="small"
                                   icon={<CopyOutlined />}
                                   onClick={() =>
                                     handleCopy(
-                                      bankSettings.bankAccountName || '',
-                                      'tên chủ tài khoản',
+                                      bankSettings?.bankAccountNumber || '',
+                                      'số tài khoản',
                                     )
                                   }
                                 />
                               </Tooltip>
                             </div>
                           </div>
-                        ) : null}
 
-                        <div className="staff-vietqr-detail-item">
-                          <span className="staff-vietqr-detail-label">Số tiền cần chuyển</span>
-                          <div className="staff-vietqr-detail-value">
-                            <strong style={{ color: '#0877ee', fontSize: 16 }}>
-                              {formatMoney(totalVnd)}
-                            </strong>
-                            <Tooltip title="Sao chép số tiền">
-                              <Button
-                                type="text"
-                                size="small"
-                                icon={<CopyOutlined />}
-                                onClick={() => handleCopy(String(totalVnd), 'số tiền')}
-                              />
-                            </Tooltip>
+                          {bankSettings?.bankAccountName ? (
+                            <div className="staff-vietqr-detail-item">
+                              <span className="staff-vietqr-detail-label">Chủ tài khoản</span>
+                              <div className="staff-vietqr-detail-value">
+                                <strong>{bankSettings.bankAccountName}</strong>
+                                <Tooltip title="Sao chép tên chủ TK">
+                                  <Button
+                                    type="text"
+                                    size="small"
+                                    icon={<CopyOutlined />}
+                                    onClick={() =>
+                                      handleCopy(
+                                        bankSettings.bankAccountName || '',
+                                        'tên chủ tài khoản',
+                                      )
+                                    }
+                                  />
+                                </Tooltip>
+                              </div>
+                            </div>
+                          ) : null}
+
+                          <div className="staff-vietqr-detail-item">
+                            <span className="staff-vietqr-detail-label">Số tiền cần chuyển</span>
+                            <div className="staff-vietqr-detail-value">
+                              <strong style={{ color: '#0877ee', fontSize: 16 }}>
+                                {formatMoney(totalVnd)}
+                              </strong>
+                              <Tooltip title="Sao chép số tiền">
+                                <Button
+                                  type="text"
+                                  size="small"
+                                  icon={<CopyOutlined />}
+                                  onClick={() => handleCopy(String(totalVnd), 'số tiền')}
+                                />
+                              </Tooltip>
+                            </div>
+                          </div>
+
+                          <div className="staff-vietqr-detail-item">
+                            <span className="staff-vietqr-detail-label">Nội dung CK</span>
+                            <div className="staff-vietqr-detail-value">
+                              <strong style={{ color: '#d97706' }}>{transferNote}</strong>
+                              <Tooltip title="Sao chép nội dung">
+                                <Button
+                                  type="text"
+                                  size="small"
+                                  icon={<CopyOutlined />}
+                                  onClick={() => handleCopy(transferNote, 'nội dung')}
+                                />
+                              </Tooltip>
+                            </div>
                           </div>
                         </div>
-
-                        <div className="staff-vietqr-detail-item">
-                          <span className="staff-vietqr-detail-label">Nội dung CK</span>
-                          <div className="staff-vietqr-detail-value">
-                            <strong style={{ color: '#d97706' }}>{transferNote}</strong>
-                            <Tooltip title="Sao chép nội dung">
+                      ) : (
+                        <Alert
+                          type="warning"
+                          showIcon
+                          title="Chưa cấu hình tài khoản ngân hàng"
+                          description={
+                            <div style={{ marginTop: 6 }}>
+                              <p style={{ margin: '0 0 10px', color: '#64748b', fontSize: 13 }}>
+                                Vui lòng cấu hình tài khoản ngân hàng trong Thiết lập để tự động tạo
+                                mã VietQR cho khách quét chuyển khoản.
+                              </p>
                               <Button
-                                type="text"
                                 size="small"
-                                icon={<CopyOutlined />}
-                                onClick={() => handleCopy(transferNote, 'nội dung')}
-                              />
-                            </Tooltip>
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <Alert
-                        type="warning"
-                        showIcon
-                        title="Chưa cấu hình tài khoản ngân hàng"
-                        description={
-                          <div style={{ marginTop: 6 }}>
-                            <p style={{ margin: '0 0 10px', color: '#64748b', fontSize: 13 }}>
-                              Vui lòng cấu hình tài khoản ngân hàng trong Thiết lập để tự động tạo
-                              mã VietQR cho khách quét chuyển khoản.
-                            </p>
-                            <Button
-                              size="small"
-                              type="primary"
-                              onClick={() => navigate('/owner/settings/store')}
-                            >
-                              Đến trang Cấu hình ngân hàng
-                            </Button>
-                          </div>
-                        }
-                      />
-                    )}
-                  </section>
-                );
-              })()
+                                type="primary"
+                                onClick={() => navigate('/owner/settings/store')}
+                              >
+                                Đến trang Cấu hình ngân hàng
+                              </Button>
+                            </div>
+                          }
+                        />
+                      )}
+                    </section>
+                  );
+                })()
               : null}
           </div>
 
@@ -8466,9 +8756,9 @@ export function StaffPosPortalPage() {
     : location.pathname.startsWith('/pos/qr-order')
       ? 'qr'
       : location.pathname.startsWith('/pos/more') ||
-        isInvoicesList ||
-        isCatalog ||
-        isPrinterSettings
+          isInvoicesList ||
+          isCatalog ||
+          isPrinterSettings
         ? 'more'
         : 'orders';
 

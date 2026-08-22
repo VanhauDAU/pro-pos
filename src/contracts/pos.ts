@@ -22,6 +22,7 @@ export const addOrderItemSchema = z.object({
     .object({
       type: z.enum(['FIXED', 'PERCENT']),
       value: z.number().int().nonnegative(),
+      reason: z.string().trim().min(1, 'Vui lòng nhập lý do giảm giá.').max(300),
     })
     .nullable()
     .optional(),
@@ -35,6 +36,7 @@ export const updateOrderItemSchema = z.object({
     .object({
       type: z.enum(['FIXED', 'PERCENT']),
       value: z.number().int().nonnegative(),
+      reason: z.string().trim().min(1, 'Vui lòng nhập lý do giảm giá.').max(300),
     })
     .nullable()
     .optional(),

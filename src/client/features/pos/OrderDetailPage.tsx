@@ -224,6 +224,32 @@ export function OrderDetailPage({
   });
 
   const data = detailQuery.data;
+  const invoicePromotions = useMemo(() => {
+    if (!data?.invoice?.snapshotJson) return [];
+    try {
+      const snapshot = JSON.parse(data.invoice.snapshotJson) as {
+        promotion?: {
+          name: string;
+          type: string;
+          value: number | null;
+          discountAmountVnd: number;
+        } | null;
+        promotions?: Array<{
+          name: string;
+          type: string;
+          value: number | null;
+          discountAmountVnd: number;
+        }>;
+      };
+      return snapshot.promotions ?? (snapshot.promotion ? [snapshot.promotion] : []);
+    } catch {
+      return [];
+    }
+  }, [data?.invoice?.snapshotJson]);
+  const invoicePromotionDiscount = invoicePromotions.reduce(
+    (sum, promotion) => sum + promotion.discountAmountVnd,
+    0,
+  );
 
   // Realtime active segment duration calculation
   const liveTimeSegments = useMemo(() => {
@@ -305,6 +331,9 @@ export function OrderDetailPage({
       issuedAtMs: data.invoice?.issuedAt || Date.now(),
       subtotal: isPayment ? data.invoice!.subtotalVnd : liveGrandTotal,
       discountTotal: isPayment ? data.invoice!.discountTotalVnd : data.totals.totalDiscountVnd,
+      promotionDiscount: isPayment ? invoicePromotionDiscount : 0,
+      promotion: invoicePromotions[0] ?? null,
+      promotions: invoicePromotions,
       total: isPayment ? data.invoice!.totalVnd : liveGrandTotal,
       paymentMethod: isPayment ? (successfulPayment?.method ?? null) : null,
       cashReceived: isPayment ? (successfulPayment?.cashReceived ?? null) : null,
@@ -341,6 +370,8 @@ export function OrderDetailPage({
           totalPrice: it.netLineTotalVnd,
           unitName: it.unitNameSnapshot,
           note: it.note,
+          discountAmount: it.discountAmountVnd,
+          discountReason: it.discountReason,
           isTime: it.productType === 'TIME',
           timeStartedAtMs: it.timeStartedAtMs ?? undefined,
           timeEndedAtMs: it.timeEndedAtMs,
@@ -835,13 +866,15 @@ export function OrderDetailPage({
 
                 <div className="order-detail-totals-row">
                   <span className="text-secondary">Tiền mặt hàng:</span>
-                  <span>{formatMoney(totals.itemGrossAmountVnd)}</span>
+                  <span>
+                    {formatMoney(totals.itemGrossAmountVnd - totals.itemDiscountAmountVnd)}
+                  </span>
                 </div>
 
-                {totals.totalDiscountVnd > 0 && (
+                {totals.orderDiscountAmountVnd > 0 && (
                   <div className="order-detail-totals-row text-danger">
-                    <span>Giảm giá:</span>
-                    <span>-{formatMoney(totals.totalDiscountVnd)}</span>
+                    <span>Khuyến mại:</span>
+                    <span>-{formatMoney(totals.orderDiscountAmountVnd)}</span>
                   </div>
                 )}
 
@@ -1279,12 +1312,14 @@ export function OrderDetailPage({
                   </div>
                   <div className="order-detail-inline-receipt__row">
                     <span>Tiền hàng / giờ</span>
-                    <b>{formatMoney(invoice.subtotalVnd)}</b>
+                    <b>{formatMoney(invoice.totalVnd + invoicePromotionDiscount)}</b>
                   </div>
-                  <div className="order-detail-inline-receipt__row">
-                    <span>Giảm giá</span>
-                    <b>-{formatMoney(invoice.discountTotalVnd)}</b>
-                  </div>
+                  {invoicePromotions.map((promotion) => (
+                    <div key={promotion.name} className="order-detail-inline-receipt__row">
+                      <span>Khuyến mại · {promotion.name}</span>
+                      <b>-{formatMoney(promotion.discountAmountVnd)}</b>
+                    </div>
+                  ))}
                   <div className="order-detail-inline-receipt__divider" />
                   <div className="order-detail-inline-receipt__row order-detail-inline-receipt__total">
                     <span>TỔNG CỘNG</span>
@@ -1409,9 +1444,12 @@ export function OrderDetailPage({
                       {it.productNameSnapshot} (x{it.quantityMilli / 1000})
                     </div>
                     {it.discountAmountVnd > 0 && (
-                      <small className="text-danger">
-                        Giảm: -{formatMoney(it.discountAmountVnd)}
-                      </small>
+                      <>
+                        <small className="text-danger">
+                          Giảm thủ công: -{formatMoney(it.discountAmountVnd)}
+                        </small>
+                        <small>Lý do: {it.discountReason || 'Chưa có lý do'}</small>
+                      </>
                     )}
                   </div>
                   <strong>{formatMoney(it.netLineTotalVnd)}</strong>
@@ -1424,14 +1462,17 @@ export function OrderDetailPage({
             <div className="order-detail-invoice-preview__totals">
               <div className="order-detail-invoice-preview__total-row">
                 <span>Tổng tiền hàng & giờ:</span>
-                <span>{formatMoney(invoice.subtotalVnd)}</span>
+                <span>{formatMoney(invoice.totalVnd + invoicePromotionDiscount)}</span>
               </div>
-              {invoice.discountTotalVnd > 0 && (
-                <div className="order-detail-invoice-preview__total-row text-danger">
-                  <span>Giảm giá:</span>
-                  <span>-{formatMoney(invoice.discountTotalVnd)}</span>
+              {invoicePromotions.map((promotion) => (
+                <div
+                  key={promotion.name}
+                  className="order-detail-invoice-preview__total-row text-danger"
+                >
+                  <span>Khuyến mại · {promotion.name}:</span>
+                  <span>-{formatMoney(promotion.discountAmountVnd)}</span>
                 </div>
-              )}
+              ))}
               <div className="order-detail-invoice-preview__total-row order-detail-invoice-preview__total-row--grand">
                 <span>THANH TOÁN:</span>
                 <strong>{formatMoney(invoice.totalVnd)}</strong>

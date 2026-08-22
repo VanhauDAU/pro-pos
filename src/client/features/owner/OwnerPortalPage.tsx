@@ -6,6 +6,7 @@ import {
   CreditCardOutlined,
   DashboardOutlined,
   FileTextOutlined,
+  GiftOutlined,
   LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -69,6 +70,7 @@ import {
   OwnerCustomerGroupListPage,
   OwnerCustomerListPage,
 } from './OwnerCustomerPages';
+import { OwnerPromotionFormPage, OwnerPromotionListPage } from './OwnerPromotionPages';
 
 const BRAND = '#0975F7';
 
@@ -143,6 +145,7 @@ const menuItems: OwnerMenuItem[] = [
       { key: '/owner/customer-groups', label: 'Nhóm khách hàng', icon: <TeamOutlined /> },
     ],
   },
+  { key: '/owner/promotions', label: 'Khuyến mại', icon: <GiftOutlined /> },
 ];
 
 const settingsItems: OwnerMenuItem[] = [
@@ -524,6 +527,15 @@ export function OwnerPortalPage() {
     ) {
       return '/owner/settings';
     }
+    const direct = allMenuItems
+      .filter(
+        (item) =>
+          item.key !== '/owner' &&
+          item.key.startsWith('/') &&
+          (location.pathname === item.key || location.pathname.startsWith(`${item.key}/`)),
+      )
+      .toSorted((left, right) => right.key.length - left.key.length)[0];
+    if (direct) return direct.key;
     const match = allMenuItems
       .flatMap((item) => item.children ?? [])
       .filter(
@@ -760,6 +772,12 @@ export function OwnerPortalPage() {
               <OwnerCategoryDetailPage categoryId={location.pathname.split('/').at(-1)!} />
             ) : location.pathname === '/owner/invoices' ? (
               <OwnerInvoicesPage />
+            ) : location.pathname === '/owner/promotions' ? (
+              <OwnerPromotionListPage />
+            ) : location.pathname === '/owner/promotions/new' ? (
+              <OwnerPromotionFormPage />
+            ) : location.pathname.startsWith('/owner/promotions/') ? (
+              <OwnerPromotionFormPage promotionId={location.pathname.split('/')[3]!} />
             ) : location.pathname === '/owner/customers' ? (
               <OwnerCustomerListPage />
             ) : location.pathname === '/owner/customers/new' ? (

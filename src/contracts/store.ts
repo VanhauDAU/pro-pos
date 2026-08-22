@@ -32,6 +32,7 @@ export interface PrintTemplateDisplayConfig {
   showTableAreaName: boolean;
   showCashierName: boolean;
   showCheckInTime: boolean;
+  showCustomerName: boolean;
   showCustomerPhone: boolean;
   showCustomerAddress: boolean;
   showOrderNote: boolean;
@@ -41,6 +42,7 @@ export interface PrintTemplateDisplayConfig {
   showItemTableBorder: boolean;
   showItemIndex: boolean;
   showItemNote: boolean;
+  showItemDiscounts: boolean;
 
   // 4. Thông tin giờ
   showHourlyDetail: boolean;
@@ -59,14 +61,17 @@ export interface PrintTemplateDisplayConfig {
   combineGoodsAndServiceTotal: boolean;
   showPromotionsList: boolean;
   showProvisionalTotal: boolean;
+  showPaymentMethod: boolean;
+  showCashDetails: boolean;
   showBottomImage: boolean;
 }
 
-export const defaultPrintTemplateConfig: PrintTemplateDisplayConfig = {
+const basePrintTemplateConfig: PrintTemplateDisplayConfig = {
   showLogo: true,
   showTableAreaName: true,
   showCashierName: true,
   showCheckInTime: true,
+  showCustomerName: true,
   showCustomerPhone: true,
   showCustomerAddress: true,
   showOrderNote: true,
@@ -74,6 +79,7 @@ export const defaultPrintTemplateConfig: PrintTemplateDisplayConfig = {
   showItemTableBorder: false,
   showItemIndex: true,
   showItemNote: true,
+  showItemDiscounts: true,
   showHourlyDetail: true,
   hourlyDetailMode: 'FULL_TIMELOG',
   showHourlyUnitPrice: true,
@@ -86,8 +92,38 @@ export const defaultPrintTemplateConfig: PrintTemplateDisplayConfig = {
   combineGoodsAndServiceTotal: true,
   showPromotionsList: true,
   showProvisionalTotal: true,
+  showPaymentMethod: true,
+  showCashDetails: true,
   showBottomImage: true,
 };
+
+export const defaultProvisionalPrintTemplateConfig: PrintTemplateDisplayConfig = {
+  ...basePrintTemplateConfig,
+  showCustomerPhone: false,
+  showCustomerAddress: false,
+  showPaymentMethod: false,
+  showCashDetails: false,
+  showBottomImage: false,
+};
+
+export const defaultPaymentPrintTemplateConfig: PrintTemplateDisplayConfig = {
+  ...basePrintTemplateConfig,
+  showCustomerAddress: false,
+  showPaymentMethod: true,
+  showCashDetails: true,
+  showBottomImage: true,
+};
+
+/** Backward-compatible default for callers that do not specify a receipt type. */
+export const defaultPrintTemplateConfig = defaultPaymentPrintTemplateConfig;
+
+export function defaultPrintTemplateConfigFor(
+  type: keyof PrintTemplateSettingsMap,
+): PrintTemplateDisplayConfig {
+  return type === 'PROVISIONAL'
+    ? defaultProvisionalPrintTemplateConfig
+    : defaultPaymentPrintTemplateConfig;
+}
 
 export interface PrintTemplateSettingsMap {
   PROVISIONAL: PrintTemplateDisplayConfig;
@@ -97,8 +133,8 @@ export interface PrintTemplateSettingsMap {
 export function parsePrintTemplateConfigs(jsonStr?: string | null): PrintTemplateSettingsMap {
   if (!jsonStr) {
     return {
-      PROVISIONAL: { ...defaultPrintTemplateConfig },
-      PAYMENT: { ...defaultPrintTemplateConfig },
+      PROVISIONAL: { ...defaultProvisionalPrintTemplateConfig },
+      PAYMENT: { ...defaultPaymentPrintTemplateConfig },
     };
   }
   try {
@@ -106,21 +142,24 @@ export function parsePrintTemplateConfigs(jsonStr?: string | null): PrintTemplat
     if (parsed && typeof parsed === 'object') {
       if (parsed.PROVISIONAL || parsed.PAYMENT) {
         return {
-          PROVISIONAL: { ...defaultPrintTemplateConfig, ...parsed.PROVISIONAL },
-          PAYMENT: { ...defaultPrintTemplateConfig, ...parsed.PAYMENT },
+          PROVISIONAL: {
+            ...defaultProvisionalPrintTemplateConfig,
+            ...parsed.PROVISIONAL,
+          },
+          PAYMENT: { ...defaultPaymentPrintTemplateConfig, ...parsed.PAYMENT },
         };
       }
       return {
-        PROVISIONAL: { ...defaultPrintTemplateConfig, ...parsed },
-        PAYMENT: { ...defaultPrintTemplateConfig, ...parsed },
+        PROVISIONAL: { ...defaultProvisionalPrintTemplateConfig, ...parsed },
+        PAYMENT: { ...defaultPaymentPrintTemplateConfig, ...parsed },
       };
     }
   } catch {
     // fallback to defaults
   }
   return {
-    PROVISIONAL: { ...defaultPrintTemplateConfig },
-    PAYMENT: { ...defaultPrintTemplateConfig },
+    PROVISIONAL: { ...defaultProvisionalPrintTemplateConfig },
+    PAYMENT: { ...defaultPaymentPrintTemplateConfig },
   };
 }
 

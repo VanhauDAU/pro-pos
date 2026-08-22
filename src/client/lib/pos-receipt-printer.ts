@@ -62,6 +62,7 @@ function thermalReceiptDocument(html: string, paperSize: PaperSize, printableWid
     .thermal-receipt-store-name { font-size: ${isK58 ? 11 : 13.5}px; font-weight: 700; text-transform: uppercase; }
     .thermal-receipt-store-address, .thermal-receipt-store-phone { font-size: ${isK58 ? 9 : 11}px; }
     .thermal-receipt-title { font-size: ${isK58 ? 11.5 : 14.5}px; font-weight: 800; margin-top: 1mm; }
+    .thermal-receipt-unpaid { margin: .8mm 0; border: 1px solid #000; padding: .8mm; text-align: center; font-size: ${isK58 ? 10 : 12}px; font-weight: 800; }
     .thermal-receipt-copy-count { font-size: ${isK58 ? 9 : 11}px; }
     .thermal-receipt-divider-dash { border-bottom: 1px dashed #000; margin: 1mm 0; }
     .thermal-receipt-meta, .thermal-receipt-summary { display: flex; flex-direction: column; gap: .5mm; }
@@ -141,7 +142,7 @@ export function generateThermalReceiptHtml(
   if (template.showBottomImage && data.receiptType !== 'DEBT_PAYMENT') {
     if (printSettings?.bottomImageType === 'UPLOAD' && printSettings?.bottomImageMediaId) {
       bottomImageUrl = `/api/v1/media/${printSettings.bottomImageMediaId}`;
-    } else if (printSettings?.bottomImageType === 'VIETQR' && data.receiptType !== 'PAYMENT') {
+    } else if (printSettings?.bottomImageType === 'VIETQR' && data.receiptType === 'PAYMENT') {
       const bank = (printSettings?.bottomBankName || storeInfo?.bankName || '').trim();
       const account = (
         printSettings?.bottomBankAccountNumber ||
@@ -208,6 +209,7 @@ export function generateThermalReceiptHtml(
 
   html += `
     <div class="thermal-receipt-title">${title}</div>
+    ${data.receiptType === 'PROVISIONAL' ? '<div class="thermal-receipt-unpaid">CHƯA THANH TOÁN</div>' : ''}
     <div class="thermal-receipt-copy-count">Liên ${copy?.index ?? 1}/${copy?.total ?? 1}</div>
     <div class="thermal-receipt-code-line">
       <span>Số: ${code}</span>
@@ -247,11 +249,11 @@ export function generateThermalReceiptHtml(
   if (
     (template.showCustomerPhone && data.guestPhone) ||
     (template.showCustomerAddress && data.guestAddress) ||
-    data.customerName ||
+    (template.showCustomerName && data.customerName) ||
     (template.showOrderNote && data.note)
   ) {
     html += `<div class="thermal-receipt-divider-dash"></div>`;
-    if (data.customerName) {
+    if (template.showCustomerName && data.customerName) {
       html += `
         <div class="thermal-receipt-row">
           <span class="thermal-receipt-label">Khách hàng</span>
@@ -405,6 +407,12 @@ export function generateThermalReceiptHtml(
               ? `<div class="thermal-receipt-item-sub" style="font-style: italic;">* G/chú: ${escapeHtml(line.note)}</div>`
               : ''
           }
+          ${
+            template.showItemDiscounts && (line.discountAmount ?? 0) > 0
+              ? `<div class="thermal-receipt-item-sub" style="color: #d4380d;">* Giảm thủ công: -${formatVnd(line.discountAmount ?? 0)}đ</div>
+                 <div class="thermal-receipt-item-sub">* Lý do: ${escapeHtml(line.discountReason || 'Chưa có lý do')}</div>`
+              : ''
+          }
         </div>
       `;
     }
@@ -428,21 +436,30 @@ export function generateThermalReceiptHtml(
   ) {
     html += `<div class="thermal-receipt-row" style="font-weight: 600;"><span>Tổng tiền hàng &amp; dịch vụ</span><span>${formatVnd(timeTotal + goodsTotal)}đ</span></div>`;
   }
-  if (template.showProvisionalTotal && data.discountTotal > 0) {
+  const promotionDiscount = data.promotionDiscount ?? 0;
+  if (template.showProvisionalTotal && promotionDiscount > 0) {
     html += `
       <div class="thermal-receipt-row">
         <span>Tổng tạm tính</span>
-        <span>${formatVnd(data.subtotal)}đ</span>
+        <span>${formatVnd(timeTotal + goodsTotal)}đ</span>
       </div>
     `;
   }
-  if (template.showPromotionsList && data.discountTotal > 0) {
-    html += `
-      <div class="thermal-receipt-row" style="color: #e11d48;">
-        <span>Chiết khấu / Giảm giá</span>
-        <span>-${formatVnd(data.discountTotal)}đ</span>
-      </div>
-    `;
+  if (template.showPromotionsList && promotionDiscount > 0) {
+    const promotionLines =
+      data.promotions && data.promotions.length > 0
+        ? data.promotions
+        : data.promotion
+          ? [data.promotion]
+          : [{ name: 'Khuyến mại', type: '', value: null, discountAmountVnd: promotionDiscount }];
+    for (const promotion of promotionLines) {
+      html += `
+        <div class="thermal-receipt-row" style="color: #e11d48;">
+          <span>${escapeHtml(`KM: ${promotion.name}`)}</span>
+          <span>-${formatVnd(promotion.discountAmountVnd)}đ</span>
+        </div>
+      `;
+    }
   }
 
   const grandLabel =
@@ -458,7 +475,7 @@ export function generateThermalReceiptHtml(
     </div>
   `;
 
-  if (data.receiptType === 'PAYMENT') {
+  if (data.receiptType === 'PAYMENT' && template.showPaymentMethod) {
     const allocations = data.paymentAllocations ?? [];
     const needsAllocationBreakdown =
       allocations.length > 1 || allocations.some((allocation) => allocation.method === 'DEBT');
@@ -486,13 +503,14 @@ export function generateThermalReceiptHtml(
       <div class="thermal-receipt-row"><span>Số tiền vừa thu</span><strong>${formatVnd(data.debtPaymentVnd ?? data.total)}đ</strong></div>
       <div class="thermal-receipt-row"><span>Dư nợ còn lại</span><strong>${formatVnd(data.debtAfterVnd ?? 0)}đ</strong></div>
       ${data.referenceCode ? `<div class="thermal-receipt-row"><span>Mã tham chiếu</span><span>${escapeHtml(data.referenceCode)}</span></div>` : ''}
-      <div class="thermal-receipt-row"><span>Phương thức</span><span>${data.paymentMethod === 'CASH' ? 'Tiền mặt' : 'Chuyển khoản'}</span></div>
+      ${template.showPaymentMethod ? `<div class="thermal-receipt-row"><span>Phương thức</span><span>${data.paymentMethod === 'CASH' ? 'Tiền mặt' : 'Chuyển khoản'}</span></div>` : ''}
     `;
   }
 
   // Payment Details
   if (
     data.receiptType === 'PAYMENT' &&
+    template.showPaymentMethod &&
     data.paymentMethod &&
     (data.paymentAllocations?.length ?? 0) <= 1 &&
     !data.paymentAllocations?.some((allocation) => allocation.method === 'DEBT')
@@ -504,7 +522,7 @@ export function generateThermalReceiptHtml(
         <span style="font-weight: 600;">${methodStr}</span>
       </div>
     `;
-    if (data.paymentMethod === 'CASH') {
+    if (data.paymentMethod === 'CASH' && template.showCashDetails) {
       if (data.cashReceived !== null && data.cashReceived !== undefined) {
         html += `
           <div class="thermal-receipt-row">

@@ -15,6 +15,7 @@ import { ownerAccountRoutes } from '@server/routes/owner-account';
 import { ownerInvoiceRoutes } from '@server/routes/owner-invoices';
 import { ownerAnalyticsRoutes } from '@server/routes/owner-analytics';
 import { ownerCustomerRoutes } from '@server/routes/owner-customers';
+import { ownerPromotionRoutes } from '@server/routes/owner-promotions';
 import { guestOrderRoutes } from '@server/routes/guest-order';
 import type { AppEnv } from '@server/types';
 import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
@@ -80,6 +81,7 @@ app.route('/api/v1/owner/account', ownerAccountRoutes);
 app.route('/api/v1/owner/invoices', ownerInvoiceRoutes);
 app.route('/api/v1/owner/analytics', ownerAnalyticsRoutes);
 app.route('/api/v1/owner/customers', ownerCustomerRoutes);
+app.route('/api/v1/owner/promotions', ownerPromotionRoutes);
 
 app.notFound((c) => failure(c, { code: 'NOT_FOUND', message: 'Không tìm thấy tài nguyên.' }, 404));
 

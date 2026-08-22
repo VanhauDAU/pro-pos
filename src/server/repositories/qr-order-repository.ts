@@ -2,6 +2,7 @@ import type {
   GuestMenuProduct,
   GuestOrderRequestDto,
   ServiceRequestDto,
+  StaffNotificationAuditDto,
 } from '@contracts/qr-order';
 
 export interface QrActiveContextRow {
@@ -32,6 +33,25 @@ interface GuestRequestRow {
   createdAt: number;
   note: string | null;
   rejectedReason: string | null;
+}
+
+export interface StaffOperationalAuditRow {
+  id: string;
+  action: string;
+  entityId: string | null;
+  requestId: string;
+  orderId: string | null;
+  orderCode: string | null;
+  tableId: string | null;
+  tableName: string | null;
+  areaName: string | null;
+  productName: string | null;
+  variantName: string | null;
+  actorName: string | null;
+  deviceName: string | null;
+  beforeJson: string | null;
+  afterJson: string | null;
+  createdAt: number;
 }
 
 export class QrOrderRepository {
@@ -220,6 +240,10 @@ export class QrOrderRepository {
     note: string | null;
     ipHash: string | null;
     now: number;
+    notificationSummary: string;
+    notificationItemCount: number;
+    notificationTotalVnd: number;
+    notificationExpiresAt: number;
     items: Array<{
       id: string;
       productId: string;
@@ -279,6 +303,30 @@ export class QrOrderRepository {
             input.now,
           ),
       ),
+      this.db
+        .prepare(
+          `INSERT INTO staff_notification_events (
+            id, store_id, source_type, source_id, event_type, status,
+            order_id, table_id, table_name_snapshot, area_name_snapshot,
+            summary, note, item_count, total_vnd, created_at, expires_at
+          ) VALUES (?, ?, 'GUEST_ORDER', ?, 'QR_ORDER', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(store_id, source_type, source_id) DO NOTHING`,
+        )
+        .bind(
+          crypto.randomUUID(),
+          input.session.storeId,
+          input.requestId,
+          input.session.orderId,
+          input.session.tableId,
+          input.session.tableName,
+          input.session.areaName,
+          input.notificationSummary,
+          input.note,
+          input.notificationItemCount,
+          input.notificationTotalVnd,
+          input.now,
+          input.notificationExpiresAt,
+        ),
     ]);
   }
 
@@ -339,7 +387,7 @@ export class QrOrderRepository {
     );
   }
 
-  acceptRequest(input: {
+  async acceptRequest(input: {
     commandId: string;
     storeId: string;
     guestRequestId: string;
@@ -350,25 +398,41 @@ export class QrOrderRepository {
     requestId: string;
     now: number;
   }) {
-    return this.db
-      .prepare(
-        `INSERT INTO accept_guest_order_request_commands (
-          id, store_id, guest_request_id, expected_order_version,
-          actor_user_id, actor_session_id, device_id, request_id, issued_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        input.commandId,
-        input.storeId,
-        input.guestRequestId,
-        input.expectedOrderVersion,
-        input.actorId,
-        input.actorSessionId,
-        input.deviceId,
-        input.requestId,
-        input.now,
-      )
-      .run();
+    return this.db.batch([
+      this.db
+        .prepare(
+          `INSERT INTO accept_guest_order_request_commands (
+            id, store_id, guest_request_id, expected_order_version,
+            actor_user_id, actor_session_id, device_id, request_id, issued_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          input.commandId,
+          input.storeId,
+          input.guestRequestId,
+          input.expectedOrderVersion,
+          input.actorId,
+          input.actorSessionId,
+          input.deviceId,
+          input.requestId,
+          input.now,
+        ),
+      this.db
+        .prepare(
+          `UPDATE staff_notification_events
+           SET status = 'ACCEPTED', actor_user_id = ?, actor_session_id = ?,
+               device_id = ?, handled_at = ?
+           WHERE store_id = ? AND source_type = 'GUEST_ORDER' AND source_id = ?`,
+        )
+        .bind(
+          input.actorId,
+          input.actorSessionId,
+          input.deviceId,
+          input.now,
+          input.storeId,
+          input.guestRequestId,
+        ),
+    ]);
   }
 
   findAcceptCommand(storeId: string, commandId: string) {
@@ -381,7 +445,7 @@ export class QrOrderRepository {
       .first<{ guestRequestId: string }>();
   }
 
-  rejectRequest(input: {
+  async rejectRequest(input: {
     commandId: string;
     storeId: string;
     guestRequestId: string;
@@ -392,25 +456,42 @@ export class QrOrderRepository {
     requestId: string;
     now: number;
   }) {
-    return this.db
-      .prepare(
-        `INSERT INTO reject_guest_order_request_commands (
-          id, store_id, guest_request_id, reason, actor_user_id,
-          actor_session_id, device_id, request_id, issued_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        input.commandId,
-        input.storeId,
-        input.guestRequestId,
-        input.reason,
-        input.actorId,
-        input.actorSessionId,
-        input.deviceId,
-        input.requestId,
-        input.now,
-      )
-      .run();
+    return this.db.batch([
+      this.db
+        .prepare(
+          `INSERT INTO reject_guest_order_request_commands (
+            id, store_id, guest_request_id, reason, actor_user_id,
+            actor_session_id, device_id, request_id, issued_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          input.commandId,
+          input.storeId,
+          input.guestRequestId,
+          input.reason,
+          input.actorId,
+          input.actorSessionId,
+          input.deviceId,
+          input.requestId,
+          input.now,
+        ),
+      this.db
+        .prepare(
+          `UPDATE staff_notification_events
+           SET status = 'REJECTED', note = ?, actor_user_id = ?, actor_session_id = ?,
+               device_id = ?, handled_at = ?
+           WHERE store_id = ? AND source_type = 'GUEST_ORDER' AND source_id = ?`,
+        )
+        .bind(
+          input.reason,
+          input.actorId,
+          input.actorSessionId,
+          input.deviceId,
+          input.now,
+          input.storeId,
+          input.guestRequestId,
+        ),
+    ]);
   }
 
   findRejectCommand(storeId: string, commandId: string) {
@@ -440,6 +521,7 @@ export class QrOrderRepository {
     session: GuestSessionRow;
     type: 'CALL_STAFF' | 'CHECKOUT_REQUEST';
     now: number;
+    notificationExpiresAt: number;
   }) {
     await this.db.batch([
       this.db
@@ -480,6 +562,28 @@ export class QrOrderRepository {
           input.session.tableId,
           input.now,
         ),
+      this.db
+        .prepare(
+          `INSERT INTO staff_notification_events (
+            id, store_id, source_type, source_id, event_type, status,
+            order_id, table_id, table_name_snapshot, area_name_snapshot,
+            summary, item_count, total_vnd, created_at, expires_at
+          ) VALUES (?, ?, 'SERVICE_REQUEST', ?, ?, 'OPEN', ?, ?, ?, ?, ?, 0, 0, ?, ?)
+          ON CONFLICT(store_id, source_type, source_id) DO NOTHING`,
+        )
+        .bind(
+          crypto.randomUUID(),
+          input.session.storeId,
+          input.id,
+          input.type,
+          input.session.orderId,
+          input.session.tableId,
+          input.session.tableName,
+          input.session.areaName,
+          input.type === 'CALL_STAFF' ? 'Khách gọi nhân viên hỗ trợ' : 'Khách yêu cầu thanh toán',
+          input.now,
+          input.notificationExpiresAt,
+        ),
     ]);
   }
 
@@ -502,11 +606,123 @@ export class QrOrderRepository {
     return result.results;
   }
 
+  async listNotificationAudit(
+    storeId: string,
+    limit: number,
+  ): Promise<StaffNotificationAuditDto[]> {
+    const result = await this.db
+      .prepare(
+        `SELECT sne.id, sne.source_id AS sourceId, sne.event_type AS eventType,
+                sne.status, sne.order_id AS orderId, sne.table_id AS tableId,
+                sne.table_name_snapshot AS tableName, sne.area_name_snapshot AS areaName,
+                sne.summary, sne.note, sne.item_count AS itemCount,
+                sne.total_vnd AS totalVnd, u.display_name AS actorName,
+                d.name AS deviceName, sne.handled_at AS handledAt,
+                sne.created_at AS createdAt
+         FROM staff_notification_events sne
+         LEFT JOIN users u ON u.id = sne.actor_user_id
+         LEFT JOIN devices d ON d.id = sne.device_id
+         WHERE sne.store_id = ?
+         ORDER BY sne.created_at DESC
+         LIMIT ?`,
+      )
+      .bind(storeId, limit)
+      .all<StaffNotificationAuditDto>();
+    return result.results;
+  }
+
+  async listOperationalAudit(storeId: string, since: number, limit: number) {
+    const result = await this.db
+      .prepare(
+        `WITH selected AS (
+           SELECT al.*,
+             COALESCE(
+               json_extract(al.after_json, '$.orderId'),
+               json_extract(al.after_json, '$.order_id'),
+               json_extract(al.before_json, '$.orderId'),
+               CASE WHEN al.entity_type = 'ORDER' THEN al.entity_id END
+             ) AS resolved_order_id,
+             json_extract(al.after_json, '$.productId') AS resolved_product_id,
+             json_extract(al.after_json, '$.variantId') AS resolved_variant_id
+           FROM audit_logs al
+           WHERE al.store_id = ? AND al.created_at >= ? AND al.action IN (
+             'TABLE_OPENED', 'TAKEAWAY_ORDER_CREATED',
+             'ORDER_ITEM_ADDED', 'ORDER_ITEM_ADDED_WITH_DISCOUNT',
+             'ORDER_ITEM_UPDATED', 'ORDER_ITEM_REMOVED', 'ORDER_NOTE_UPDATED',
+             'TABLE_TRANSFERRED', 'TIME_PAUSED', 'TIME_RESUMED',
+             'TIME_RANGE_UPDATED', 'TIME_SESSION_REMOVED', 'TIME_SESSION_RESTORED',
+             'ORDER_CHECKOUT_PENDING', 'ORDER_RESUMED_FROM_CHECKOUT',
+             'CHECKOUT_COMPLETED', 'ORDER_CANCELLED'
+           )
+         )
+         SELECT s.id, s.action, s.entity_id AS entityId, s.request_id AS requestId,
+                s.resolved_order_id AS orderId,
+                COALESCE(o.display_code, tor.display_code) AS orderCode,
+                st.id AS tableId,
+                COALESCE(st.display_name, st.name,
+                  CASE WHEN tor.id IS NOT NULL THEN 'Mang đi' END) AS tableName,
+                a.name AS areaName,
+                COALESCE(p.name, oi.product_name_snapshot, toi.product_name_snapshot) AS productName,
+                COALESCE(pv.name, oi.variant_name_snapshot, toi.variant_name_snapshot) AS variantName,
+                u.display_name AS actorName, d.name AS deviceName,
+                s.before_json AS beforeJson, s.after_json AS afterJson,
+                s.created_at AS createdAt
+         FROM selected s
+         LEFT JOIN orders o ON o.id = s.resolved_order_id AND o.store_id = s.store_id
+         LEFT JOIN takeaway_orders tor
+           ON tor.id = s.resolved_order_id AND tor.store_id = s.store_id
+         LEFT JOIN service_tables st ON st.id = o.table_id AND st.store_id = o.store_id
+         LEFT JOIN areas a ON a.id = st.area_id AND a.store_id = st.store_id
+         LEFT JOIN products p
+           ON p.id = s.resolved_product_id AND p.store_id = s.store_id
+         LEFT JOIN product_variants pv
+           ON pv.id = s.resolved_variant_id AND pv.store_id = s.store_id
+         LEFT JOIN order_items oi
+           ON oi.id = s.entity_id AND oi.store_id = s.store_id
+         LEFT JOIN takeaway_order_items toi
+           ON toi.id = s.entity_id AND toi.store_id = s.store_id
+         LEFT JOIN users u ON u.id = s.actor_user_id
+         LEFT JOIN devices d ON d.id = s.device_id
+         ORDER BY s.created_at DESC
+         LIMIT ?`,
+      )
+      .bind(storeId, since, limit)
+      .all<StaffOperationalAuditRow>();
+    return result.results;
+  }
+
+  cleanupExpiredNotifications(now: number) {
+    return this.db
+      .prepare('DELETE FROM staff_notification_events WHERE expires_at <= ?')
+      .bind(now)
+      .run();
+  }
+
+  cleanupExpiredOperationalAudit(before: number) {
+    return this.db
+      .prepare(
+        `DELETE FROM audit_logs
+         WHERE created_at < ? AND action IN (
+           'TABLE_OPENED', 'TAKEAWAY_ORDER_CREATED',
+           'ORDER_ITEM_ADDED', 'ORDER_ITEM_ADDED_WITH_DISCOUNT',
+           'ORDER_ITEM_UPDATED', 'ORDER_ITEM_REMOVED', 'ORDER_NOTE_UPDATED',
+           'TABLE_TRANSFERRED', 'TIME_PAUSED', 'TIME_RESUMED',
+           'TIME_RANGE_UPDATED', 'TIME_SESSION_REMOVED', 'TIME_SESSION_RESTORED',
+           'ORDER_CHECKOUT_PENDING', 'ORDER_RESUMED_FROM_CHECKOUT',
+           'CHECKOUT_COMPLETED', 'ORDER_CANCELLED'
+         )`,
+      )
+      .bind(before)
+      .run();
+  }
+
   async updateServiceRequest(input: {
     storeId: string;
     id: string;
     action: 'ACKNOWLEDGE' | 'COMPLETE';
     actorId: string;
+    actorSessionId: string | null;
+    deviceId: string | null;
     requestId: string;
     now: number;
   }) {
@@ -555,6 +771,22 @@ export class QrOrderRepository {
           input.now,
           current.orderId,
           input.storeId,
+        ),
+      this.db
+        .prepare(
+          `UPDATE staff_notification_events
+           SET status = ?, actor_user_id = ?, actor_session_id = ?, device_id = ?,
+               handled_at = ?
+           WHERE store_id = ? AND source_type = 'SERVICE_REQUEST' AND source_id = ?`,
+        )
+        .bind(
+          status,
+          input.actorId,
+          input.actorSessionId,
+          input.deviceId,
+          input.now,
+          input.storeId,
+          input.id,
         ),
     ]);
     return { id: input.id, status, conflict: false };

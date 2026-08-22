@@ -234,10 +234,28 @@ function durationToSeconds(value: number | undefined, unit: string | undefined) 
   return amount * 60;
 }
 
-function BackLink({ label, to }: { label: string; to: string }) {
+function BackLink({
+  label,
+  to,
+  onClick,
+}: {
+  label: string;
+  to?: string | undefined;
+  onClick?: (() => void) | undefined;
+}) {
   const navigate = useNavigate();
   return (
-    <button className="owner-back-link" type="button" onClick={() => navigate(to)}>
+    <button
+      className="owner-back-link"
+      type="button"
+      onClick={() => {
+        if (onClick) {
+          onClick();
+        } else if (to) {
+          navigate(to);
+        }
+      }}
+    >
       <ArrowLeftOutlined /> {label}
     </button>
   );
@@ -270,7 +288,13 @@ function ProductAvatar({
   );
 }
 
-export function OwnerProductListPage() {
+export function OwnerProductListPage({
+  baseRoute = '/owner/catalog',
+  onBack,
+}: {
+  baseRoute?: string;
+  onBack?: () => void;
+} = {}) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [messageApi, contextHolder] = message.useMessage();
@@ -382,7 +406,7 @@ export function OwnerProductListPage() {
             <Button
               type="link"
               className="owner-catalog-name-link"
-              onClick={() => navigate(`/owner/catalog/products/${product.id}`)}
+              onClick={() => navigate(`${baseRoute}/products/${product.id}`)}
             >
               {product.name}
             </Button>
@@ -430,14 +454,14 @@ export function OwnerProductListPage() {
           <Button
             type="link"
             icon={<CopyOutlined />}
-            onClick={() => navigate(`/owner/catalog/products/new?copyFrom=${product.id}`)}
+            onClick={() => navigate(`${baseRoute}/products/new?copyFrom=${product.id}`)}
           >
             Sao chép
           </Button>
           <Button
             type="link"
             icon={<EditOutlined />}
-            onClick={() => navigate(`/owner/catalog/products/${product.id}`)}
+            onClick={() => navigate(`${baseRoute}/products/${product.id}`)}
           >
             Sửa
           </Button>
@@ -472,6 +496,7 @@ export function OwnerProductListPage() {
   return (
     <div className="owner-catalog-page">
       {contextHolder}
+      {onBack ? <BackLink label="Quay lại POS" onClick={onBack} /> : null}
       <div className="owner-catalog-heading">
         <div>
           <Typography.Title level={2}>Danh sách mặt hàng</Typography.Title>
@@ -482,7 +507,7 @@ export function OwnerProductListPage() {
         <Button
           type="primary"
           icon={<PlusOutlined />}
-          onClick={() => navigate('/owner/catalog/products/new')}
+          onClick={() => navigate(`${baseRoute}/products/new`)}
         >
           Thêm mặt hàng
         </Button>
@@ -491,7 +516,7 @@ export function OwnerProductListPage() {
         <Button
           type="link"
           icon={<TagsOutlined />}
-          onClick={() => navigate('/owner/catalog/categories')}
+          onClick={() => navigate(`${baseRoute}/categories`)}
         >
           Danh mục
         </Button>
@@ -584,7 +609,15 @@ export function OwnerProductListPage() {
   );
 }
 
-export function OwnerProductFormPage({ productId }: { productId?: string }) {
+export function OwnerProductFormPage({
+  productId,
+  baseRoute = '/owner/catalog',
+  onBack,
+}: {
+  productId?: string;
+  baseRoute?: string;
+  onBack?: () => void;
+} = {}) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const copyFromId = searchParams.get('copyFrom');
@@ -1038,7 +1071,11 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
         queryClient.invalidateQueries({ queryKey: ['pos-catalog'] }),
       ]);
       messageApi.success(isEdit ? 'Đã cập nhật mặt hàng.' : 'Đã thêm mặt hàng.');
-      navigate('/owner/catalog/products');
+      if (onBack) {
+        onBack();
+      } else {
+        navigate(`${baseRoute}/products`);
+      }
     } catch (error) {
       messageApi.error(errorMessage(error, 'Không thể lưu mặt hàng.'));
     } finally {
@@ -1053,7 +1090,11 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
   return (
     <div className="owner-catalog-form-page">
       {contextHolder}
-      <BackLink label="Quay lại danh sách mặt hàng" to="/owner/catalog/products" />
+      <BackLink
+        label="Quay lại danh sách mặt hàng"
+        to={onBack ? undefined : `${baseRoute}/products`}
+        onClick={onBack}
+      />
       <div className="owner-page-heading">
         <div>
           <Typography.Title level={2}>
@@ -1067,12 +1108,19 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
           {isEdit && (
             <Button
               icon={<CopyOutlined />}
-              onClick={() => navigate(`/owner/catalog/products/new?copyFrom=${productId}`)}
+              onClick={() => navigate(`${baseRoute}/products/new?copyFrom=${productId}`)}
             >
               Sao chép
             </Button>
           )}
-          <Button onClick={() => navigate('/owner/catalog/products')}>Hủy</Button>
+          <Button
+            onClick={() => {
+              if (onBack) onBack();
+              else navigate(`${baseRoute}/products`);
+            }}
+          >
+            Hủy
+          </Button>
         </Space>
       </div>
       <Form
@@ -1798,7 +1846,14 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
           </Col>
         </Row>
         <div className="owner-form-actions">
-          <Button onClick={() => navigate('/owner/catalog/products')}>Hủy</Button>
+          <Button
+            onClick={() => {
+              if (onBack) onBack();
+              else navigate(`${baseRoute}/products`);
+            }}
+          >
+            Hủy
+          </Button>
           <Button type="primary" htmlType="submit" loading={saving} icon={<SaveOutlined />}>
             Lưu mặt hàng
           </Button>
@@ -1808,7 +1863,13 @@ export function OwnerProductFormPage({ productId }: { productId?: string }) {
   );
 }
 
-export function OwnerCategoryListPage() {
+export function OwnerCategoryListPage({
+  baseRoute = '/owner/catalog',
+  onBack,
+}: {
+  baseRoute?: string;
+  onBack?: () => void;
+} = {}) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [messageApi, contextHolder] = message.useMessage();
@@ -1843,7 +1904,11 @@ export function OwnerCategoryListPage() {
   return (
     <div className="owner-catalog-page">
       {contextHolder}
-      <BackLink label="Quay lại mặt hàng" to="/owner/catalog/products" />
+      <BackLink
+        label="Quay lại mặt hàng"
+        to={onBack ? undefined : `${baseRoute}/products`}
+        onClick={onBack}
+      />
       <div className="owner-catalog-heading">
         <div>
           <Typography.Title level={2}>Danh mục</Typography.Title>
@@ -1880,7 +1945,7 @@ export function OwnerCategoryListPage() {
                 render: (name, category) => (
                   <Button
                     type="link"
-                    onClick={() => navigate(`/owner/catalog/categories/${category.id}`)}
+                    onClick={() => navigate(`${baseRoute}/categories/${category.id}`)}
                   >
                     {name}
                   </Button>
@@ -1899,7 +1964,7 @@ export function OwnerCategoryListPage() {
                   <Button
                     type="link"
                     icon={<EditOutlined />}
-                    onClick={() => navigate(`/owner/catalog/categories/${category.id}`)}
+                    onClick={() => navigate(`${baseRoute}/categories/${category.id}`)}
                   >
                     Xem và sửa
                   </Button>
@@ -1931,7 +1996,15 @@ export function OwnerCategoryListPage() {
   );
 }
 
-export function OwnerCategoryDetailPage({ categoryId }: { categoryId: string }) {
+export function OwnerCategoryDetailPage({
+  categoryId,
+  baseRoute = '/owner/catalog',
+  onBack,
+}: {
+  categoryId: string;
+  baseRoute?: string;
+  onBack?: () => void;
+}) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [messageApi, contextHolder] = message.useMessage();
@@ -1979,7 +2052,11 @@ export function OwnerCategoryDetailPage({ categoryId }: { categoryId: string }) 
       });
       await queryClient.invalidateQueries({ queryKey: CATEGORY_QUERY });
       messageApi.success('Đã xóa danh mục.');
-      navigate('/owner/catalog/categories');
+      if (onBack) {
+        onBack();
+      } else {
+        navigate(`${baseRoute}/categories`);
+      }
     } catch (error) {
       messageApi.error(errorMessage(error, 'Không thể xóa danh mục.'));
     }
@@ -1989,7 +2066,11 @@ export function OwnerCategoryDetailPage({ categoryId }: { categoryId: string }) 
   return (
     <div className="owner-catalog-page">
       {contextHolder}
-      <BackLink label="Quay lại danh mục" to="/owner/catalog/categories" />
+      <BackLink
+        label="Quay lại danh mục"
+        to={onBack ? undefined : `${baseRoute}/categories`}
+        onClick={onBack}
+      />
       <div className="owner-page-heading">
         <div>
           <Typography.Title level={2}>Chi tiết danh mục</Typography.Title>
@@ -2056,7 +2137,7 @@ export function OwnerCategoryDetailPage({ categoryId }: { categoryId: string }) 
                         <ProductAvatar product={product} size={32} />
                         <Button
                           type="link"
-                          onClick={() => navigate(`/owner/catalog/products/${product.id}`)}
+                          onClick={() => navigate(`${baseRoute}/products/${product.id}`)}
                         >
                           {value}
                         </Button>

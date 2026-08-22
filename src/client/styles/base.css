@@ -119,6 +119,46 @@
   color: #1d4ed8 !important;
 }
 
+.staff-header-notification-btn {
+  position: relative;
+  display: inline-grid !important;
+  place-items: center;
+  width: 38px !important;
+  min-width: 38px !important;
+  height: 38px !important;
+  padding: 0 !important;
+  border: 1px solid #e0e8f2 !important;
+  border-radius: 10px !important;
+  background: #f8fbff !important;
+  color: #40516a !important;
+  font-size: 17px !important;
+}
+
+.staff-header-notification-btn:hover {
+  border-color: #b9d6fa !important;
+  background: #edf6ff !important;
+  color: #0877ee !important;
+}
+
+.staff-header-notification-badge {
+  position: absolute;
+  top: -6px;
+  right: -7px;
+  display: grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background: #e11d48;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
 .staff-pos-header__left {
   display: flex;
   align-items: center;
@@ -253,6 +293,33 @@
 
 .staff-pos-bottom-nav button .anticon {
   font-size: 24px;
+}
+
+.staff-pos-nav-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.staff-pos-nav-badge {
+  position: absolute;
+  top: -9px;
+  right: -13px;
+  display: grid;
+  place-items: center;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background: #e11d48;
+  color: #fff;
+  box-shadow: 0 2px 7px rgb(190 18 60 / 28%);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 .staff-pos-bottom-nav button.is-active {
@@ -627,6 +694,93 @@
   display: block;
   margin-top: 24px;
   text-align: center;
+}
+
+.staff-onboarding-entry {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 16px 18px;
+  border: 0;
+  border-top: 1px solid #f1f5f9;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.staff-onboarding-entry:hover {
+  background: #f8fbff;
+}
+
+.staff-onboarding-entry__icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: #f3e8ff;
+  color: #7e22ce;
+  font-size: 22px;
+}
+
+.staff-onboarding-entry__copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.staff-onboarding-entry__copy strong {
+  color: #0f172a;
+  font-size: 15px;
+}
+
+.staff-onboarding-entry__copy small {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.staff-onboarding-entry > .anticon {
+  color: #94a3b8;
+}
+
+.staff-onboarding-welcome {
+  display: grid;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.staff-onboarding-welcome__icons {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #0877ee;
+  font-size: 25px;
+}
+
+.staff-onboarding-welcome__icons .anticon {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 13px;
+  background: #eff6ff;
+}
+
+.staff-onboarding-welcome .ant-typography {
+  margin: 0;
+}
+
+.staff-onboarding-tour .ant-tour-inner {
+  max-width: min(360px, calc(100vw - 24px));
+}
+
+.staff-onboarding-tour .ant-tour-description {
+  line-height: 1.55;
 }
 
 .staff-pos-shell--editor .staff-pos-main {
@@ -4929,6 +5083,140 @@ body {
     min-width: 120px;
     padding: 8px 0;
   }
+}
+
+.staff-notification-audit-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.staff-notification-audit-title > .anticon {
+  color: #0877ee;
+  font-size: 20px;
+}
+
+.staff-notification-audit-title > div {
+  display: grid;
+  gap: 2px;
+}
+
+.staff-notification-audit-title span {
+  color: #728096;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.staff-notification-audit-list {
+  display: grid;
+  gap: 10px;
+}
+
+.staff-notification-audit-item {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 11px;
+  padding: 13px;
+  border: 1px solid #e4eaf1;
+  border-radius: 13px;
+  background: #fff;
+}
+
+.staff-notification-audit-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  background: #eaf4ff;
+  color: #0877ee;
+  font-size: 17px;
+}
+
+.staff-notification-audit-icon.is-call_staff,
+.staff-notification-audit-icon.is-checkout_pending {
+  background: #fff7df;
+  color: #d97706;
+}
+
+.staff-notification-audit-icon.is-checkout_request,
+.staff-notification-audit-icon.is-checkout {
+  background: #ecfdf3;
+  color: #138a4b;
+}
+
+.staff-notification-audit-icon.is-order_created,
+.staff-notification-audit-icon.is-item_added,
+.staff-notification-audit-icon.is-item_updated,
+.staff-notification-audit-icon.is-item_removed,
+.staff-notification-audit-icon.is-order_saved,
+.staff-notification-audit-icon.is-table_transferred,
+.staff-notification-audit-icon.is-time_paused,
+.staff-notification-audit-icon.is-time_resumed,
+.staff-notification-audit-icon.is-time_updated,
+.staff-notification-audit-icon.is-order_cancelled {
+  background: #fdf2f8;
+  color: #db2777;
+}
+
+.staff-notification-audit-body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.staff-notification-audit-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.staff-notification-audit-row .ant-tag {
+  flex-shrink: 0;
+  margin: 0;
+}
+
+.staff-notification-audit-body > p {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 2px 0;
+  color: #58667b;
+  font-size: 12px;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.staff-notification-audit-body > small {
+  color: #718096;
+}
+
+.staff-notification-audit-body > small.is-note {
+  color: #a85b08;
+}
+
+.staff-notification-audit-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  color: #7b8798;
+  font-size: 11px;
+}
+
+.staff-notification-audit-meta span + span::before {
+  content: '•';
+  margin-right: 7px;
+  color: #bdc5d0;
+}
+
+.staff-notification-audit-body .ant-btn-link {
+  justify-self: start;
+  height: auto;
+  margin-top: 2px;
+  padding: 0;
+  font-size: 12px;
 }
 
 /* ==========================================================================

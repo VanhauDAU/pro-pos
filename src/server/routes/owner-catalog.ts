@@ -19,7 +19,7 @@ import { QrOrderService } from '@server/services/qr-order-service';
 import type { AppEnv } from '@server/types';
 
 const ownerCatalogRoutes = new Hono<AppEnv>();
-ownerCatalogRoutes.use('*', requireActor('OWNER'));
+ownerCatalogRoutes.use('*', requireActor('OWNER', 'EMPLOYEE'));
 
 ownerCatalogRoutes.get('/tables/:tableId/qr-code', requirePermission('table.manage'), async (c) =>
   success(

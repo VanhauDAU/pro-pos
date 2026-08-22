@@ -236,6 +236,15 @@ export class PosRealtimeClient {
     if (event.topics.includes('guest.services')) {
       invalidations.push(this.queryClient.invalidateQueries({ queryKey: ['service-requests'] }));
     }
+    if (
+      event.topics.includes('pos.orders') ||
+      event.topics.includes('guest.orders') ||
+      event.topics.includes('guest.services')
+    ) {
+      invalidations.push(
+        this.queryClient.invalidateQueries({ queryKey: ['staff-notification-audit'] }),
+      );
+    }
     if (event.topics.includes(`pos.order:${event.aggregate.id}`)) {
       invalidations.push(
         this.queryClient.invalidateQueries({ queryKey: ['pos-order-quote', event.aggregate.id] }),
@@ -255,7 +264,8 @@ export class PosRealtimeClient {
           root === 'pos-order-quote' ||
           root === 'pos-order-detail' ||
           root === 'guest-order-requests' ||
-          root === 'service-requests'
+          root === 'service-requests' ||
+          root === 'staff-notification-audit'
         );
       },
     });

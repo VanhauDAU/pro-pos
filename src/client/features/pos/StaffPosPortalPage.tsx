@@ -26,6 +26,7 @@ import {
   PlusCircleOutlined,
   PlusOutlined,
   PrinterOutlined,
+  QuestionCircleOutlined,
   QrcodeOutlined,
   RightOutlined,
   SearchOutlined,
@@ -34,6 +35,7 @@ import {
   StopOutlined,
   SwapOutlined,
   SyncOutlined,
+  TagsOutlined,
   UnorderedListOutlined,
   UpOutlined,
   UserOutlined,
@@ -45,6 +47,7 @@ import {
   Button,
   Card,
   ConfigProvider,
+  Drawer,
   Dropdown,
   Empty,
   Input,
@@ -67,7 +70,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
-import type { GuestOrderRequestDto, ServiceRequestDto } from '@contracts/qr-order';
+import type {
+  GuestOrderRequestDto,
+  ServiceRequestDto,
+  StaffNotificationAuditResponse,
+  StaffNotificationEventType,
+  StaffNotificationStatus,
+} from '@contracts/qr-order';
 import type { StorePrintSettings } from '@contracts/store';
 import type { PricingConfigSnapshot } from '@domain/pricing/types';
 import {
@@ -76,8 +85,15 @@ import {
   printReceipt,
 } from '@client/lib/pos-receipt-printer';
 import { OrderDetailPage } from './OrderDetailPage';
+import { StaffOnboarding } from './StaffOnboarding';
 import { PushNotificationControl } from '@client/features/pwa/PushNotificationControl';
 import { OwnerInvoicesPage } from '@client/features/owner/OwnerInvoicesPage';
+import {
+  OwnerCategoryDetailPage,
+  OwnerCategoryListPage,
+  OwnerProductFormPage,
+  OwnerProductListPage,
+} from '@client/features/owner/OwnerCatalogPages';
 
 import { apiRequest, jsonRequest } from '@client/lib/api';
 import { playPosSound } from '@client/lib/sound';
@@ -393,6 +409,42 @@ function requestUrgency(createdAt: number, now: number) {
   return { className: 'is-fresh', color: 'processing' as const, label: 'Mới nhận' };
 }
 
+function notificationTypeLabel(type: StaffNotificationEventType) {
+  const labels: Record<StaffNotificationEventType, string> = {
+    QR_ORDER: 'QR Order gọi món',
+    CALL_STAFF: 'Gọi nhân viên',
+    CHECKOUT_REQUEST: 'Yêu cầu thanh toán',
+    ORDER_CREATED: 'Đơn hàng mới được tạo',
+    ITEM_ADDED: 'Thêm mặt hàng vào đơn',
+    ITEM_UPDATED: 'Thay đổi mặt hàng trong đơn',
+    ITEM_REMOVED: 'Xóa mặt hàng khỏi đơn',
+    ORDER_SAVED: 'Lưu thay đổi đơn hàng',
+    TABLE_TRANSFERRED: 'Thay đổi bàn của đơn',
+    TIME_PAUSED: 'Tạm dừng tính giờ',
+    TIME_RESUMED: 'Tiếp tục tính giờ',
+    TIME_UPDATED: 'Điều chỉnh thời gian',
+    CHECKOUT_PENDING: 'Chốt giờ chờ thanh toán',
+    CHECKOUT: 'Hoàn tất thanh toán',
+    ORDER_CANCELLED: 'Hủy đơn hàng',
+  };
+  return labels[type] || 'Hoạt động POS';
+}
+
+function notificationStatusMeta(status: StaffNotificationStatus) {
+  const values: Record<StaffNotificationStatus, { label: string; color: string }> = {
+    PENDING: { label: 'Chờ xác nhận', color: 'processing' },
+    OPEN: { label: 'Chưa tiếp nhận', color: 'warning' },
+    ACKNOWLEDGED: { label: 'Đã tiếp nhận', color: 'blue' },
+    ACCEPTED: { label: 'Đã xác nhận', color: 'success' },
+    REJECTED: { label: 'Đã từ chối', color: 'error' },
+    COMPLETED: { label: 'Hoàn tất', color: 'success' },
+    CANCELLED: { label: 'Đã hủy', color: 'default' },
+    EXPIRED: { label: 'Hết hiệu lực', color: 'default' },
+    INFO: { label: 'Hoạt động POS', color: 'magenta' },
+  };
+  return values[status];
+}
+
 function formatPreciseTime(timestamp: number) {
   return new Intl.DateTimeFormat('vi-VN', {
     hour: '2-digit',
@@ -471,15 +523,31 @@ function mutationHeaders(csrfToken: string) {
 function StaffHeader({
   context,
   searchSlot,
+  onOpenNotifications,
 }: {
   context: AuthContextResponse | undefined;
   searchSlot?: React.ReactNode;
+  onOpenNotifications: () => void;
 }) {
   const { status } = useRealtime();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [modal, holder] = Modal.useModal();
   const [loggingOut, setLoggingOut] = useState(false);
+  const pollingInterval = usePosPollingInterval(15_000);
+  const guestRequests = useQuery({
+    queryKey: ['guest-order-requests'],
+    queryFn: () => apiRequest<GuestOrderRequestDto[]>('/api/v1/pos/qr-orders?status=PENDING'),
+    refetchInterval: pollingInterval,
+  });
+  const serviceRequests = useQuery({
+    queryKey: ['service-requests'],
+    queryFn: () => apiRequest<ServiceRequestDto[]>('/api/v1/pos/qr-orders/service-requests/list'),
+    refetchInterval: pollingInterval,
+  });
+  const pendingNotificationCount =
+    (guestRequests.data?.length ?? 0) +
+    (serviceRequests.data?.filter((request) => request.status === 'OPEN').length ?? 0);
 
   const logout = () => {
     modal.confirm({
@@ -592,7 +660,25 @@ function StaffHeader({
           </span>
         </div>
       </Tooltip>
-      <PushNotificationControl csrfToken={context?.csrfToken} />
+      <Tooltip title="Mở trung tâm thông báo 3 ngày gần nhất">
+        <Button
+          type="text"
+          className="staff-header-notification-btn"
+          icon={<BellOutlined />}
+          aria-label={
+            pendingNotificationCount > 0
+              ? `Thông báo, ${pendingNotificationCount} yêu cầu chưa xử lý`
+              : 'Thông báo'
+          }
+          onClick={onOpenNotifications}
+        >
+          {pendingNotificationCount > 0 ? (
+            <b className="staff-header-notification-badge">
+              {pendingNotificationCount > 99 ? '99+' : pendingNotificationCount}
+            </b>
+          ) : null}
+        </Button>
+      </Tooltip>
       <Dropdown
         menu={{ items: menuItems }}
         trigger={['click']}
@@ -630,16 +716,43 @@ const navItems = [
 
 function StaffBottomNav({ active }: { active: (typeof navItems)[number]['key'] }) {
   const navigate = useNavigate();
+  const pollingInterval = usePosPollingInterval(15_000);
+  const guestRequests = useQuery({
+    queryKey: ['guest-order-requests'],
+    queryFn: () => apiRequest<GuestOrderRequestDto[]>('/api/v1/pos/qr-orders?status=PENDING'),
+    refetchInterval: pollingInterval,
+  });
+  const serviceRequests = useQuery({
+    queryKey: ['service-requests'],
+    queryFn: () => apiRequest<ServiceRequestDto[]>('/api/v1/pos/qr-orders/service-requests/list'),
+    refetchInterval: pollingInterval,
+  });
+  const pendingNotificationCount =
+    (guestRequests.data?.length ?? 0) +
+    (serviceRequests.data?.filter((request) => request.status === 'OPEN').length ?? 0);
   return (
     <nav className="staff-pos-bottom-nav" aria-label="Điều hướng POS nhân viên">
       {navItems.map((item) => (
         <button
           key={item.key}
           type="button"
+          data-nav-key={item.key}
           className={active === item.key ? 'is-active' : ''}
+          aria-label={
+            item.key === 'qr' && pendingNotificationCount > 0
+              ? `${item.label}, ${pendingNotificationCount} yêu cầu chưa xử lý`
+              : item.label
+          }
           onClick={() => navigate(item.path)}
         >
-          {item.icon}
+          <span className="staff-pos-nav-icon">
+            {item.icon}
+            {item.key === 'qr' && pendingNotificationCount > 0 ? (
+              <b className="staff-pos-nav-badge">
+                {pendingNotificationCount > 99 ? '99+' : pendingNotificationCount}
+              </b>
+            ) : null}
+          </span>
           <span>{item.label}</span>
         </button>
       ))}
@@ -867,6 +980,111 @@ function AreasPage() {
   );
 }
 
+function StaffNotificationCenter({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const navigate = useNavigate();
+  const pollingInterval = usePosPollingInterval(30_000);
+  const notificationAudit = useQuery({
+    queryKey: ['staff-notification-audit'],
+    queryFn: () =>
+      apiRequest<StaffNotificationAuditResponse>('/api/v1/pos/qr-orders/audit?limit=50'),
+    refetchInterval: pollingInterval,
+  });
+  const retentionDays = notificationAudit.data?.retentionDays ?? 3;
+
+  return (
+    <Drawer
+      title={
+        <div className="staff-notification-audit-title">
+          <HistoryOutlined />
+          <div>
+            <strong>Thông báo</strong>
+            <span>
+              Lưu tối đa {retentionDays} ngày · {notificationAudit.data?.items.length ?? 0}/50 sự
+              kiện gần nhất
+            </span>
+          </div>
+        </div>
+      }
+      placement="right"
+      size={520}
+      open={open}
+      onClose={onClose}
+      className="staff-notification-audit-drawer"
+    >
+      {notificationAudit.isLoading ? (
+        <Skeleton active paragraph={{ rows: 8 }} />
+      ) : notificationAudit.isError ? (
+        <Alert
+          type="error"
+          showIcon
+          title="Chưa tải được nhật ký"
+          action={<Button onClick={() => void notificationAudit.refetch()}>Thử lại</Button>}
+        />
+      ) : (notificationAudit.data?.items.length ?? 0) === 0 ? (
+        <Empty description={`Chưa có thông báo nào trong ${retentionDays} ngày gần đây`} />
+      ) : (
+        <div className="staff-notification-audit-list">
+          {(notificationAudit.data?.items ?? []).map((event) => {
+            const status = notificationStatusMeta(event.status);
+            return (
+              <article key={event.id} className="staff-notification-audit-item">
+                <div
+                  className={`staff-notification-audit-icon is-${event.eventType.toLowerCase()}`}
+                >
+                  {event.eventType === 'QR_ORDER' ? (
+                    <QrcodeOutlined />
+                  ) : event.eventType === 'CALL_STAFF' ? (
+                    <BellOutlined />
+                  ) : event.eventType === 'CHECKOUT_PENDING' ? (
+                    <ClockCircleOutlined />
+                  ) : event.eventType === 'CHECKOUT_REQUEST' || event.eventType === 'CHECKOUT' ? (
+                    <CreditCardOutlined />
+                  ) : (
+                    <FileTextOutlined />
+                  )}
+                </div>
+                <div className="staff-notification-audit-body">
+                  <div className="staff-notification-audit-row">
+                    <strong>{notificationTypeLabel(event.eventType)}</strong>
+                    <Tag color={status.color}>{status.label}</Tag>
+                  </div>
+                  <b>
+                    {event.tableName} · {event.areaName}
+                  </b>
+                  <p>{event.summary}</p>
+                  {event.note ? <small className="is-note">Ghi chú: {event.note}</small> : null}
+                  <div className="staff-notification-audit-meta">
+                    <span>{formatDateTime(event.createdAt)}</span>
+                    {event.itemCount > 0 ? <span>{event.itemCount} món</span> : null}
+                    {event.totalVnd > 0 ? <span>{formatMoney(event.totalVnd)}</span> : null}
+                  </div>
+                  {event.actorName ? (
+                    <small>
+                      {status.label} bởi <b>{event.actorName}</b>
+                      {event.deviceName ? ` · ${event.deviceName}` : ''}
+                      {event.handledAt ? ` lúc ${formatPreciseTime(event.handledAt)}` : ''}
+                    </small>
+                  ) : null}
+                  <Button
+                    type="link"
+                    size="small"
+                    onClick={() => {
+                      onClose();
+                      navigate(`/pos/orders/${event.orderId}`);
+                    }}
+                  >
+                    Mở đơn liên quan
+                  </Button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </Drawer>
+  );
+}
+
 function QrOrderPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -957,6 +1175,7 @@ function QrOrderPage() {
       queryClient.invalidateQueries({ queryKey: ['service-requests'] }),
       queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
       queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
+      queryClient.invalidateQueries({ queryKey: ['staff-notification-audit'] }),
     ]);
   const accept = useMutation({
     mutationFn: (request: GuestOrderRequestDto) =>
@@ -1045,10 +1264,6 @@ function QrOrderPage() {
           <div className="staff-qr-order-hero__eyebrow">
             <QrcodeOutlined /> Trung tâm yêu cầu tại bàn
           </div>
-          <Typography.Title level={2}>QR Order</Typography.Title>
-          <Typography.Text>
-            Theo dõi gọi món, gọi nhân viên và thanh toán theo thời gian thực.
-          </Typography.Text>
         </div>
         <div className="staff-qr-order-hero__actions">
           <Tag color={realtimeColor} className="staff-qr-realtime-tag">
@@ -1300,7 +1515,13 @@ function QrOrderPage() {
   );
 }
 
-function MorePage({ auth }: { auth: AuthContextResponse }) {
+function MorePage({
+  auth,
+  onStartOnboarding,
+}: {
+  auth: AuthContextResponse;
+  onStartOnboarding: () => void;
+}) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [messageApi, holder] = message.useMessage();
@@ -1369,6 +1590,49 @@ function MorePage({ auth }: { auth: AuthContextResponse }) {
             boxShadow: '0 2px 8px rgba(15, 23, 42, 0.04)',
           }}
         >
+          {hasPermission('catalog.manage') ? (
+            <div
+              className="staff-more-nav-item"
+              onClick={() => navigate('/pos/catalog')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '16px 18px',
+                cursor: 'pointer',
+                borderBottom: '1px solid #f1f5f9',
+                transition: 'background 0.15s ease',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                <div
+                  style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 10,
+                    background: '#fdf2f8',
+                    color: '#db2777',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 22,
+                  }}
+                >
+                  <TagsOutlined />
+                </div>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>
+                    Quản lý Mặt hàng & Danh mục
+                  </div>
+                  <div style={{ fontSize: 12.5, color: '#64748b', marginTop: 2 }}>
+                    Thêm món mới, điều chỉnh giá bán, quản lý danh mục và bảng giá
+                  </div>
+                </div>
+              </div>
+              <RightOutlined style={{ color: '#94a3b8', fontSize: 14 }} />
+            </div>
+          ) : null}
+
           {hasPermission('invoice.view') ? (
             <div
               className="staff-more-nav-item"
@@ -1411,6 +1675,21 @@ function MorePage({ auth }: { auth: AuthContextResponse }) {
               <RightOutlined style={{ color: '#94a3b8', fontSize: 14 }} />
             </div>
           ) : null}
+
+          <button
+            type="button"
+            className="staff-more-nav-item staff-onboarding-entry"
+            onClick={onStartOnboarding}
+          >
+            <span className="staff-onboarding-entry__icon">
+              <QuestionCircleOutlined />
+            </span>
+            <span className="staff-onboarding-entry__copy">
+              <strong>Hướng dẫn sử dụng POS</strong>
+              <small>Xem lại cách chọn khu vực, bàn, gọi món, lưu đơn và QR Order</small>
+            </span>
+            <RightOutlined />
+          </button>
 
           {/* Push Notification Setup */}
           <div style={{ padding: '14px 18px' }}>
@@ -3539,9 +3818,22 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
 
               <main className="staff-product-picker-mobile__products-col">
                 <div className="staff-product-picker-mobile__section-heading">
-                  {selectedCategory === 'ALL'
-                    ? 'Tất cả'
-                    : (categories.find((c) => c.id === selectedCategory)?.name ?? 'Danh sách')}
+                  <span>
+                    {selectedCategory === 'ALL'
+                      ? 'Tất cả'
+                      : (categories.find((c) => c.id === selectedCategory)?.name ?? 'Danh sách')}
+                  </span>
+                  {auth.actor?.kind === 'OWNER' ||
+                  (staffContext.data?.permissions ?? []).includes('catalog.manage') ? (
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<TagsOutlined />}
+                      onClick={() => navigate('/pos/catalog')}
+                    >
+                      Quản lý món
+                    </Button>
+                  ) : null}
                 </div>
                 {catalog.isLoading ? (
                   <Skeleton active />
@@ -7183,6 +7475,8 @@ export function StaffPosPortalPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const [ordersSearch, setOrdersSearch] = useState('');
+  const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
+  const [onboardingRestartToken, setOnboardingRestartToken] = useState(0);
   const auth = useQuery({
     queryKey: ['auth-context'],
     queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
@@ -7199,17 +7493,36 @@ export function StaffPosPortalPage() {
   const isInvoiceDetail = location.pathname.startsWith('/pos/invoices/');
   const isInvoicesList =
     location.pathname === '/pos/invoices' || location.pathname.startsWith('/pos/invoices?');
+  const isCatalogNewProduct = location.pathname === '/pos/catalog/products/new';
+  const isCatalogEditProduct =
+    location.pathname.startsWith('/pos/catalog/products/') && !isCatalogNewProduct;
+  const isCatalogCategoryDetail =
+    location.pathname.startsWith('/pos/catalog/categories/') &&
+    location.pathname !== '/pos/catalog/categories';
+  const isCatalogCategories = location.pathname === '/pos/catalog/categories';
+  const isCatalogList =
+    location.pathname === '/pos/catalog' ||
+    location.pathname === '/pos/catalog/' ||
+    location.pathname === '/pos/catalog/products' ||
+    location.pathname.startsWith('/pos/catalog/products?');
+  const isCatalog =
+    isCatalogNewProduct ||
+    isCatalogEditProduct ||
+    isCatalogCategoryDetail ||
+    isCatalogCategories ||
+    isCatalogList;
+
   const isDetail =
     location.pathname.startsWith('/pos/orders/') && location.pathname.endsWith('/detail');
   const isPayment =
     location.pathname.startsWith('/pos/orders/') && location.pathname.endsWith('/payment');
   const isEditor = location.pathname.startsWith('/pos/orders/') && !isPayment && !isDetail;
-  const isFullScreen = isInvoiceDetail || isPayment || isEditor || isDetail;
+  const isFullScreen = isInvoiceDetail || isPayment || isEditor || isDetail || isCatalog;
   const active = location.pathname.startsWith('/pos/areas')
     ? 'areas'
     : location.pathname.startsWith('/pos/qr-order')
       ? 'qr'
-      : location.pathname.startsWith('/pos/more') || isInvoicesList
+      : location.pathname.startsWith('/pos/more') || isInvoicesList || isCatalog
         ? 'more'
         : 'orders';
 
@@ -7220,9 +7533,12 @@ export function StaffPosPortalPage() {
     <ConfigProvider theme={{ token: { colorPrimary: BRAND, borderRadius: 8 } }}>
       <RealtimeProvider>
         <div className={`staff-pos-shell${isFullScreen ? ' staff-pos-shell--editor' : ''}`}>
+          <PushNotificationControl csrfToken={auth.data.csrfToken} autoPrompt />
+          <StaffOnboarding auth={auth.data} restartToken={onboardingRestartToken} />
           {!isFullScreen ? (
             <StaffHeader
               context={auth.data}
+              onOpenNotifications={() => setNotificationCenterOpen(true)}
               searchSlot={
                 active === 'orders' ? (
                   <Input
@@ -7251,6 +7567,53 @@ export function StaffPosPortalPage() {
                   />
                 </div>
               </div>
+            ) : isCatalogNewProduct ? (
+              <div className="staff-invoices-shell">
+                <div className="staff-invoices-container">
+                  <OwnerProductFormPage
+                    baseRoute="/pos/catalog"
+                    onBack={() => navigate('/pos/catalog/products')}
+                  />
+                </div>
+              </div>
+            ) : isCatalogEditProduct ? (
+              <div className="staff-invoices-shell">
+                <div className="staff-invoices-container">
+                  <OwnerProductFormPage
+                    productId={location.pathname.split('/').at(-1)!}
+                    baseRoute="/pos/catalog"
+                    onBack={() => navigate('/pos/catalog/products')}
+                  />
+                </div>
+              </div>
+            ) : isCatalogCategoryDetail ? (
+              <div className="staff-invoices-shell">
+                <div className="staff-invoices-container">
+                  <OwnerCategoryDetailPage
+                    categoryId={location.pathname.split('/').at(-1)!}
+                    baseRoute="/pos/catalog"
+                    onBack={() => navigate('/pos/catalog/categories')}
+                  />
+                </div>
+              </div>
+            ) : isCatalogCategories ? (
+              <div className="staff-invoices-shell">
+                <div className="staff-invoices-container">
+                  <OwnerCategoryListPage
+                    baseRoute="/pos/catalog"
+                    onBack={() => navigate('/pos/catalog/products')}
+                  />
+                </div>
+              </div>
+            ) : isCatalogList ? (
+              <div className="staff-invoices-shell">
+                <div className="staff-invoices-container">
+                  <OwnerProductListPage
+                    baseRoute="/pos/catalog"
+                    onBack={() => navigate('/pos/more')}
+                  />
+                </div>
+              </div>
             ) : isDetail && detailOrderId ? (
               <OrderDetailPage orderId={detailOrderId} />
             ) : isPayment && paymentOrderId ? (
@@ -7262,12 +7625,19 @@ export function StaffPosPortalPage() {
             ) : active === 'qr' ? (
               <QrOrderPage />
             ) : active === 'more' ? (
-              <MorePage auth={auth.data} />
+              <MorePage
+                auth={auth.data}
+                onStartOnboarding={() => setOnboardingRestartToken((value) => value + 1)}
+              />
             ) : (
               <OrdersPage search={ordersSearch} />
             )}
           </div>
           {!isFullScreen ? <StaffBottomNav active={active} /> : null}
+          <StaffNotificationCenter
+            open={notificationCenterOpen}
+            onClose={() => setNotificationCenterOpen(false)}
+          />
         </div>
       </RealtimeProvider>
     </ConfigProvider>

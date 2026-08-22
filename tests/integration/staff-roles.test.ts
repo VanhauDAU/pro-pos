@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { beforeAll, describe, expect, it } from 'vitest';
 
+import { AuthorizationRepository } from '@server/repositories/authorization-repository';
 import { PlatformService } from '@server/services/platform-service';
 import { StaffService } from '@server/services/staff-service';
 
@@ -98,5 +99,22 @@ describe('Owner staff and role management', () => {
     await expect(staff.deleteRole(storeId, employeeRole.id)).rejects.toMatchObject({
       code: 'ROLE_PROTECTED',
     });
+  });
+
+  it('allows creating an employee with catalog permissions to manage products and categories', async () => {
+    const catalogRole = await staff.createRole(storeId, 'Quản lý kho món', [
+      'catalog.products.view',
+      'catalog.products.create',
+    ]);
+    const employee = await staff.createEmployee({
+      storeId,
+      displayName: 'Nhân viên Quản lý Món',
+      username: 'catalog.manager',
+      pin: '9999',
+      roleId: catalogRole.id,
+      permissionKeys: [],
+    });
+    const authRepo = new AuthorizationRepository(env.DB);
+    expect(await authRepo.hasPermission(storeId, employee.userId, 'catalog.manage')).toBe(true);
   });
 });

@@ -1,6 +1,6 @@
 import { BellOutlined } from '@ant-design/icons';
 import { useCallback, useEffect, useState } from 'react';
-import { Button, message, Tooltip } from 'antd';
+import { Button, message, Modal, Tooltip } from 'antd';
 
 import { apiRequest, jsonRequest } from '@client/lib/api';
 import { playPosSound, unlockPosAudio } from '@client/lib/sound';
@@ -15,12 +15,18 @@ function vapidKeyToBytes(value: string) {
 export function PushNotificationControl({
   csrfToken,
   showGuide = false,
+  autoPrompt = false,
 }: {
   csrfToken: string | null | undefined;
   showGuide?: boolean;
+  autoPrompt?: boolean;
 }) {
   const [messageApi, holder] = message.useMessage();
   const [loading, setLoading] = useState(false);
+  const [autoPromptOpen, setAutoPromptOpen] = useState(
+    () =>
+      autoPrompt && typeof Notification !== 'undefined' && Notification.permission === 'default',
+  );
   const [subscriptionActive, setSubscriptionActive] = useState(false);
   const [permission, setPermission] = useState<NotificationPermission>(() =>
     typeof Notification === 'undefined' ? 'default' : Notification.permission,
@@ -92,6 +98,8 @@ export function PushNotificationControl({
     try {
       const nextPermission = await Notification.requestPermission();
       setPermission(nextPermission);
+      setAutoPromptOpen(false);
+      window.dispatchEvent(new Event('propos:push-prompt-finished'));
       if (nextPermission !== 'granted') {
         messageApi.info('Bạn chưa cho phép nhận thông báo.');
         return;
@@ -133,6 +141,35 @@ export function PushNotificationControl({
     </>
   );
 
+  if (autoPrompt) {
+    return (
+      <>
+        {holder}
+        <Modal
+          open={autoPromptOpen && supported && permission === 'default'}
+          title="Cho phép thông báo từ Pro POS?"
+          okText="Cho phép thông báo"
+          cancelText="Để sau"
+          confirmLoading={loading}
+          onOk={() => void enable()}
+          onCancel={() => {
+            setAutoPromptOpen(false);
+            window.dispatchEvent(new Event('propos:push-prompt-finished'));
+          }}
+        >
+          <p>
+            Pro POS cần quyền thông báo để báo ngay khi khách gọi món, gọi nhân viên hoặc yêu cầu
+            thanh toán, kể cả khi PWA đang chạy nền.
+          </p>
+          <p style={{ marginBottom: 0, color: '#64748b' }}>
+            Sau khi bấm cho phép, hãy bật Âm thanh cho Pro POS trong cài đặt thông báo của điện
+            thoại.
+          </p>
+        </Modal>
+      </>
+    );
+  }
+
   if (!showGuide) return control;
   return (
     <div className="pos-push-guide">
@@ -143,17 +180,6 @@ export function PushNotificationControl({
         </div>
         {control}
       </div>
-      <ul>
-        <li>
-          <b>iPhone/iPad:</b> cài Pro POS vào Màn hình chính, sau đó bật Âm thanh trong Cài đặt →
-          Thông báo → Pro POS và cho phép Pro POS trong chế độ Tập trung.
-        </li>
-        <li>
-          <b>Android:</b> giữ một thông báo Pro POS, chọn Cảnh báo + Âm thanh; cho phép chạy nền và
-          bỏ hạn chế pin cho PWA/trình duyệt.
-        </li>
-        <li>Chế độ im lặng, Không làm phiền hoặc âm lượng hệ thống vẫn có quyền ưu tiên.</li>
-      </ul>
     </div>
   );
 }

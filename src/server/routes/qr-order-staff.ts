@@ -29,6 +29,18 @@ qrOrderStaffRoutes.get('/', requirePermission('table.view'), async (c) =>
   ),
 );
 
+qrOrderStaffRoutes.get('/audit', requirePermission('table.view'), async (c) => {
+  const rawLimit = c.req.query('limit');
+  const limit = rawLimit === undefined ? 50 : Number(rawLimit);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+    throw new AppError('AUDIT_LIMIT_INVALID', 'Giới hạn nhật ký phải từ 1 đến 100.', 422);
+  }
+  return success(
+    c,
+    await new QrOrderService(c.env).listNotificationAudit(c.get('actor').storeId!, limit),
+  );
+});
+
 qrOrderStaffRoutes.post('/:id/accept', requirePermission('order.manage'), async (c) => {
   const body = await parseJson(c.req.raw, acceptGuestOrderSchema);
   return success(
@@ -82,6 +94,8 @@ qrOrderStaffRoutes.post(
         id: c.req.param('id'),
         action: body.action,
         actorId: c.get('actor').id,
+        actorSessionId: c.get('sessionId'),
+        deviceId: c.get('device')?.id ?? null,
         requestId: c.get('requestId'),
       }),
     );

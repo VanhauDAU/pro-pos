@@ -5,6 +5,7 @@ import { CatalogService } from '@server/services/catalog-service';
 import { PlatformService } from '@server/services/platform-service';
 import { PosService } from '@server/services/pos-service';
 import { QrOrderService } from '@server/services/qr-order-service';
+import { QrOrderRepository } from '@server/repositories/qr-order-repository';
 
 describe('online POS vertical slice', () => {
   let storeId: string;
@@ -508,6 +509,51 @@ describe('online POS vertical slice', () => {
         totalVnd: 20_000,
       }),
     );
+
+    const staffTimeline = await new QrOrderService(env).listNotificationAudit(storeId, 50);
+    expect(staffTimeline.items).toContainEqual(
+      expect.objectContaining({
+        eventType: 'ORDER_CREATED',
+        status: 'INFO',
+        orderId: first.orderId,
+        actorName: 'POS Owner',
+      }),
+    );
+    const addedItemEvent = staffTimeline.items.find(
+      (event) => event.orderId === first.orderId && event.eventType === 'ITEM_ADDED',
+    );
+    expect(addedItemEvent).toMatchObject({
+      itemCount: 1,
+      totalVnd: 20_000,
+      actorName: 'POS Owner',
+    });
+    expect(addedItemEvent!.summary).toContain('Nước suối');
+
+    const permanentAuditId = crypto.randomUUID();
+    await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE audit_logs SET created_at = 1
+         WHERE store_id = ? AND json_extract(after_json, '$.orderId') = ?`,
+      ).bind(storeId, first.orderId),
+      env.DB.prepare(
+        `INSERT INTO audit_logs (
+          id, store_id, action, entity_type, request_id, created_at
+        ) VALUES (?, ?, 'STORE_SETTINGS_UPDATED', 'STORE', 'keep-permanent-audit', 1)`,
+      ).bind(permanentAuditId, storeId),
+    ]);
+    await new QrOrderRepository(env.DB).cleanupExpiredOperationalAudit(2);
+    const cleanupCounts = await env.DB.prepare(
+      `SELECT
+         SUM(CASE WHEN action IN ('TAKEAWAY_ORDER_CREATED', 'ORDER_ITEM_ADDED')
+           AND (entity_id = ? OR json_extract(after_json, '$.orderId') = ?)
+           THEN 1 ELSE 0 END)
+           AS operational,
+         SUM(CASE WHEN id = ? THEN 1 ELSE 0 END) AS permanent
+       FROM audit_logs WHERE store_id = ?`,
+    )
+      .bind(first.orderId, first.orderId, permanentAuditId, storeId)
+      .first<{ operational: number; permanent: number }>();
+    expect(cleanupCounts).toEqual({ operational: 0, permanent: 1 });
   });
 
   it('allocates unique compact order codes when devices create orders concurrently', async () => {
@@ -1837,6 +1883,18 @@ describe('online POS vertical slice', () => {
       orderId: opened.orderId,
     });
     expect(acknowledgedAssistance!.acknowledgedAt).toEqual(expect.any(Number));
+    const acknowledgedAudit = (await qr.listNotificationAudit(storeId, 50)).items.find(
+      (event) => event.sourceId === assistance.id,
+    );
+    expect(acknowledgedAudit).toMatchObject({
+      eventType: 'CALL_STAFF',
+      status: 'ACKNOWLEDGED',
+      tableName: 'Bàn QR Order',
+      areaName: 'Khu A',
+      summary: 'Khách gọi nhân viên hỗ trợ',
+      actorName: 'POS Owner',
+    });
+    expect(acknowledgedAudit!.handledAt).toEqual(expect.any(Number));
 
     const clientRequestId = crypto.randomUUID();
     const submitted = await qr.submitOrder(
@@ -1870,6 +1928,18 @@ describe('online POS vertical slice', () => {
     );
     expect(replay).toMatchObject({ requestId: submitted.requestId, replayed: true });
 
+    const pendingAudit = (await qr.listNotificationAudit(storeId, 50)).items.find(
+      (event) => event.sourceId === submitted.requestId,
+    );
+    expect(pendingAudit).toMatchObject({
+      eventType: 'QR_ORDER',
+      status: 'PENDING',
+      orderId: opened.orderId,
+      itemCount: 2,
+      totalVnd: 40_000,
+    });
+    expect(pendingAudit!.summary).toContain('Nước suối');
+
     const [pending] = await qr.listStaffRequests(storeId, 'PENDING');
     expect(pending).toMatchObject({
       id: submitted.requestId,
@@ -1899,6 +1969,11 @@ describe('online POS vertical slice', () => {
       .first<{ source: string; guestRequestId: string }>();
     expect(source).toEqual({ source: 'QR_GUEST', guestRequestId: submitted.requestId });
     expect(await qr.listStaffRequests(storeId, 'PENDING')).toHaveLength(0);
+    expect(
+      (await qr.listNotificationAudit(storeId, 50)).items.find(
+        (event) => event.sourceId === submitted.requestId,
+      ),
+    ).toMatchObject({ status: 'ACCEPTED', actorName: 'POS Owner' });
 
     const secondGuest = await qr.resolveQr({
       rawQrToken: code.token,
@@ -1958,5 +2033,22 @@ describe('online POS vertical slice', () => {
     await expect(qr.getContext(resolved.rawGuest)).rejects.toMatchObject({
       code: 'GUEST_SESSION_INVALID',
     });
+    expect(
+      (await qr.listNotificationAudit(storeId, 50)).items.find(
+        (event) => event.sourceId === assistance.id,
+      ),
+    ).toMatchObject({ status: 'CANCELLED' });
+
+    await env.DB.prepare(
+      'UPDATE staff_notification_events SET expires_at = 1 WHERE store_id = ? AND source_id = ?',
+    )
+      .bind(storeId, assistance.id)
+      .run();
+    await new QrOrderRepository(env.DB).cleanupExpiredNotifications(Date.now());
+    expect(
+      (await qr.listNotificationAudit(storeId, 50)).items.some(
+        (event) => event.sourceId === assistance.id,
+      ),
+    ).toBe(false);
   });
 });

@@ -16,6 +16,7 @@ import { ownerAnalyticsRoutes } from '@server/routes/owner-analytics';
 import { guestOrderRoutes } from '@server/routes/guest-order';
 import type { AppEnv } from '@server/types';
 import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
+import { QrOrderRepository } from '@server/repositories/qr-order-repository';
 
 export { StoreRealtimeRoom } from '@server/realtime/store-realtime-room';
 
@@ -116,7 +117,12 @@ export default {
   async scheduled(controller: ScheduledController, env: CloudflareBindings) {
     const dispatcher = new RealtimeDispatcher(env);
     if (controller.cron === '17 18 * * *') {
-      await dispatcher.cleanupPublished();
+      const now = Date.now();
+      await Promise.all([
+        dispatcher.cleanupPublished(),
+        new QrOrderRepository(env.DB).cleanupExpiredNotifications(now),
+        new QrOrderRepository(env.DB).cleanupExpiredOperationalAudit(now - 3 * 24 * 60 * 60_000),
+      ]);
       return;
     }
     await dispatcher.dispatchPendingStores();

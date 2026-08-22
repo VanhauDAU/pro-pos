@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 
 import { REALTIME_SUBPROTOCOL } from '@contracts/realtime';
+import { updatePrinterDeviceSettingsSchema } from '@contracts/store';
 import {
   addOrderItemSchema,
   cancelOrderSchema,
@@ -28,10 +29,13 @@ import {
 } from '@server/middleware/authorization';
 import { PosService } from '@server/services/pos-service';
 import { StoreService } from '@server/services/store-service';
+import { CustomerService } from '@server/services/customer-service';
+import { customerInputSchema, debtPaymentSchema } from '@contracts/customer';
 import { OwnerInvoiceService } from '@server/services/owner-invoice-service';
 import { RealtimeRepository } from '@server/repositories/realtime-repository';
 import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
 import { qrOrderStaffRoutes } from '@server/routes/qr-order-staff';
+import { QrOrderService } from '@server/services/qr-order-service';
 import { pushNotificationRoutes } from '@server/routes/push-notifications';
 import type { AppEnv } from '@server/types';
 
@@ -51,6 +55,23 @@ posRoutes.use('*', async (c, next) => {
       );
     }
   }
+});
+
+posRoutes.get('/onboarding/audio/:track', async (c) => {
+  const track = c.req.param('track');
+  if (!/^(0[0-9]|1[0-3])$/.test(track)) {
+    throw new AppError('ONBOARDING_AUDIO_NOT_FOUND', 'Không tìm thấy âm thanh hướng dẫn.', 404);
+  }
+  const object = await c.env.MEDIA.get(`onboarding/sound_${track}.MP3`);
+  if (!object) {
+    throw new AppError('ONBOARDING_AUDIO_NOT_FOUND', 'Không tìm thấy âm thanh hướng dẫn.', 404);
+  }
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set('Content-Type', 'audio/mpeg');
+  headers.set('ETag', object.httpEtag);
+  headers.set('Cache-Control', 'private, max-age=31536000, immutable');
+  return new Response(object.body, { headers });
 });
 
 function idempotencyKey(c: Parameters<typeof success>[0]) {
@@ -133,6 +154,62 @@ posRoutes.get('/print-settings', requirePermission('order.manage'), async (c) =>
   success(c, await new StoreService(c.env).getPrintSettings(c.get('actor').storeId!)),
 );
 
+posRoutes.get('/customers', requirePermission('order.add_customer'), async (c) => {
+  const search = c.req.query('search')?.trim();
+  return success(
+    c,
+    await new CustomerService(c.env).list(c.get('actor').storeId!, {
+      ...(search ? { search } : {}),
+      status: 'ACTIVE',
+      page: 1,
+      limit: 50,
+    }),
+  );
+});
+posRoutes.get('/customers/:id', requirePermission('order.add_customer'), async (c) =>
+  success(c, await new CustomerService(c.env).detail(c.get('actor').storeId!, c.req.param('id'))),
+);
+posRoutes.post('/customers', requirePermission('order.add_customer'), async (c) => {
+  const body = await parseJson(c.req.raw, customerInputSchema);
+  const actor = c.get('actor');
+  return success(c, await new CustomerService(c.env).create(actor.storeId!, actor.id, body), 201);
+});
+posRoutes.post(
+  '/customers/:id/debt-payments',
+  requirePermission('checkout.complete'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, debtPaymentSchema);
+    const actor = c.get('actor');
+    return success(
+      c,
+      await new CustomerService(c.env).payDebt(actor.storeId!, c.req.param('id'), actor.id, body),
+    );
+  },
+);
+
+posRoutes.put('/printer-settings', requirePermission('order.manage'), async (c) => {
+  const printer = await parseJson(c.req.raw, updatePrinterDeviceSettingsSchema);
+  const actor = c.get('actor');
+  const storeId = actor.storeId!;
+  const service = new StoreService(c.env);
+  const current = await service.getPrintSettings(storeId);
+
+  await service.updatePrintSettings({
+    ...current,
+    storeId,
+    paperSize: printer.paperSize,
+    printersJson: JSON.stringify(printer),
+    auditContext: {
+      actorUserId: actor.id,
+      actorSessionId: c.get('sessionId'),
+      deviceId: c.get('device')?.id ?? null,
+      requestId: c.get('requestId'),
+    },
+  });
+
+  return success(c, await service.getPrintSettings(storeId));
+});
+
 posRoutes.get('/catalog', requirePermission('order.manage'), async (c) =>
   success(c, await new PosService(c.env).listCatalog(c.get('actor').storeId!)),
 );
@@ -175,6 +252,18 @@ posRoutes.post('/tables/open', requirePermission('table.open'), async (c) => {
     201,
   );
 });
+
+posRoutes.post('/tables/:tableId/qr-code', requirePermission('table.view'), async (c) =>
+  success(
+    c,
+    await new QrOrderService(c.env).rotateQrCode(
+      c.get('actor').storeId!,
+      c.req.param('tableId'),
+      c.get('actor').id,
+    ),
+    201,
+  ),
+);
 
 posRoutes.get('/orders/:orderId/quote', requirePermission('table.view'), async (c) =>
   success(c, await new PosService(c.env).quote(c.get('actor').storeId!, c.req.param('orderId'))),
@@ -309,6 +398,7 @@ posRoutes.patch('/orders/:orderId/guest', requirePermission('order.manage'), asy
       guestCount: body.guestCount,
       customerName: body.customerName ?? null,
       customerPhone: body.customerPhone ?? null,
+      customerId: body.customerId ?? null,
     }),
   );
 });
@@ -423,6 +513,8 @@ posRoutes.post('/orders/:orderId/checkout', requirePermission('checkout.complete
       expectedOrderVersion: body.expectedOrderVersion,
       method: body.method,
       cashReceivedVnd: body.cashReceivedVnd ?? null,
+      allocations: body.allocations ?? [],
+      debtAmountVnd: body.debtAmountVnd,
       actorSessionId: c.get('sessionId'),
       deviceId: c.get('device')?.id ?? null,
     }),

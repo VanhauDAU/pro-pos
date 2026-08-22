@@ -53,11 +53,32 @@ export interface GuestMenuProduct {
 }
 
 export interface GuestOrderContext {
+  tableStatus: 'OPEN' | 'AVAILABLE' | 'OPEN_REQUESTED';
   storeName: string;
   tableName: string;
   areaName: string;
-  sessionExpiresAt: number;
+  table: {
+    id: string;
+    name: string;
+    areaName: string;
+  };
+  sessionExpiresAt: number | null;
+  openRequest: {
+    id: string;
+    status: 'OPEN';
+    createdAt: number;
+  } | null;
   menu: GuestMenuProduct[];
+}
+
+export interface TableOpenRequestDto {
+  id: string;
+  status: 'OPEN';
+  tableId: string;
+  tableName: string;
+  areaName: string;
+  tableVersion: number;
+  createdAt: number;
 }
 
 export type GuestOrderStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'CANCELLED' | 'EXPIRED';
@@ -88,7 +109,61 @@ export interface ServiceRequestDto {
   id: string;
   type: 'CALL_STAFF' | 'CHECKOUT_REQUEST';
   status: 'OPEN' | 'ACKNOWLEDGED' | 'COMPLETED' | 'CANCELLED';
+  tableId: string;
   tableName: string;
   areaName: string;
+  orderId: string;
   createdAt: number;
+  acknowledgedAt: number | null;
+}
+
+export type StaffNotificationEventType =
+  | 'QR_ORDER'
+  | 'CALL_STAFF'
+  | 'CHECKOUT_REQUEST'
+  | 'ORDER_CREATED'
+  | 'ITEM_ADDED'
+  | 'ITEM_UPDATED'
+  | 'ITEM_REMOVED'
+  | 'ORDER_SAVED'
+  | 'TABLE_TRANSFERRED'
+  | 'TIME_PAUSED'
+  | 'TIME_RESUMED'
+  | 'TIME_UPDATED'
+  | 'CHECKOUT_PENDING'
+  | 'CHECKOUT'
+  | 'ORDER_CANCELLED';
+export type StaffNotificationStatus =
+  | 'PENDING'
+  | 'OPEN'
+  | 'ACKNOWLEDGED'
+  | 'ACCEPTED'
+  | 'REJECTED'
+  | 'COMPLETED'
+  | 'CANCELLED'
+  | 'EXPIRED'
+  | 'INFO';
+
+export interface StaffNotificationAuditDto {
+  id: string;
+  sourceId: string;
+  eventType: StaffNotificationEventType;
+  status: StaffNotificationStatus;
+  orderId: string;
+  tableId: string;
+  tableName: string;
+  areaName: string;
+  summary: string;
+  note: string | null;
+  itemCount: number;
+  totalVnd: number;
+  actorName: string | null;
+  deviceName: string | null;
+  handledAt: number | null;
+  createdAt: number;
+}
+
+export interface StaffNotificationAuditResponse {
+  retentionDays: 3;
+  items: StaffNotificationAuditDto[];
 }

@@ -261,7 +261,7 @@ describe('POS Order Detail & Lifecycle Audit (Acceptance Test)', () => {
     expect(detail.order.tableUsageChain).toEqual(['Bàn Líp-01', 'Bàn Lỗ-02']);
 
     // 2. Multi-Segment Time Breakdown
-    expect(detail.timeSegments).toHaveLength(3);
+    expect(detail.timeSegments).toHaveLength(2);
 
     // Segment 1: Bàn Líp-01 (19:00 -> 20:00 @ 30k)
     expect(detail.timeSegments[0]!.tableName).toBe('Bàn Líp-01');
@@ -271,26 +271,17 @@ describe('POS Order Detail & Lifecycle Audit (Acceptance Test)', () => {
     expect(detail.timeSegments[0]!.unitPriceSnapshot).toBe(30_000);
     expect(detail.timeSegments[0]!.amountAfterRoundingVnd).toBe(30_000);
 
-    // Segment 2: Bàn Lỗ-02 (20:00 -> 21:00 @ 60k)
+    // Segment 2 remains continuous on Bàn Lỗ-02 despite entering and leaving checkout.
     expect(detail.timeSegments[1]!.tableName).toBe('Bàn Lỗ-02');
     expect(detail.timeSegments[1]!.startedAt).toBe(t1);
-    expect(detail.timeSegments[1]!.endedAt).toBe(t2);
-    expect(detail.timeSegments[1]!.elapsedSeconds).toBe(3600);
+    expect(detail.timeSegments[1]!.endedAt).toBe(t4);
+    expect(detail.timeSegments[1]!.elapsedSeconds).toBe(5400);
     expect(detail.timeSegments[1]!.unitPriceSnapshot).toBe(60_000);
-    expect(detail.timeSegments[1]!.amountAfterRoundingVnd).toBe(60_000);
+    expect(detail.timeSegments[1]!.amountAfterRoundingVnd).toBe(90_000);
 
-    // Segment 3: Bàn Lỗ-02 (21:05 -> 21:30 @ 60k)
-    expect(detail.timeSegments[2]!.tableName).toBe('Bàn Lỗ-02');
-    expect(detail.timeSegments[2]!.startedAt).toBe(t3);
-    expect(detail.timeSegments[2]!.endedAt).toBe(t4);
-    expect(detail.timeSegments[2]!.elapsedSeconds).toBe(1500); // 25 minutes = 1500s
-    expect(detail.timeSegments[2]!.unitPriceSnapshot).toBe(60_000);
-    // 25 mins @ 60k/h = 25,000 VND -> rounded to nearest 1000 = 25,000 VND
-    expect(detail.timeSegments[2]!.amountAfterRoundingVnd).toBe(25_000);
-
-    // Total Time: 3600 + 3600 + 1500 = 8700s (2h 25m). Total Amount = 30k + 60k + 25k = 115k
-    expect(detail.timeSummary?.totalElapsedSeconds).toBe(8700);
-    expect(detail.timeSummary?.totalAmountAfterRoundingVnd).toBe(115_000);
+    // Total Time: 1h on the first table + 1h30 on the current table.
+    expect(detail.timeSummary?.totalElapsedSeconds).toBe(9000);
+    expect(detail.timeSummary?.totalAmountAfterRoundingVnd).toBe(120_000);
 
     // 3. Table Transfer History
     expect(detail.tableTransfers).toHaveLength(1);
@@ -319,31 +310,31 @@ describe('POS Order Detail & Lifecycle Audit (Acceptance Test)', () => {
     expect(stingItem!.netLineTotalVnd).toBe(10_000);
 
     // 5. Financial Totals
-    // Time: 115,000 VND
+    // Time: 120,000 VND
     // Items Gross: 45,000 VND
     // Discount: 5,000 VND
-    // Subtotal: 160,000 VND
-    // Total: 155,000 VND
-    // Cash Received: 200,000 VND -> Change: 45,000 VND
-    expect(detail.totals.timeAmountVnd).toBe(115_000);
+    // Subtotal: 165,000 VND
+    // Total: 160,000 VND
+    // Cash Received: 200,000 VND -> Change: 40,000 VND
+    expect(detail.totals.timeAmountVnd).toBe(120_000);
     expect(detail.totals.itemGrossAmountVnd).toBe(45_000);
     expect(detail.totals.totalDiscountVnd).toBe(5000);
-    expect(detail.totals.totalVnd).toBe(155_000);
-    expect(detail.totals.paidAmountVnd).toBe(155_000);
-    expect(detail.totals.changeAmountVnd).toBe(45_000);
+    expect(detail.totals.totalVnd).toBe(160_000);
+    expect(detail.totals.paidAmountVnd).toBe(160_000);
+    expect(detail.totals.changeAmountVnd).toBe(40_000);
 
     // 6. Payments
     expect(detail.payments).toHaveLength(1);
     expect(detail.payments[0]!.method).toBe('CASH');
-    expect(detail.payments[0]!.amount).toBe(155_000);
+    expect(detail.payments[0]!.amount).toBe(160_000);
     expect(detail.payments[0]!.cashReceived).toBe(200_000);
-    expect(detail.payments[0]!.cashChange).toBe(45_000);
+    expect(detail.payments[0]!.cashChange).toBe(40_000);
     expect(detail.payments[0]!.status).toBe('SUCCEEDED');
 
     // 7. Invoice Snapshot
     expect(detail.invoice).toBeDefined();
     expect(detail.invoice!.status).toBe('COMPLETED');
-    expect(detail.invoice!.totalVnd).toBe(155_000);
+    expect(detail.invoice!.totalVnd).toBe(160_000);
 
     // 8. Audit Timeline
     expect(detail.auditEvents.length).toBeGreaterThanOrEqual(6);
@@ -386,6 +377,102 @@ describe('POS Order Detail & Lifecycle Audit (Acceptance Test)', () => {
     expect(detail.items[0]!.productNameSnapshot).toBe('Coca Cola');
     expect(detail.items[0]!.quantityMilli).toBe(3000);
     expect(detail.totals.totalVnd).toBe(45_000);
+  });
+
+  it('does not release a table when deleting an older invoice after the table was reopened', async () => {
+    const catalog = new CatalogService(env);
+    const pos = new PosService(env);
+    const invoiceService = new OwnerInvoiceService(env);
+    const pricing = await env.DB.prepare(
+      'SELECT area_id AS areaId, time_product_id AS timeProductId FROM service_tables WHERE id = ?',
+    )
+      .bind(tableAId)
+      .first<{ areaId: string; timeProductId: string }>();
+    const source = await catalog.createTable({
+      storeId,
+      areaId: pricing!.areaId,
+      timeProductId: pricing!.timeProductId,
+      name: 'Bàn tái sử dụng sau hóa đơn',
+      sortOrder: 50,
+    });
+    const target = await catalog.createTable({
+      storeId,
+      areaId: pricing!.areaId,
+      timeProductId: pricing!.timeProductId,
+      name: 'Bàn đích sau hóa đơn',
+      sortOrder: 51,
+    });
+    const startedAt = Date.parse('2026-08-22T08:00:00.000Z');
+    const oldOrder = await pos.openTable({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'req-open-old-reused-table',
+      idempotencyKey: 'cmd-open-old-reused-table',
+      tableId: source.id,
+      expectedTableVersion: 1,
+      now: startedAt,
+    });
+    await pos.stopTimeForCheckout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'req-stop-old-reused-table',
+      idempotencyKey: 'cmd-stop-old-reused-table',
+      orderId: oldOrder.orderId,
+      expectedOrderVersion: 1,
+      now: startedAt + 60_000,
+    });
+    await pos.checkout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'req-pay-old-reused-table',
+      idempotencyKey: 'cmd-pay-old-reused-table',
+      orderId: oldOrder.orderId,
+      expectedOrderVersion: 2,
+      method: 'CASH',
+      cashReceivedVnd: 100_000,
+      now: startedAt + 61_000,
+    });
+
+    const sourceAfterPayment = (await pos.listTables(storeId)).find(
+      (table) => table.id === source.id,
+    )!;
+    const newOrder = await pos.openTable({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'req-open-new-reused-table',
+      idempotencyKey: 'cmd-open-new-reused-table',
+      tableId: source.id,
+      expectedTableVersion: sourceAfterPayment.version,
+      now: startedAt + 120_000,
+    });
+
+    await invoiceService.deleteInvoice({
+      storeId,
+      targetId: oldOrder.orderId,
+      actorUserId: ownerUserId,
+      requestId: 'req-delete-old-invoice-reused-table',
+    });
+
+    const tablesAfterDeletion = await pos.listTables(storeId);
+    const currentSource = tablesAfterDeletion.find((table) => table.id === source.id)!;
+    const currentTarget = tablesAfterDeletion.find((table) => table.id === target.id)!;
+    expect(currentSource.status).toBe('OCCUPIED');
+    expect(currentSource.activeOrderId).toBe(newOrder.orderId);
+
+    await expect(
+      pos.transfer({
+        storeId,
+        actorId: ownerUserId,
+        requestId: 'req-transfer-after-old-invoice-delete',
+        idempotencyKey: 'cmd-transfer-after-old-invoice-delete',
+        orderId: newOrder.orderId,
+        targetTableId: target.id,
+        expectedOrderVersion: 1,
+        expectedSourceTableVersion: currentSource.version,
+        expectedTargetTableVersion: currentTarget.version,
+        now: startedAt + 180_000,
+      }),
+    ).resolves.toMatchObject({ orderId: newOrder.orderId, targetTableId: target.id });
   });
 
   it('correctly handles cancelled order detail with reason and audit trail', async () => {

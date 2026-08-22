@@ -23,5 +23,13 @@
       "@domain/*": ["./src/domain/*"]
     }
   },
-  "include": ["tests", "src/server", "src/contracts", "src/domain", "worker-configuration.d.ts"]
+  "include": [
+    "tests",
+    "src/server",
+    "src/contracts",
+    "src/domain",
+    "src/client/lib/qz-tray-service.ts",
+    "src/client/lib/pos-receipt-printer.ts",
+    "worker-configuration.d.ts"
+  ]
 }

@@ -11,11 +11,14 @@ import { mediaRoutes } from '@server/routes/media';
 import { posRoutes } from '@server/routes/pos';
 import { currentDeviceRoutes, ownerDeviceRoutes } from '@server/routes/devices';
 import { ownerStoreRoutes } from '@server/routes/owner-store';
+import { ownerAccountRoutes } from '@server/routes/owner-account';
 import { ownerInvoiceRoutes } from '@server/routes/owner-invoices';
 import { ownerAnalyticsRoutes } from '@server/routes/owner-analytics';
+import { ownerCustomerRoutes } from '@server/routes/owner-customers';
 import { guestOrderRoutes } from '@server/routes/guest-order';
 import type { AppEnv } from '@server/types';
 import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
+import { QrOrderRepository } from '@server/repositories/qr-order-repository';
 
 export { StoreRealtimeRoom } from '@server/realtime/store-realtime-room';
 
@@ -72,8 +75,10 @@ app.route('/api/v1/pos', posRoutes);
 app.route('/api/v1/owner/devices', ownerDeviceRoutes);
 app.route('/api/v1/devices/current', currentDeviceRoutes);
 app.route('/api/v1/owner/store', ownerStoreRoutes);
+app.route('/api/v1/owner/account', ownerAccountRoutes);
 app.route('/api/v1/owner/invoices', ownerInvoiceRoutes);
 app.route('/api/v1/owner/analytics', ownerAnalyticsRoutes);
+app.route('/api/v1/owner/customers', ownerCustomerRoutes);
 
 app.notFound((c) => failure(c, { code: 'NOT_FOUND', message: 'Không tìm thấy tài nguyên.' }, 404));
 
@@ -116,7 +121,12 @@ export default {
   async scheduled(controller: ScheduledController, env: CloudflareBindings) {
     const dispatcher = new RealtimeDispatcher(env);
     if (controller.cron === '17 18 * * *') {
-      await dispatcher.cleanupPublished();
+      const now = Date.now();
+      await Promise.all([
+        dispatcher.cleanupPublished(),
+        new QrOrderRepository(env.DB).cleanupExpiredNotifications(now),
+        new QrOrderRepository(env.DB).cleanupExpiredOperationalAudit(now - 3 * 24 * 60 * 60_000),
+      ]);
       return;
     }
     await dispatcher.dispatchPendingStores();

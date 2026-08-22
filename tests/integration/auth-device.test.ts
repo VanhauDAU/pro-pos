@@ -4,6 +4,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 
 import { hashExchangeCode, randomOpaqueToken } from '@server/lib/crypto';
 import { AccessAuthRepository } from '@server/repositories/access-auth-repository';
+import { PlatformRepository } from '@server/repositories/platform-repository';
 import { PlatformService } from '@server/services/platform-service';
 import { StaffService } from '@server/services/staff-service';
 import { AccessAuthService } from '@server/services/access-auth-service';
@@ -14,11 +15,14 @@ const OWNER_EMAIL = 'owner.test@example.com';
 
 async function seedStore() {
   const platform = new PlatformService(env);
-  await platform.bootstrap({
-    bootstrapSecret: env.SYSTEM_BOOTSTRAP_SECRET!,
-    email: 'system.admin@example.com',
-    displayName: 'System Admin',
-  });
+  if (!(await new PlatformRepository(env.DB).hasSuperAdmin())) {
+    await platform.bootstrap({
+      bootstrapSecret: env.SYSTEM_BOOTSTRAP_SECRET!,
+      email: 'system.admin@example.com',
+      displayName: 'System Admin',
+      password: 'AdminPassword123!',
+    });
+  }
   return platform.createStore({
     name: 'Pilot Store',
     ownerDisplayName: 'Pilot Owner',
@@ -138,6 +142,29 @@ describe('Owner and POS activation invariants', () => {
     const data = await jsonData<{ device: { name: string; status: string } }>(activate);
     expect(data.device.name).toBe('Máy thu ngân trực tiếp');
     expect(data.device.status).toBe('ACTIVE');
+
+    const deviceCookie = cookieValue(activate, '__Host-propos-device')!;
+    const contextRes = await SELF.fetch(`${ORIGIN}/api/v1/auth/context`, {
+      headers: { Cookie: deviceCookie },
+    });
+    expect(contextRes.status).toBe(200);
+    const contextData = await jsonData<{
+      device: { name: string; status: string; storeName: string };
+    }>(contextRes);
+    expect(contextData.device.storeName).toBe('Pilot Store');
+
+    const disconnectRes = await SELF.fetch(`${ORIGIN}/api/v1/auth/device/disconnect`, {
+      method: 'POST',
+      headers: {
+        Origin: ORIGIN,
+        'Content-Type': 'application/json',
+        Cookie: deviceCookie,
+      },
+      body: JSON.stringify({}),
+    });
+    expect(disconnectRes.status).toBe(200);
+    expect(disconnectRes.headers.get('Set-Cookie')).toContain('__Host-propos-device=');
+    expect(disconnectRes.headers.get('Set-Cookie')).toContain('Max-Age=0');
   });
 
   it('rejects an Access callback when Cloudflare did not authenticate the request', async () => {
@@ -221,6 +248,25 @@ describe('Owner and POS activation invariants', () => {
       .bind(store.storeId)
       .first<{ status: string }>();
     expect(row?.status).toBe('LOCKED');
+
+    const detailsResponse = await SELF.fetch(`${ORIGIN}/api/v1/platform/stores/${store.storeId}`, {
+      headers: {
+        Origin: ORIGIN,
+        Cookie: sessionCookie,
+      },
+    });
+    expect(detailsResponse.status).toBe(200);
+    const details = await jsonData<{
+      store: { id: string; name: string; status: string };
+      members: Array<{ roleCode: string; displayName: string }>;
+      devices: Array<{ name: string }>;
+      sessions: Array<{ sessionKind: string }>;
+      stats: { totalAreas: number; totalTables: number; totalProducts: number };
+    }>(detailsResponse);
+    expect(details.store.name).toBe('Store From Platform UI');
+    expect(details.members.length).toBeGreaterThanOrEqual(1);
+    expect(details.members[0]?.roleCode).toBe('OWNER');
+    expect(details.stats).toBeDefined();
   });
 
   it('allows Owner login on a fresh device without creating a POS device', async () => {
@@ -348,9 +394,9 @@ describe('Owner and POS activation invariants', () => {
     expect(response.headers.get('Set-Cookie')).toContain('__Host-propos-session=; Max-Age=0');
   });
 
-  it('returns accessLogoutUrl on POST /api/v1/auth/logout for Owner session', async () => {
-    const authorize = await completeAccess('OWNER_LOGIN');
-    if (authorize.purpose !== 'OWNER_LOGIN') throw new Error('Expected owner login.');
+  it('returns accessLogoutUrl on POST /api/v1/auth/logout for SUPER_ADMIN session in staging/production', async () => {
+    const authorize = await completeAccess('PLATFORM_LOGIN', 'system.admin@example.com');
+    if (authorize.purpose !== 'PLATFORM_LOGIN') throw new Error('Expected platform login.');
     const sessionCookie = `__Host-propos-session=${authorize.rawSession}`;
     const context = await new AuthService(env).context(authorize.rawSession);
 
@@ -368,7 +414,7 @@ describe('Owner and POS activation invariants', () => {
     expect(data.accessLogoutUrl).toContain('/cdn-cgi/access/logout');
     expect(data.accessLogoutUrl).toContain(
       encodeURIComponent(
-        `/logout-callback?target=${encodeURIComponent(`${ORIGIN}/?tab=owner&loggedOut=1`)}`,
+        `/logout-callback?target=${encodeURIComponent(`${ORIGIN}/platform/login?loggedOut=1`)}`,
       ),
     );
     expect(logout.headers.get('Set-Cookie')).toContain('__Host-propos-session=; Max-Age=0');
@@ -430,5 +476,117 @@ describe('Owner and POS activation invariants', () => {
       }),
     });
     expect(loginNew.status).toBe(200);
+  });
+
+  it('rejects SUPER_ADMIN password login in staging/production with 403 PLATFORM_PASSWORD_LOGIN_DISABLED', async () => {
+    const response = await SELF.fetch(`${ORIGIN}/api/v1/auth/platform/login`, {
+      method: 'POST',
+      headers: {
+        Origin: ORIGIN,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        username: 'system.admin@example.com',
+        password: 'AnyPassword123!',
+      }),
+    });
+    expect(response.status).toBe(403);
+    const json = (await response.json()) as { error: { code: string; message: string } };
+    expect(json.error.code).toBe('PLATFORM_PASSWORD_LOGIN_DISABLED');
+  });
+
+  it('authenticates SUPER_ADMIN locally with valid password and rejects invalid password', async () => {
+    const authService = new AuthService({
+      ...env,
+      ENVIRONMENT: 'local',
+    });
+
+    // Valid credentials
+    const valid = await authService.platformLogin({
+      username: 'system.admin@example.com',
+      password: 'AdminPassword123!',
+    });
+    expect(valid.response.actor.kind).toBe('SUPER_ADMIN');
+    expect(valid.rawToken).toBeDefined();
+
+    // Invalid credentials
+    await expect(
+      authService.platformLogin({
+        username: 'system.admin@example.com',
+        password: 'WrongPassword!',
+      }),
+    ).rejects.toThrow('Tên đăng nhập hoặc mật khẩu không chính xác.');
+  });
+
+  it('allows SuperAdmin to update store member info and reset password', async () => {
+    const platform = new PlatformService(env);
+    if (!(await new PlatformRepository(env.DB).hasSuperAdmin())) {
+      await platform.bootstrap({
+        bootstrapSecret: env.SYSTEM_BOOTSTRAP_SECRET!,
+        email: 'system.admin@example.com',
+        displayName: 'System Admin',
+        password: 'AdminPassword123!',
+      });
+    }
+    const store = await platform.createStore({
+      name: 'Store for Member Edit',
+      ownerDisplayName: 'Member Edit Owner',
+      ownerEmail: 'member.edit.owner@example.com',
+      ownerUsername: 'owner.edit.test',
+      ownerPassword: 'OwnerPassword123!',
+    });
+
+    const details = await platform.getStoreDetails(store.storeId);
+    const ownerMember = details.members.find((m) => m.roleCode === 'OWNER')!;
+    expect(ownerMember).toBeDefined();
+
+    // 1. Update owner info + new password
+    const updateResult = await platform.updateStoreMember({
+      storeId: store.storeId,
+      userId: ownerMember.userId,
+      displayName: 'Updated Owner Name',
+      email: 'new.owner.email@example.com',
+      phone: '0987654321',
+      status: 'ACTIVE',
+      newPassword: 'BrandNewPassword123!',
+    });
+    expect(updateResult.success).toBe(true);
+
+    // 2. Check updated details
+    const updatedDetails = await platform.getStoreDetails(store.storeId);
+    const updatedOwner = updatedDetails.members.find((m) => m.userId === ownerMember.userId)!;
+    expect(updatedOwner.displayName).toBe('Updated Owner Name');
+    expect(updatedOwner.email).toBe('new.owner.email@example.com');
+    expect(updatedOwner.phone).toBe('0987654321');
+
+    // 3. Login with newly reset password
+    const authService = new AuthService(env);
+    const loginRes = await authService.ownerLogin({
+      username: 'owner.edit.test',
+      password: 'BrandNewPassword123!',
+      rememberMe: true,
+    });
+    expect(loginRes.response.actor.displayName).toBe('Updated Owner Name');
+    expect(loginRes.maxAgeSeconds).toBe(30 * 24 * 60 * 60);
+
+    const loginShort = await authService.ownerLogin({
+      username: 'owner.edit.test',
+      password: 'BrandNewPassword123!',
+      rememberMe: false,
+    });
+    expect(loginShort.maxAgeSeconds).toBe(24 * 60 * 60);
+  });
+
+  it('aggregates platform analytics and store performance data correctly', async () => {
+    const platform = new PlatformService(env);
+    const analytics = await platform.getPlatformAnalytics(14);
+
+    expect(analytics.summary).toBeDefined();
+    expect(analytics.summary.totalStores).toBeGreaterThanOrEqual(1);
+    expect(analytics.revenueTrend).toHaveLength(14);
+    expect(analytics.storePerformance.length).toBeGreaterThanOrEqual(1);
+    expect(analytics.hourlyDistribution).toHaveLength(24);
+    expect(Array.isArray(analytics.paymentMethods)).toBe(true);
+    expect(Array.isArray(analytics.topProducts)).toBe(true);
   });
 });

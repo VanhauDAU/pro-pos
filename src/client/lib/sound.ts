@@ -1,6 +1,7 @@
 export const POS_SOUNDS = {
   NEW_QR_ORDER: '/sound/sound_goimonmoi.ogg',
   CHECKOUT_REQUEST: '/sound/sound_yeucauthanhtoan.ogg',
+  TABLE_OPEN_REQUEST: '/sound/sound_yeuccaumoban.ogg',
 } as const;
 
 export type PosSoundType = keyof typeof POS_SOUNDS;
@@ -11,6 +12,7 @@ class PosSoundEngine {
   private readonly audioElements = new Map<PosSoundType, HTMLAudioElement>();
   private isUnlocked = false;
   private isLoadingBuffers = false;
+  private readonly playedKeys = new Map<string, number>();
 
   constructor() {
     if (typeof window === 'undefined') return;
@@ -123,12 +125,23 @@ class PosSoundEngine {
    * Play sound with 0ms latency using pre-decoded AudioBuffer,
    * falling back to HTMLAudioElement and triggering haptic vibration.
    */
-  play(type: PosSoundType) {
+  play(type: PosSoundType, dedupeKey?: string) {
+    if (dedupeKey) {
+      const now = Date.now();
+      const lastPlayedAt = this.playedKeys.get(dedupeKey);
+      if (lastPlayedAt !== undefined && now - lastPlayedAt < 15_000) return;
+      this.playedKeys.set(dedupeKey, now);
+      for (const [key, playedAt] of this.playedKeys) {
+        if (now - playedAt >= 60_000) this.playedKeys.delete(key);
+      }
+    }
     // 1. Trigger haptic vibration on mobile devices
     if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
       try {
         if (type === 'NEW_QR_ORDER') {
           navigator.vibrate([200, 100, 200]);
+        } else if (type === 'TABLE_OPEN_REQUEST') {
+          navigator.vibrate([250, 100, 250, 100, 250]);
         } else {
           navigator.vibrate([400, 150, 400]);
         }
@@ -182,8 +195,8 @@ class PosSoundEngine {
 
 const engine = new PosSoundEngine();
 
-export function playPosSound(type: PosSoundType): void {
-  engine.play(type);
+export function playPosSound(type: PosSoundType, dedupeKey?: string): void {
+  engine.play(type, dedupeKey);
 }
 
 export function unlockPosAudio(): void {

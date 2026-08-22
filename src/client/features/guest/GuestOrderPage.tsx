@@ -6,8 +6,10 @@ import {
   CloseOutlined,
   CreditCardOutlined,
   DeleteOutlined,
+  EditOutlined,
   FileTextOutlined,
   HistoryOutlined,
+  HourglassOutlined,
   MinusOutlined,
   PlusOutlined,
   RightOutlined,
@@ -15,9 +17,22 @@ import {
   SendOutlined,
   ShopOutlined,
   ShoppingCartOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, Drawer, Empty, Input, Modal, Result, Spin, Tag, message } from 'antd';
+import {
+  Alert,
+  Button,
+  Drawer,
+  Empty,
+  Input,
+  Modal,
+  Popconfirm,
+  Result,
+  Spin,
+  Tag,
+  message,
+} from 'antd';
 import { useMemo, useState } from 'react';
 import { useParams } from 'react-router';
 
@@ -65,6 +80,13 @@ export function GuestOrderPage() {
   const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
   const [orderNote, setOrderNote] = useState('');
 
+  // Cart Item Note Editing
+  const [editingNoteVariantId, setEditingNoteVariantId] = useState<string | null>(null);
+  const [tempItemNote, setTempItemNote] = useState<string>('');
+
+  // Order Success Celebration Modal
+  const [orderSuccessModalOpen, setOrderSuccessModalOpen] = useState(false);
+
   // Item Customization Modal State
   const [customizingProduct, setCustomizingProduct] = useState<GuestMenuProduct | null>(null);
   const [selectedVariantId, setSelectedVariantId] = useState<string>('');
@@ -83,12 +105,14 @@ export function GuestOrderPage() {
     queryFn: () => apiRequest<GuestOrderContext>(`/api/v1/guest-order/resolve/${token}`),
     enabled: Boolean(token),
     retry: false,
+    refetchInterval: (query) =>
+      query.state.data?.tableStatus === 'OPEN_REQUESTED' ? 3_000 : false,
   });
 
   const requests = useQuery({
     queryKey: ['guest-order-own-requests'],
     queryFn: () => apiRequest<GuestOrderRequestDto[]>('/api/v1/guest-order/requests'),
-    enabled: context.isSuccess,
+    enabled: context.data?.tableStatus === 'OPEN',
     refetchInterval: 5_000,
   });
 
@@ -164,6 +188,44 @@ export function GuestOrderPage() {
     });
   };
 
+  const QUICK_TABLE_NOTES = [
+    '🧊 Thêm đá lạnh',
+    '🥢 Thêm chén đũa/ly',
+    '🌶️ Ít cay / không cay',
+    '🥤 Mang nước trước',
+    '⚡ Làm nhanh giúp em',
+    '🥡 Cho mang về',
+  ];
+
+  const handleToggleQuickNote = (chipText: string) => {
+    setOrderNote((prev) => {
+      const trimmed = prev.trim();
+      if (!trimmed) return chipText;
+      if (trimmed.includes(chipText)) {
+        return trimmed
+          .replace(chipText, '')
+          .replace(/,\s*,/g, ',')
+          .replace(/^,\s*|,\s*$/g, '')
+          .trim();
+      }
+      return `${trimmed}, ${chipText}`;
+    });
+  };
+
+  const handleUpdateItemNote = (variantId: string, note: string) => {
+    setCart((current) => {
+      const item = current[variantId];
+      if (!item) return current;
+      return {
+        ...current,
+        [variantId]: {
+          ...item,
+          note: note.trim(),
+        },
+      };
+    });
+  };
+
   const handleUpdateCartQuantity = (variantId: string, delta: number) => {
     setCart((current) => {
       const item = current[variantId];
@@ -222,6 +284,9 @@ export function GuestOrderPage() {
   // Submit Order Mutation
   const submitOrder = useMutation({
     mutationFn: async () => {
+      if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+        navigator.vibrate?.(40);
+      }
       const clientRequestId = crypto.randomUUID();
       return jsonRequest<{ requestId: string }>(
         '/api/v1/guest-order/requests',
@@ -242,6 +307,7 @@ export function GuestOrderPage() {
       setCart({});
       setOrderNote('');
       setCartDrawerOpen(false);
+      setOrderSuccessModalOpen(true);
       messageApi.success('Đã gửi gọi món thành công! Quán đang chuẩn bị món cho bạn.');
       await queryClient.invalidateQueries({ queryKey: ['guest-order-own-requests'] });
     },
@@ -266,6 +332,25 @@ export function GuestOrderPage() {
     onError: (error) => {
       setServiceConfirm({ open: false, type: 'CALL_STAFF' });
       messageApi.warning(error instanceof Error ? error.message : 'Không thể gửi yêu cầu.');
+    },
+  });
+
+  const requestTableOpen = useMutation({
+    mutationFn: () =>
+      jsonRequest<{ requestId: string | null; alreadyOpen: boolean }>(
+        `/api/v1/guest-order/resolve/${token}/open-request`,
+        {},
+      ),
+    onSuccess: async (result) => {
+      messageApi.success(
+        result.alreadyOpen
+          ? 'Bàn đã được mở. Đang tải phiên gọi món...'
+          : 'Đã báo nhân viên. Bạn có thể chọn món trong lúc chờ.',
+      );
+      await context.refetch();
+    },
+    onError: (error) => {
+      messageApi.error(error instanceof Error ? error.message : 'Không thể gửi yêu cầu mở bàn.');
     },
   });
 
@@ -298,6 +383,12 @@ export function GuestOrderPage() {
   }
 
   const latestRequest = requests.data?.[0];
+  const isTableOpen = context.data.tableStatus === 'OPEN';
+  const isWaitingForOpen = context.data.tableStatus === 'OPEN_REQUESTED';
+  const mediaUrl = (mediaId: string) =>
+    isTableOpen
+      ? `/api/v1/guest-order/media/${mediaId}`
+      : `/api/v1/guest-order/resolve/${token}/media/${mediaId}`;
 
   return (
     <div className="qr-guest-layout">
@@ -335,6 +426,7 @@ export function GuestOrderPage() {
             <button
               type="button"
               className="qr-guest-service-btn qr-guest-service-btn--staff"
+              disabled={!isTableOpen}
               onClick={() => setServiceConfirm({ open: true, type: 'CALL_STAFF' })}
             >
               <div className="qr-guest-service-btn__icon">
@@ -349,6 +441,7 @@ export function GuestOrderPage() {
             <button
               type="button"
               className="qr-guest-service-btn qr-guest-service-btn--bill"
+              disabled={!isTableOpen}
               onClick={() => setServiceConfirm({ open: true, type: 'CHECKOUT_REQUEST' })}
             >
               <div className="qr-guest-service-btn__icon">
@@ -361,6 +454,33 @@ export function GuestOrderPage() {
             </button>
           </div>
         </header>
+
+        {!isTableOpen ? (
+          <Alert
+            className="qr-guest-table-open-alert"
+            type={isWaitingForOpen ? 'info' : 'warning'}
+            showIcon
+            icon={<HourglassOutlined />}
+            title={isWaitingForOpen ? 'Đang chờ nhân viên mở bàn' : 'Bàn chưa được mở'}
+            description={
+              <div className="qr-guest-table-open-alert__content">
+                <span>
+                  {isWaitingForOpen
+                    ? 'Bạn cứ chọn món vào giỏ. Trang sẽ tự cập nhật ngay khi bàn được mở.'
+                    : 'Gửi yêu cầu để nhân viên mở bàn. Bạn vẫn có thể xem menu và chọn món trước.'}
+                </span>
+                <Button
+                  type="primary"
+                  loading={requestTableOpen.isPending}
+                  disabled={isWaitingForOpen}
+                  onClick={() => requestTableOpen.mutate()}
+                >
+                  {isWaitingForOpen ? 'Đã gửi yêu cầu' : 'Yêu cầu mở bàn'}
+                </Button>
+              </div>
+            }
+          />
+        ) : null}
 
         {/* ── 2. Live Order Status Tracker (If previous requests exist) ─── */}
         {latestRequest ? (
@@ -476,7 +596,7 @@ export function GuestOrderPage() {
                       >
                         {product.avatarType === 'IMAGE' && product.mediaId ? (
                           <img
-                            src={`/api/v1/guest-order/media/${product.mediaId}`}
+                            src={mediaUrl(product.mediaId)}
                             alt={product.name}
                             className="qr-guest-card__img"
                             loading="lazy"
@@ -585,131 +705,328 @@ export function GuestOrderPage() {
 
         {/* ── 7. Cart Bottom Sheet Drawer ─────────────────────────────────── */}
         <Drawer
-          title={
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                width: '100%',
-              }}
-            >
-              <span style={{ fontSize: 17, fontWeight: 800 }}>Giỏ hàng ({totalItemCount} món)</span>
-              <Button
-                type="text"
-                danger
-                size="small"
-                icon={<DeleteOutlined />}
-                onClick={() => setCart({})}
-              >
-                Xóa tất cả
-              </Button>
-            </div>
-          }
           placement="bottom"
           height="auto"
           open={cartDrawerOpen}
-          onClose={() => setCartDrawerOpen(false)}
+          onClose={() => {
+            setCartDrawerOpen(false);
+            setEditingNoteVariantId(null);
+          }}
+          closeIcon={null}
+          rootClassName="qr-cart-drawer-root"
           styles={{
-            body: { padding: '14px 16px 24px', maxHeight: '75vh', overflowY: 'auto' },
+            body: { padding: 0, maxHeight: '85vh', display: 'flex', flexDirection: 'column' },
           }}
         >
-          {cartLines.length === 0 ? (
-            <Empty description="Giỏ hàng của bạn đang trống" style={{ padding: '20px 0' }} />
-          ) : (
-            <div>
-              <div style={{ marginBottom: 14 }}>
-                {cartLines.map((line) => (
-                  <div key={line.variant.id} className="qr-guest-sheet-item">
-                    <div className="qr-guest-sheet-item__info">
-                      <div className="qr-guest-sheet-item__name">{line.product.name}</div>
-                      <div className="qr-guest-sheet-item__meta">
-                        {line.variant.name !== 'Default' && line.variant.name !== 'Mặc định' ? (
-                          <Tag style={{ marginRight: 6 }}>{line.variant.name}</Tag>
-                        ) : null}
-                        <span className="qr-guest-sheet-item__price">
-                          {formatVnd(line.variant.salePriceVnd)}
-                        </span>
-                      </div>
-                      {line.note ? (
-                        <div style={{ fontSize: 12, color: '#f59e0b', marginTop: 2 }}>
-                          Ghi chú: {line.note}
-                        </div>
-                      ) : null}
-                    </div>
-
-                    <div className="qr-guest-sheet-item__stepper">
-                      <Button
-                        size="small"
-                        shape="circle"
-                        icon={<MinusOutlined />}
-                        onClick={() => handleUpdateCartQuantity(line.variant.id, -1)}
-                      />
-                      <strong style={{ minWidth: 20, textAlign: 'center', fontSize: 15 }}>
-                        {line.quantity}
-                      </strong>
-                      <Button
-                        size="small"
-                        shape="circle"
-                        icon={<PlusOutlined />}
-                        onClick={() => handleUpdateCartQuantity(line.variant.id, 1)}
-                      />
-                    </div>
+          {/* Top Drag Bar & Header */}
+          <div className="qr-cart-sheet-top">
+            <div className="qr-cart-drag-handle" />
+            <div className="qr-cart-header">
+              <div className="qr-cart-header__left">
+                <div className="qr-cart-header__title-row">
+                  <span className="qr-cart-header__title">Giỏ hàng của bạn</span>
+                  <span className="qr-cart-header__count-badge">{totalItemCount} món</span>
+                </div>
+                {context.data?.table ? (
+                  <div className="qr-cart-header__table-badge">
+                    <ShopOutlined />
+                    <span>
+                      {context.data.table.name}
+                      {context.data.table.areaName ? ` • ${context.data.table.areaName}` : ''}
+                    </span>
                   </div>
-                ))}
+                ) : null}
               </div>
 
-              {/* Table Order Note */}
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6, color: '#334155' }}>
-                  <FileTextOutlined /> Ghi chú cho cả bàn:
+              <div className="qr-cart-header__right">
+                {cartLines.length > 0 ? (
+                  <Popconfirm
+                    title="Xóa tất cả món trong giỏ?"
+                    description="Bạn có chắc muốn làm trống giỏ hàng không?"
+                    okText="Xóa tất cả"
+                    cancelText="Hủy"
+                    okButtonProps={{ danger: true }}
+                    onConfirm={() => {
+                      setCart({});
+                      setCartDrawerOpen(false);
+                    }}
+                  >
+                    <button type="button" className="qr-cart-clear-btn" aria-label="Xóa tất cả món">
+                      <DeleteOutlined />
+                      <span>Xóa hết</span>
+                    </button>
+                  </Popconfirm>
+                ) : null}
+                <button
+                  type="button"
+                  className="qr-cart-close-btn"
+                  onClick={() => setCartDrawerOpen(false)}
+                  aria-label="Đóng giỏ hàng"
+                >
+                  <CloseOutlined />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {cartLines.length === 0 ? (
+            <div className="qr-cart-empty-state">
+              <div className="qr-cart-empty-icon">
+                <ShoppingCartOutlined />
+              </div>
+              <div className="qr-cart-empty-title">Giỏ hàng đang trống</div>
+              <div className="qr-cart-empty-desc">
+                Hãy khám phá các món ngon hấp dẫn và thêm vào giỏ để gọi món nhé!
+              </div>
+              <Button
+                type="primary"
+                size="large"
+                className="qr-cart-empty-btn"
+                onClick={() => setCartDrawerOpen(false)}
+              >
+                Khám phá thực đơn
+              </Button>
+            </div>
+          ) : (
+            <div className="qr-cart-sheet-body">
+              {/* Cart Items List */}
+              <div className="qr-cart-items-list">
+                {cartLines.map((line) => {
+                  const isEditingNote = editingNoteVariantId === line.variant.id;
+                  const hasCustomAvatar = Boolean(
+                    line.product.avatarType === 'IMAGE' && line.product.mediaId,
+                  );
+                  const isMultiVariants =
+                    line.variant.name !== 'Default' && line.variant.name !== 'Mặc định';
+
+                  return (
+                    <div key={line.variant.id} className="qr-cart-item-card">
+                      <div className="qr-cart-item-main">
+                        {/* Thumbnail / Avatar */}
+                        <div
+                          className={`qr-cart-item-thumb ${line.product.avatarColor ? 'has-custom-color' : ''}`}
+                          style={{ background: line.product.avatarColor || '#f1f5f9' }}
+                        >
+                          {hasCustomAvatar ? (
+                            <img
+                              src={mediaUrl(line.product.mediaId!)}
+                              alt={line.product.name}
+                              className="qr-cart-item-img"
+                              loading="lazy"
+                            />
+                          ) : (
+                            <span className="qr-cart-item-avatar-letter">
+                              {getInitials(line.product.name)}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Info */}
+                        <div className="qr-cart-item-info">
+                          <div className="qr-cart-item-name">{line.product.name}</div>
+                          <div className="qr-cart-item-meta">
+                            {isMultiVariants ? (
+                              <Tag className="qr-cart-variant-tag">{line.variant.name}</Tag>
+                            ) : null}
+                            <span className="qr-cart-item-unit-price">
+                              {formatVnd(line.variant.salePriceVnd)}
+                              {line.product.productType === 'WEIGHT' && line.product.unitName
+                                ? `/${line.product.unitName}`
+                                : ''}
+                            </span>
+                          </div>
+                          <div className="qr-cart-item-total-price">
+                            {formatVnd(line.variant.salePriceVnd * line.quantity)}
+                          </div>
+                        </div>
+
+                        {/* Stepper */}
+                        <div className="qr-cart-item-stepper">
+                          <button
+                            type="button"
+                            className={`qr-cart-stepper-btn ${line.quantity === 1 ? 'is-delete' : ''}`}
+                            aria-label={line.quantity === 1 ? 'Xóa món' : 'Giảm số lượng'}
+                            onClick={() => handleUpdateCartQuantity(line.variant.id, -1)}
+                          >
+                            {line.quantity === 1 ? (
+                              <DeleteOutlined style={{ fontSize: 13, color: '#ef4444' }} />
+                            ) : (
+                              <MinusOutlined style={{ fontSize: 12 }} />
+                            )}
+                          </button>
+                          <span className="qr-cart-stepper-val">{line.quantity}</span>
+                          <button
+                            type="button"
+                            className="qr-cart-stepper-btn"
+                            aria-label="Tăng số lượng"
+                            onClick={() => handleUpdateCartQuantity(line.variant.id, 1)}
+                          >
+                            <PlusOutlined style={{ fontSize: 12 }} />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Item Note Section */}
+                      <div className="qr-cart-item-note-section">
+                        {isEditingNote ? (
+                          <div className="qr-cart-item-note-edit">
+                            <Input
+                              size="small"
+                              placeholder="Ghi chú món này (vd: ít đường, không đá...)"
+                              value={tempItemNote}
+                              maxLength={100}
+                              autoFocus
+                              onChange={(e) => setTempItemNote(e.target.value)}
+                              onPressEnter={() => {
+                                handleUpdateItemNote(line.variant.id, tempItemNote);
+                                setEditingNoteVariantId(null);
+                              }}
+                              className="qr-cart-item-note-input"
+                            />
+                            <div className="qr-cart-item-note-edit-actions">
+                              <Button
+                                size="small"
+                                type="primary"
+                                onClick={() => {
+                                  handleUpdateItemNote(line.variant.id, tempItemNote);
+                                  setEditingNoteVariantId(null);
+                                }}
+                              >
+                                Lưu
+                              </Button>
+                              <Button size="small" onClick={() => setEditingNoteVariantId(null)}>
+                                Hủy
+                              </Button>
+                            </div>
+                          </div>
+                        ) : line.note ? (
+                          <div className="qr-cart-item-note-badge">
+                            <span className="qr-cart-item-note-text">
+                              📝 <strong>Ghi chú:</strong> {line.note}
+                            </span>
+                            <div className="qr-cart-item-note-btns">
+                              <button
+                                type="button"
+                                className="qr-cart-note-action-btn"
+                                onClick={() => {
+                                  setEditingNoteVariantId(line.variant.id);
+                                  setTempItemNote(line.note);
+                                }}
+                              >
+                                <EditOutlined /> Sửa
+                              </button>
+                              <button
+                                type="button"
+                                className="qr-cart-note-action-btn is-danger"
+                                onClick={() => handleUpdateItemNote(line.variant.id, '')}
+                              >
+                                <CloseOutlined />
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            className="qr-cart-add-note-btn"
+                            onClick={() => {
+                              setEditingNoteVariantId(line.variant.id);
+                              setTempItemNote('');
+                            }}
+                          >
+                            <PlusOutlined style={{ fontSize: 10 }} /> Thêm ghi chú món
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Table Order Notes & Quick Suggestions */}
+              <div className="qr-cart-table-note-card">
+                <div className="qr-cart-table-note-header">
+                  <span className="qr-cart-table-note-title">
+                    <FileTextOutlined /> Ghi chú cho cả bàn
+                  </span>
+                  <span className="qr-cart-table-note-hint">Chạm gợi ý để chọn nhanh</span>
                 </div>
+
+                <div className="qr-cart-quick-chips">
+                  {QUICK_TABLE_NOTES.map((chip) => {
+                    const isSelected = orderNote.includes(chip);
+                    return (
+                      <button
+                        key={chip}
+                        type="button"
+                        className={`qr-cart-quick-chip ${isSelected ? 'is-selected' : ''}`}
+                        onClick={() => handleToggleQuickNote(chip)}
+                      >
+                        {chip}
+                      </button>
+                    );
+                  })}
+                </div>
+
                 <Input.TextArea
                   rows={2}
                   maxLength={200}
                   showCount
-                  placeholder="Ví dụ: Mang thêm đá lạnh, mang trước nước ngọt..."
+                  placeholder="Nhập thêm ghi chú phục vụ cho nhà hàng nếu cần..."
                   value={orderNote}
                   onChange={(e) => setOrderNote(e.target.value)}
+                  className="qr-cart-table-note-input"
                 />
               </div>
 
-              {/* Order Total & Submit Button */}
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '12px 0',
-                  borderTop: '1px solid #e2e8f0',
-                  marginBottom: 14,
-                }}
-              >
-                <span style={{ fontSize: 15, fontWeight: 600, color: '#64748b' }}>
-                  Tổng thanh toán:
-                </span>
-                <span style={{ fontSize: 20, fontWeight: 800, color: '#e11d48' }}>
-                  {formatVnd(totalAmount)}
-                </span>
+              {/* Summary Breakdown */}
+              <div className="qr-cart-summary-card">
+                <div className="qr-cart-summary-row">
+                  <span className="qr-cart-summary-label">Số lượng món</span>
+                  <span className="qr-cart-summary-val">
+                    {totalItemCount} phần ({cartLines.length} món)
+                  </span>
+                </div>
+                <div className="qr-cart-summary-row">
+                  <span className="qr-cart-summary-label">Bàn phục vụ</span>
+                  <span className="qr-cart-summary-val">{context.data?.table.name}</span>
+                </div>
+                <div className="qr-cart-summary-divider" />
+                <div className="qr-cart-summary-row is-total">
+                  <div className="qr-cart-summary-total-label">
+                    <span>Tổng thanh toán</span>
+                    <small>(Tạm tính)</small>
+                  </div>
+                  <span className="qr-cart-summary-total-amount">{formatVnd(totalAmount)}</span>
+                </div>
               </div>
 
-              <Button
-                type="primary"
-                size="large"
-                block
-                icon={<SendOutlined />}
-                loading={submitOrder.isPending}
-                style={{
-                  height: 50,
-                  borderRadius: 14,
-                  fontSize: 16,
-                  fontWeight: 700,
-                  background: 'linear-gradient(135deg, #0b63d6 0%, #0877ee 100%)',
-                }}
-                onClick={() => submitOrder.mutate()}
-              >
-                Gửi yêu cầu gọi món ({formatVnd(totalAmount)})
-              </Button>
+              {/* Sticky Submit Button Box */}
+              <div className="qr-cart-footer-box">
+                <button
+                  type="button"
+                  className="qr-cart-submit-btn"
+                  disabled={submitOrder.isPending || !isTableOpen}
+                  onClick={() => submitOrder.mutate()}
+                >
+                  <div className="qr-cart-submit-btn__content">
+                    <span className="qr-cart-submit-btn__icon">
+                      {submitOrder.isPending ? <Spin size="small" /> : <SendOutlined />}
+                    </span>
+                    <span className="qr-cart-submit-btn__text">
+                      {submitOrder.isPending
+                        ? 'Đang gửi yêu cầu...'
+                        : isTableOpen
+                          ? 'Gửi yêu cầu gọi món'
+                          : 'Chờ nhân viên mở bàn'}
+                    </span>
+                    <span className="qr-cart-submit-btn__badge">{formatVnd(totalAmount)}</span>
+                  </div>
+                </button>
+                <div className="qr-cart-footer-tip">
+                  <ThunderboltOutlined style={{ color: '#f59e0b' }} /> Món sẽ được chuyển ngay đến
+                  quầy bar / bếp chế biến
+                </div>
+              </div>
             </div>
           )}
         </Drawer>
@@ -993,6 +1310,47 @@ export function GuestOrderPage() {
                 tới bàn.
               </p>
             )}
+          </div>
+        </Modal>
+
+        {/* ── 11. Order Success Modal ──────────────────────────────────────── */}
+        <Modal
+          open={orderSuccessModalOpen}
+          footer={null}
+          centered
+          closable={false}
+          className="qr-order-success-modal"
+          styles={{ body: { padding: '28px 20px 24px', textAlign: 'center' } }}
+        >
+          <div className="qr-success-anim-wrap">
+            <CheckCircleFilled className="qr-success-icon" />
+          </div>
+          <div className="qr-success-title">Gọi món thành công!</div>
+          <div className="qr-success-desc">
+            Yêu cầu gọi món tại <strong>{context.data?.table?.name || 'bàn của bạn'}</strong> đã
+            được chuyển đến quầy phục vụ và đang được chuẩn bị.
+          </div>
+          <div className="qr-success-actions">
+            <Button
+              type="primary"
+              size="large"
+              block
+              className="qr-success-view-btn"
+              onClick={() => {
+                setOrderSuccessModalOpen(false);
+                setHistoryDrawerOpen(true);
+              }}
+            >
+              <HistoryOutlined /> Xem tiến độ & Lịch sử gọi món
+            </Button>
+            <Button
+              size="large"
+              block
+              className="qr-success-continue-btn"
+              onClick={() => setOrderSuccessModalOpen(false)}
+            >
+              Tiếp tục xem thực đơn
+            </Button>
           </div>
         </Modal>
       </div>

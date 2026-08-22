@@ -44,12 +44,19 @@ authRoutes.post('/owner/login', async (c) => {
   assertSameOrigin(c);
   const body = await parseJson(c.req.raw, ownerLoginRequestSchema);
   const result = await new AuthService(c.env).ownerLogin(body);
-  setCredentialCookie(c, 'session', result.rawToken, 7 * 24 * 60 * 60);
+  setCredentialCookie(c, 'session', result.rawToken, result.maxAgeSeconds);
   return success(c, result.response);
 });
 
 authRoutes.post('/platform/login', async (c) => {
   assertSameOrigin(c);
+  if (c.env.ENVIRONMENT !== 'local') {
+    throw new AppError(
+      'PLATFORM_PASSWORD_LOGIN_DISABLED',
+      'Đăng nhập mật khẩu SUPER_ADMIN chỉ được sử dụng ở môi trường local.',
+      403,
+    );
+  }
   const body = await parseJson(c.req.raw, platformLoginRequestSchema);
   const result = await new AuthService(c.env).platformLogin(body);
   setCredentialCookie(c, 'session', result.rawToken, 24 * 60 * 60);
@@ -179,14 +186,14 @@ function buildAccessLogoutUrl(env: CloudflareBindings, finalReturnTo: string): s
 
 authRoutes.post('/logout', async (c) => {
   const rawSession = readCredentialCookie(c, 'session');
-  let isAccessUser = false;
+  let isAccessSuperAdmin = false;
   if (rawSession) {
     await assertCsrf(c, rawSession);
     const authService = new AuthService(c.env);
     const context = await authService.context(rawSession, readCredentialCookie(c, 'device'));
     await authService.logout(rawSession);
-    if (context.actor?.kind === 'OWNER' || context.actor?.kind === 'SUPER_ADMIN') {
-      isAccessUser = true;
+    if (context.actor?.kind === 'SUPER_ADMIN' && c.env.ENVIRONMENT !== 'local') {
+      isAccessSuperAdmin = true;
     }
     if (context.actor?.storeId && context.sessionId) {
       const room = c.env.STORE_REALTIME.getByName(context.actor.storeId);
@@ -202,13 +209,23 @@ authRoutes.post('/logout', async (c) => {
   clearCredentialCookie(c, 'access');
 
   const origin = new URL(c.req.url).origin;
-  const returnTo = isAccessUser ? `${origin}/?tab=owner&loggedOut=1` : `${origin}/`;
-  const accessLogoutUrl = isAccessUser ? buildAccessLogoutUrl(c.env, returnTo) : null;
+  const returnTo = isAccessSuperAdmin
+    ? `${origin}/platform/login?loggedOut=1`
+    : `${origin}/?tab=owner&loggedOut=1`;
+  const accessLogoutUrl = isAccessSuperAdmin ? buildAccessLogoutUrl(c.env, returnTo) : null;
 
   return success(c, {
     loggedOut: true,
     accessLogoutUrl,
   });
+});
+
+authRoutes.post('/device/disconnect', async (c) => {
+  assertSameOrigin(c);
+  clearCredentialCookie(c, 'device');
+  clearCredentialCookie(c, 'session');
+  clearCredentialCookie(c, 'activation');
+  return success(c, { disconnected: true });
 });
 
 authRoutes.get('/access/logout', (c) => {
@@ -218,7 +235,8 @@ authRoutes.get('/access/logout', (c) => {
 
   const origin = new URL(c.req.url).origin;
   const returnTo = c.req.query('returnTo') || `${origin}/?tab=owner&loggedOut=1`;
-  const accessLogoutUrl = buildAccessLogoutUrl(c.env, returnTo) || returnTo;
+  const accessLogoutUrl =
+    c.env.ENVIRONMENT !== 'local' ? buildAccessLogoutUrl(c.env, returnTo) || returnTo : returnTo;
 
   return c.redirect(accessLogoutUrl, 303);
 });

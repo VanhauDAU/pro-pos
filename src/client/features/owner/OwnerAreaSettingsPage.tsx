@@ -30,6 +30,7 @@ import { useNavigate } from 'react-router';
 import QRCode from 'qrcode';
 
 import type { AuthContextResponse } from '@contracts/auth';
+import { TableQrModal } from '@client/components/TableQrModal';
 
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 
@@ -709,50 +710,16 @@ export function OwnerAreaSettingsPage() {
         ) : null}
       </Modal>
 
-      <Modal
-        title={`QR Order · ${qrPreview?.tableName ?? ''}`}
-        open={qrPreview !== null}
-        onCancel={() => setQrPreview(null)}
-        footer={[
-          <Button key="close" onClick={() => setQrPreview(null)}>
-            Đóng
-          </Button>,
-          <Button
-            key="download"
-            type="primary"
-            onClick={() => {
-              if (!qrPreview) return;
-              const link = document.createElement('a');
-              link.href = qrPreview.image;
-              link.download = `qr-order-${qrPreview.tableName}.png`;
-              link.click();
-            }}
-          >
-            Tải QR để in
-          </Button>,
-        ]}
-      >
-        {qrPreview ? (
-          <div style={{ textAlign: 'center' }}>
-            <img
-              src={qrPreview.image}
-              alt={`QR Order ${qrPreview.tableName}`}
-              style={{ width: 280, maxWidth: '100%' }}
-            />
-            <Input
-              value={qrPreview.url}
-              readOnly
-              onFocus={(event) => event.currentTarget.select()}
-            />
-            <Alert
-              style={{ marginTop: 12, textAlign: 'left' }}
-              type="warning"
-              showIcon
-              title="Hãy tải và lưu mã này ngay. Tạo mã mới sẽ vô hiệu hóa QR cũ."
-            />
-          </div>
-        ) : null}
-      </Modal>
+      {qrPreview && (
+        <TableQrModal
+          open={qrPreview !== null}
+          onClose={() => setQrPreview(null)}
+          tableName={qrPreview.tableName}
+          url={qrPreview.url}
+          qrImageSrc={qrPreview.image}
+          storeName={authContext.data?.device?.storeName ?? 'PRO POS'}
+        />
+      )}
 
       {/* MODAL: SỬA TÊN BÀN */}
       <Modal

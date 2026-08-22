@@ -38,7 +38,7 @@ export interface PosReceiptLineItem {
 }
 
 export interface PosReceiptPrintData {
-  receiptType: 'PROVISIONAL' | 'PAYMENT';
+  receiptType: 'PROVISIONAL' | 'PAYMENT' | 'DEBT_PAYMENT';
   orderCode: string;
   invoiceCode?: string | null | undefined;
   orderType: 'DINE_IN' | 'TAKEAWAY';
@@ -57,6 +57,14 @@ export interface PosReceiptPrintData {
   paymentMethod?: 'CASH' | 'BANK_TRANSFER' | null | undefined;
   cashReceived?: number | null | undefined;
   cashChange?: number | null | undefined;
+  paymentAllocations?:
+    Array<{ method: 'CASH' | 'BANK_TRANSFER' | 'DEBT'; amountVnd: number }> | undefined;
+  paidAmountVnd?: number | undefined;
+  debtAmountVnd?: number | undefined;
+  debtBeforeVnd?: number | undefined;
+  debtPaymentVnd?: number | undefined;
+  debtAfterVnd?: number | undefined;
+  referenceCode?: string | null | undefined;
   lines: PosReceiptLineItem[];
 }
 
@@ -80,14 +88,15 @@ function formatVnd(val: number): string {
   return new Intl.NumberFormat('vi-VN').format(val);
 }
 
-function formatDateTime(ms: number): string {
+function formatDateTime(ms: number, withSeconds = false): string {
   const d = new Date(ms);
   const dd = String(d.getDate()).padStart(2, '0');
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const yyyy = d.getFullYear();
   const HH = String(d.getHours()).padStart(2, '0');
   const MM = String(d.getMinutes()).padStart(2, '0');
-  return `${dd}/${mm}/${yyyy} ${HH}:${MM}`;
+  const SS = String(d.getSeconds()).padStart(2, '0');
+  return `${dd}/${mm}/${yyyy} ${HH}:${MM}${withSeconds ? `:${SS}` : ''}`;
 }
 
 function formatDuration(sec: number): string {
@@ -100,7 +109,10 @@ function formatDuration(sec: number): string {
 /**
  * Generates raw ESC/POS commands from formatted order/invoice data according to the store's profile & template settings.
  */
-export function buildEscPosReceipt(options: PosReceiptPrintOptions): {
+export function buildEscPosReceipt(
+  options: PosReceiptPrintOptions,
+  copy?: { index: number; total: number },
+): {
   escPosData: string;
   paperSize: PaperSize;
   autoCut: boolean;
@@ -139,8 +151,14 @@ export function buildEscPosReceipt(options: PosReceiptPrintOptions): {
   if (storePhone) raw += `SĐT: ${storePhone}\n`;
 
   // 2. Receipt Title
-  const title = data.receiptType === 'PROVISIONAL' ? 'PHIẾU TẠM TÍNH' : 'HÓA ĐƠN THANH TOÁN';
+  const title =
+    data.receiptType === 'PROVISIONAL'
+      ? 'HÓA ĐƠN TẠM TÍNH'
+      : data.receiptType === 'DEBT_PAYMENT'
+        ? 'PHIẾU THU CÔNG NỢ'
+        : 'HÓA ĐƠN THANH TOÁN';
   raw += '\n' + escBoldOn + title + '\n' + escBoldOff;
+  raw += `Liên ${copy?.index ?? 1}/${copy?.total ?? 1}\n`;
   const code = data.invoiceCode || data.orderCode;
   raw += `Số: ${code}\n`;
   raw += `Ngày: ${formatDateTime(data.issuedAtMs)}\n`;
@@ -172,6 +190,8 @@ export function buildEscPosReceipt(options: PosReceiptPrintOptions): {
 
   const timeLines = data.lines.filter((l) => l.isTime);
   const productLines = data.lines.filter((l) => !l.isTime);
+  const timeTotal = timeLines.reduce((sum, line) => sum + line.totalPrice, 0);
+  const goodsTotal = productLines.reduce((sum, line) => sum + line.totalPrice, 0);
 
   // 4. Section: Hourly Services (Thông tin giờ)
   if (timeLines.length > 0) {
@@ -230,8 +250,10 @@ export function buildEscPosReceipt(options: PosReceiptPrintOptions): {
       }
 
       if (template.showHourlyDetail && line.timeStartedAtMs) {
-        const startStr = formatDateTime(line.timeStartedAtMs);
-        const endStr = line.timeEndedAtMs ? formatDateTime(line.timeEndedAtMs) : 'Hiện tại';
+        const startStr = formatDateTime(line.timeStartedAtMs, template.showHourlyTimeWithSeconds);
+        const endStr = line.timeEndedAtMs
+          ? formatDateTime(line.timeEndedAtMs, template.showHourlyTimeWithSeconds)
+          : 'Hiện tại';
         if (template.hourlyDetailMode === 'FULL_TIMELOG') {
           raw += `   ${startStr} - ${endStr}\n`;
           raw += `   = ${formatDuration(line.timeElapsedSeconds || 0)}\n`;
@@ -304,6 +326,26 @@ export function buildEscPosReceipt(options: PosReceiptPrintOptions): {
   }
 
   // 5. Summary & Totals
+  if (timeLines.length > 0) {
+    const label = `Tiền giờ (${timeLines.length}):`;
+    const value = `${formatVnd(timeTotal)}đ`;
+    raw += `${label}${' '.repeat(Math.max(1, chars - label.length - value.length))}${value}\n`;
+  }
+  if (productLines.length > 0) {
+    const label = `Tiền hàng (${productLines.length}):`;
+    const value = `${formatVnd(goodsTotal)}đ`;
+    raw += `${label}${' '.repeat(Math.max(1, chars - label.length - value.length))}${value}\n`;
+  }
+  if (
+    template.combineGoodsAndServiceTotal &&
+    timeLines.length > 0 &&
+    productLines.length > 0 &&
+    (data.receiptType !== 'PAYMENT' || data.discountTotal > 0)
+  ) {
+    const label = 'Tổng hàng & dịch vụ:';
+    const value = `${formatVnd(timeTotal + goodsTotal)}đ`;
+    raw += `${label}${' '.repeat(Math.max(1, chars - label.length - value.length))}${value}\n`;
+  }
   if (template.showProvisionalTotal && data.discountTotal > 0) {
     const subLabel = 'Tổng tạm tính:';
     const subVal = formatVnd(data.subtotal) + 'đ';
@@ -318,13 +360,52 @@ export function buildEscPosReceipt(options: PosReceiptPrintOptions): {
     raw += `${discLabel}${' '.repeat(Math.max(1, padLen))}${discVal}\n`;
   }
 
-  const grandLabel = data.receiptType === 'PROVISIONAL' ? 'TỔNG TẠM TÍNH:' : 'TỔNG CỘNG:';
+  const grandLabel =
+    data.receiptType === 'PROVISIONAL'
+      ? 'TỔNG TẠM TÍNH:'
+      : data.receiptType === 'DEBT_PAYMENT'
+        ? 'SỐ TIỀN THU:'
+        : 'TỔNG CỘNG:';
   const grandVal = formatVnd(data.total) + 'đ';
   const grandPad = chars - grandLabel.length - grandVal.length;
   raw += escBoldOn + `${grandLabel}${' '.repeat(Math.max(1, grandPad))}${grandVal}\n` + escBoldOff;
 
+  if (data.receiptType === 'PAYMENT') {
+    const allocations = data.paymentAllocations ?? [];
+    const needsAllocationBreakdown =
+      allocations.length > 1 || allocations.some((allocation) => allocation.method === 'DEBT');
+    if (needsAllocationBreakdown) {
+      for (const allocation of allocations) {
+        const label =
+          allocation.method === 'CASH'
+            ? 'Tiền mặt đã thu'
+            : allocation.method === 'DEBT'
+              ? 'Ghi công nợ'
+              : 'CK đã thu';
+        raw += `${label.padEnd(20, ' ')}: ${formatVnd(allocation.amountVnd)}đ\n`;
+      }
+    } else if (allocations.length === 0 && (data.debtAmountVnd ?? 0) > 0) {
+      if ((data.paidAmountVnd ?? 0) > 0)
+        raw += `Đã thu             : ${formatVnd(data.paidAmountVnd!)}đ\n`;
+      raw += `Ghi công nợ         : ${formatVnd(data.debtAmountVnd!)}đ\n`;
+    }
+  }
+  if (data.receiptType === 'DEBT_PAYMENT') {
+    raw += divider + '\n';
+    raw += `Dư nợ trước         : ${formatVnd(data.debtBeforeVnd ?? 0)}đ\n`;
+    raw += `Số tiền vừa thu     : ${formatVnd(data.debtPaymentVnd ?? data.total)}đ\n`;
+    raw += `Dư nợ còn lại       : ${formatVnd(data.debtAfterVnd ?? 0)}đ\n`;
+    if (data.referenceCode) raw += `Mã tham chiếu       : ${data.referenceCode}\n`;
+    raw += `Phương thức         : ${data.paymentMethod === 'CASH' ? 'Tiền mặt' : 'Chuyển khoản'}\n`;
+  }
+
   // 6. Payment method & Cash details
-  if (data.receiptType === 'PAYMENT' && data.paymentMethod) {
+  if (
+    data.receiptType === 'PAYMENT' &&
+    data.paymentMethod &&
+    (data.paymentAllocations?.length ?? 0) <= 1 &&
+    !data.paymentAllocations?.some((allocation) => allocation.method === 'DEBT')
+  ) {
     raw += divider + '\n';
     const methodStr = data.paymentMethod === 'CASH' ? 'Tiền mặt' : 'Chuyển khoản (VietQR)';
     raw += `Hình thức thanh toán: ${methodStr}\n`;
@@ -536,6 +617,7 @@ export function buildPrintDataFromInvoice(invoice: {
     guestPhone?: string | null | undefined;
     guestAddress?: string | null | undefined;
     note?: string | null | undefined;
+    snapshotJson?: string | null | undefined;
     issuedAt: number;
     subtotal: number;
     discountTotal: number;
@@ -557,6 +639,24 @@ export function buildPrintDataFromInvoice(invoice: {
   }>;
 }): PosReceiptPrintData {
   const lines: PosReceiptLineItem[] = [];
+  let invoiceSnapshot: {
+    order?: {
+      tableName?: string | null;
+      areaName?: string | null;
+      openedAt?: number;
+      openedByName?: string | null;
+      customerName?: string | null;
+      customerPhone?: string | null;
+      note?: string | null;
+    };
+  } = {};
+  try {
+    invoiceSnapshot = invoice.invoice.snapshotJson
+      ? (JSON.parse(invoice.invoice.snapshotJson) as typeof invoiceSnapshot)
+      : {};
+  } catch {
+    // Older invoices may not contain a parseable snapshot.
+  }
 
   for (const line of invoice.lines) {
     let snapshot: {
@@ -623,13 +723,14 @@ export function buildPrintDataFromInvoice(invoice: {
     orderCode: invoice.invoice.displayCode,
     invoiceCode: invoice.invoice.displayCode,
     orderType: invoice.invoice.orderType,
-    tableName: invoice.invoice.tableName ?? null,
-    areaName: null,
-    cashierName: invoice.invoice.cashierName ?? null,
-    guestPhone: invoice.invoice.guestPhone ?? null,
+    tableName: invoice.invoice.tableName ?? invoiceSnapshot.order?.tableName ?? null,
+    areaName: invoiceSnapshot.order?.areaName ?? null,
+    cashierName: invoice.invoice.cashierName ?? invoiceSnapshot.order?.openedByName ?? null,
+    customerName: invoiceSnapshot.order?.customerName ?? null,
+    guestPhone: invoice.invoice.guestPhone ?? invoiceSnapshot.order?.customerPhone ?? null,
     guestAddress: invoice.invoice.guestAddress ?? null,
-    note: invoice.invoice.note ?? null,
-    checkInTimeMs: null,
+    note: invoice.invoice.note ?? invoiceSnapshot.order?.note ?? null,
+    checkInTimeMs: invoiceSnapshot.order?.openedAt ?? null,
     issuedAtMs: invoice.invoice.issuedAt,
     subtotal: invoice.invoice.subtotal,
     discountTotal: invoice.invoice.discountTotal,

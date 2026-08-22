@@ -42,6 +42,14 @@ export interface RawRunningSessionRow {
 export class OwnerDashboardRepository {
   constructor(private readonly db: D1Database) {}
 
+  async countActiveCustomers(storeId: string) {
+    const row = await this.db
+      .prepare("SELECT COUNT(*) AS count FROM customers WHERE store_id = ? AND status = 'ACTIVE'")
+      .bind(storeId)
+      .first<{ count: number }>();
+    return row?.count ?? 0;
+  }
+
   async getCompletedInvoices(
     storeId: string,
     fromMs: number,

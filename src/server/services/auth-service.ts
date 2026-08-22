@@ -21,8 +21,10 @@ import { AuditRepository, type AuditContext } from '@server/repositories/audit-r
 
 const EMPLOYEE_ABSOLUTE_SECONDS = 12 * 60 * 60;
 const EMPLOYEE_IDLE_SECONDS = 30 * 60;
-const OWNER_IDLE_SECONDS = 24 * 60 * 60;
-const OWNER_ABSOLUTE_SECONDS = 7 * 24 * 60 * 60;
+const OWNER_SHORT_ABSOLUTE_SECONDS = 24 * 60 * 60;
+const OWNER_SHORT_IDLE_SECONDS = 12 * 60 * 60;
+const OWNER_LONG_ABSOLUTE_SECONDS = 30 * 24 * 60 * 60;
+const OWNER_LONG_IDLE_SECONDS = 7 * 24 * 60 * 60;
 const PLATFORM_IDLE_SECONDS = 60 * 60;
 const PLATFORM_ABSOLUTE_SECONDS = 24 * 60 * 60;
 const DEVICE_SECONDS = 365 * 24 * 60 * 60;
@@ -58,7 +60,8 @@ export class AuthService {
   async ownerLogin(input: {
     username: string;
     password: string;
-  }): Promise<{ rawToken: string; response: LoginResponse }> {
+    rememberMe?: boolean | undefined;
+  }): Promise<{ rawToken: string; maxAgeSeconds: number; response: LoginResponse }> {
     const now = Date.now();
     const normalizedIdentifier = input.username.trim().toLocaleLowerCase('en-US');
     const subjectKey = `owner:${normalizedIdentifier}`;
@@ -95,6 +98,11 @@ export class AuthService {
 
     await this.repository.clearFailures('OWNER_PASSWORD', subjectKey);
     const rawToken = randomOpaqueToken();
+    const absoluteSeconds = input.rememberMe
+      ? OWNER_LONG_ABSOLUTE_SECONDS
+      : OWNER_SHORT_ABSOLUTE_SECONDS;
+    const idleSeconds = input.rememberMe ? OWNER_LONG_IDLE_SECONDS : OWNER_SHORT_IDLE_SECONDS;
+
     await this.repository.createSession({
       id: crypto.randomUUID(),
       tokenHash: await hashOpaqueToken(rawToken, this.sessionTokenPepper),
@@ -103,13 +111,14 @@ export class AuthService {
       deviceId: null,
       kind: 'OWNER',
       credentialVersion: identity.credential_version ?? 1,
-      expiresAt: now + OWNER_ABSOLUTE_SECONDS * 1000,
-      idleExpiresAt: now + OWNER_IDLE_SECONDS * 1000,
+      expiresAt: now + absoluteSeconds * 1000,
+      idleExpiresAt: now + idleSeconds * 1000,
       now,
     });
 
     return {
       rawToken,
+      maxAgeSeconds: absoluteSeconds,
       response: {
         actor: {
           id: identity.user_id,
@@ -511,7 +520,7 @@ export class AuthService {
               ? EMPLOYEE_IDLE_SECONDS
               : session.session_kind === 'SUPER_ADMIN'
                 ? PLATFORM_IDLE_SECONDS
-                : OWNER_IDLE_SECONDS;
+                : OWNER_LONG_IDLE_SECONDS;
           await this.repository.touchSession(session.session_id, now, now + idleSeconds * 1000);
         }
       }
@@ -530,6 +539,7 @@ export class AuthService {
             name: device.device_name,
             status: device.device_status,
             storeId: device.store_id,
+            storeName: device.store_name,
           }
         : null,
       allowedEntrypoints,

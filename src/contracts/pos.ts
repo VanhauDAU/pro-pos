@@ -62,6 +62,16 @@ export const checkoutSchema = z.object({
   expectedOrderVersion: z.number().int().positive(),
   method: z.enum(['CASH', 'BANK_TRANSFER']),
   cashReceivedVnd: z.number().int().nonnegative().nullable().optional(),
+  allocations: z
+    .array(
+      z.object({
+        method: z.enum(['CASH', 'BANK_TRANSFER']),
+        amountVnd: z.number().int().nonnegative(),
+        tenderedVnd: z.number().int().nonnegative().optional(),
+      }),
+    )
+    .optional(),
+  debtAmountVnd: z.number().int().nonnegative().default(0),
 });
 
 export const timeActionSchema = z.object({
@@ -99,4 +109,5 @@ export const updateOrderGuestSchema = z.object({
   guestCount: z.number().int().positive().min(1).max(999),
   customerName: z.string().trim().max(100).nullable().optional(),
   customerPhone: z.string().trim().max(30).nullable().optional(),
+  customerId: z.uuid().nullable().optional(),
 });

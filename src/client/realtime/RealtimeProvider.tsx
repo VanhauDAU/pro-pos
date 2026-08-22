@@ -49,7 +49,9 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
       const message = event.data as { type?: unknown; soundType?: unknown; tag?: unknown };
       if (
         message.type !== 'PUSH_NOTIFICATION_RECEIVED' ||
-        (message.soundType !== 'NEW_QR_ORDER' && message.soundType !== 'CHECKOUT_REQUEST')
+        (message.soundType !== 'NEW_QR_ORDER' &&
+          message.soundType !== 'CHECKOUT_REQUEST' &&
+          message.soundType !== 'TABLE_OPEN_REQUEST')
       ) {
         return;
       }

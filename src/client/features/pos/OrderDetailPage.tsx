@@ -276,9 +276,10 @@ export function OrderDetailPage({
       }>('/api/v1/pos/context'),
   });
 
-  const handlePrintReceipt = (receiptType: 'PROVISIONAL' | 'PAYMENT') => {
+  const handlePrintReceipt = async (receiptType: 'PROVISIONAL' | 'PAYMENT') => {
     if (!data) return;
     const isPayment = receiptType === 'PAYMENT' && Boolean(data.invoice);
+    const successfulPayment = data.payments.find((payment) => payment.status === 'SUCCEEDED');
 
     const printData: PosReceiptPrintData = {
       receiptType,
@@ -289,7 +290,7 @@ export function OrderDetailPage({
       invoiceCode: data.invoice?.displayCode || null,
       orderType: data.order.orderType,
       tableName: data.order.tableName,
-      areaName: null,
+      areaName: data.order.areaName,
       cashierName: data.invoice?.issuedByName ?? null,
       customerName: data.customer?.name ?? null,
       guestPhone: data.customer?.phone ?? null,
@@ -298,11 +299,11 @@ export function OrderDetailPage({
       checkInTimeMs: data.order.openedAt,
       issuedAtMs: data.invoice?.issuedAt || Date.now(),
       subtotal: isPayment ? data.invoice!.subtotalVnd : liveGrandTotal,
-      discountTotal: isPayment ? data.invoice!.discountTotalVnd : 0,
+      discountTotal: isPayment ? data.invoice!.discountTotalVnd : data.totals.totalDiscountVnd,
       total: isPayment ? data.invoice!.totalVnd : liveGrandTotal,
-      paymentMethod: data.invoice ? 'CASH' : null,
-      cashReceived: null,
-      cashChange: null,
+      paymentMethod: isPayment ? (successfulPayment?.method ?? null) : null,
+      cashReceived: isPayment ? (successfulPayment?.cashReceived ?? null) : null,
+      cashChange: isPayment ? (successfulPayment?.cashChange ?? null) : null,
       lines: [
         ...(liveTimeSegments.length > 0
           ? [
@@ -335,11 +336,14 @@ export function OrderDetailPage({
           totalPrice: it.netLineTotalVnd,
           unitName: it.unitNameSnapshot,
           note: it.note,
+          isTime: it.productType === 'TIME',
+          timeStartedAtMs: it.timeStartedAtMs ?? undefined,
+          timeEndedAtMs: it.timeEndedAtMs,
         })),
       ],
     };
 
-    void printReceipt({
+    const result = await printReceipt({
       data: printData,
       printSettings: printSettings.data,
       storeInfo: {
@@ -351,6 +355,8 @@ export function OrderDetailPage({
         bankAccountName: staffContext.data?.bankAccountName ?? null,
       },
     });
+    if (result.success) messageApi.success('Đã gửi lệnh in hóa đơn.');
+    else messageApi.error(result.message ?? 'Không thể in hóa đơn.');
   };
 
   if (detailQuery.isLoading) {

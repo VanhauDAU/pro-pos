@@ -13,9 +13,11 @@ import {
   type StaffOperationalAuditRow,
 } from '@server/repositories/qr-order-repository';
 import { MediaService } from '@server/services/media-service';
+import { PosService } from '@server/services/pos-service';
 
 const STAFF_NOTIFICATION_RETENTION_DAYS = 3 as const;
 const STAFF_NOTIFICATION_RETENTION_MS = STAFF_NOTIFICATION_RETENTION_DAYS * 24 * 60 * 60_000;
+const TABLE_OPEN_REQUEST_TTL_MS = 10 * 60_000;
 
 function parseAuditJson(value: string | null) {
   try {
@@ -220,6 +222,7 @@ export class QrOrderService {
 
   private async responseContext(session: GuestSessionRow): Promise<GuestOrderContext> {
     return {
+      tableStatus: 'OPEN',
       storeName: session.storeName,
       tableName: session.tableName,
       areaName: session.areaName,
@@ -229,6 +232,7 @@ export class QrOrderService {
         areaName: session.areaName,
       },
       sessionExpiresAt: session.expiresAt,
+      openRequest: null,
       menu: await this.repository.listMenu(session.storeId),
     };
   }
@@ -240,13 +244,48 @@ export class QrOrderService {
     deviceNonce: string | null;
   }) {
     const now = Date.now();
-    const context = await this.repository.findActiveQrContext(
-      await hashOpaqueToken(input.rawQrToken, this.pepper),
-    );
-    if (!context) {
+    const tokenHash = await hashOpaqueToken(input.rawQrToken, this.pepper);
+    const tableContext = await this.repository.findQrTableContext(tokenHash);
+    if (!tableContext || tableContext.tableStatus === 'DISABLED') {
       throw new AppError(
         'QR_TABLE_NOT_ACTIVE',
-        'Bàn chưa mở, mã QR đã bị thay đổi hoặc hiện không nhận gọi món.',
+        'Mã QR đã bị thay đổi hoặc bàn hiện không nhận gọi món.',
+        409,
+      );
+    }
+    if (tableContext.tableStatus === 'AVAILABLE') {
+      await this.repository.expireTableOpenRequests(
+        tableContext.storeId,
+        now - TABLE_OPEN_REQUEST_TTL_MS,
+        now,
+      );
+      const openRequest = await this.repository.findOpenTableRequest(
+        tableContext.storeId,
+        tableContext.tableId,
+      );
+      return {
+        rawGuest: '',
+        context: {
+          tableStatus: openRequest ? ('OPEN_REQUESTED' as const) : ('AVAILABLE' as const),
+          storeName: tableContext.storeName,
+          tableName: tableContext.tableName,
+          areaName: tableContext.areaName,
+          table: {
+            id: tableContext.tableId,
+            name: tableContext.tableName,
+            areaName: tableContext.areaName,
+          },
+          sessionExpiresAt: null,
+          openRequest,
+          menu: await this.repository.listMenu(tableContext.storeId),
+        },
+      };
+    }
+    const context = await this.repository.findActiveQrContext(tokenHash);
+    if (!context) {
+      throw new AppError(
+        'QR_TABLE_SESSION_INVALID',
+        'Bàn đang mở nhưng phiên gọi món chưa sẵn sàng.',
         409,
       );
     }
@@ -279,6 +318,133 @@ export class QrOrderService {
     };
   }
 
+  async requestTableOpen(rawQrToken: string, ip: string | null) {
+    const context = await this.repository.findQrTableContext(
+      await hashOpaqueToken(rawQrToken, this.pepper),
+    );
+    if (!context || context.tableStatus === 'DISABLED') {
+      throw new AppError('QR_TABLE_NOT_ACTIVE', 'Mã QR không còn hiệu lực.', 409);
+    }
+    if (context.tableStatus === 'OCCUPIED') {
+      return {
+        ...context,
+        alreadyOpen: true,
+        requestId: null,
+        replayed: true,
+        createdAt: null,
+      };
+    }
+    const now = Date.now();
+    await this.repository.expireTableOpenRequests(
+      context.storeId,
+      now - TABLE_OPEN_REQUEST_TTL_MS,
+      now,
+    );
+    const existing = await this.repository.findOpenTableRequest(context.storeId, context.tableId);
+    if (existing) {
+      return {
+        ...context,
+        alreadyOpen: false,
+        requestId: existing.id,
+        replayed: true,
+        createdAt: existing.createdAt,
+      };
+    }
+    const id = crypto.randomUUID();
+    try {
+      await this.repository.createTableOpenRequest({
+        id,
+        context,
+        ipHash: ip ? await hashOpaqueToken(`guest-ip:${ip}`, this.pepper) : null,
+        now,
+      });
+    } catch (error) {
+      const concurrent = await this.repository.findOpenTableRequest(
+        context.storeId,
+        context.tableId,
+      );
+      if (!concurrent) throw error;
+      return {
+        ...context,
+        alreadyOpen: false,
+        requestId: concurrent.id,
+        replayed: true,
+        createdAt: concurrent.createdAt,
+      };
+    }
+    return {
+      ...context,
+      alreadyOpen: false,
+      requestId: id,
+      replayed: false,
+      createdAt: now,
+    };
+  }
+
+  async listTableOpenRequests(storeId: string) {
+    const now = Date.now();
+    await this.repository.expireTableOpenRequests(storeId, now - TABLE_OPEN_REQUEST_TTL_MS, now);
+    return this.repository.listTableOpenRequests(storeId);
+  }
+
+  async acceptTableOpenRequest(input: {
+    storeId: string;
+    id: string;
+    actorId: string;
+    actorSessionId: string | null;
+    deviceId: string | null;
+    requestId: string;
+    idempotencyKey: string;
+  }) {
+    const request = await this.repository.getTableOpenRequest(input.storeId, input.id);
+    if (!request)
+      throw new AppError('TABLE_OPEN_REQUEST_NOT_FOUND', 'Không tìm thấy yêu cầu.', 404);
+    if (request.status !== 'OPEN') {
+      return { id: request.id, status: request.status, replayed: true };
+    }
+    if (request.tableStatus === 'DISABLED') {
+      throw new AppError('TABLE_DISABLED', 'Bàn đang ngừng phục vụ.', 409);
+    }
+    let opened: { orderId?: string } | null = null;
+    if (request.tableStatus === 'AVAILABLE') {
+      opened = await new PosService(this.env).openTable({
+        storeId: input.storeId,
+        actorId: input.actorId,
+        requestId: input.requestId,
+        idempotencyKey: input.idempotencyKey,
+        tableId: request.tableId,
+        expectedTableVersion: request.tableVersion,
+        actorSessionId: input.actorSessionId,
+        deviceId: input.deviceId,
+      });
+    }
+    await this.repository.completeTableOpenRequest({
+      storeId: input.storeId,
+      id: input.id,
+      actorId: input.actorId,
+      now: Date.now(),
+    });
+    return { id: input.id, status: 'COMPLETED' as const, orderId: opened?.orderId ?? null };
+  }
+
+  async cancelTableOpenRequest(input: {
+    storeId: string;
+    id: string;
+    actorId: string;
+    reason: string;
+  }) {
+    const request = await this.repository.getTableOpenRequest(input.storeId, input.id);
+    if (!request)
+      throw new AppError('TABLE_OPEN_REQUEST_NOT_FOUND', 'Không tìm thấy yêu cầu.', 404);
+    if (request.status !== 'OPEN')
+      return { id: request.id, status: request.status, replayed: true };
+    await this.repository.cancelTableOpenRequest({
+      ...input,
+      now: Date.now(),
+    });
+    return { id: input.id, status: 'CANCELLED' as const };
+  }
+
   async getContext(rawGuest: string) {
     const session = await this.contextFromSession(rawGuest);
     await this.repository.touchGuestSession(session.guestSessionId, Date.now());
@@ -288,6 +454,16 @@ export class QrOrderService {
   async getMedia(rawGuest: string, mediaId: string) {
     const session = await this.contextFromSession(rawGuest);
     return new MediaService(this.env).get(session.storeId, mediaId);
+  }
+
+  async getMediaByQr(rawQrToken: string, mediaId: string) {
+    const context = await this.repository.findQrTableContext(
+      await hashOpaqueToken(rawQrToken, this.pepper),
+    );
+    if (!context || context.tableStatus === 'DISABLED') {
+      throw new AppError('QR_TABLE_NOT_ACTIVE', 'Mã QR không còn hiệu lực.', 409);
+    }
+    return new MediaService(this.env).get(context.storeId, mediaId);
   }
 
   async submitOrder(

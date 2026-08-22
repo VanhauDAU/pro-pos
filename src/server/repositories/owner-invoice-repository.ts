@@ -501,13 +501,18 @@ export class OwnerInvoiceRepository {
       this.db
         .prepare('DELETE FROM order_items WHERE store_id = ? AND order_id = ?')
         .bind(storeId, orderId),
+      this.db.prepare('DELETE FROM orders WHERE store_id = ? AND id = ?').bind(storeId, orderId),
       this.db
         .prepare(
           `UPDATE service_tables SET status = 'AVAILABLE', version = version + 1, updated_at = ?
-           WHERE store_id = ? AND id = ? AND status = 'OCCUPIED'`,
+           WHERE store_id = ? AND id = ? AND status = 'OCCUPIED'
+             AND NOT EXISTS (
+               SELECT 1 FROM orders
+               WHERE store_id = ? AND table_id = ?
+                 AND status IN ('OPEN', 'PAYMENT_PENDING')
+             )`,
         )
-        .bind(Date.now(), storeId, input.tableId),
-      this.db.prepare('DELETE FROM orders WHERE store_id = ? AND id = ?').bind(storeId, orderId),
+        .bind(Date.now(), storeId, input.tableId, storeId, input.tableId),
       this.deletionAudit(input, 'INVOICE'),
       this.deletionRealtimeEvent(input, [input.tableId]),
     );

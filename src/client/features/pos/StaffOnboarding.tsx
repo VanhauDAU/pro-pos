@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
+import { onboardingAudioPlayer } from '@client/lib/onboarding-audio';
 
 const ONBOARDING_VERSION = 1;
 const DEFER_MS = 24 * 60 * 60_000;
@@ -66,10 +67,26 @@ export function StaffOnboarding({
   const [basicTourOpen, setBasicTourOpen] = useState(false);
   const [basicStep, setBasicStep] = useState(0);
   const [orderTourOpen, setOrderTourOpen] = useState(false);
+  const [orderStep, setOrderStep] = useState(0);
+  const [audioReady, setAudioReady] = useState(false);
   const [pushPromptFinished, setPushPromptFinished] = useState(
     () => typeof Notification === 'undefined' || Notification.permission !== 'default',
   );
   const previousRestartToken = useRef(restartToken);
+  useEffect(() => {
+    void onboardingAudioPlayer.preload().then(() => setAudioReady(true));
+    return () => onboardingAudioPlayer.stop();
+  }, []);
+
+  useEffect(() => {
+    const unlock = () => void onboardingAudioPlayer.unlock();
+    window.addEventListener('pointerdown', unlock, { capture: true, passive: true });
+    window.addEventListener('keydown', unlock, { capture: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlock, true);
+      window.removeEventListener('keydown', unlock, true);
+    };
+  }, []);
 
   const persist = (next: OnboardingProgress) => {
     setProgress(next);
@@ -120,7 +137,10 @@ export function StaffOnboarding({
       return undefined;
     }
     if ((progress.orderDeferredUntil ?? 0) > Date.now()) return undefined;
-    const timer = window.setTimeout(() => setOrderTourOpen(true), 700);
+    const timer = window.setTimeout(() => {
+      setOrderStep(0);
+      setOrderTourOpen(true);
+    }, 700);
     return () => window.clearTimeout(timer);
   }, [
     location.pathname,
@@ -137,6 +157,7 @@ export function StaffOnboarding({
     persist(next);
     setBasicStep(0);
     setOrderTourOpen(false);
+    onboardingAudioPlayer.stop();
     setWelcomeOpen(true);
   }, [restartToken]);
 
@@ -148,6 +169,16 @@ export function StaffOnboarding({
       navigate('/pos');
     }
   }, [basicStep, basicTourOpen, location.pathname, navigate]);
+
+  useEffect(() => {
+    if (!basicTourOpen) return;
+    void onboardingAudioPlayer.play(basicStep);
+  }, [basicStep, basicTourOpen]);
+
+  useEffect(() => {
+    if (!orderTourOpen) return;
+    void onboardingAudioPlayer.play(orderStep + 8);
+  }, [orderStep, orderTourOpen]);
 
   const basicSteps: NonNullable<TourProps['steps']> = [
     {
@@ -191,7 +222,7 @@ export function StaffOnboarding({
       target: target('[data-nav-key="qr"]'),
       title: '5. QR Order',
       description:
-        'Badge đỏ báo số yêu cầu chưa xử lý. Tại đây bạn xác nhận món khách gọi, gọi nhân viên và yêu cầu thanh toán.',
+        'Badge đỏ báo số yêu cầu chưa xử lý. Tại đây bạn xác nhận mở bàn, món khách gọi, gọi nhân viên và yêu cầu thanh toán.',
       nextButtonProps: { children: 'Tiếp tục' },
       prevButtonProps: { children: 'Quay lại' },
     },
@@ -253,7 +284,8 @@ export function StaffOnboarding({
     },
   ];
 
-  const startBasics = () => {
+  const startBasics = async () => {
+    await onboardingAudioPlayer.preload();
     setWelcomeOpen(false);
     const step = Math.min(progress.basicStep, (basicSteps?.length ?? 1) - 1);
     setBasicStep(step);
@@ -261,6 +293,7 @@ export function StaffOnboarding({
   };
 
   const deferBasics = () => {
+    onboardingAudioPlayer.stop();
     const next = { ...progress, basicStep, deferredUntil: Date.now() + DEFER_MS };
     persist(next);
     setWelcomeOpen(false);
@@ -268,6 +301,7 @@ export function StaffOnboarding({
   };
 
   const skipAll = () => {
+    onboardingAudioPlayer.stop();
     persist({
       ...progress,
       basicsCompleted: true,
@@ -295,8 +329,13 @@ export function StaffOnboarding({
           <Button key="later" onClick={deferBasics}>
             Để sau 24 giờ
           </Button>,
-          <Button key="start" type="primary" onClick={startBasics}>
-            Bắt đầu hướng dẫn
+          <Button
+            key="start"
+            type="primary"
+            loading={!audioReady}
+            onClick={() => void startBasics()}
+          >
+            {audioReady ? 'Bắt đầu hướng dẫn' : 'Đang tải hướng dẫn'}
           </Button>,
         ]}
       >
@@ -329,10 +368,12 @@ export function StaffOnboarding({
           persist({ ...progress, basicStep: step, deferredUntil: undefined });
         }}
         onClose={(step) => {
+          onboardingAudioPlayer.stop();
           persist({ ...progress, basicStep: step, deferredUntil: Date.now() + DEFER_MS });
           setBasicTourOpen(false);
         }}
         onFinish={() => {
+          onboardingAudioPlayer.stop();
           persist({
             ...progress,
             basicsCompleted: true,
@@ -346,12 +387,15 @@ export function StaffOnboarding({
 
       <Tour
         open={orderTourOpen}
+        current={orderStep}
         steps={orderSteps}
         type="primary"
         rootClassName="staff-onboarding-tour"
         getPopupContainer={false}
         zIndex={1600}
+        onChange={setOrderStep}
         onClose={() => {
+          onboardingAudioPlayer.stop();
           persist({ ...progress, orderDeferredUntil: Date.now() + DEFER_MS });
           setOrderTourOpen(false);
         }}
@@ -363,6 +407,7 @@ export function StaffOnboarding({
             completedAt: Date.now(),
           });
           setOrderTourOpen(false);
+          void onboardingAudioPlayer.play(13);
         }}
       />
     </>

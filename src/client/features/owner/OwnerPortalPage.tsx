@@ -47,6 +47,7 @@ import logo from '@client/assets/logo-white.svg';
 import { apiRequest } from '@client/lib/api';
 
 import { OwnerStoreSettingsPage } from './OwnerStoreSettingsPage';
+import { OwnerAccountSettingsPage } from './OwnerAccountSettingsPage';
 import { OwnerAreaCreatePage, OwnerAreaSettingsPage } from './OwnerAreaSettingsPage';
 import { OwnerEmployeeFormPage, OwnerStaffListPage } from './OwnerStaffPages';
 import { OwnerRoleFormPage, OwnerRolesPage } from './OwnerRolePages';
@@ -61,6 +62,7 @@ import { OwnerInvoicesPage } from './OwnerInvoicesPage';
 import { OwnerPrintSettingsPage } from './OwnerPrintSettingsPage';
 import { OwnerPrintTemplateEditPage } from './OwnerPrintTemplateEditPage';
 import { OwnerDashboardPage } from './OwnerDashboardPage';
+
 
 const BRAND = '#0975F7';
 
@@ -673,6 +675,15 @@ export function OwnerPortalPage() {
                 menu={{
                   items: [
                     {
+                      key: 'account-settings',
+                      icon: <UserOutlined />,
+                      label: 'Thiết lập tài khoản',
+                      onClick: () => navigate('/owner/settings/account'),
+                    },
+                    {
+                      type: 'divider',
+                    },
+                    {
                       key: 'logout',
                       icon: <LogoutOutlined />,
                       label: 'Đăng xuất',
@@ -707,6 +718,8 @@ export function OwnerPortalPage() {
               <OwnerDashboardPage settings={settings.data} />
             ) : location.pathname === '/owner/settings/store' ? (
               <OwnerStoreSettingsPage />
+            ) : location.pathname === '/owner/settings/account' ? (
+              <OwnerAccountSettingsPage />
             ) : location.pathname === '/owner/settings/areas' ? (
               <OwnerAreaSettingsPage />
             ) : location.pathname === '/owner/settings/areas/new' ? (
@@ -754,3 +767,4 @@ export function OwnerPortalPage() {
     </ConfigProvider>
   );
 }
+

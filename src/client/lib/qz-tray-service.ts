@@ -121,6 +121,72 @@ export interface TestPrintOptions {
   storeName?: string | undefined;
 }
 
+export interface ReceiptPrintJobOptions extends TestPrintOptions {
+  escPosData: string[];
+  htmlData: string[];
+  paperWidthMm: number;
+}
+
+export async function printEscPosReceipt(
+  options: ReceiptPrintJobOptions,
+): Promise<{ success: boolean; message?: string }> {
+  try {
+    if (!qz.websocket.isActive()) {
+      await qz.websocket.connect({ retries: 2, delay: 1 });
+    }
+
+    if (options.connectionType === 'NETWORK_TCP' && !options.networkIp?.trim()) {
+      return { success: false, message: 'Vui lòng nhập địa chỉ IP máy in mạng.' };
+    }
+    if (options.connectionType === 'SYSTEM' && !options.printerName?.trim()) {
+      return { success: false, message: 'Vui lòng chọn máy in hệ thống.' };
+    }
+
+    if (options.connectionType === 'SYSTEM') {
+      const config = qz.configs.create(options.printerName!.trim(), {
+        copies: 1,
+        colorType: 'grayscale',
+        interpolation: 'nearest-neighbor',
+        jobName: 'Pro POS Receipt',
+        margins: 0,
+        rasterize: true,
+        scaleContent: false,
+        units: 'mm',
+      });
+      await qz.print(
+        config,
+        options.htmlData.map((data) => ({
+          type: 'pixel' as const,
+          format: 'html' as const,
+          flavor: 'plain' as const,
+          data,
+          options: { pageWidth: options.paperWidthMm / 25.4 },
+        })),
+      );
+    } else {
+      const config = qz.configs.create(
+        {
+          host: options.networkIp!.trim(),
+          port: String(options.networkPort || 9100),
+        },
+        { copies: 1, jobName: 'Pro POS Receipt' },
+      );
+      await qz.print(
+        config,
+        options.escPosData.map((data) => ({
+          type: 'raw' as const,
+          format: 'command' as const,
+          flavor: 'plain' as const,
+          data,
+        })),
+      );
+    }
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export async function printTestReceipt(
   options: TestPrintOptions,
 ): Promise<{ success: boolean; message?: string }> {

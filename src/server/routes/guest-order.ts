@@ -44,13 +44,58 @@ guestOrderRoutes.get('/resolve/:token', async (c) => {
     ip: clientIp(c),
     deviceNonce: c.req.header('X-Guest-Device') ?? null,
   });
-  setCredentialCookie(c, 'guest', result.rawGuest, 8 * 60 * 60);
+  if (result.rawGuest) {
+    setCredentialCookie(c, 'guest', result.rawGuest, 8 * 60 * 60);
+  }
   return success(c, result.context);
+});
+
+guestOrderRoutes.post('/resolve/:token/open-request', async (c) => {
+  assertSameOrigin(c);
+  const result = await new QrOrderService(c.env).requestTableOpen(
+    c.req.param('token'),
+    clientIp(c),
+  );
+  if (!result.alreadyOpen && !result.replayed && result.requestId && result.createdAt) {
+    c.executionCtx.waitUntil(
+      Promise.all([
+        new RealtimeDispatcher(c.env).dispatchStore(result.storeId),
+        new PushNotificationService(c.env).sendStoreNotification({
+          storeId: result.storeId,
+          kind: 'TABLE_OPEN_REQUEST',
+          soundType: 'TABLE_OPEN_REQUEST',
+          title: `🪑 ${result.tableName} yêu cầu mở bàn`,
+          body: compactPushBody([result.areaName, 'Khách đang chờ để bắt đầu gọi món']),
+          url: '/pos/qr-order',
+          tag: `table-open-request:${result.requestId}`,
+          timestamp: result.createdAt,
+          requestId: result.requestId,
+          orderId: '',
+          actionTitle: 'Xem và mở bàn',
+          badgeCount: 1,
+          requireInteraction: true,
+        }),
+      ]).catch(() => undefined),
+    );
+  }
+  return success(c, { requestId: result.requestId, alreadyOpen: result.alreadyOpen }, 201);
 });
 
 guestOrderRoutes.get('/context', async (c) =>
   success(c, await new QrOrderService(c.env).getContext(guestCredential(c))),
 );
+
+guestOrderRoutes.get('/resolve/:token/media/:mediaId', async (c) => {
+  const result = await new QrOrderService(c.env).getMediaByQr(
+    c.req.param('token'),
+    c.req.param('mediaId'),
+  );
+  const headers = new Headers();
+  result.object.writeHttpMetadata(headers);
+  headers.set('ETag', result.object.httpEtag);
+  headers.set('Cache-Control', 'private, max-age=86400');
+  return new Response(result.object.body, { headers });
+});
 
 guestOrderRoutes.get('/requests', async (c) =>
   success(c, await new QrOrderService(c.env).listGuestRequests(guestCredential(c))),

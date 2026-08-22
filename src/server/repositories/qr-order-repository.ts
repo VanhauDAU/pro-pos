@@ -3,6 +3,7 @@ import type {
   GuestOrderRequestDto,
   ServiceRequestDto,
   StaffNotificationAuditDto,
+  TableOpenRequestDto,
 } from '@contracts/qr-order';
 
 export interface QrActiveContextRow {
@@ -15,6 +16,17 @@ export interface QrActiveContextRow {
   timeSessionId: string;
   orderId: string;
   orderVersion: number;
+}
+
+export interface QrTableContextRow {
+  qrId: string;
+  storeId: string;
+  storeName: string;
+  tableId: string;
+  tableName: string;
+  areaName: string;
+  tableStatus: 'AVAILABLE' | 'OCCUPIED' | 'DISABLED';
+  tableVersion: number;
 }
 
 export interface GuestSessionRow extends QrActiveContextRow {
@@ -57,6 +69,22 @@ export interface StaffOperationalAuditRow {
 export class QrOrderRepository {
   constructor(private readonly db: D1Database) {}
 
+  findQrTableContext(tokenHash: string) {
+    return this.db
+      .prepare(
+        `SELECT qr.id AS qrId, s.id AS storeId, s.name AS storeName,
+                st.id AS tableId, COALESCE(st.display_name, st.name) AS tableName,
+                a.name AS areaName, st.status AS tableStatus, st.version AS tableVersion
+         FROM table_qr_codes qr
+         JOIN stores s ON s.id = qr.store_id AND s.status = 'ACTIVE'
+         JOIN service_tables st ON st.id = qr.table_id AND st.store_id = qr.store_id
+         JOIN areas a ON a.id = st.area_id AND a.store_id = st.store_id AND a.status = 'ACTIVE'
+         WHERE qr.token_hash = ? AND qr.enabled = 1 LIMIT 1`,
+      )
+      .bind(tokenHash)
+      .first<QrTableContextRow>();
+  }
+
   findActiveQrContext(tokenHash: string) {
     return this.db
       .prepare(
@@ -76,6 +104,117 @@ export class QrOrderRepository {
       )
       .bind(tokenHash)
       .first<QrActiveContextRow>();
+  }
+
+  findOpenTableRequest(storeId: string, tableId: string) {
+    return this.db
+      .prepare(
+        `SELECT id, status, created_at AS createdAt
+         FROM table_open_requests
+         WHERE store_id = ? AND table_id = ? AND status = 'OPEN'
+         ORDER BY created_at DESC LIMIT 1`,
+      )
+      .bind(storeId, tableId)
+      .first<{ id: string; status: 'OPEN'; createdAt: number }>();
+  }
+
+  expireTableOpenRequests(storeId: string, before: number, now: number) {
+    return this.db
+      .prepare(
+        `UPDATE table_open_requests
+         SET status = 'CANCELLED', handled_at = ?, cancel_reason = 'Yêu cầu đã hết hạn.'
+         WHERE store_id = ? AND status = 'OPEN' AND created_at <= ?`,
+      )
+      .bind(now, storeId, before)
+      .run();
+  }
+
+  async createTableOpenRequest(input: {
+    id: string;
+    context: QrTableContextRow;
+    ipHash: string | null;
+    now: number;
+  }) {
+    await this.db
+      .prepare(
+        `INSERT INTO table_open_requests (
+          id, store_id, table_id, qr_code_id, status, ip_hash, created_at
+        ) VALUES (?, ?, ?, ?, 'OPEN', ?, ?)`,
+      )
+      .bind(
+        input.id,
+        input.context.storeId,
+        input.context.tableId,
+        input.context.qrId,
+        input.ipHash,
+        input.now,
+      )
+      .run();
+  }
+
+  async listTableOpenRequests(storeId: string): Promise<TableOpenRequestDto[]> {
+    const result = await this.db
+      .prepare(
+        `SELECT tor.id, tor.status, tor.table_id AS tableId,
+                COALESCE(st.display_name, st.name) AS tableName,
+                a.name AS areaName, st.version AS tableVersion,
+                tor.created_at AS createdAt
+         FROM table_open_requests tor
+         JOIN service_tables st ON st.id = tor.table_id AND st.store_id = tor.store_id
+         JOIN areas a ON a.id = st.area_id AND a.store_id = st.store_id
+         WHERE tor.store_id = ? AND tor.status = 'OPEN'
+         ORDER BY tor.created_at ASC`,
+      )
+      .bind(storeId)
+      .all<TableOpenRequestDto>();
+    return result.results;
+  }
+
+  getTableOpenRequest(storeId: string, id: string) {
+    return this.db
+      .prepare(
+        `SELECT tor.id, tor.status, tor.table_id AS tableId,
+                st.status AS tableStatus, st.version AS tableVersion
+         FROM table_open_requests tor
+         JOIN service_tables st ON st.id = tor.table_id AND st.store_id = tor.store_id
+         WHERE tor.store_id = ? AND tor.id = ? LIMIT 1`,
+      )
+      .bind(storeId, id)
+      .first<{
+        id: string;
+        status: 'OPEN' | 'COMPLETED' | 'CANCELLED';
+        tableId: string;
+        tableStatus: 'AVAILABLE' | 'OCCUPIED' | 'DISABLED';
+        tableVersion: number;
+      }>();
+  }
+
+  completeTableOpenRequest(input: { storeId: string; id: string; actorId: string; now: number }) {
+    return this.db
+      .prepare(
+        `UPDATE table_open_requests
+         SET status = 'COMPLETED', handled_at = ?, handled_by = ?
+         WHERE store_id = ? AND id = ? AND status = 'OPEN'`,
+      )
+      .bind(input.now, input.actorId, input.storeId, input.id)
+      .run();
+  }
+
+  cancelTableOpenRequest(input: {
+    storeId: string;
+    id: string;
+    actorId: string;
+    reason: string;
+    now: number;
+  }) {
+    return this.db
+      .prepare(
+        `UPDATE table_open_requests
+         SET status = 'CANCELLED', handled_at = ?, handled_by = ?, cancel_reason = ?
+         WHERE store_id = ? AND id = ? AND status = 'OPEN'`,
+      )
+      .bind(input.now, input.actorId, input.reason, input.storeId, input.id)
+      .run();
   }
 
   findGuestSession(secretHash: string, now: number) {

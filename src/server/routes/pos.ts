@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 
 import { REALTIME_SUBPROTOCOL } from '@contracts/realtime';
+import { updatePrinterDeviceSettingsSchema } from '@contracts/store';
 import {
   addOrderItemSchema,
   cancelOrderSchema,
@@ -51,6 +52,23 @@ posRoutes.use('*', async (c, next) => {
       );
     }
   }
+});
+
+posRoutes.get('/onboarding/audio/:track', async (c) => {
+  const track = c.req.param('track');
+  if (!/^(0[0-9]|1[0-3])$/.test(track)) {
+    throw new AppError('ONBOARDING_AUDIO_NOT_FOUND', 'Không tìm thấy âm thanh hướng dẫn.', 404);
+  }
+  const object = await c.env.MEDIA.get(`onboarding/sound_${track}.MP3`);
+  if (!object) {
+    throw new AppError('ONBOARDING_AUDIO_NOT_FOUND', 'Không tìm thấy âm thanh hướng dẫn.', 404);
+  }
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set('Content-Type', 'audio/mpeg');
+  headers.set('ETag', object.httpEtag);
+  headers.set('Cache-Control', 'private, max-age=31536000, immutable');
+  return new Response(object.body, { headers });
 });
 
 function idempotencyKey(c: Parameters<typeof success>[0]) {
@@ -132,6 +150,29 @@ posRoutes.get('/realtime/stream', requirePermission('table.view'), async (c) => 
 posRoutes.get('/print-settings', requirePermission('order.manage'), async (c) =>
   success(c, await new StoreService(c.env).getPrintSettings(c.get('actor').storeId!)),
 );
+
+posRoutes.put('/printer-settings', requirePermission('order.manage'), async (c) => {
+  const printer = await parseJson(c.req.raw, updatePrinterDeviceSettingsSchema);
+  const actor = c.get('actor');
+  const storeId = actor.storeId!;
+  const service = new StoreService(c.env);
+  const current = await service.getPrintSettings(storeId);
+
+  await service.updatePrintSettings({
+    ...current,
+    storeId,
+    paperSize: printer.paperSize,
+    printersJson: JSON.stringify(printer),
+    auditContext: {
+      actorUserId: actor.id,
+      actorSessionId: c.get('sessionId'),
+      deviceId: c.get('device')?.id ?? null,
+      requestId: c.get('requestId'),
+    },
+  });
+
+  return success(c, await service.getPrintSettings(storeId));
+});
 
 posRoutes.get('/catalog', requirePermission('order.manage'), async (c) =>
   success(c, await new PosService(c.env).listCatalog(c.get('actor').storeId!)),

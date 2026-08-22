@@ -218,6 +218,13 @@ export class PosRealtimeClient {
         } else {
           playPosSound('CHECKOUT_REQUEST', dedupeKey);
         }
+      } else if (event.data.reason === 'TABLE_OPEN_REQUEST_CREATED') {
+        playPosSound(
+          'TABLE_OPEN_REQUEST',
+          event.data.tableOpenRequestId
+            ? `table-open-request:${event.data.tableOpenRequestId}`
+            : event.eventId,
+        );
       }
     }
 
@@ -236,10 +243,14 @@ export class PosRealtimeClient {
     if (event.topics.includes('guest.services')) {
       invalidations.push(this.queryClient.invalidateQueries({ queryKey: ['service-requests'] }));
     }
+    if (event.topics.includes('guest.table-open-requests')) {
+      invalidations.push(this.queryClient.invalidateQueries({ queryKey: ['table-open-requests'] }));
+    }
     if (
       event.topics.includes('pos.orders') ||
       event.topics.includes('guest.orders') ||
-      event.topics.includes('guest.services')
+      event.topics.includes('guest.services') ||
+      event.topics.includes('guest.table-open-requests')
     ) {
       invalidations.push(
         this.queryClient.invalidateQueries({ queryKey: ['staff-notification-audit'] }),
@@ -265,6 +276,7 @@ export class PosRealtimeClient {
           root === 'pos-order-detail' ||
           root === 'guest-order-requests' ||
           root === 'service-requests' ||
+          root === 'table-open-requests' ||
           root === 'staff-notification-audit'
         );
       },

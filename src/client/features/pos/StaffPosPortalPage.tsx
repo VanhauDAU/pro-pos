@@ -37,6 +37,7 @@ import {
   SyncOutlined,
   TagsOutlined,
   UnorderedListOutlined,
+  UnlockOutlined,
   UpOutlined,
   UserOutlined,
 } from '@ant-design/icons';
@@ -76,6 +77,7 @@ import type {
   StaffNotificationAuditResponse,
   StaffNotificationEventType,
   StaffNotificationStatus,
+  TableOpenRequestDto,
 } from '@contracts/qr-order';
 import type { StorePrintSettings } from '@contracts/store';
 import type { PricingConfigSnapshot } from '@domain/pricing/types';
@@ -86,6 +88,7 @@ import {
 } from '@client/lib/pos-receipt-printer';
 import { OrderDetailPage } from './OrderDetailPage';
 import { StaffOnboarding } from './StaffOnboarding';
+import { StaffPrinterSettingsPage } from './StaffPrinterSettingsPage';
 import { PushNotificationControl } from '@client/features/pwa/PushNotificationControl';
 import { OwnerInvoicesPage } from '@client/features/owner/OwnerInvoicesPage';
 import {
@@ -545,9 +548,16 @@ function StaffHeader({
     queryFn: () => apiRequest<ServiceRequestDto[]>('/api/v1/pos/qr-orders/service-requests/list'),
     refetchInterval: pollingInterval,
   });
+  const tableOpenRequests = useQuery({
+    queryKey: ['table-open-requests'],
+    queryFn: () =>
+      apiRequest<TableOpenRequestDto[]>('/api/v1/pos/qr-orders/table-open-requests/list'),
+    refetchInterval: pollingInterval,
+  });
   const pendingNotificationCount =
     (guestRequests.data?.length ?? 0) +
-    (serviceRequests.data?.filter((request) => request.status === 'OPEN').length ?? 0);
+    (serviceRequests.data?.filter((request) => request.status === 'OPEN').length ?? 0) +
+    (tableOpenRequests.data?.length ?? 0);
 
   const logout = () => {
     modal.confirm({
@@ -727,9 +737,16 @@ function StaffBottomNav({ active }: { active: (typeof navItems)[number]['key'] }
     queryFn: () => apiRequest<ServiceRequestDto[]>('/api/v1/pos/qr-orders/service-requests/list'),
     refetchInterval: pollingInterval,
   });
+  const tableOpenRequests = useQuery({
+    queryKey: ['table-open-requests'],
+    queryFn: () =>
+      apiRequest<TableOpenRequestDto[]>('/api/v1/pos/qr-orders/table-open-requests/list'),
+    refetchInterval: pollingInterval,
+  });
   const pendingNotificationCount =
     (guestRequests.data?.length ?? 0) +
-    (serviceRequests.data?.filter((request) => request.status === 'OPEN').length ?? 0);
+    (serviceRequests.data?.filter((request) => request.status === 'OPEN').length ?? 0) +
+    (tableOpenRequests.data?.length ?? 0);
   return (
     <nav className="staff-pos-bottom-nav" aria-label="Điều hướng POS nhân viên">
       {navItems.map((item) => (
@@ -1095,9 +1112,11 @@ function QrOrderPage() {
   const now = useServerNow(realtime.serverTimeOffsetMs);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [updatingServiceId, setUpdatingServiceId] = useState<string | null>(null);
+  const [updatingTableOpenId, setUpdatingTableOpenId] = useState<string | null>(null);
   const previousPendingCount = useRef<number | null>(null);
   const previousCallStaffRequestCount = useRef<number | null>(null);
   const previousCheckoutRequestCount = useRef<number | null>(null);
+  const previousTableOpenRequestCount = useRef<number | null>(null);
   const auth = useQuery({
     queryKey: ['auth-context'],
     queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
@@ -1110,6 +1129,12 @@ function QrOrderPage() {
   const serviceRequests = useQuery({
     queryKey: ['service-requests'],
     queryFn: () => apiRequest<ServiceRequestDto[]>('/api/v1/pos/qr-orders/service-requests/list'),
+    refetchInterval: pollingInterval,
+  });
+  const tableOpenRequests = useQuery({
+    queryKey: ['table-open-requests'],
+    queryFn: () =>
+      apiRequest<TableOpenRequestDto[]>('/api/v1/pos/qr-orders/table-open-requests/list'),
     refetchInterval: pollingInterval,
   });
 
@@ -1169,10 +1194,23 @@ function QrOrderPage() {
     previousCallStaffRequestCount.current = callStaffCount;
     previousCheckoutRequestCount.current = checkoutCount;
   }, [realtime.status, serviceRequests.data]);
+  useEffect(() => {
+    const count = tableOpenRequests.data?.length;
+    if (count === undefined) return;
+    if (
+      realtime.status !== 'CONNECTED' &&
+      previousTableOpenRequestCount.current !== null &&
+      count > previousTableOpenRequestCount.current
+    ) {
+      playPosSound('TABLE_OPEN_REQUEST');
+    }
+    previousTableOpenRequestCount.current = count;
+  }, [realtime.status, tableOpenRequests.data?.length]);
   const refresh = () =>
     Promise.all([
       queryClient.invalidateQueries({ queryKey: ['guest-order-requests'] }),
       queryClient.invalidateQueries({ queryKey: ['service-requests'] }),
+      queryClient.invalidateQueries({ queryKey: ['table-open-requests'] }),
       queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
       queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
       queryClient.invalidateQueries({ queryKey: ['staff-notification-audit'] }),
@@ -1242,6 +1280,57 @@ function QrOrderPage() {
       setUpdatingServiceId(null);
     }
   };
+  const acceptTableOpen = async (request: TableOpenRequestDto) => {
+    setUpdatingTableOpenId(request.id);
+    try {
+      await jsonRequest(
+        `/api/v1/pos/qr-orders/table-open-requests/${request.id}/accept`,
+        {},
+        { headers: mutationHeaders(auth.data?.csrfToken ?? '') },
+      );
+      messageApi.success(`Đã mở ${request.tableName}.`);
+      await refresh();
+    } catch (error) {
+      messageApi.error(errorText(error));
+      await refresh();
+    } finally {
+      setUpdatingTableOpenId(null);
+    }
+  };
+  const cancelTableOpen = (request: TableOpenRequestDto) => {
+    let reason = '';
+    modal.confirm({
+      title: `Từ chối mở ${request.tableName}`,
+      content: (
+        <Input.TextArea
+          autoFocus
+          placeholder="Nhập lý do từ chối"
+          maxLength={300}
+          onChange={(event) => {
+            reason = event.target.value;
+          }}
+        />
+      ),
+      okText: 'Từ chối',
+      okButtonProps: { danger: true },
+      cancelText: 'Quay lại',
+      onOk: async () => {
+        if (!reason.trim()) throw new Error('Vui lòng nhập lý do.');
+        setUpdatingTableOpenId(request.id);
+        try {
+          await jsonRequest(
+            `/api/v1/pos/qr-orders/table-open-requests/${request.id}/cancel`,
+            { reason: reason.trim() },
+            { headers: mutationHeaders(auth.data?.csrfToken ?? '') },
+          );
+          messageApi.success('Đã từ chối yêu cầu mở bàn.');
+          await refresh();
+        } finally {
+          setUpdatingTableOpenId(null);
+        }
+      },
+    });
+  };
 
   const realtimeLabel =
     realtime.status === 'CONNECTED'
@@ -1252,7 +1341,8 @@ function QrOrderPage() {
           ? 'Đang kết nối lại'
           : 'Realtime đang tắt';
   const realtimeColor = realtime.status === 'CONNECTED' ? 'success' : 'warning';
-  const isRefreshing = requests.isFetching || serviceRequests.isFetching;
+  const isRefreshing =
+    requests.isFetching || serviceRequests.isFetching || tableOpenRequests.isFetching;
 
   return (
     <main className="staff-qr-order-page">
@@ -1287,9 +1377,9 @@ function QrOrderPage() {
           <small>{formatMoney(totalPendingValue)}</small>
         </article>
         <article>
-          <span>Hỗ trợ chưa nhận</span>
-          <strong>{openServiceCount}</strong>
-          <small>{activeServiceRequests.length} yêu cầu đang mở</small>
+          <span>Yêu cầu tại bàn</span>
+          <strong>{openServiceCount + (tableOpenRequests.data?.length ?? 0)}</strong>
+          <small>{tableOpenRequests.data?.length ?? 0} bàn chờ mở</small>
         </article>
         <article>
           <span>Đồng bộ dữ liệu</span>
@@ -1298,7 +1388,7 @@ function QrOrderPage() {
         </article>
       </section>
 
-      {requests.isError || serviceRequests.isError ? (
+      {requests.isError || serviceRequests.isError || tableOpenRequests.isError ? (
         <Alert
           type="error"
           showIcon
@@ -1307,6 +1397,73 @@ function QrOrderPage() {
           className="staff-qr-order-error"
         />
       ) : null}
+
+      <section className="staff-qr-order-section">
+        <div className="staff-qr-order-section__heading">
+          <div>
+            <Typography.Title level={3}>Yêu cầu mở bàn</Typography.Title>
+            <Typography.Text type="secondary">
+              Khách đã quét QR và đang chọn món trong lúc chờ.
+            </Typography.Text>
+          </div>
+          <Tag color={(tableOpenRequests.data?.length ?? 0) > 0 ? 'processing' : 'default'}>
+            {tableOpenRequests.data?.length ?? 0} đang chờ
+          </Tag>
+        </div>
+
+        {tableOpenRequests.isLoading ? (
+          <Skeleton active paragraph={{ rows: 2 }} />
+        ) : (tableOpenRequests.data?.length ?? 0) === 0 ? (
+          <div className="staff-qr-order-empty staff-qr-order-empty--compact">
+            <CheckCircleOutlined /> Không có bàn đang chờ mở
+          </div>
+        ) : (
+          <div className="staff-qr-service-grid">
+            {tableOpenRequests.data?.map((request) => {
+              const urgency = requestUrgency(request.createdAt, now);
+              const isUpdating = updatingTableOpenId === request.id;
+              return (
+                <article key={request.id} className={`staff-qr-service-card ${urgency.className}`}>
+                  <div className="staff-qr-service-card__icon">
+                    <UnlockOutlined />
+                  </div>
+                  <div className="staff-qr-service-card__body">
+                    <div className="staff-qr-service-card__title">
+                      <strong>Yêu cầu mở bàn</strong>
+                      <Tag color={urgency.color}>{urgency.label}</Tag>
+                    </div>
+                    <b>
+                      {request.tableName} · {request.areaName}
+                    </b>
+                    <div className="staff-qr-request-timing">
+                      <ClockCircleOutlined /> Gửi lúc {formatPreciseTime(request.createdAt)} · chờ{' '}
+                      <strong>{formatRequestAge(request.createdAt, now)}</strong>
+                    </div>
+                  </div>
+                  <div className="staff-qr-service-card__actions">
+                    <Button
+                      danger
+                      disabled={updatingTableOpenId !== null}
+                      onClick={() => cancelTableOpen(request)}
+                    >
+                      Từ chối
+                    </Button>
+                    <Button
+                      type="primary"
+                      icon={<UnlockOutlined />}
+                      loading={isUpdating}
+                      disabled={updatingTableOpenId !== null && !isUpdating}
+                      onClick={() => void acceptTableOpen(request)}
+                    >
+                      Mở bàn
+                    </Button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       <section className="staff-qr-order-section">
         <div className="staff-qr-order-section__heading">
@@ -1565,8 +1722,7 @@ function MorePage({
         </div>
       </section>
 
-      {/* ── Feature Modules Section ─────────────────────────────────── */}
-      {/* thêm mergin top */}
+      {/* ── Sales management ───────────────────────────────────────── */}
       <div style={{ marginBottom: 16, marginTop: 20 }}>
         <Typography.Title
           level={5}
@@ -1578,7 +1734,7 @@ function MorePage({
             letterSpacing: '0.04em',
           }}
         >
-          Chức năng & Nghiệp vụ được phân quyền
+          Quản lý bán hàng
         </Typography.Title>
 
         <Card
@@ -1669,6 +1825,73 @@ function MorePage({
                   </div>
                   <div style={{ fontSize: 12.5, color: '#64748b', marginTop: 2 }}>
                     Xem lịch sử hóa đơn bán hàng, in lại bill, tra cứu đơn đã thanh toán
+                  </div>
+                </div>
+              </div>
+              <RightOutlined style={{ color: '#94a3b8', fontSize: 14 }} />
+            </div>
+          ) : null}
+        </Card>
+      </div>
+
+      {/* ── Device & POS settings ───────────────────────────────────── */}
+      <div style={{ marginBottom: 16 }}>
+        <Typography.Title
+          level={5}
+          style={{
+            margin: '0 0 10px 4px',
+            color: '#475569',
+            fontSize: 13,
+            textTransform: 'uppercase',
+            letterSpacing: '0.04em',
+          }}
+        >
+          Thiết lập
+        </Typography.Title>
+
+        <Card
+          styles={{ body: { padding: 0 } }}
+          style={{
+            overflow: 'hidden',
+            borderRadius: 12,
+            border: '1px solid #e2e8f0',
+            boxShadow: '0 2px 8px rgba(15, 23, 42, 0.04)',
+          }}
+        >
+          {hasPermission('order.manage') ? (
+            <div
+              className="staff-more-nav-item"
+              onClick={() => navigate('/pos/printers')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '16px 18px',
+                cursor: 'pointer',
+                borderBottom: '1px solid #f1f5f9',
+                transition: 'background 0.15s ease',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                <div
+                  style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 10,
+                    background: '#ecfdf5',
+                    color: '#059669',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 22,
+                  }}
+                >
+                  <PrinterOutlined />
+                </div>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>Máy in</div>
+                  <div style={{ fontSize: 12.5, color: '#64748b', marginTop: 2 }}>
+                    Dò tìm và thiết lập máy in hóa đơn trên thiết bị POS này
                   </div>
                 </div>
               </div>
@@ -5069,6 +5292,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                           size="large"
                           block
                           icon={<PrinterOutlined />}
+                          disabled={printSettings.data?.allowProvisionalPrint === false}
                           onClick={() => setProvisionalBillOpen(true)}
                           className="staff-action-provisional-btn"
                         >
@@ -5701,10 +5925,10 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           <Button
             key="print"
             icon={<PrinterOutlined />}
-            onClick={() => {
+            onClick={async () => {
               if (!quote.data) return;
               const printData = buildPrintDataFromQuote(quote.data, 'PROVISIONAL');
-              void printReceipt({
+              const result = await printReceipt({
                 data: printData,
                 printSettings: printSettings.data,
                 storeInfo: {
@@ -5716,7 +5940,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   bankAccountName: staffContext.data?.bankAccountName ?? null,
                 },
               });
-              messageApi.success('Đã gửi lệnh in phiếu tạm tính!');
+              if (result.success) messageApi.success('Đã gửi lệnh in phiếu tạm tính!');
+              else messageApi.error(result.message ?? 'Không thể in phiếu tạm tính.');
             }}
           >
             In tạm tính
@@ -6094,6 +6319,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   size="large"
                   block
                   icon={<PrinterOutlined />}
+                  disabled={printSettings.data?.allowProvisionalPrint === false}
                   onClick={() => {
                     setMobileActionsOpen(false);
                     setProvisionalBillOpen(true);
@@ -6664,9 +6890,9 @@ function InvoicePage() {
           type="primary"
           size="large"
           icon={<PrinterOutlined />}
-          onClick={() => {
+          onClick={async () => {
             const printData = buildPrintDataFromInvoice(data);
-            void printReceipt({
+            const result = await printReceipt({
               data: printData,
               printSettings: printSettings.data,
               storeInfo: {
@@ -6678,7 +6904,8 @@ function InvoicePage() {
                 bankAccountName: staffContext.data?.bankAccountName ?? null,
               },
             });
-            messageApi.success('Đã gửi lệnh in hóa đơn!');
+            if (result.success) messageApi.success('Đã gửi lệnh in hóa đơn!');
+            else messageApi.error(result.message ?? 'Không thể in hóa đơn.');
           }}
         >
           In hóa đơn
@@ -6856,7 +7083,7 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
           (quote.data.order.id ? `HD-${quote.data.order.id.slice(0, 8).toUpperCase()}` : '—');
         printData.orderCode = resolvedCode;
         printData.invoiceCode = resolvedCode;
-        await printReceipt({
+        const printResult = await printReceipt({
           data: printData,
           printSettings: printSettings.data,
           storeInfo: {
@@ -6868,7 +7095,13 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
             bankAccountName: staffContext.data?.bankAccountName ?? null,
           },
         });
-        messageApi.success('Thanh toán và in hóa đơn thành công!');
+        if (printResult.success) {
+          messageApi.success('Thanh toán và in hóa đơn thành công!');
+        } else {
+          messageApi.warning(
+            `Thanh toán thành công nhưng chưa in được hóa đơn: ${printResult.message ?? 'Không rõ lỗi'}`,
+          );
+        }
       } else {
         messageApi.success('Thanh toán đơn hàng thành công!');
       }
@@ -7088,126 +7321,94 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
                   );
                   const transferNote =
                     `TT ${quote.data?.order.tableName ? `${quote.data.order.tableName} ` : ''}${quote.data?.order.displayCode || quote.data?.order.id.slice(0, 6) || ''}`.trim();
-                  const qrUrl = hasBank
-                    ? `https://img.vietqr.io/image/${encodeURIComponent(bankSettings!.bankName!.trim())}-${encodeURIComponent(bankSettings!.bankAccountNumber!.trim())}-compact2.png?amount=${totalVnd}&addInfo=${encodeURIComponent(transferNote)}&accountName=${encodeURIComponent(bankSettings!.bankAccountName?.trim() || '')}`
-                    : null;
 
                   return (
                     <section className="staff-payment-page__section staff-vietqr-card">
                       <div className="staff-vietqr-card__header">
                         <div className="staff-vietqr-card__title">
-                          <QrcodeOutlined style={{ color: '#0877ee', fontSize: 20 }} />
-                          <span>Mã VietQR chuyển khoản</span>
+                          <QrcodeOutlined style={{ color: '#0877ee', fontSize: 18 }} />
+                          <span>Thông tin chuyển khoản</span>
                         </div>
                         <Tag color="processing" style={{ borderRadius: 12, margin: 0 }}>
                           Tự động điền số tiền
                         </Tag>
                       </div>
 
-                      {hasBank && qrUrl ? (
-                        <div className="staff-vietqr-container">
-                          <div className="staff-vietqr-preview-box">
-                            <div
-                              className="staff-vietqr-img-wrapper"
-                              onClick={() => setQrModalOpen(true)}
-                              title="Nhấn để phóng to mã QR"
-                            >
-                              <img
-                                src={qrUrl}
-                                alt="VietQR Payment"
-                                className="staff-vietqr-img"
-                                loading="eager"
-                              />
-                              <div className="staff-vietqr-img-overlay">
-                                <FullscreenOutlined /> Phóng to QR
-                              </div>
+                      {hasBank ? (
+                        <div className="staff-vietqr-details" style={{ width: '100%' }}>
+                          <div className="staff-vietqr-detail-item">
+                            <span className="staff-vietqr-detail-label">Số tài khoản</span>
+                            <div className="staff-vietqr-detail-value">
+                              <strong className="staff-vietqr-copyable">
+                                {bankSettings?.bankAccountNumber}
+                              </strong>
+                              <Tooltip title="Sao chép STK">
+                                <Button
+                                  type="text"
+                                  size="small"
+                                  icon={<CopyOutlined />}
+                                  onClick={() =>
+                                    handleCopy(
+                                      bankSettings?.bankAccountNumber || '',
+                                      'số tài khoản',
+                                    )
+                                  }
+                                />
+                              </Tooltip>
                             </div>
-                            <Button
-                              type="dashed"
-                              icon={<FullscreenOutlined />}
-                              onClick={() => setQrModalOpen(true)}
-                              className="staff-vietqr-zoom-btn"
-                              block
-                            >
-                              Phóng to cho khách quét
-                            </Button>
                           </div>
 
-                          <div className="staff-vietqr-details">
+                          {bankSettings?.bankAccountName ? (
                             <div className="staff-vietqr-detail-item">
-                              <span className="staff-vietqr-detail-label">Số tài khoản</span>
+                              <span className="staff-vietqr-detail-label">Chủ tài khoản</span>
                               <div className="staff-vietqr-detail-value">
-                                <strong className="staff-vietqr-copyable">
-                                  {bankSettings?.bankAccountNumber}
-                                </strong>
-                                <Tooltip title="Sao chép STK">
+                                <strong>{bankSettings.bankAccountName}</strong>
+                                <Tooltip title="Sao chép tên chủ TK">
                                   <Button
                                     type="text"
                                     size="small"
                                     icon={<CopyOutlined />}
                                     onClick={() =>
                                       handleCopy(
-                                        bankSettings?.bankAccountNumber || '',
-                                        'số tài khoản',
+                                        bankSettings.bankAccountName || '',
+                                        'tên chủ tài khoản',
                                       )
                                     }
                                   />
                                 </Tooltip>
                               </div>
                             </div>
+                          ) : null}
 
-                            {bankSettings?.bankAccountName ? (
-                              <div className="staff-vietqr-detail-item">
-                                <span className="staff-vietqr-detail-label">Chủ tài khoản</span>
-                                <div className="staff-vietqr-detail-value">
-                                  <strong>{bankSettings.bankAccountName}</strong>
-                                  <Tooltip title="Sao chép tên chủ TK">
-                                    <Button
-                                      type="text"
-                                      size="small"
-                                      icon={<CopyOutlined />}
-                                      onClick={() =>
-                                        handleCopy(
-                                          bankSettings.bankAccountName || '',
-                                          'tên chủ tài khoản',
-                                        )
-                                      }
-                                    />
-                                  </Tooltip>
-                                </div>
-                              </div>
-                            ) : null}
-
-                            <div className="staff-vietqr-detail-item">
-                              <span className="staff-vietqr-detail-label">Số tiền cần chuyển</span>
-                              <div className="staff-vietqr-detail-value">
-                                <strong style={{ color: '#0877ee', fontSize: 16 }}>
-                                  {formatMoney(totalVnd)}
-                                </strong>
-                                <Tooltip title="Sao chép số tiền">
-                                  <Button
-                                    type="text"
-                                    size="small"
-                                    icon={<CopyOutlined />}
-                                    onClick={() => handleCopy(String(totalVnd), 'số tiền')}
-                                  />
-                                </Tooltip>
-                              </div>
+                          <div className="staff-vietqr-detail-item">
+                            <span className="staff-vietqr-detail-label">Số tiền cần chuyển</span>
+                            <div className="staff-vietqr-detail-value">
+                              <strong style={{ color: '#0877ee', fontSize: 16 }}>
+                                {formatMoney(totalVnd)}
+                              </strong>
+                              <Tooltip title="Sao chép số tiền">
+                                <Button
+                                  type="text"
+                                  size="small"
+                                  icon={<CopyOutlined />}
+                                  onClick={() => handleCopy(String(totalVnd), 'số tiền')}
+                                />
+                              </Tooltip>
                             </div>
+                          </div>
 
-                            <div className="staff-vietqr-detail-item">
-                              <span className="staff-vietqr-detail-label">Nội dung CK</span>
-                              <div className="staff-vietqr-detail-value">
-                                <strong style={{ color: '#d97706' }}>{transferNote}</strong>
-                                <Tooltip title="Sao chép nội dung">
-                                  <Button
-                                    type="text"
-                                    size="small"
-                                    icon={<CopyOutlined />}
-                                    onClick={() => handleCopy(transferNote, 'nội dung')}
-                                  />
-                                </Tooltip>
-                              </div>
+                          <div className="staff-vietqr-detail-item">
+                            <span className="staff-vietqr-detail-label">Nội dung CK</span>
+                            <div className="staff-vietqr-detail-value">
+                              <strong style={{ color: '#d97706' }}>{transferNote}</strong>
+                              <Tooltip title="Sao chép nội dung">
+                                <Button
+                                  type="text"
+                                  size="small"
+                                  icon={<CopyOutlined />}
+                                  onClick={() => handleCopy(transferNote, 'nội dung')}
+                                />
+                              </Tooltip>
                             </div>
                           </div>
                         </div>
@@ -7277,16 +7478,81 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
                   </div>
                 </>
               ) : (
-                <div className="staff-payment-bank-summary">
-                  <div className="staff-payment-bank-summary__badge">
-                    <CreditCardOutlined /> Chuyển khoản ngân hàng (VietQR)
+                <>
+                  <div className="staff-payment-bank-summary">
+                    <div className="staff-payment-bank-summary__badge">
+                      <CreditCardOutlined /> Chuyển khoản ngân hàng (VietQR)
+                    </div>
+                    <p className="staff-payment-bank-summary__hint">
+                      Khách quét mã VietQR bên dưới để thanh toán đúng số tiền{' '}
+                      <b>{formatMoney(totalVnd)}</b>. Sau khi kiểm tra tiền đã vào tài khoản, bấm
+                      nút <b>Xác nhận đã nhận tiền</b>.
+                    </p>
                   </div>
-                  <p className="staff-payment-bank-summary__hint">
-                    Khách quét mã VietQR bên cạnh để thanh toán đúng số tiền{' '}
-                    <b>{formatMoney(totalVnd)}</b>. Sau khi kiểm tra tiền đã vào tài khoản, bấm nút{' '}
-                    <b>Xác nhận thanh toán</b>.
-                  </p>
-                </div>
+
+                  {(() => {
+                    const bankSettings = quote.data?.bankSettings;
+                    const hasBank = Boolean(
+                      bankSettings?.bankName && bankSettings?.bankAccountNumber,
+                    );
+                    const transferNote =
+                      `TT ${quote.data?.order.tableName ? `${quote.data.order.tableName} ` : ''}${quote.data?.order.displayCode || quote.data?.order.id.slice(0, 6) || ''}`.trim();
+                    const qrUrl = hasBank
+                      ? `https://img.vietqr.io/image/${encodeURIComponent(bankSettings!.bankName!.trim())}-${encodeURIComponent(bankSettings!.bankAccountNumber!.trim())}-compact2.png?amount=${totalVnd}&addInfo=${encodeURIComponent(transferNote)}&accountName=${encodeURIComponent(bankSettings!.bankAccountName?.trim() || '')}`
+                      : null;
+
+                    if (!hasBank || !qrUrl) return null;
+
+                    return (
+                      <div
+                        className="staff-vietqr-sidebar-box"
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          gap: 10,
+                          padding: '12px 0 4px',
+                        }}
+                      >
+                        <div
+                          className="staff-vietqr-img-wrapper"
+                          onClick={() => setQrModalOpen(true)}
+                          title="Nhấn để phóng to mã QR"
+                          style={{
+                            maxWidth: 340,
+                            width: '100%',
+                            cursor: 'pointer',
+                            borderRadius: 12,
+                            overflow: 'hidden',
+                            border: '1px solid #e2e8f0',
+                            boxShadow: '0 6px 24px rgba(0, 0, 0, 0.08)',
+                            background: '#fff',
+                          }}
+                        >
+                          <img
+                            src={qrUrl}
+                            alt="VietQR Payment"
+                            className="staff-vietqr-img"
+                            loading="eager"
+                            style={{ display: 'block', width: '100%', height: 'auto' }}
+                          />
+                          <div className="staff-vietqr-img-overlay">
+                            <FullscreenOutlined /> Phóng to QR
+                          </div>
+                        </div>
+                        <Button
+                          type="dashed"
+                          icon={<FullscreenOutlined />}
+                          onClick={() => setQrModalOpen(true)}
+                          className="staff-vietqr-zoom-btn"
+                          style={{ maxWidth: 340, width: '100%' }}
+                        >
+                          Phóng to cho khách quét
+                        </Button>
+                      </div>
+                    );
+                  })()}
+                </>
               )}
             </div>
 
@@ -7511,18 +7777,23 @@ export function StaffPosPortalPage() {
     isCatalogCategoryDetail ||
     isCatalogCategories ||
     isCatalogList;
+  const isPrinterSettings = location.pathname === '/pos/printers';
 
   const isDetail =
     location.pathname.startsWith('/pos/orders/') && location.pathname.endsWith('/detail');
   const isPayment =
     location.pathname.startsWith('/pos/orders/') && location.pathname.endsWith('/payment');
   const isEditor = location.pathname.startsWith('/pos/orders/') && !isPayment && !isDetail;
-  const isFullScreen = isInvoiceDetail || isPayment || isEditor || isDetail || isCatalog;
+  const isFullScreen =
+    isInvoiceDetail || isPayment || isEditor || isDetail || isCatalog || isPrinterSettings;
   const active = location.pathname.startsWith('/pos/areas')
     ? 'areas'
     : location.pathname.startsWith('/pos/qr-order')
       ? 'qr'
-      : location.pathname.startsWith('/pos/more') || isInvoicesList || isCatalog
+      : location.pathname.startsWith('/pos/more') ||
+          isInvoicesList ||
+          isCatalog ||
+          isPrinterSettings
         ? 'more'
         : 'orders';
 
@@ -7554,7 +7825,13 @@ export function StaffPosPortalPage() {
             />
           ) : null}
           <div className="staff-pos-main">
-            {isInvoiceDetail ? (
+            {isPrinterSettings ? (
+              <StaffPrinterSettingsPage
+                csrfToken={auth.data.csrfToken}
+                storeName={posContext.data?.storeName ?? 'PRO POS'}
+                onBack={() => navigate('/pos/more')}
+              />
+            ) : isInvoiceDetail ? (
               <InvoicePage />
             ) : isInvoicesList ? (
               <div className="staff-invoices-shell">

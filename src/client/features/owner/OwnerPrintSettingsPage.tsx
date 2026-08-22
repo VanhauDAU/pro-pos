@@ -673,7 +673,6 @@ export function OwnerPrintSettingsPage() {
           onChange={(key) => setActiveTab(key as 'invoice' | 'printers')}
           items={[
             { key: 'invoice', label: 'Mẫu in hóa đơn' },
-            { key: 'printers', label: 'Cấu hình máy in' },
             { key: 'label_disabled', label: 'Mẫu in tem', disabled: true },
             { key: 'kitchen_disabled', label: 'Mẫu in bếp', disabled: true },
             { key: 'check_disabled', label: 'Mẫu in phiếu kiểm đồ', disabled: true },

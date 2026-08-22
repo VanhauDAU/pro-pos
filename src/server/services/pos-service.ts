@@ -425,7 +425,20 @@ export class PosService {
       }
     }
     discountAmount = Math.min(subtotal, discountAmount);
-    const itemId = crypto.randomUUID();
+    const normalizedNote = input.note?.trim() || null;
+    const mergeableItem =
+      product.product_type !== 'TIME' && !input.discount
+        ? await this.repository.findMergeableOrderItem({
+            storeId: input.storeId,
+            orderId: input.orderId,
+            takeaway: Boolean(takeawayOrder),
+            productId: product.product_id,
+            variantId: product.variant_id,
+            unitPriceVnd,
+            note: normalizedNote,
+          })
+        : null;
+    const itemId = mergeableItem?.itemId ?? crypto.randomUUID();
     const command = {
       commandId: input.idempotencyKey,
       storeId: input.storeId,
@@ -446,7 +459,7 @@ export class PosService {
             timeEndedAtMs: effectiveEndedAt,
           }
         : {}),
-      note: input.note?.trim() || null,
+      note: normalizedNote,
       discountType: input.discount?.type ?? null,
       discountInputValue: input.discount?.value ?? null,
       discountAmountVnd: discountAmount,
@@ -487,7 +500,7 @@ export class PosService {
         discountAmountVnd: discountAmount,
         grossLineTotalVnd: subtotal,
         netLineTotalVnd: subtotal - discountAmount,
-        note: input.note?.trim() || null,
+        note: normalizedNote,
       },
       now,
     });

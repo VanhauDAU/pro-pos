@@ -26,6 +26,7 @@ import {
   PlusCircleOutlined,
   PlusOutlined,
   PrinterOutlined,
+  QuestionCircleOutlined,
   QrcodeOutlined,
   RightOutlined,
   SearchOutlined,
@@ -33,6 +34,8 @@ import {
   ShoppingCartOutlined,
   StopOutlined,
   SwapOutlined,
+  SyncOutlined,
+  TagsOutlined,
   UnorderedListOutlined,
   UpOutlined,
   UserOutlined,
@@ -44,6 +47,7 @@ import {
   Button,
   Card,
   ConfigProvider,
+  Drawer,
   Dropdown,
   Empty,
   Input,
@@ -54,7 +58,6 @@ import {
   Segmented,
   Select,
   Skeleton,
-  Space,
   Spin,
   Switch,
   Tag,
@@ -63,12 +66,17 @@ import {
   message,
 } from 'antd';
 import type { MenuProps } from 'antd';
-import * as React from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
-import type { GuestOrderRequestDto, ServiceRequestDto } from '@contracts/qr-order';
+import type {
+  GuestOrderRequestDto,
+  ServiceRequestDto,
+  StaffNotificationAuditResponse,
+  StaffNotificationEventType,
+  StaffNotificationStatus,
+} from '@contracts/qr-order';
 import type { StorePrintSettings } from '@contracts/store';
 import type { PricingConfigSnapshot } from '@domain/pricing/types';
 import {
@@ -77,8 +85,15 @@ import {
   printReceipt,
 } from '@client/lib/pos-receipt-printer';
 import { OrderDetailPage } from './OrderDetailPage';
+import { StaffOnboarding } from './StaffOnboarding';
 import { PushNotificationControl } from '@client/features/pwa/PushNotificationControl';
 import { OwnerInvoicesPage } from '@client/features/owner/OwnerInvoicesPage';
+import {
+  OwnerCategoryDetailPage,
+  OwnerCategoryListPage,
+  OwnerProductFormPage,
+  OwnerProductListPage,
+} from '@client/features/owner/OwnerCatalogPages';
 
 import { apiRequest, jsonRequest } from '@client/lib/api';
 import { playPosSound } from '@client/lib/sound';
@@ -381,6 +396,75 @@ function formatElapsed(totalSeconds: number) {
   return [hours, minutes, remainder].map((value) => String(value).padStart(2, '0')).join(':');
 }
 
+function formatRequestAge(createdAt: number, now: number) {
+  return formatElapsed(Math.max(0, Math.floor((now - createdAt) / 1000)));
+}
+
+function requestUrgency(createdAt: number, now: number) {
+  const seconds = Math.max(0, Math.floor((now - createdAt) / 1000));
+  if (seconds >= 300)
+    return { className: 'is-critical', color: 'error' as const, label: 'Quá 5 phút' };
+  if (seconds >= 120)
+    return { className: 'is-warning', color: 'warning' as const, label: 'Cần xử lý' };
+  return { className: 'is-fresh', color: 'processing' as const, label: 'Mới nhận' };
+}
+
+function notificationTypeLabel(type: StaffNotificationEventType) {
+  const labels: Record<StaffNotificationEventType, string> = {
+    QR_ORDER: 'QR Order gọi món',
+    CALL_STAFF: 'Gọi nhân viên',
+    CHECKOUT_REQUEST: 'Yêu cầu thanh toán',
+    ORDER_CREATED: 'Đơn hàng mới được tạo',
+    ITEM_ADDED: 'Thêm mặt hàng vào đơn',
+    ITEM_UPDATED: 'Thay đổi mặt hàng trong đơn',
+    ITEM_REMOVED: 'Xóa mặt hàng khỏi đơn',
+    ORDER_SAVED: 'Lưu thay đổi đơn hàng',
+    TABLE_TRANSFERRED: 'Thay đổi bàn của đơn',
+    TIME_PAUSED: 'Tạm dừng tính giờ',
+    TIME_RESUMED: 'Tiếp tục tính giờ',
+    TIME_UPDATED: 'Điều chỉnh thời gian',
+    CHECKOUT_PENDING: 'Chốt giờ chờ thanh toán',
+    CHECKOUT: 'Hoàn tất thanh toán',
+    ORDER_CANCELLED: 'Hủy đơn hàng',
+  };
+  return labels[type] || 'Hoạt động POS';
+}
+
+function notificationStatusMeta(status: StaffNotificationStatus) {
+  const values: Record<StaffNotificationStatus, { label: string; color: string }> = {
+    PENDING: { label: 'Chờ xác nhận', color: 'processing' },
+    OPEN: { label: 'Chưa tiếp nhận', color: 'warning' },
+    ACKNOWLEDGED: { label: 'Đã tiếp nhận', color: 'blue' },
+    ACCEPTED: { label: 'Đã xác nhận', color: 'success' },
+    REJECTED: { label: 'Đã từ chối', color: 'error' },
+    COMPLETED: { label: 'Hoàn tất', color: 'success' },
+    CANCELLED: { label: 'Đã hủy', color: 'default' },
+    EXPIRED: { label: 'Hết hiệu lực', color: 'default' },
+    INFO: { label: 'Hoạt động POS', color: 'magenta' },
+  };
+  return values[status];
+}
+
+function formatPreciseTime(timestamp: number) {
+  return new Intl.DateTimeFormat('vi-VN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(timestamp);
+}
+
+function useServerNow(serverTimeOffsetMs: number) {
+  const [now, setNow] = useState(() => Date.now() + serverTimeOffsetMs);
+  useEffect(() => {
+    const update = () => setNow(Date.now() + serverTimeOffsetMs);
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [serverTimeOffsetMs]);
+  return now;
+}
+
 function formatDurationVietnamese(seconds: number | null | undefined) {
   if (!seconds || seconds <= 0) return '0 giây';
   const h = Math.floor(seconds / 3600);
@@ -439,15 +523,31 @@ function mutationHeaders(csrfToken: string) {
 function StaffHeader({
   context,
   searchSlot,
+  onOpenNotifications,
 }: {
   context: AuthContextResponse | undefined;
   searchSlot?: React.ReactNode;
+  onOpenNotifications: () => void;
 }) {
   const { status } = useRealtime();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [modal, holder] = Modal.useModal();
   const [loggingOut, setLoggingOut] = useState(false);
+  const pollingInterval = usePosPollingInterval(15_000);
+  const guestRequests = useQuery({
+    queryKey: ['guest-order-requests'],
+    queryFn: () => apiRequest<GuestOrderRequestDto[]>('/api/v1/pos/qr-orders?status=PENDING'),
+    refetchInterval: pollingInterval,
+  });
+  const serviceRequests = useQuery({
+    queryKey: ['service-requests'],
+    queryFn: () => apiRequest<ServiceRequestDto[]>('/api/v1/pos/qr-orders/service-requests/list'),
+    refetchInterval: pollingInterval,
+  });
+  const pendingNotificationCount =
+    (guestRequests.data?.length ?? 0) +
+    (serviceRequests.data?.filter((request) => request.status === 'OPEN').length ?? 0);
 
   const logout = () => {
     modal.confirm({
@@ -560,7 +660,25 @@ function StaffHeader({
           </span>
         </div>
       </Tooltip>
-      <PushNotificationControl csrfToken={context?.csrfToken} />
+      <Tooltip title="Mở trung tâm thông báo 3 ngày gần nhất">
+        <Button
+          type="text"
+          className="staff-header-notification-btn"
+          icon={<BellOutlined />}
+          aria-label={
+            pendingNotificationCount > 0
+              ? `Thông báo, ${pendingNotificationCount} yêu cầu chưa xử lý`
+              : 'Thông báo'
+          }
+          onClick={onOpenNotifications}
+        >
+          {pendingNotificationCount > 0 ? (
+            <b className="staff-header-notification-badge">
+              {pendingNotificationCount > 99 ? '99+' : pendingNotificationCount}
+            </b>
+          ) : null}
+        </Button>
+      </Tooltip>
       <Dropdown
         menu={{ items: menuItems }}
         trigger={['click']}
@@ -598,16 +716,43 @@ const navItems = [
 
 function StaffBottomNav({ active }: { active: (typeof navItems)[number]['key'] }) {
   const navigate = useNavigate();
+  const pollingInterval = usePosPollingInterval(15_000);
+  const guestRequests = useQuery({
+    queryKey: ['guest-order-requests'],
+    queryFn: () => apiRequest<GuestOrderRequestDto[]>('/api/v1/pos/qr-orders?status=PENDING'),
+    refetchInterval: pollingInterval,
+  });
+  const serviceRequests = useQuery({
+    queryKey: ['service-requests'],
+    queryFn: () => apiRequest<ServiceRequestDto[]>('/api/v1/pos/qr-orders/service-requests/list'),
+    refetchInterval: pollingInterval,
+  });
+  const pendingNotificationCount =
+    (guestRequests.data?.length ?? 0) +
+    (serviceRequests.data?.filter((request) => request.status === 'OPEN').length ?? 0);
   return (
     <nav className="staff-pos-bottom-nav" aria-label="Điều hướng POS nhân viên">
       {navItems.map((item) => (
         <button
           key={item.key}
           type="button"
+          data-nav-key={item.key}
           className={active === item.key ? 'is-active' : ''}
+          aria-label={
+            item.key === 'qr' && pendingNotificationCount > 0
+              ? `${item.label}, ${pendingNotificationCount} yêu cầu chưa xử lý`
+              : item.label
+          }
           onClick={() => navigate(item.path)}
         >
-          {item.icon}
+          <span className="staff-pos-nav-icon">
+            {item.icon}
+            {item.key === 'qr' && pendingNotificationCount > 0 ? (
+              <b className="staff-pos-nav-badge">
+                {pendingNotificationCount > 99 ? '99+' : pendingNotificationCount}
+              </b>
+            ) : null}
+          </span>
           <span>{item.label}</span>
         </button>
       ))}
@@ -835,12 +980,124 @@ function AreasPage() {
   );
 }
 
+function StaffNotificationCenter({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const navigate = useNavigate();
+  const pollingInterval = usePosPollingInterval(30_000);
+  const notificationAudit = useQuery({
+    queryKey: ['staff-notification-audit'],
+    queryFn: () =>
+      apiRequest<StaffNotificationAuditResponse>('/api/v1/pos/qr-orders/audit?limit=50'),
+    refetchInterval: pollingInterval,
+  });
+  const retentionDays = notificationAudit.data?.retentionDays ?? 3;
+
+  return (
+    <Drawer
+      title={
+        <div className="staff-notification-audit-title">
+          <HistoryOutlined />
+          <div>
+            <strong>Thông báo</strong>
+            <span>
+              Lưu tối đa {retentionDays} ngày · {notificationAudit.data?.items.length ?? 0}/50 sự
+              kiện gần nhất
+            </span>
+          </div>
+        </div>
+      }
+      placement="right"
+      size={520}
+      open={open}
+      onClose={onClose}
+      className="staff-notification-audit-drawer"
+    >
+      {notificationAudit.isLoading ? (
+        <Skeleton active paragraph={{ rows: 8 }} />
+      ) : notificationAudit.isError ? (
+        <Alert
+          type="error"
+          showIcon
+          title="Chưa tải được nhật ký"
+          action={<Button onClick={() => void notificationAudit.refetch()}>Thử lại</Button>}
+        />
+      ) : (notificationAudit.data?.items.length ?? 0) === 0 ? (
+        <Empty description={`Chưa có thông báo nào trong ${retentionDays} ngày gần đây`} />
+      ) : (
+        <div className="staff-notification-audit-list">
+          {(notificationAudit.data?.items ?? []).map((event) => {
+            const status = notificationStatusMeta(event.status);
+            return (
+              <article key={event.id} className="staff-notification-audit-item">
+                <div
+                  className={`staff-notification-audit-icon is-${event.eventType.toLowerCase()}`}
+                >
+                  {event.eventType === 'QR_ORDER' ? (
+                    <QrcodeOutlined />
+                  ) : event.eventType === 'CALL_STAFF' ? (
+                    <BellOutlined />
+                  ) : event.eventType === 'CHECKOUT_PENDING' ? (
+                    <ClockCircleOutlined />
+                  ) : event.eventType === 'CHECKOUT_REQUEST' || event.eventType === 'CHECKOUT' ? (
+                    <CreditCardOutlined />
+                  ) : (
+                    <FileTextOutlined />
+                  )}
+                </div>
+                <div className="staff-notification-audit-body">
+                  <div className="staff-notification-audit-row">
+                    <strong>{notificationTypeLabel(event.eventType)}</strong>
+                    <Tag color={status.color}>{status.label}</Tag>
+                  </div>
+                  <b>
+                    {event.tableName} · {event.areaName}
+                  </b>
+                  <p>{event.summary}</p>
+                  {event.note ? <small className="is-note">Ghi chú: {event.note}</small> : null}
+                  <div className="staff-notification-audit-meta">
+                    <span>{formatDateTime(event.createdAt)}</span>
+                    {event.itemCount > 0 ? <span>{event.itemCount} món</span> : null}
+                    {event.totalVnd > 0 ? <span>{formatMoney(event.totalVnd)}</span> : null}
+                  </div>
+                  {event.actorName ? (
+                    <small>
+                      {status.label} bởi <b>{event.actorName}</b>
+                      {event.deviceName ? ` · ${event.deviceName}` : ''}
+                      {event.handledAt ? ` lúc ${formatPreciseTime(event.handledAt)}` : ''}
+                    </small>
+                  ) : null}
+                  <Button
+                    type="link"
+                    size="small"
+                    onClick={() => {
+                      onClose();
+                      navigate(`/pos/orders/${event.orderId}`);
+                    }}
+                  >
+                    Mở đơn liên quan
+                  </Button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </Drawer>
+  );
+}
+
 function QrOrderPage() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [messageApi, holder] = message.useMessage();
   const [modal, modalHolder] = Modal.useModal();
-  const previousPendingCount = React.useRef<number | null>(null);
-  const previousCheckoutRequestCount = React.useRef<number | null>(null);
+  const realtime = useRealtime();
+  const pollingInterval = usePosPollingInterval(15_000);
+  const now = useServerNow(realtime.serverTimeOffsetMs);
+  const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [updatingServiceId, setUpdatingServiceId] = useState<string | null>(null);
+  const previousPendingCount = useRef<number | null>(null);
+  const previousCallStaffRequestCount = useRef<number | null>(null);
+  const previousCheckoutRequestCount = useRef<number | null>(null);
   const auth = useQuery({
     queryKey: ['auth-context'],
     queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
@@ -848,42 +1105,77 @@ function QrOrderPage() {
   const requests = useQuery({
     queryKey: ['guest-order-requests'],
     queryFn: () => apiRequest<GuestOrderRequestDto[]>('/api/v1/pos/qr-orders?status=PENDING'),
-    refetchInterval: 15_000,
+    refetchInterval: pollingInterval,
   });
   const serviceRequests = useQuery({
     queryKey: ['service-requests'],
     queryFn: () => apiRequest<ServiceRequestDto[]>('/api/v1/pos/qr-orders/service-requests/list'),
-    refetchInterval: 15_000,
+    refetchInterval: pollingInterval,
   });
+
+  const pendingRequests = useMemo(
+    () => (requests.data ?? []).toSorted((a, b) => a.createdAt - b.createdAt),
+    [requests.data],
+  );
+  const activeServiceRequests = useMemo(
+    () =>
+      (serviceRequests.data ?? []).toSorted((a, b) => {
+        if (a.status !== b.status) return a.status === 'OPEN' ? -1 : 1;
+        return a.createdAt - b.createdAt;
+      }),
+    [serviceRequests.data],
+  );
+  const openServiceCount = activeServiceRequests.filter((item) => item.status === 'OPEN').length;
+  const totalPendingValue = pendingRequests.reduce(
+    (sum, request) => sum + request.items.reduce((itemSum, item) => itemSum + item.lineTotalVnd, 0),
+    0,
+  );
 
   useEffect(() => {
     const count = requests.data?.length;
     if (count === undefined) return;
-    if (previousPendingCount.current !== null && count > previousPendingCount.current) {
+    if (
+      realtime.status !== 'CONNECTED' &&
+      previousPendingCount.current !== null &&
+      count > previousPendingCount.current
+    ) {
       playPosSound('NEW_QR_ORDER');
     }
     previousPendingCount.current = count;
-  }, [requests.data?.length]);
+  }, [realtime.status, requests.data?.length]);
 
   useEffect(() => {
+    const callStaffCount = serviceRequests.data?.filter(
+      (sr) => sr.type === 'CALL_STAFF' && sr.status === 'OPEN',
+    ).length;
     const checkoutCount = serviceRequests.data?.filter(
       (sr) => sr.type === 'CHECKOUT_REQUEST' && sr.status === 'OPEN',
     ).length;
-    if (checkoutCount === undefined) return;
+    if (callStaffCount === undefined || checkoutCount === undefined) return;
     if (
+      realtime.status !== 'CONNECTED' &&
+      previousCallStaffRequestCount.current !== null &&
+      callStaffCount > previousCallStaffRequestCount.current
+    ) {
+      playPosSound('NEW_QR_ORDER');
+    }
+    if (
+      realtime.status !== 'CONNECTED' &&
       previousCheckoutRequestCount.current !== null &&
       checkoutCount > previousCheckoutRequestCount.current
     ) {
       playPosSound('CHECKOUT_REQUEST');
     }
+    previousCallStaffRequestCount.current = callStaffCount;
     previousCheckoutRequestCount.current = checkoutCount;
-  }, [serviceRequests.data]);
+  }, [realtime.status, serviceRequests.data]);
   const refresh = () =>
     Promise.all([
       queryClient.invalidateQueries({ queryKey: ['guest-order-requests'] }),
       queryClient.invalidateQueries({ queryKey: ['service-requests'] }),
       queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
       queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
+      queryClient.invalidateQueries({ queryKey: ['staff-notification-audit'] }),
     ]);
   const accept = useMutation({
     mutationFn: (request: GuestOrderRequestDto) =>
@@ -896,7 +1188,10 @@ function QrOrderPage() {
       messageApi.success('Đã xác nhận món vào hóa đơn.');
       await refresh();
     },
-    onError: (error) => messageApi.error(errorText(error)),
+    onError: async (error) => {
+      messageApi.error(errorText(error));
+      await refresh();
+    },
   });
   const rejectRequest = (request: GuestOrderRequestDto) => {
     let reason = '';
@@ -917,17 +1212,23 @@ function QrOrderPage() {
       cancelText: 'Quay lại',
       onOk: async () => {
         if (!reason.trim()) throw new Error('Vui lòng nhập lý do.');
-        await jsonRequest(
-          `/api/v1/pos/qr-orders/${request.id}/reject`,
-          { reason: reason.trim() },
-          { headers: mutationHeaders(auth.data?.csrfToken ?? '') },
-        );
-        messageApi.success('Đã từ chối yêu cầu.');
-        await refresh();
+        setRejectingId(request.id);
+        try {
+          await jsonRequest(
+            `/api/v1/pos/qr-orders/${request.id}/reject`,
+            { reason: reason.trim() },
+            { headers: mutationHeaders(auth.data?.csrfToken ?? '') },
+          );
+          messageApi.success('Đã từ chối yêu cầu.');
+          await refresh();
+        } finally {
+          setRejectingId(null);
+        }
       },
     });
   };
   const updateService = async (request: ServiceRequestDto, action: 'ACKNOWLEDGE' | 'COMPLETE') => {
+    setUpdatingServiceId(request.id);
     try {
       await jsonRequest(
         `/api/v1/pos/qr-orders/service-requests/${request.id}/status`,
@@ -937,110 +1238,290 @@ function QrOrderPage() {
       await refresh();
     } catch (error) {
       messageApi.error(errorText(error));
+    } finally {
+      setUpdatingServiceId(null);
     }
   };
 
+  const realtimeLabel =
+    realtime.status === 'CONNECTED'
+      ? 'Realtime đang hoạt động'
+      : realtime.status === 'CONNECTING'
+        ? 'Đang kết nối realtime'
+        : realtime.status === 'RECONNECTING'
+          ? 'Đang kết nối lại'
+          : 'Realtime đang tắt';
+  const realtimeColor = realtime.status === 'CONNECTED' ? 'success' : 'warning';
+  const isRefreshing = requests.isFetching || serviceRequests.isFetching;
+
   return (
-    <div style={{ padding: 16, maxWidth: 1100, margin: '0 auto' }}>
+    <main className="staff-qr-order-page">
       {holder}
       {modalHolder}
-      <div style={{ marginBottom: 18 }}>
-        <Typography.Title level={2} style={{ marginBottom: 2 }}>
-          QR Order
-        </Typography.Title>
-        <Typography.Text type="secondary">
-          Yêu cầu gọi món và hỗ trợ từ khách tại bàn
-        </Typography.Text>
-      </div>
 
-      {(serviceRequests.data ?? []).length > 0 ? (
-        <Card title="Yêu cầu hỗ trợ" style={{ marginBottom: 16 }}>
-          <Space orientation="vertical" style={{ width: '100%' }}>
-            {(serviceRequests.data ?? []).map((request) => (
-              <Card key={request.id} size="small">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <BellOutlined style={{ color: '#fa8c16', fontSize: 20 }} />
-                  <div style={{ flex: 1 }}>
-                    <strong>
-                      {request.tableName} · {request.areaName}
-                    </strong>
-                    <div>
-                      {request.type === 'CALL_STAFF' ? 'Gọi nhân viên' : 'Yêu cầu thanh toán'}
-                    </div>
-                  </div>
-                  {request.status === 'OPEN' ? (
-                    <Button
-                      type="primary"
-                      onClick={() => void updateService(request, 'ACKNOWLEDGE')}
-                    >
-                      Đã nhận
-                    </Button>
-                  ) : (
-                    <Button onClick={() => void updateService(request, 'COMPLETE')}>
-                      Hoàn tất
-                    </Button>
-                  )}
-                </div>
-              </Card>
-            ))}
-          </Space>
-        </Card>
+      <section className="staff-qr-order-hero">
+        <div>
+          <div className="staff-qr-order-hero__eyebrow">
+            <QrcodeOutlined /> Trung tâm yêu cầu tại bàn
+          </div>
+        </div>
+        <div className="staff-qr-order-hero__actions">
+          <Tag color={realtimeColor} className="staff-qr-realtime-tag">
+            <span className={`staff-qr-realtime-dot is-${realtime.status.toLowerCase()}`} />
+            {realtimeLabel}
+          </Tag>
+          <Button
+            icon={<SyncOutlined spin={isRefreshing} />}
+            disabled={isRefreshing}
+            onClick={() => void refresh()}
+          >
+            Làm mới
+          </Button>
+        </div>
+      </section>
+
+      <section className="staff-qr-order-summary" aria-label="Tổng quan QR Order">
+        <article>
+          <span>Đơn chờ xác nhận</span>
+          <strong>{pendingRequests.length}</strong>
+          <small>{formatMoney(totalPendingValue)}</small>
+        </article>
+        <article>
+          <span>Hỗ trợ chưa nhận</span>
+          <strong>{openServiceCount}</strong>
+          <small>{activeServiceRequests.length} yêu cầu đang mở</small>
+        </article>
+        <article>
+          <span>Đồng bộ dữ liệu</span>
+          <strong>{realtime.status === 'CONNECTED' ? 'Tức thì' : '15 giây'}</strong>
+          <small>Giờ máy chủ {formatPreciseTime(now)}</small>
+        </article>
+      </section>
+
+      {requests.isError || serviceRequests.isError ? (
+        <Alert
+          type="error"
+          showIcon
+          title="Không thể tải đầy đủ yêu cầu"
+          description="Hệ thống vẫn sẽ tự thử lại. Bạn có thể bấm Làm mới để kiểm tra ngay."
+          className="staff-qr-order-error"
+        />
       ) : null}
 
-      <Card title={`Đơn chờ xác nhận (${requests.data?.length ?? 0})`} loading={requests.isLoading}>
-        {(requests.data ?? []).length === 0 ? (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Chưa có yêu cầu gọi món mới" />
+      <section className="staff-qr-order-section">
+        <div className="staff-qr-order-section__heading">
+          <div>
+            <Typography.Title level={3}>Yêu cầu hỗ trợ</Typography.Title>
+            <Typography.Text type="secondary">
+              Ưu tiên yêu cầu chưa có nhân viên tiếp nhận.
+            </Typography.Text>
+          </div>
+          <Tag>{activeServiceRequests.length} đang mở</Tag>
+        </div>
+
+        {serviceRequests.isLoading ? (
+          <Skeleton active paragraph={{ rows: 2 }} />
+        ) : activeServiceRequests.length === 0 ? (
+          <div className="staff-qr-order-empty staff-qr-order-empty--compact">
+            <CheckCircleOutlined /> Không có yêu cầu hỗ trợ đang chờ
+          </div>
         ) : (
-          <Space orientation="vertical" style={{ width: '100%' }} size={12}>
-            {(requests.data ?? []).map((request) => (
-              <Card
-                key={request.id}
-                size="small"
-                title={
-                  <span>
-                    {request.tableName} · {request.areaName}
-                  </span>
-                }
-                extra={<Tag color="processing">Chờ xác nhận</Tag>}
-              >
-                {request.items.map((item) => (
-                  <div
-                    key={item.id}
-                    style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0' }}
-                  >
-                    <span>
-                      <strong>{item.quantity} ×</strong> {item.productName}
-                      {item.variantName ? ` (${item.variantName})` : ''}
-                    </span>
-                    <strong>{formatMoney(item.lineTotalVnd)}</strong>
+          <div className="staff-qr-service-grid">
+            {activeServiceRequests.map((request) => {
+              const urgency = requestUrgency(request.createdAt, now);
+              const isUpdating = updatingServiceId === request.id;
+              return (
+                <article key={request.id} className={`staff-qr-service-card ${urgency.className}`}>
+                  <div className="staff-qr-service-card__icon">
+                    {request.type === 'CALL_STAFF' ? <BellOutlined /> : <CreditCardOutlined />}
                   </div>
-                ))}
-                {request.note ? (
-                  <Alert type="info" title={`Ghi chú: ${request.note}`} style={{ marginTop: 8 }} />
-                ) : null}
-                <Space style={{ marginTop: 12 }}>
-                  <Button danger onClick={() => rejectRequest(request)}>
-                    Từ chối
-                  </Button>
-                  <Button
-                    type="primary"
-                    icon={<CheckCircleOutlined />}
-                    loading={accept.isPending}
-                    onClick={() => accept.mutate(request)}
-                  >
-                    Xác nhận vào hóa đơn
-                  </Button>
-                </Space>
-              </Card>
-            ))}
-          </Space>
+                  <div className="staff-qr-service-card__body">
+                    <div className="staff-qr-service-card__title">
+                      <strong>
+                        {request.type === 'CALL_STAFF' ? 'Gọi nhân viên' : 'Yêu cầu thanh toán'}
+                      </strong>
+                      <Tag color={request.status === 'OPEN' ? urgency.color : 'success'}>
+                        {request.status === 'OPEN' ? urgency.label : 'Đã tiếp nhận'}
+                      </Tag>
+                    </div>
+                    <b>
+                      {request.tableName} · {request.areaName}
+                    </b>
+                    <div className="staff-qr-request-timing">
+                      <ClockCircleOutlined /> Gửi lúc {formatPreciseTime(request.createdAt)} · chờ{' '}
+                      <strong>{formatRequestAge(request.createdAt, now)}</strong>
+                    </div>
+                    {request.acknowledgedAt ? (
+                      <small>Tiếp nhận lúc {formatPreciseTime(request.acknowledgedAt)}</small>
+                    ) : null}
+                  </div>
+                  <div className="staff-qr-service-card__actions">
+                    <Button size="small" onClick={() => navigate(`/pos/orders/${request.orderId}`)}>
+                      Mở đơn
+                    </Button>
+                    {request.status === 'OPEN' ? (
+                      <Button
+                        type="primary"
+                        loading={isUpdating}
+                        disabled={updatingServiceId !== null && !isUpdating}
+                        onClick={() => void updateService(request, 'ACKNOWLEDGE')}
+                      >
+                        Tiếp nhận
+                      </Button>
+                    ) : (
+                      <Button
+                        type="primary"
+                        loading={isUpdating}
+                        disabled={updatingServiceId !== null && !isUpdating}
+                        onClick={() => void updateService(request, 'COMPLETE')}
+                      >
+                        Hoàn tất
+                      </Button>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
         )}
-      </Card>
-    </div>
+      </section>
+
+      <section className="staff-qr-order-section staff-qr-order-section--orders">
+        <div className="staff-qr-order-section__heading">
+          <div>
+            <Typography.Title level={3}>Đơn chờ xác nhận</Typography.Title>
+            <Typography.Text type="secondary">
+              Xếp theo thời gian chờ lâu nhất để không bỏ sót yêu cầu.
+            </Typography.Text>
+          </div>
+          <Tag color={pendingRequests.length > 0 ? 'processing' : 'default'}>
+            {pendingRequests.length} yêu cầu
+          </Tag>
+        </div>
+
+        {requests.isLoading ? (
+          <Skeleton active paragraph={{ rows: 6 }} />
+        ) : pendingRequests.length === 0 ? (
+          <Empty
+            className="staff-qr-order-empty"
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description="Chưa có yêu cầu gọi món mới"
+          />
+        ) : (
+          <div className="staff-qr-request-list">
+            {pendingRequests.map((request) => {
+              const urgency = requestUrgency(request.createdAt, now);
+              const itemQuantity = request.items.reduce((sum, item) => sum + item.quantity, 0);
+              const requestTotal = request.items.reduce((sum, item) => sum + item.lineTotalVnd, 0);
+              const isAccepting = accept.isPending && accept.variables?.id === request.id;
+              const isRejecting = rejectingId === request.id;
+              const anotherActionPending =
+                (accept.isPending && !isAccepting) || (rejectingId !== null && !isRejecting);
+
+              return (
+                <article key={request.id} className={`staff-qr-request-card ${urgency.className}`}>
+                  <header className="staff-qr-request-card__header">
+                    <div className="staff-qr-request-card__table">
+                      <span className="staff-qr-request-card__table-icon">
+                        <ShopOutlined />
+                      </span>
+                      <div>
+                        <Typography.Title level={4}>{request.tableName}</Typography.Title>
+                        <span>{request.areaName}</span>
+                      </div>
+                    </div>
+                    <div className="staff-qr-request-card__status">
+                      <Tag color={urgency.color}>{urgency.label}</Tag>
+                      <div className="staff-qr-request-card__age">
+                        <ClockCircleOutlined />
+                        <strong>{formatRequestAge(request.createdAt, now)}</strong>
+                      </div>
+                      <small>Gửi lúc {formatPreciseTime(request.createdAt)}</small>
+                    </div>
+                  </header>
+
+                  <div className="staff-qr-request-card__meta">
+                    <span>{request.items.length} dòng món</span>
+                    <span>{formatDecimal(itemQuantity)} sản phẩm</span>
+                    <span>Mã #{request.id.slice(0, 8).toUpperCase()}</span>
+                  </div>
+
+                  <div className="staff-qr-request-items">
+                    {request.items.map((item) => (
+                      <div key={item.id} className="staff-qr-request-item">
+                        <strong className="staff-qr-request-item__quantity">
+                          {item.quantity}×
+                        </strong>
+                        <div className="staff-qr-request-item__name">
+                          <b>{item.productName}</b>
+                          {item.variantName && item.variantName !== 'Mặc định' ? (
+                            <span>{item.variantName}</span>
+                          ) : null}
+                          {item.note ? <small>Ghi chú món: {item.note}</small> : null}
+                        </div>
+                        <div className="staff-qr-request-item__price">
+                          <span>{formatMoney(item.unitPriceVnd)} / đơn vị</span>
+                          <strong>{formatMoney(item.lineTotalVnd)}</strong>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {request.note ? (
+                    <div className="staff-qr-request-note">
+                      <MessageOutlined />
+                      <div>
+                        <span>Ghi chú toàn đơn</span>
+                        <strong>{request.note}</strong>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <footer className="staff-qr-request-card__footer">
+                    <div className="staff-qr-request-total">
+                      <span>Tổng yêu cầu</span>
+                      <strong>{formatMoney(requestTotal)}</strong>
+                    </div>
+                    <div className="staff-qr-request-actions">
+                      <Button onClick={() => navigate(`/pos/orders/${request.orderId}`)}>
+                        Xem đơn hiện tại
+                      </Button>
+                      <Button
+                        danger
+                        loading={isRejecting}
+                        disabled={anotherActionPending || isAccepting}
+                        onClick={() => rejectRequest(request)}
+                      >
+                        Từ chối
+                      </Button>
+                      <Button
+                        type="primary"
+                        icon={<CheckCircleOutlined />}
+                        loading={isAccepting}
+                        disabled={anotherActionPending || isRejecting}
+                        onClick={() => accept.mutate(request)}
+                      >
+                        Xác nhận vào hóa đơn
+                      </Button>
+                    </div>
+                  </footer>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    </main>
   );
 }
 
-function MorePage({ auth }: { auth: AuthContextResponse }) {
+function MorePage({
+  auth,
+  onStartOnboarding,
+}: {
+  auth: AuthContextResponse;
+  onStartOnboarding: () => void;
+}) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [messageApi, holder] = message.useMessage();
@@ -1109,6 +1590,49 @@ function MorePage({ auth }: { auth: AuthContextResponse }) {
             boxShadow: '0 2px 8px rgba(15, 23, 42, 0.04)',
           }}
         >
+          {hasPermission('catalog.manage') ? (
+            <div
+              className="staff-more-nav-item"
+              onClick={() => navigate('/pos/catalog')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '16px 18px',
+                cursor: 'pointer',
+                borderBottom: '1px solid #f1f5f9',
+                transition: 'background 0.15s ease',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                <div
+                  style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 10,
+                    background: '#fdf2f8',
+                    color: '#db2777',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 22,
+                  }}
+                >
+                  <TagsOutlined />
+                </div>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>
+                    Quản lý Mặt hàng & Danh mục
+                  </div>
+                  <div style={{ fontSize: 12.5, color: '#64748b', marginTop: 2 }}>
+                    Thêm món mới, điều chỉnh giá bán, quản lý danh mục và bảng giá
+                  </div>
+                </div>
+              </div>
+              <RightOutlined style={{ color: '#94a3b8', fontSize: 14 }} />
+            </div>
+          ) : null}
+
           {hasPermission('invoice.view') ? (
             <div
               className="staff-more-nav-item"
@@ -1152,9 +1676,24 @@ function MorePage({ auth }: { auth: AuthContextResponse }) {
             </div>
           ) : null}
 
+          <button
+            type="button"
+            className="staff-more-nav-item staff-onboarding-entry"
+            onClick={onStartOnboarding}
+          >
+            <span className="staff-onboarding-entry__icon">
+              <QuestionCircleOutlined />
+            </span>
+            <span className="staff-onboarding-entry__copy">
+              <strong>Hướng dẫn sử dụng POS</strong>
+              <small>Xem lại cách chọn khu vực, bàn, gọi món, lưu đơn và QR Order</small>
+            </span>
+            <RightOutlined />
+          </button>
+
           {/* Push Notification Setup */}
           <div style={{ padding: '14px 18px' }}>
-            <PushNotificationControl csrfToken={auth.csrfToken} />
+            <PushNotificationControl csrfToken={auth.csrfToken} showGuide />
           </div>
         </Card>
       </div>
@@ -2279,7 +2818,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const [cartPreviewOpen, setCartPreviewOpen] = useState(false);
   const [editingNoteItemIndex, setEditingNoteItemIndex] = useState<number | null>(null);
   const [itemNoteDraft, setItemNoteDraft] = useState('');
-  const cartIconRef = React.useRef<HTMLButtonElement>(null);
+  const cartIconRef = useRef<HTMLButtonElement>(null);
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
   const [guestCount, setGuestCount] = useState<number>(1);
   const [guestModalOpen, setGuestModalOpen] = useState(false);
@@ -3279,9 +3818,22 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
 
               <main className="staff-product-picker-mobile__products-col">
                 <div className="staff-product-picker-mobile__section-heading">
-                  {selectedCategory === 'ALL'
-                    ? 'Tất cả'
-                    : (categories.find((c) => c.id === selectedCategory)?.name ?? 'Danh sách')}
+                  <span>
+                    {selectedCategory === 'ALL'
+                      ? 'Tất cả'
+                      : (categories.find((c) => c.id === selectedCategory)?.name ?? 'Danh sách')}
+                  </span>
+                  {auth.actor?.kind === 'OWNER' ||
+                  (staffContext.data?.permissions ?? []).includes('catalog.manage') ? (
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<TagsOutlined />}
+                      onClick={() => navigate('/pos/catalog')}
+                    >
+                      Quản lý món
+                    </Button>
+                  ) : null}
                 </div>
                 {catalog.isLoading ? (
                   <Skeleton active />
@@ -6923,6 +7475,8 @@ export function StaffPosPortalPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const [ordersSearch, setOrdersSearch] = useState('');
+  const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
+  const [onboardingRestartToken, setOnboardingRestartToken] = useState(0);
   const auth = useQuery({
     queryKey: ['auth-context'],
     queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
@@ -6939,17 +7493,36 @@ export function StaffPosPortalPage() {
   const isInvoiceDetail = location.pathname.startsWith('/pos/invoices/');
   const isInvoicesList =
     location.pathname === '/pos/invoices' || location.pathname.startsWith('/pos/invoices?');
+  const isCatalogNewProduct = location.pathname === '/pos/catalog/products/new';
+  const isCatalogEditProduct =
+    location.pathname.startsWith('/pos/catalog/products/') && !isCatalogNewProduct;
+  const isCatalogCategoryDetail =
+    location.pathname.startsWith('/pos/catalog/categories/') &&
+    location.pathname !== '/pos/catalog/categories';
+  const isCatalogCategories = location.pathname === '/pos/catalog/categories';
+  const isCatalogList =
+    location.pathname === '/pos/catalog' ||
+    location.pathname === '/pos/catalog/' ||
+    location.pathname === '/pos/catalog/products' ||
+    location.pathname.startsWith('/pos/catalog/products?');
+  const isCatalog =
+    isCatalogNewProduct ||
+    isCatalogEditProduct ||
+    isCatalogCategoryDetail ||
+    isCatalogCategories ||
+    isCatalogList;
+
   const isDetail =
     location.pathname.startsWith('/pos/orders/') && location.pathname.endsWith('/detail');
   const isPayment =
     location.pathname.startsWith('/pos/orders/') && location.pathname.endsWith('/payment');
   const isEditor = location.pathname.startsWith('/pos/orders/') && !isPayment && !isDetail;
-  const isFullScreen = isInvoiceDetail || isPayment || isEditor || isDetail;
+  const isFullScreen = isInvoiceDetail || isPayment || isEditor || isDetail || isCatalog;
   const active = location.pathname.startsWith('/pos/areas')
     ? 'areas'
     : location.pathname.startsWith('/pos/qr-order')
       ? 'qr'
-      : location.pathname.startsWith('/pos/more') || isInvoicesList
+      : location.pathname.startsWith('/pos/more') || isInvoicesList || isCatalog
         ? 'more'
         : 'orders';
 
@@ -6960,9 +7533,12 @@ export function StaffPosPortalPage() {
     <ConfigProvider theme={{ token: { colorPrimary: BRAND, borderRadius: 8 } }}>
       <RealtimeProvider>
         <div className={`staff-pos-shell${isFullScreen ? ' staff-pos-shell--editor' : ''}`}>
+          <PushNotificationControl csrfToken={auth.data.csrfToken} autoPrompt />
+          <StaffOnboarding auth={auth.data} restartToken={onboardingRestartToken} />
           {!isFullScreen ? (
             <StaffHeader
               context={auth.data}
+              onOpenNotifications={() => setNotificationCenterOpen(true)}
               searchSlot={
                 active === 'orders' ? (
                   <Input
@@ -6991,6 +7567,53 @@ export function StaffPosPortalPage() {
                   />
                 </div>
               </div>
+            ) : isCatalogNewProduct ? (
+              <div className="staff-invoices-shell">
+                <div className="staff-invoices-container">
+                  <OwnerProductFormPage
+                    baseRoute="/pos/catalog"
+                    onBack={() => navigate('/pos/catalog/products')}
+                  />
+                </div>
+              </div>
+            ) : isCatalogEditProduct ? (
+              <div className="staff-invoices-shell">
+                <div className="staff-invoices-container">
+                  <OwnerProductFormPage
+                    productId={location.pathname.split('/').at(-1)!}
+                    baseRoute="/pos/catalog"
+                    onBack={() => navigate('/pos/catalog/products')}
+                  />
+                </div>
+              </div>
+            ) : isCatalogCategoryDetail ? (
+              <div className="staff-invoices-shell">
+                <div className="staff-invoices-container">
+                  <OwnerCategoryDetailPage
+                    categoryId={location.pathname.split('/').at(-1)!}
+                    baseRoute="/pos/catalog"
+                    onBack={() => navigate('/pos/catalog/categories')}
+                  />
+                </div>
+              </div>
+            ) : isCatalogCategories ? (
+              <div className="staff-invoices-shell">
+                <div className="staff-invoices-container">
+                  <OwnerCategoryListPage
+                    baseRoute="/pos/catalog"
+                    onBack={() => navigate('/pos/catalog/products')}
+                  />
+                </div>
+              </div>
+            ) : isCatalogList ? (
+              <div className="staff-invoices-shell">
+                <div className="staff-invoices-container">
+                  <OwnerProductListPage
+                    baseRoute="/pos/catalog"
+                    onBack={() => navigate('/pos/more')}
+                  />
+                </div>
+              </div>
             ) : isDetail && detailOrderId ? (
               <OrderDetailPage orderId={detailOrderId} />
             ) : isPayment && paymentOrderId ? (
@@ -7002,12 +7625,19 @@ export function StaffPosPortalPage() {
             ) : active === 'qr' ? (
               <QrOrderPage />
             ) : active === 'more' ? (
-              <MorePage auth={auth.data} />
+              <MorePage
+                auth={auth.data}
+                onStartOnboarding={() => setOnboardingRestartToken((value) => value + 1)}
+              />
             ) : (
               <OrdersPage search={ordersSearch} />
             )}
           </div>
           {!isFullScreen ? <StaffBottomNav active={active} /> : null}
+          <StaffNotificationCenter
+            open={notificationCenterOpen}
+            onClose={() => setNotificationCenterOpen(false)}
+          />
         </div>
       </RealtimeProvider>
     </ConfigProvider>

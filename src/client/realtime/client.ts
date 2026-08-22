@@ -1,6 +1,7 @@
 import type { QueryClient } from '@tanstack/react-query';
 
 import {
+  REALTIME_SCHEMA_VERSION,
   REALTIME_SUBPROTOCOL,
   type RealtimeEventV1,
   type RealtimeServerFrame,
@@ -21,6 +22,7 @@ export class PosRealtimeClient {
   private reauthTimer: number | null = null;
   private pingTimer: number | null = null;
   private syncing = false;
+  private eventQueue: Promise<void> = Promise.resolve();
   private bufferedEvents: RealtimeEventV1[] = [];
   private readonly seenEventIds = new Set<string>();
   private cursor: number | null;
@@ -85,6 +87,10 @@ export class PosRealtimeClient {
         return;
       }
       if (frame.type === 'ready') {
+        if (frame.schemaVersion !== REALTIME_SCHEMA_VERSION) {
+          socket.close(4406, 'Realtime schema mismatch');
+          return;
+        }
         this.serverTimeOffset = frame.serverNowMs - Date.now();
         this.onServerTime(this.serverTimeOffset);
         const reconnectIn = Math.max(1_000, frame.reauthAtMs - Date.now() - 5_000);
@@ -95,7 +101,7 @@ export class PosRealtimeClient {
         void this.synchronize();
         return;
       }
-      if (frame.type === 'events') void this.receiveEvents(frame.events);
+      if (frame.type === 'events') this.enqueueEvents(frame.events, socket);
     });
 
     socket.addEventListener('close', (event) => {
@@ -104,6 +110,14 @@ export class PosRealtimeClient {
       this.scheduleReconnect(event.code === 4401 ? 250 : undefined);
     });
     socket.addEventListener('error', () => socket.close());
+  }
+
+  private enqueueEvents(events: RealtimeEventV1[], socket: WebSocket) {
+    this.eventQueue = this.eventQueue
+      .then(() => this.receiveEvents(events))
+      .catch(() => {
+        if (this.socket === socket) socket.close(1012, 'Realtime event processing failed');
+      });
   }
 
   private scheduleReconnect(delayOverride?: number) {
@@ -191,13 +205,18 @@ export class PosRealtimeClient {
   private async routeEvent(event: RealtimeEventV1, isLive: boolean) {
     if (isLive) {
       if (event.data.reason === 'GUEST_ORDER_CREATED') {
-        playPosSound('NEW_QR_ORDER');
+        playPosSound(
+          'NEW_QR_ORDER',
+          event.data.guestRequestId ? `qr-order:${event.data.guestRequestId}` : event.eventId,
+        );
       } else if (event.data.reason === 'SERVICE_REQUEST_CREATED') {
-        if (
-          event.data.serviceRequestType === 'CHECKOUT_REQUEST' ||
-          !event.data.serviceRequestType
-        ) {
-          playPosSound('CHECKOUT_REQUEST');
+        const dedupeKey = event.data.serviceRequestId
+          ? `service-request:${event.data.serviceRequestId}`
+          : event.eventId;
+        if (event.data.serviceRequestType === 'CALL_STAFF') {
+          playPosSound('NEW_QR_ORDER', dedupeKey);
+        } else {
+          playPosSound('CHECKOUT_REQUEST', dedupeKey);
         }
       }
     }
@@ -216,6 +235,15 @@ export class PosRealtimeClient {
     }
     if (event.topics.includes('guest.services')) {
       invalidations.push(this.queryClient.invalidateQueries({ queryKey: ['service-requests'] }));
+    }
+    if (
+      event.topics.includes('pos.orders') ||
+      event.topics.includes('guest.orders') ||
+      event.topics.includes('guest.services')
+    ) {
+      invalidations.push(
+        this.queryClient.invalidateQueries({ queryKey: ['staff-notification-audit'] }),
+      );
     }
     if (event.topics.includes(`pos.order:${event.aggregate.id}`)) {
       invalidations.push(
@@ -236,7 +264,8 @@ export class PosRealtimeClient {
           root === 'pos-order-quote' ||
           root === 'pos-order-detail' ||
           root === 'guest-order-requests' ||
-          root === 'service-requests'
+          root === 'service-requests' ||
+          root === 'staff-notification-audit'
         );
       },
     });

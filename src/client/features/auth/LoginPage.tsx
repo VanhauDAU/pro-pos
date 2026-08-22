@@ -6,11 +6,23 @@ import {
   EyeOutlined,
   LockOutlined,
   LoginOutlined,
+  ShopOutlined,
   SwapOutlined,
   UserOutlined,
 } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Avatar, Button, Checkbox, Form, Input, Spin, Tabs, Typography } from 'antd';
+import {
+  Alert,
+  Avatar,
+  Button,
+  Checkbox,
+  Form,
+  Input,
+  Popconfirm,
+  Spin,
+  Tabs,
+  Typography,
+} from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router';
 
@@ -351,6 +363,68 @@ export function LoginPage() {
     }
   };
 
+  const [disconnecting, setDisconnecting] = useState(false);
+
+  const handleDisconnectDevice = async () => {
+    setDisconnecting(true);
+    setError(null);
+    try {
+      await jsonRequest<{ disconnected: boolean }>('/api/v1/auth/device/disconnect', {});
+      try {
+        localStorage.removeItem(REMEMBERED_EMPLOYEE_KEY);
+      } catch {
+        // ignore
+      }
+      setRememberedEmployeeState(null);
+      setIsSwitchingAccount(false);
+      setPinValue('');
+      await queryClient.invalidateQueries({ queryKey: ['auth-context'] });
+      navigate('/device-activation');
+    } catch (disconnectError) {
+      setError(errorMessage(disconnectError));
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
+  const renderDeviceBar = () => (
+    <div className="employee-device-bar">
+      <div className="employee-device-info">
+        <ShopOutlined className="employee-device-icon" />
+        <span
+          className="employee-device-store"
+          title={context.data?.device?.storeName || 'Cửa hàng'}
+        >
+          {context.data?.device?.storeName || 'Cửa hàng'}
+        </span>
+        <span className="employee-device-divider">•</span>
+        <span className="employee-device-name" title={context.data?.device?.name}>
+          {context.data?.device?.name}
+        </span>
+      </div>
+      <Popconfirm
+        title="Đổi cửa hàng cho máy POS?"
+        description="Máy sẽ ngắt liên kết với cửa hàng hiện tại để kích hoạt cửa hàng khác."
+        okText="Đổi cửa hàng"
+        cancelText="Hủy"
+        okButtonProps={{ danger: true, size: 'small' }}
+        cancelButtonProps={{ size: 'small' }}
+        placement="topRight"
+        onConfirm={handleDisconnectDevice}
+      >
+        <Button
+          type="link"
+          size="small"
+          icon={<SwapOutlined />}
+          className="employee-change-store-btn"
+          loading={disconnecting}
+        >
+          Đổi cửa hàng
+        </Button>
+      </Popconfirm>
+    </div>
+  );
+
   const handleQuickPinComplete = (completedPin: string) => {
     if (rememberedEmployee && !isSwitchingAccount) {
       void executeEmployeeLogin(rememberedEmployee.username, completedPin);
@@ -510,10 +584,7 @@ export function LoginPage() {
               Đăng nhập
             </Button>
 
-            <div className="device-caption">
-              <DesktopOutlined />
-              <span>{context.data?.device?.name}</span>
-            </div>
+            {renderDeviceBar()}
           </div>
         ) : (
           /* Standard Username + PIN login form */
@@ -587,10 +658,7 @@ export function LoginPage() {
               Đăng nhập
             </Button>
 
-            <div className="device-caption">
-              <DesktopOutlined />
-              <span>{context.data?.device?.name}</span>
-            </div>
+            {renderDeviceBar()}
           </Form>
         )
       ) : (

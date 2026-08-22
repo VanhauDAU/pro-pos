@@ -32,6 +32,7 @@ export default defineConfig({
         'sound/sound_yeucauthanhtoan.ogg',
       ],
       manifest: {
+        id: '/',
         name: 'Pro POS',
         short_name: 'Pro POS',
         description: 'Hệ thống quản lý cửa hàng billiards',

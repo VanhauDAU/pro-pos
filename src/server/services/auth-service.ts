@@ -539,6 +539,7 @@ export class AuthService {
             name: device.device_name,
             status: device.device_status,
             storeId: device.store_id,
+            storeName: device.store_name,
           }
         : null,
       allowedEntrypoints,

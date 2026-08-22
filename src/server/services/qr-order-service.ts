@@ -1,10 +1,126 @@
 import type { SubmitGuestOrderInput } from './qr-order-types';
-import type { GuestOrderContext } from '@contracts/qr-order';
+import type {
+  GuestOrderContext,
+  StaffNotificationAuditDto,
+  StaffNotificationEventType,
+} from '@contracts/qr-order';
 import { AppError } from '@server/lib/app-error';
 import { hashOpaqueToken, randomOpaqueToken } from '@server/lib/crypto';
 import { requireSecret } from '@server/lib/env';
-import { QrOrderRepository, type GuestSessionRow } from '@server/repositories/qr-order-repository';
+import {
+  QrOrderRepository,
+  type GuestSessionRow,
+  type StaffOperationalAuditRow,
+} from '@server/repositories/qr-order-repository';
 import { MediaService } from '@server/services/media-service';
+
+const STAFF_NOTIFICATION_RETENTION_DAYS = 3 as const;
+const STAFF_NOTIFICATION_RETENTION_MS = STAFF_NOTIFICATION_RETENTION_DAYS * 24 * 60 * 60_000;
+
+function parseAuditJson(value: string | null) {
+  try {
+    return value ? (JSON.parse(value) as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function mapOperationalAudit(row: StaffOperationalAuditRow): StaffNotificationAuditDto {
+  const after = parseAuditJson(row.afterJson);
+  const actor = row.actorName ?? 'Nhân viên';
+  const orderLabel = row.orderCode ? `đơn ${row.orderCode}` : 'đơn hàng';
+  const location = row.tableName
+    ? `${row.tableName}${row.areaName ? ` · ${row.areaName}` : ''}`
+    : 'đơn mang đi';
+  const quantity = Math.max(0, Number(after['quantityMilli'] ?? 0) / 1000);
+  const totalVnd = Math.max(
+    0,
+    Number(after['netLineTotalVnd'] ?? after['total'] ?? after['grossLineTotalVnd'] ?? 0),
+  );
+  const product = [row.productName, row.variantName].filter(Boolean).join(' · ') || 'mặt hàng';
+  let eventType: StaffNotificationEventType = 'ORDER_SAVED';
+  let summary = `${actor} cập nhật ${orderLabel}`;
+  let note = typeof after['note'] === 'string' ? after['note'] : null;
+
+  switch (row.action) {
+    case 'TABLE_OPENED':
+    case 'TAKEAWAY_ORDER_CREATED':
+      eventType = 'ORDER_CREATED';
+      summary = `${actor} tạo ${orderLabel} tại ${location}`;
+      break;
+    case 'ORDER_ITEM_ADDED':
+    case 'ORDER_ITEM_ADDED_WITH_DISCOUNT':
+      eventType = 'ITEM_ADDED';
+      summary = `${actor} thêm ${product}${quantity > 0 ? ` ×${quantity}` : ''} vào ${orderLabel} tại ${location}`;
+      break;
+    case 'ORDER_ITEM_UPDATED':
+      eventType = 'ITEM_UPDATED';
+      summary = `${actor} cập nhật ${product}${quantity > 0 ? ` thành ${quantity}` : ''} trong ${orderLabel}`;
+      break;
+    case 'ORDER_ITEM_REMOVED':
+      eventType = 'ITEM_REMOVED';
+      summary = `${actor} xóa một mặt hàng khỏi ${orderLabel}`;
+      break;
+    case 'ORDER_NOTE_UPDATED':
+      eventType = 'ORDER_SAVED';
+      summary = `${actor} lưu ghi chú cho ${orderLabel}`;
+      break;
+    case 'TABLE_TRANSFERRED':
+      eventType = 'TABLE_TRANSFERRED';
+      summary = `${actor} chuyển ${orderLabel} sang ${location}`;
+      break;
+    case 'TIME_PAUSED':
+      eventType = 'TIME_PAUSED';
+      summary = `${actor} tạm dừng tính giờ ${orderLabel} tại ${location}`;
+      break;
+    case 'TIME_RESUMED':
+      eventType = 'TIME_RESUMED';
+      summary = `${actor} tiếp tục tính giờ ${orderLabel} tại ${location}`;
+      break;
+    case 'TIME_RANGE_UPDATED':
+    case 'TIME_SESSION_REMOVED':
+    case 'TIME_SESSION_RESTORED':
+      eventType = 'TIME_UPDATED';
+      summary = `${actor} điều chỉnh thời gian của ${orderLabel}`;
+      break;
+    case 'ORDER_CHECKOUT_PENDING':
+      eventType = 'CHECKOUT_PENDING';
+      summary = `${actor} dừng giờ và lưu ${orderLabel} để chờ thanh toán`;
+      break;
+    case 'ORDER_RESUMED_FROM_CHECKOUT':
+      eventType = 'TIME_RESUMED';
+      summary = `${actor} mở lại ${orderLabel} và tiếp tục tính giờ`;
+      break;
+    case 'CHECKOUT_COMPLETED':
+      eventType = 'CHECKOUT';
+      summary = `${actor} thanh toán thành công ${orderLabel}${totalVnd > 0 ? ` trị giá ${totalVnd.toLocaleString('vi-VN')}đ` : ''}`;
+      break;
+    case 'ORDER_CANCELLED':
+      eventType = 'ORDER_CANCELLED';
+      summary = `${actor} hủy ${orderLabel}`;
+      note = typeof after['reason'] === 'string' ? after['reason'] : note;
+      break;
+  }
+
+  return {
+    id: `audit:${row.id}`,
+    sourceId: row.requestId,
+    eventType,
+    status: 'INFO',
+    orderId: row.orderId ?? '',
+    tableId: row.tableId ?? '',
+    tableName: row.tableName ?? 'Mang đi',
+    areaName: row.areaName ?? '',
+    summary,
+    note,
+    itemCount: quantity,
+    totalVnd,
+    actorName: row.actorName,
+    deviceName: row.deviceName,
+    handledAt: row.createdAt,
+    createdAt: row.createdAt,
+  };
+}
 
 function mapDatabaseError(error: unknown): never {
   const message = error instanceof Error ? error.message : String(error);
@@ -53,6 +169,31 @@ function mapDatabaseError(error: unknown): never {
   throw error;
 }
 
+type SubmitOrderResult =
+  | {
+      requestId: string;
+      replayed: true;
+      storeId: string;
+      tableName: string;
+    }
+  | {
+      requestId: string;
+      replayed: false;
+      storeId: string;
+      tableName: string;
+      areaName: string;
+      orderId: string;
+      createdAt: number;
+      note: string | null;
+      items: Array<{
+        productName: string;
+        variantName: string | null;
+        quantity: number;
+        lineTotalVnd: number;
+        note: string | null;
+      }>;
+    };
+
 export class QrOrderService {
   private readonly repository: QrOrderRepository;
   private readonly pepper: string;
@@ -82,6 +223,11 @@ export class QrOrderService {
       storeName: session.storeName,
       tableName: session.tableName,
       areaName: session.areaName,
+      table: {
+        id: session.tableId,
+        name: session.tableName,
+        areaName: session.areaName,
+      },
       sessionExpiresAt: session.expiresAt,
       menu: await this.repository.listMenu(session.storeId),
     };
@@ -144,7 +290,11 @@ export class QrOrderService {
     return new MediaService(this.env).get(session.storeId, mediaId);
   }
 
-  async submitOrder(rawGuest: string, input: SubmitGuestOrderInput, ip: string | null) {
+  async submitOrder(
+    rawGuest: string,
+    input: SubmitGuestOrderInput,
+    ip: string | null,
+  ): Promise<SubmitOrderResult> {
     const session = await this.contextFromSession(rawGuest);
     const replay = await this.repository.findRequestByClient(
       session.guestSessionId,
@@ -186,6 +336,16 @@ export class QrOrderService {
     );
 
     const requestId = crypto.randomUUID();
+    const createdAt = Date.now();
+    const notificationSummary = items
+      .map((item) => {
+        const variant =
+          item.variantName && item.variantName !== 'Mặc định' ? ` · ${item.variantName}` : '';
+        const itemNote = item.note ? ` (${item.note})` : '';
+        return `${item.productName}${variant} ×${item.quantityMilli / 1000}${itemNote}`;
+      })
+      .join(', ')
+      .slice(0, 800);
     try {
       await this.repository.createGuestOrder({
         commandId: crypto.randomUUID(),
@@ -194,8 +354,12 @@ export class QrOrderService {
         session,
         note: input.note?.trim() || null,
         ipHash: ip ? await hashOpaqueToken(`guest-ip:${ip}`, this.pepper) : null,
-        now: Date.now(),
+        now: createdAt,
         items,
+        notificationSummary,
+        notificationItemCount: items.reduce((sum, item) => sum + item.quantityMilli / 1000, 0),
+        notificationTotalVnd: items.reduce((sum, item) => sum + item.lineTotalVnd, 0),
+        notificationExpiresAt: createdAt + STAFF_NOTIFICATION_RETENTION_MS,
       });
     } catch (error) {
       const concurrentReplay = await this.repository.findRequestByClient(
@@ -212,7 +376,23 @@ export class QrOrderService {
       }
       mapDatabaseError(error);
     }
-    return { requestId, replayed: false, storeId: session.storeId, tableName: session.tableName };
+    return {
+      requestId,
+      replayed: false,
+      storeId: session.storeId,
+      tableName: session.tableName,
+      areaName: session.areaName,
+      orderId: session.orderId,
+      createdAt,
+      note: input.note?.trim() || null,
+      items: items.map((item) => ({
+        productName: item.productName,
+        variantName: item.variantName,
+        quantity: item.quantityMilli / 1000,
+        lineTotalVnd: item.lineTotalVnd,
+        note: item.note,
+      })),
+    };
   }
 
   async listGuestRequests(rawGuest: string) {
@@ -233,8 +413,15 @@ export class QrOrderService {
       });
     }
     const id = crypto.randomUUID();
+    const now = Date.now();
     try {
-      await this.repository.createServiceRequest({ id, session, type, now: Date.now() });
+      await this.repository.createServiceRequest({
+        id,
+        session,
+        type,
+        now,
+        notificationExpiresAt: now + STAFF_NOTIFICATION_RETENTION_MS,
+      });
     } catch (error) {
       mapDatabaseError(error);
     }
@@ -243,6 +430,9 @@ export class QrOrderService {
       status: 'OPEN' as const,
       storeId: session.storeId,
       tableName: session.tableName,
+      areaName: session.areaName,
+      orderId: session.orderId,
+      createdAt: now,
     };
   }
 
@@ -252,6 +442,20 @@ export class QrOrderService {
 
   listServiceRequests(storeId: string) {
     return this.repository.listServiceRequests(storeId);
+  }
+
+  async listNotificationAudit(storeId: string, limit: number) {
+    const since = Date.now() - STAFF_NOTIFICATION_RETENTION_MS;
+    const [notifications, operational] = await Promise.all([
+      this.repository.listNotificationAudit(storeId, limit),
+      this.repository.listOperationalAudit(storeId, since, limit),
+    ]);
+    return {
+      retentionDays: STAFF_NOTIFICATION_RETENTION_DAYS,
+      items: [...notifications, ...operational.map(mapOperationalAudit)]
+        .toSorted((a, b) => b.createdAt - a.createdAt)
+        .slice(0, limit),
+    };
   }
 
   async accept(input: {
@@ -299,9 +503,16 @@ export class QrOrderService {
     id: string;
     action: 'ACKNOWLEDGE' | 'COMPLETE';
     actorId: string;
+    actorSessionId?: string | null;
+    deviceId?: string | null;
     requestId: string;
   }) {
-    const result = await this.repository.updateServiceRequest({ ...input, now: Date.now() });
+    const result = await this.repository.updateServiceRequest({
+      ...input,
+      actorSessionId: input.actorSessionId ?? null,
+      deviceId: input.deviceId ?? null,
+      now: Date.now(),
+    });
     if (!result) throw new AppError('SERVICE_REQUEST_NOT_FOUND', 'Không tìm thấy yêu cầu.', 404);
     if (result.conflict) {
       throw new AppError('SERVICE_REQUEST_ALREADY_UPDATED', 'Yêu cầu đã được xử lý trước đó.', 409);

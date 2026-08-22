@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 
 import { apiRequest } from '@client/lib/api';
+import { playPosSound } from '@client/lib/sound';
 import { PosRealtimeClient, type RealtimeConnectionStatus } from './client';
 
 interface RealtimeStaffContext {
@@ -40,6 +41,23 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
     client.start();
     return () => client.stop();
   }, [enabled, queryClient, storeId]);
+
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return undefined;
+    const onMessage = (event: MessageEvent<unknown>) => {
+      if (!event.data || typeof event.data !== 'object') return;
+      const message = event.data as { type?: unknown; soundType?: unknown; tag?: unknown };
+      if (
+        message.type !== 'PUSH_NOTIFICATION_RECEIVED' ||
+        (message.soundType !== 'NEW_QR_ORDER' && message.soundType !== 'CHECKOUT_REQUEST')
+      ) {
+        return;
+      }
+      playPosSound(message.soundType, typeof message.tag === 'string' ? message.tag : undefined);
+    };
+    navigator.serviceWorker.addEventListener('message', onMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', onMessage);
+  }, []);
 
   const value = useMemo(() => ({ status, serverTimeOffsetMs }), [serverTimeOffsetMs, status]);
   return <RealtimeContext.Provider value={value}>{children}</RealtimeContext.Provider>;

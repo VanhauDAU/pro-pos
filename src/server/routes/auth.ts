@@ -220,6 +220,14 @@ authRoutes.post('/logout', async (c) => {
   });
 });
 
+authRoutes.post('/device/disconnect', async (c) => {
+  assertSameOrigin(c);
+  clearCredentialCookie(c, 'device');
+  clearCredentialCookie(c, 'session');
+  clearCredentialCookie(c, 'activation');
+  return success(c, { disconnected: true });
+});
+
 authRoutes.get('/access/logout', (c) => {
   clearCredentialCookie(c, 'session');
   clearCredentialCookie(c, 'activation');

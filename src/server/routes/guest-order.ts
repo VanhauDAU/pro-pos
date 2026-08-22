@@ -1,6 +1,10 @@
 import { Hono } from 'hono';
 
-import { createServiceRequestSchema, submitGuestOrderSchema } from '@contracts/qr-order';
+import {
+  GUEST_VOICE_NAMES,
+  createServiceRequestSchema,
+  submitGuestOrderSchema,
+} from '@contracts/qr-order';
 import { AppError } from '@server/lib/app-error';
 import { readCredentialCookie, setCredentialCookie } from '@server/lib/cookies';
 import { success } from '@server/lib/response';
@@ -12,6 +16,7 @@ import { QrOrderService } from '@server/services/qr-order-service';
 import type { AppEnv } from '@server/types';
 
 const guestOrderRoutes = new Hono<AppEnv>();
+const guestVoiceNames = new Set<string>(GUEST_VOICE_NAMES);
 
 function formatPushMoney(value: number) {
   return `${new Intl.NumberFormat('vi-VN').format(value)}đ`;
@@ -35,6 +40,23 @@ function clientIp(c: Parameters<typeof success>[0]) {
     null
   );
 }
+
+guestOrderRoutes.get('/voice/:voiceName', async (c) => {
+  const voiceName = c.req.param('voiceName');
+  if (!guestVoiceNames.has(voiceName)) {
+    throw new AppError('GUEST_VOICE_NOT_FOUND', 'Không tìm thấy giọng nói trợ lý.', 404);
+  }
+  const object = await c.env.MEDIA.get(`sound/${voiceName}`);
+  if (!object) {
+    throw new AppError('GUEST_VOICE_NOT_FOUND', 'Không tìm thấy giọng nói trợ lý trong R2.', 404);
+  }
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set('Content-Type', 'audio/ogg');
+  headers.set('ETag', object.httpEtag);
+  headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+  return new Response(object.body, { headers });
+});
 
 guestOrderRoutes.get('/resolve/:token', async (c) => {
   const rawGuest = readCredentialCookie(c, 'guest');

@@ -290,9 +290,13 @@ function ProductAvatar({
 
 export function OwnerProductListPage({
   baseRoute = '/owner/catalog',
+  userPermissions,
+  isOwner,
   onBack,
 }: {
   baseRoute?: string;
+  userPermissions?: string[] | undefined;
+  isOwner?: boolean | undefined;
   onBack?: () => void;
 } = {}) {
   const navigate = useNavigate();
@@ -315,6 +319,17 @@ export function OwnerProductListPage({
     queryKey: ['owner-units'],
     queryFn: () => apiRequest<Unit[]>('/api/v1/owner/catalog/units'),
   });
+  const authContext = useQuery({
+    queryKey: ['auth-context'],
+    queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
+  });
+
+  const isOwnerUser = isOwner ?? authContext.data?.actor?.kind === 'OWNER';
+  const perms = userPermissions ?? [];
+  const canDeleteProduct =
+    isOwnerUser || perms.includes('catalog.products.delete') || perms.includes('catalog.manage');
+  const canEditProduct =
+    isOwnerUser || perms.includes('catalog.products.edit') || perms.includes('catalog.manage');
 
   const rows = useMemo(() => {
     const value = search.trim().toLowerCase();
@@ -365,18 +380,21 @@ export function OwnerProductListPage({
     setUnitFilters([]);
   };
 
-  const disableProduct = async (product: ProductSummary) => {
+  const removeProduct = async (product: ProductSummary) => {
     const context = await apiRequest<AuthContextResponse>('/api/v1/auth/context');
     try {
       await apiRequest(`/api/v1/owner/catalog/products/${product.id}`, {
         method: 'DELETE',
         headers: { 'X-CSRF-Token': context.csrfToken ?? '' },
       });
-      await queryClient.invalidateQueries({ queryKey: PRODUCT_QUERY });
-      await queryClient.invalidateQueries({ queryKey: CATEGORY_QUERY });
-      messageApi.success('Đã ngừng kinh doanh mặt hàng.');
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: PRODUCT_QUERY }),
+        queryClient.invalidateQueries({ queryKey: CATEGORY_QUERY }),
+        queryClient.invalidateQueries({ queryKey: ['pos-catalog'] }),
+      ]);
+      messageApi.success(`Đã xóa mặt hàng "${product.name}".`);
     } catch (error) {
-      messageApi.error(errorMessage(error, 'Không thể ngừng kinh doanh mặt hàng.'));
+      messageApi.error(errorMessage(error, 'Không thể xóa mặt hàng.'));
     }
   };
 
@@ -458,36 +476,42 @@ export function OwnerProductListPage({
           >
             Sao chép
           </Button>
-          <Button
-            type="link"
-            icon={<EditOutlined />}
-            onClick={() => navigate(`${baseRoute}/products/${product.id}`)}
-          >
-            Sửa
-          </Button>
-          {product.status === 'ACTIVE' ? (
-            <Popconfirm
-              title="Ngừng kinh doanh mặt hàng này?"
-              onConfirm={() => disableProduct(product)}
-              okText="Ngừng bán"
-              cancelText="Hủy"
+          {canEditProduct && (
+            <Button
+              type="link"
+              icon={<EditOutlined />}
+              onClick={() => navigate(`${baseRoute}/products/${product.id}`)}
             >
-              <Button type="link" danger icon={<DeleteOutlined />}>
-                Ngừng bán
-              </Button>
-            </Popconfirm>
-          ) : (
-            <Popconfirm
-              title="Khôi phục mặt hàng này?"
-              onConfirm={() => restoreProduct(product)}
-              okText="Khôi phục"
-              cancelText="Hủy"
-            >
-              <Button type="link" icon={<SaveOutlined />}>
-                Khôi phục
-              </Button>
-            </Popconfirm>
+              Sửa
+            </Button>
           )}
+          {canDeleteProduct &&
+            (product.status === 'ACTIVE' ? (
+              <Popconfirm
+                title="Xóa mặt hàng này?"
+                description="Mặt hàng sẽ bị ngừng kinh doanh và không còn xuất hiện trên thực đơn bán hàng."
+                onConfirm={() => removeProduct(product)}
+                okText="Xóa mặt hàng"
+                cancelText="Hủy"
+                okButtonProps={{ danger: true }}
+              >
+                <Button type="link" danger icon={<DeleteOutlined />}>
+                  Xóa
+                </Button>
+              </Popconfirm>
+            ) : (
+              <Popconfirm
+                title="Khôi phục mặt hàng này?"
+                description="Mặt hàng sẽ được kích hoạt lại trên thực đơn bán hàng."
+                onConfirm={() => restoreProduct(product)}
+                okText="Khôi phục"
+                cancelText="Hủy"
+              >
+                <Button type="link" icon={<SaveOutlined />}>
+                  Khôi phục
+                </Button>
+              </Popconfirm>
+            ))}
         </Space>
       ),
     },
@@ -612,10 +636,14 @@ export function OwnerProductListPage({
 export function OwnerProductFormPage({
   productId,
   baseRoute = '/owner/catalog',
+  userPermissions,
+  isOwner,
   onBack,
 }: {
   productId?: string;
   baseRoute?: string;
+  userPermissions?: string[] | undefined;
+  isOwner?: boolean | undefined;
   onBack?: () => void;
 } = {}) {
   const navigate = useNavigate();
@@ -661,6 +689,37 @@ export function OwnerProductFormPage({
     queryKey: ['auth-context'],
     queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
   });
+  const [deleting, setDeleting] = useState(false);
+  const isOwnerUser = isOwner ?? authContext.data?.actor?.kind === 'OWNER';
+  const perms = userPermissions ?? [];
+  const canDeleteProduct =
+    isOwnerUser || perms.includes('catalog.products.delete') || perms.includes('catalog.manage');
+
+  const removeProduct = async () => {
+    if (!productId) return;
+    setDeleting(true);
+    try {
+      await apiRequest(`/api/v1/owner/catalog/products/${productId}`, {
+        method: 'DELETE',
+        headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' },
+      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: PRODUCT_QUERY }),
+        queryClient.invalidateQueries({ queryKey: CATEGORY_QUERY }),
+        queryClient.invalidateQueries({ queryKey: ['pos-catalog'] }),
+      ]);
+      messageApi.success('Đã xóa mặt hàng thành công.');
+      if (onBack) {
+        onBack();
+      } else {
+        navigate(`${baseRoute}/products`);
+      }
+    } catch (error) {
+      messageApi.error(errorMessage(error, 'Không thể xóa mặt hàng.'));
+    } finally {
+      setDeleting(false);
+    }
+  };
   const firstPeriodEnabled = Form.useWatch('firstPeriodEnabled', form);
 
   const createCategoryDirect = async (nameToCreate: string) => {
@@ -1105,6 +1164,20 @@ export function OwnerProductFormPage({
           </Typography.Text>
         </div>
         <Space>
+          {isEdit && canDeleteProduct && (
+            <Popconfirm
+              title="Xóa mặt hàng này?"
+              description="Mặt hàng sẽ bị ngừng kinh doanh và không còn xuất hiện trên thực đơn bán hàng."
+              onConfirm={removeProduct}
+              okText="Xóa mặt hàng"
+              cancelText="Hủy"
+              okButtonProps={{ danger: true }}
+            >
+              <Button danger loading={deleting} icon={<DeleteOutlined />}>
+                Xóa mặt hàng
+              </Button>
+            </Popconfirm>
+          )}
           {isEdit && (
             <Button
               icon={<CopyOutlined />}
@@ -1846,6 +1919,20 @@ export function OwnerProductFormPage({
           </Col>
         </Row>
         <div className="owner-form-actions">
+          {isEdit && canDeleteProduct && (
+            <Popconfirm
+              title="Xóa mặt hàng này?"
+              description="Mặt hàng sẽ bị ngừng kinh doanh và không còn xuất hiện trên thực đơn bán hàng."
+              onConfirm={removeProduct}
+              okText="Xóa mặt hàng"
+              cancelText="Hủy"
+              okButtonProps={{ danger: true }}
+            >
+              <Button danger loading={deleting} icon={<DeleteOutlined />}>
+                Xóa mặt hàng
+              </Button>
+            </Popconfirm>
+          )}
           <Button
             onClick={() => {
               if (onBack) onBack();

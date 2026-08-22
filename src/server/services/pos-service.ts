@@ -13,6 +13,8 @@ import { PosRepository } from '@server/repositories/pos-repository';
 import { AuditRepository } from '@server/repositories/audit-repository';
 import { AuthorizationRepository } from '@server/repositories/authorization-repository';
 import { CustomerService } from '@server/services/customer-service';
+import { PromotionService } from '@server/services/promotion-service';
+import { PromotionRepository } from '@server/repositories/promotion-repository';
 
 function checkedMoneyFromMilli(unitPriceVnd: number, quantityMilli: number) {
   const amount = (BigInt(unitPriceVnd) * BigInt(quantityMilli) + 500n) / 1000n;
@@ -319,7 +321,7 @@ export class PosService {
     timeEndedAtMs?: number | null | undefined;
     note?: string | null;
     expectedOrderVersion: number;
-    discount?: null | { type: 'FIXED' | 'PERCENT'; value: number };
+    discount?: null | { type: 'FIXED' | 'PERCENT'; value: number; reason: string };
     actorSessionId?: string | null;
     deviceId?: string | null;
     now?: number;
@@ -473,6 +475,13 @@ export class PosService {
     try {
       if (takeawayOrder) await this.repository.executeAddTakeawayItem(command);
       else await this.repository.executeAddItem(command);
+      await this.repository.setOrderItemDiscountReason({
+        storeId: input.storeId,
+        orderType: takeawayOrder ? 'TAKEAWAY' : 'DINE_IN',
+        orderId: input.orderId,
+        itemId,
+        reason: input.discount?.reason.trim() || null,
+      });
     } catch (error) {
       mapDatabaseError(error);
     }
@@ -499,6 +508,7 @@ export class PosService {
         discountType: input.discount?.type ?? null,
         discountInputValue: input.discount?.value ?? null,
         discountAmountVnd: discountAmount,
+        discountReason: input.discount?.reason.trim() || null,
         grossLineTotalVnd: subtotal,
         netLineTotalVnd: subtotal - discountAmount,
         note: normalizedNote,
@@ -518,7 +528,7 @@ export class PosService {
     expectedOrderVersion: number;
     quantityMilli: number;
     variantId?: string | null | undefined;
-    discount?: null | { type: 'FIXED' | 'PERCENT'; value: number } | undefined;
+    discount?: null | { type: 'FIXED' | 'PERCENT'; value: number; reason: string } | undefined;
     timeStartedAtMs?: number | null | undefined;
     timeEndedAtMs?: number | null | undefined;
     note: string | null;
@@ -624,6 +634,7 @@ export class PosService {
     let discountType: string | null = item.discountType;
     let discountInputValue: number | null = item.discountInputValue;
     let discountAmountVnd = item.discountAmount;
+    let discountReason: string | null = item.discountReason;
 
     if (input.discount !== undefined) {
       if (input.discount) {
@@ -637,10 +648,12 @@ export class PosService {
         }
         discountType = input.discount.type;
         discountInputValue = input.discount.value;
+        discountReason = input.discount.reason.trim();
       } else {
         discountAmountVnd = 0;
         discountType = 'NONE';
         discountInputValue = -1;
+        discountReason = null;
       }
     } else if (item.discountType) {
       if (item.discountType === 'PERCENT') {
@@ -676,6 +689,13 @@ export class PosService {
         actorId: input.actorId,
         requestId: input.requestId,
         issuedAt: now,
+      });
+      await this.repository.setOrderItemDiscountReason({
+        storeId: input.storeId,
+        orderType: order.order_type,
+        orderId: input.orderId,
+        itemId: input.itemId,
+        reason: discountReason,
       });
     } catch (error) {
       mapDatabaseError(error);
@@ -1036,6 +1056,25 @@ export class PosService {
     );
     const bankSettings = await this.repository.findStoreBankSettings(storeId);
     const subtotal = productGross + (pricing?.amountAfterRoundingVnd ?? 0);
+    const promotions = await new PromotionService(this.env).optionsForOrder({
+      storeId,
+      orderId,
+      subtotalVnd: Math.max(0, subtotal - discountTotal),
+      customerId: order.customer_id ?? null,
+      items: processedItems.map((item) => ({
+        productId: item.productId,
+        variantId: item.variantId,
+        productType: item.productType,
+        unitPriceVnd: Number(item.unitPriceVnd),
+        quantityMilli: Number(item.quantityMilli),
+        grossLineTotalVnd: Number(item.grossLineTotalVnd),
+      })),
+      now,
+    });
+    const promotionDiscount = promotions.applied.reduce(
+      (sum, promotion) => sum + promotion.discountAmountVnd,
+      0,
+    );
     return {
       order: {
         id: order.id,
@@ -1058,10 +1097,39 @@ export class PosService {
       items: processedItems,
       time: pricing,
       subtotalVnd: subtotal,
-      discountTotalVnd: discountTotal,
-      totalVnd: subtotal - discountTotal,
+      discountTotalVnd: discountTotal + promotionDiscount,
+      itemDiscountTotalVnd: discountTotal,
+      promotionDiscountVnd: promotionDiscount,
+      promotions: promotions.applied,
+      promotion: promotions.applied[0] ?? null,
+      promotionOptions: promotions.options,
+      totalVnd: Math.max(0, subtotal - discountTotal - promotionDiscount),
       bankSettings: bankSettings ?? null,
     };
+  }
+
+  async applyPromotion(input: {
+    storeId: string;
+    orderId: string;
+    promotionIds: string[];
+    expectedOrderVersion: number;
+    actorId: string;
+  }) {
+    const quote = await this.quote(input.storeId, input.orderId);
+    return new PromotionService(this.env).applyToOrder({
+      ...input,
+      orderType: quote.order.orderType,
+      subtotalVnd: Math.max(0, quote.subtotalVnd - quote.itemDiscountTotalVnd),
+      customerId: quote.order.customerId,
+      items: quote.items.map((item) => ({
+        productId: item.productId,
+        variantId: item.variantId,
+        productType: item.productType,
+        unitPriceVnd: Number(item.unitPriceVnd),
+        quantityMilli: Number(item.quantityMilli),
+        grossLineTotalVnd: Number(item.grossLineTotalVnd),
+      })),
+    });
   }
 
   async pause(input: {
@@ -1500,6 +1568,8 @@ export class PosService {
         totalVnd: quote.totalVnd,
       },
       issuedAt: now,
+      promotion: quote.promotion,
+      promotions: quote.promotions,
     };
     const timeDescription =
       quote.time?.tableSegments && quote.time.tableSegments.length > 1
@@ -1557,6 +1627,22 @@ export class PosService {
     } catch (error) {
       mapDatabaseError(error);
     }
+    await Promise.all(
+      quote.promotions.map((promotion) =>
+        new PromotionRepository(this.env.DB).saveInvoicePromotion({
+          storeId: input.storeId,
+          invoiceId,
+          orderType: quote.order.orderType,
+          promotionId: promotion.id,
+          promotionName: promotion.name,
+          promotionType: promotion.type,
+          // Đồng giá is a price adjustment, not promotional discount value in reports.
+          discountAmountVnd: promotion.type === 'FLAT_PRICE' ? 0 : promotion.discountAmountVnd,
+          snapshotJson: JSON.stringify(promotion),
+          now,
+        }),
+      ),
+    );
     if (quote.order.customerId) {
       const settings = await new CustomerService(this.env).loyaltySettings(input.storeId);
       const points = settings.enabled ? Math.floor(quote.totalVnd / settings.vndPerPoint) : 0;
@@ -2063,6 +2149,7 @@ export class PosService {
           discountType: item.discountType,
           discountInputValue: item.discountInputValue,
           discountAmountVnd: discount,
+          discountReason: item.discountReason,
           netLineTotalVnd: net,
           note: item.note,
           addedById: item.addedById,

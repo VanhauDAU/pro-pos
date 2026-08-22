@@ -106,7 +106,7 @@ describe('Owner area and table settings', () => {
       .run();
   });
 
-  it('renames and soft-deletes an available table', async () => {
+  it('renames and deletes an available table', async () => {
     const [layout] = await catalog.listAreaLayouts(storeId);
     const table = layout!.tables[0]!;
 
@@ -121,7 +121,33 @@ describe('Owner area and table settings', () => {
     )
       .bind(table.id)
       .first<{ name: string; status: string }>();
-    expect(deleted).toEqual({ name: 'Phòng VIP', status: 'DISABLED' });
+    expect(deleted).toBeNull();
+  });
+
+  it('pauses and resumes a table status and blocks pausing when occupied', async () => {
+    const [layout] = await catalog.listAreaLayouts(storeId);
+    const table = layout!.tables[0]!;
+
+    // Pause table -> DISABLED
+    await catalog.updateTableStatus(storeId, table.id, 'DISABLED');
+    const [disabledLayout] = await catalog.listAreaLayouts(storeId);
+    expect(disabledLayout!.tables[0]!.status).toBe('DISABLED');
+
+    // Resume table -> AVAILABLE
+    await catalog.updateTableStatus(storeId, table.id, 'AVAILABLE');
+    const [resumedLayout] = await catalog.listAreaLayouts(storeId);
+    expect(resumedLayout!.tables[0]!.status).toBe('AVAILABLE');
+
+    // Block pausing occupied table
+    await env.DB.prepare("UPDATE service_tables SET status = 'OCCUPIED' WHERE id = ?")
+      .bind(table.id)
+      .run();
+    await expect(catalog.updateTableStatus(storeId, table.id, 'DISABLED')).rejects.toMatchObject({
+      code: 'SERVICE_TABLE_OCCUPIED',
+    });
+    await env.DB.prepare("UPDATE service_tables SET status = 'AVAILABLE' WHERE id = ?")
+      .bind(table.id)
+      .run();
   });
 
   it('deletes an available area layout and blocks deletion while a table is occupied', async () => {

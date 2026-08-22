@@ -101,14 +101,18 @@ export interface PlatformStoreDetail {
     userId: string;
     userName: string;
     userUsername: string;
+    userRoleCode?: string | null;
+    userRoleName?: string | null;
     deviceId: string | null;
     deviceName: string | null;
+    deviceStatus?: 'ACTIVE' | 'REVOKED' | null;
     sessionKind: 'SUPER_ADMIN' | 'OWNER' | 'EMPLOYEE';
     status: 'ACTIVE' | 'EXPIRED' | 'REVOKED';
     createdAt: number;
     lastSeenAt: number;
     expiresAt: number;
     idleExpiresAt: number;
+    revokedAt?: number | null;
   }>;
   stats: {
     totalAreas: number;

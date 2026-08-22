@@ -39,25 +39,28 @@ export function requireActor(
   };
 }
 
-export function requirePermission(permissionKey: string): MiddlewareHandler<AppEnv> {
+export function requirePermission(...permissionKeys: string[]): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
-    await assertPermission(c, permissionKey);
+    await assertPermission(c, ...permissionKeys);
     await next();
   };
 }
 
 export async function assertPermission(
   c: Parameters<MiddlewareHandler<AppEnv>>[0],
-  permissionKey: string,
+  ...permissionKeys: string[]
 ): Promise<void> {
   const actor = c.get('actor');
+  if (actor.kind === 'OWNER') {
+    return;
+  }
   if (!actor.storeId) {
     throw new AppError('STORE_CONTEXT_REQUIRED', 'Thiếu ngữ cảnh cửa hàng.', 403);
   }
   const allowed = await new AuthorizationRepository(c.env.DB).hasPermission(
     actor.storeId,
     actor.id,
-    permissionKey,
+    permissionKeys,
   );
   if (!allowed) {
     throw new AppError('PERMISSION_DENIED', 'Bạn không có quyền thực hiện thao tác này.', 403);

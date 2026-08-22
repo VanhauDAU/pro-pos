@@ -19,6 +19,7 @@ import {
   updateOrderNoteSchema,
   updateOrderGuestSchema,
 } from '@contracts/pos';
+import { applyPromotionSchema } from '@contracts/promotion';
 import { AppError } from '@server/lib/app-error';
 import { success } from '@server/lib/response';
 import { parseJson } from '@server/lib/validation';
@@ -71,6 +72,24 @@ posRoutes.get('/onboarding/audio/:track', async (c) => {
   headers.set('Content-Type', 'audio/mpeg');
   headers.set('ETag', object.httpEtag);
   headers.set('Cache-Control', 'private, max-age=31536000, immutable');
+  return new Response(object.body, { headers });
+});
+
+posRoutes.get('/sound/:soundName', async (c) => {
+  const soundName = c.req.param('soundName');
+  if (!/^[a-zA-Z0-9_\-.]+\.(ogg|mp3|wav|m4a)$/i.test(soundName)) {
+    throw new AppError('SOUND_NOT_FOUND', 'Không tìm thấy file âm thanh.', 404);
+  }
+  const object =
+    (await c.env.MEDIA.get(`sound/${soundName}`)) ?? (await c.env.MEDIA.get(soundName));
+  if (!object) {
+    throw new AppError('SOUND_NOT_FOUND', 'Không tìm thấy file âm thanh trong R2.', 404);
+  }
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set('Content-Type', soundName.endsWith('.ogg') ? 'audio/ogg' : 'audio/mpeg');
+  headers.set('ETag', object.httpEtag);
+  headers.set('Cache-Control', 'public, max-age=31536000, immutable');
   return new Response(object.body, { headers });
 });
 
@@ -275,6 +294,26 @@ posRoutes.get('/orders/:orderId/detail', requirePermission('table.view'), async 
     await new PosService(c.env).getOrderDetail(c.get('actor').storeId!, c.req.param('orderId')),
   ),
 );
+
+posRoutes.get('/orders/:orderId/promotions', requirePermission('promotion.apply'), async (c) => {
+  const quote = await new PosService(c.env).quote(c.get('actor').storeId!, c.req.param('orderId'));
+  return success(c, { applied: quote.promotions, options: quote.promotionOptions });
+});
+
+posRoutes.put('/orders/:orderId/promotion', requirePermission('promotion.apply'), async (c) => {
+  const body = await parseJson(c.req.raw, applyPromotionSchema);
+  const actor = c.get('actor');
+  return success(
+    c,
+    await new PosService(c.env).applyPromotion({
+      storeId: actor.storeId!,
+      orderId: c.req.param('orderId'),
+      promotionIds: body.promotionIds,
+      expectedOrderVersion: body.expectedOrderVersion,
+      actorId: actor.id,
+    }),
+  );
+});
 
 posRoutes.post('/orders/:orderId/items', requirePermission('order.manage'), async (c) => {
   const body = await parseJson(c.req.raw, addOrderItemSchema);

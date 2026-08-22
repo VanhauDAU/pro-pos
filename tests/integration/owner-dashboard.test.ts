@@ -246,6 +246,75 @@ describe('Owner Dashboard Real Analytics (Acceptance Test)', () => {
     expect(data.staffRevenue.some((s) => s.userId === ownerUserId && s.amount > 0)).toBe(true);
   });
 
+  it('uses the exact POS quote for unfinished TIME_BLOCK orders', async () => {
+    const platform = new PlatformService(env);
+    const blockStore = await platform.createStore({
+      name: 'Dashboard Time Block Accuracy Test',
+      ownerDisplayName: 'Block Store Owner',
+      ownerEmail: 'owner.dashboard-block@example.com',
+    });
+    const catalog = new CatalogService(env);
+    const area = await catalog.createNamed(blockStore.storeId, 'areas', 'Khu Block');
+    const timeProduct = await catalog.createProduct(blockStore.storeId, {
+      name: 'Giờ chơi theo block',
+      productType: 'TIME',
+      variants: [],
+    });
+    await catalog.upsertPricing(blockStore.storeId, {
+      productId: timeProduct.id,
+      basePriceVnd: 60_000,
+      baseDurationSeconds: 3600,
+      calculationMode: 'TIME_BLOCK',
+      roundingUnitVnd: 1000,
+      firstPeriod: { enabled: true, durationSeconds: 120, priceVnd: 40_000 },
+      specialWindows: [],
+    });
+    const table = await catalog.createTable({
+      storeId: blockStore.storeId,
+      areaId: area.id,
+      timeProductId: timeProduct.id,
+      name: 'Bàn Block A',
+    });
+
+    const pos = new PosService(env);
+    const openedAt = Date.now() - 30_000;
+    const opened = await pos.openTable({
+      storeId: blockStore.storeId,
+      actorId: blockStore.ownerUserId,
+      requestId: 'req-dashboard-block-open',
+      idempotencyKey: 'cmd-dashboard-block-open',
+      tableId: table.id,
+      expectedTableVersion: 1,
+      now: openedAt,
+    });
+
+    const dashboardService = new OwnerDashboardService(env);
+    const runningQuote = await pos.quote(blockStore.storeId, opened.orderId);
+    const runningDashboard = await dashboardService.getDashboardData(blockStore.storeId, {
+      range: 'today',
+    });
+
+    expect(runningQuote.totalVnd).toBe(40_000);
+    expect(runningDashboard.uncompletedOrders.dineIn).toEqual({ count: 1, amount: 40_000 });
+    expect(runningDashboard.uncompletedOrders.total).toEqual({ count: 1, amount: 40_000 });
+
+    const stopped = await pos.stopTimeForCheckout({
+      storeId: blockStore.storeId,
+      actorId: blockStore.ownerUserId,
+      requestId: 'req-dashboard-block-stop',
+      idempotencyKey: 'cmd-dashboard-block-stop',
+      orderId: opened.orderId,
+      expectedOrderVersion: 1,
+      now: openedAt + 30_000,
+    });
+    const pendingDashboard = await dashboardService.getDashboardData(blockStore.storeId, {
+      range: 'today',
+    });
+
+    expect(stopped.quote.totalVnd).toBe(40_000);
+    expect(pendingDashboard.uncompletedOrders.dineIn).toEqual({ count: 1, amount: 40_000 });
+  });
+
   it('allows owner to permanently delete an invoice and updates reports accordingly', async () => {
     const invoiceService = new OwnerInvoiceService(env);
     const dashboardService = new OwnerDashboardService(env);

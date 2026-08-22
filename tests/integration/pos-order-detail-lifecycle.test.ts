@@ -183,6 +183,7 @@ describe('POS Order Detail & Lifecycle Audit (Acceptance Test)', () => {
       discount: {
         type: 'FIXED',
         value: 5000,
+        reason: 'Khách quen',
       },
       now: tItem2,
     });
@@ -307,6 +308,7 @@ describe('POS Order Detail & Lifecycle Audit (Acceptance Test)', () => {
     expect(stingItem!.unitPriceSnapshot).toBe(15_000);
     expect(stingItem!.grossLineTotalVnd).toBe(15_000);
     expect(stingItem!.discountAmountVnd).toBe(5000);
+    expect(stingItem!.discountReason).toBe('Khách quen');
     expect(stingItem!.netLineTotalVnd).toBe(10_000);
 
     // 5. Financial Totals

@@ -142,6 +142,29 @@ describe('Owner and POS activation invariants', () => {
     const data = await jsonData<{ device: { name: string; status: string } }>(activate);
     expect(data.device.name).toBe('Máy thu ngân trực tiếp');
     expect(data.device.status).toBe('ACTIVE');
+
+    const deviceCookie = cookieValue(activate, '__Host-propos-device')!;
+    const contextRes = await SELF.fetch(`${ORIGIN}/api/v1/auth/context`, {
+      headers: { Cookie: deviceCookie },
+    });
+    expect(contextRes.status).toBe(200);
+    const contextData = await jsonData<{
+      device: { name: string; status: string; storeName: string };
+    }>(contextRes);
+    expect(contextData.device.storeName).toBe('Pilot Store');
+
+    const disconnectRes = await SELF.fetch(`${ORIGIN}/api/v1/auth/device/disconnect`, {
+      method: 'POST',
+      headers: {
+        Origin: ORIGIN,
+        'Content-Type': 'application/json',
+        Cookie: deviceCookie,
+      },
+      body: JSON.stringify({}),
+    });
+    expect(disconnectRes.status).toBe(200);
+    expect(disconnectRes.headers.get('Set-Cookie')).toContain('__Host-propos-device=');
+    expect(disconnectRes.headers.get('Set-Cookie')).toContain('Max-Age=0');
   });
 
   it('rejects an Access callback when Cloudflare did not authenticate the request', async () => {

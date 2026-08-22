@@ -68,6 +68,7 @@ export interface AuthContextResponse {
     name: string;
     status: z.infer<typeof deviceStatusSchema>;
     storeId: string;
+    storeName?: string;
   };
   allowedEntrypoints: Array<'OWNER' | 'EMPLOYEE' | 'PLATFORM'>;
   csrfToken: string | null;

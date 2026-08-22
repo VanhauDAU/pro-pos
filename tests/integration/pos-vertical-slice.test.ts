@@ -271,6 +271,73 @@ describe('online POS vertical slice', () => {
     expect(checkout).toMatchObject({ total: 37_500 });
   });
 
+  it('merges repeated staff additions with the same variant, price, and note', async () => {
+    const pos = new PosService(env);
+    const order = await pos.createTakeaway({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-merge-staff-order',
+      idempotencyKey: 'merge-staff-order-001',
+      note: null,
+    });
+
+    const first = await pos.addItem({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-merge-staff-first',
+      idempotencyKey: 'merge-staff-first-001',
+      orderId: order.orderId,
+      productId,
+      variantId,
+      quantityMilli: 1000,
+      expectedOrderVersion: 1,
+      discount: null,
+    });
+    const second = await pos.addItem({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-merge-staff-second',
+      idempotencyKey: 'merge-staff-second-001',
+      orderId: order.orderId,
+      productId,
+      variantId,
+      quantityMilli: 5000,
+      expectedOrderVersion: 2,
+      discount: null,
+    });
+
+    expect(second.itemId).toBe(first.itemId);
+    expect(await pos.quote(storeId, order.orderId)).toMatchObject({
+      order: { version: 3 },
+      totalVnd: 120_000,
+      items: [
+        {
+          id: first.itemId,
+          quantityMilli: 6000,
+          grossLineTotalVnd: 120_000,
+          netLineTotalVnd: 120_000,
+        },
+      ],
+    });
+
+    await pos.addItem({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-merge-staff-different-note',
+      idempotencyKey: 'merge-staff-different-note-001',
+      orderId: order.orderId,
+      productId,
+      variantId,
+      quantityMilli: 1000,
+      note: 'Không lạnh',
+      expectedOrderVersion: 3,
+      discount: null,
+    });
+    const withDifferentNote = await pos.quote(storeId, order.orderId);
+    expect(withDifferentNote.items).toHaveLength(2);
+    expect(withDifferentNote.totalVnd).toBe(140_000);
+  });
+
   it('updates price version variant and discount on existing order items', async () => {
     const catalog = new CatalogService(env);
     const createdProduct = await catalog.createProduct(storeId, {
@@ -1815,7 +1882,15 @@ describe('online POS vertical slice', () => {
     ]);
     expect(race.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
     expect(race.filter((result) => result.status === 'rejected')).toHaveLength(1);
-    expect((await pos.quote(storeId, opened.orderId)).order.version).toBe(3);
+    const quoteAfterSecondRequest = await pos.quote(storeId, opened.orderId);
+    expect(quoteAfterSecondRequest.order.version).toBe(3);
+    expect(quoteAfterSecondRequest.items).toHaveLength(1);
+    expect(quoteAfterSecondRequest.items[0]).toMatchObject({
+      productName: 'Nước suối',
+      quantityMilli: 3000,
+      grossLineTotalVnd: 60_000,
+      netLineTotalVnd: 60_000,
+    });
 
     await pos.stopTimeForCheckout({
       storeId,

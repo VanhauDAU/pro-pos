@@ -4294,6 +4294,70 @@ body {
   font-size: 12px;
 }
 
+.employee-device-bar {
+  margin-top: 18px;
+  padding: 8px 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12.5px;
+}
+
+.employee-device-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.employee-device-icon {
+  color: #6366f1;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.employee-device-store {
+  font-weight: 600;
+  color: #1e293b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.employee-device-divider {
+  color: #cbd5e1;
+  flex-shrink: 0;
+}
+
+.employee-device-name {
+  color: #64748b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.employee-change-store-btn {
+  padding: 0 4px !important;
+  height: auto !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  color: #6366f1 !important;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.employee-change-store-btn:hover {
+  color: #4f46e5 !important;
+  text-decoration: underline;
+}
+
 .activation-heading p {
   text-align: left;
   line-height: 1.65;

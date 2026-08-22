@@ -224,6 +224,36 @@ export function parsePrinterDeviceConfig(jsonStr?: string | null): PrinterDevice
   }
 }
 
+export const updatePrinterDeviceSettingsSchema = z
+  .object({
+    connectionType: z.enum(['SYSTEM', 'NETWORK_TCP']),
+    printerName: z.string().trim().max(255).optional(),
+    networkIp: z.string().trim().max(255).optional(),
+    networkPort: z.number().int().min(1).max(65535).optional(),
+    paperSize: z.enum(['K80', 'K58']),
+    printableDots: z.number().int().min(200).max(1200).optional(),
+    autoCut: z.boolean(),
+    openCashDrawer: z.boolean(),
+  })
+  .superRefine((value, context) => {
+    if (value.connectionType === 'SYSTEM' && !value.printerName) {
+      context.addIssue({
+        code: 'custom',
+        path: ['printerName'],
+        message: 'Vui lòng chọn máy in hệ thống.',
+      });
+    }
+    if (value.connectionType === 'NETWORK_TCP' && !value.networkIp) {
+      context.addIssue({
+        code: 'custom',
+        path: ['networkIp'],
+        message: 'Vui lòng nhập địa chỉ IP máy in.',
+      });
+    }
+  });
+
+export type UpdatePrinterDeviceSettingsInput = z.infer<typeof updatePrinterDeviceSettingsSchema>;
+
 export const updatePrintSettingsSchema = z.object({
   maxReceiptReprintCount: z.number().int().min(0).max(999).default(0),
   paymentCopyCount: z.number().int().min(1).max(9).default(1),

@@ -79,6 +79,48 @@ qrOrderStaffRoutes.get('/service-requests/list', requirePermission('table.view')
   success(c, await new QrOrderService(c.env).listServiceRequests(c.get('actor').storeId!)),
 );
 
+qrOrderStaffRoutes.get('/table-open-requests/list', requirePermission('table.view'), async (c) =>
+  success(c, await new QrOrderService(c.env).listTableOpenRequests(c.get('actor').storeId!)),
+);
+
+qrOrderStaffRoutes.post(
+  '/table-open-requests/:id/accept',
+  requirePermission('table.open'),
+  async (c) => {
+    const actor = c.get('actor');
+    return success(
+      c,
+      await new QrOrderService(c.env).acceptTableOpenRequest({
+        storeId: actor.storeId!,
+        id: c.req.param('id'),
+        actorId: actor.id,
+        actorSessionId: c.get('sessionId'),
+        deviceId: c.get('device')?.id ?? null,
+        requestId: c.get('requestId'),
+        idempotencyKey: idempotencyKey(c),
+      }),
+    );
+  },
+);
+
+qrOrderStaffRoutes.post(
+  '/table-open-requests/:id/cancel',
+  requirePermission('table.open'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, rejectGuestOrderSchema);
+    const actor = c.get('actor');
+    return success(
+      c,
+      await new QrOrderService(c.env).cancelTableOpenRequest({
+        storeId: actor.storeId!,
+        id: c.req.param('id'),
+        actorId: actor.id,
+        reason: body.reason,
+      }),
+    );
+  },
+);
+
 qrOrderStaffRoutes.post(
   '/service-requests/:id/status',
   requirePermission('order.manage'),

@@ -38,11 +38,12 @@ export class OwnerDashboardService {
     const { fromMs, toMs, range } = this.calculateDateRange(query);
     const now = Date.now();
 
-    const [invoices, lines, uncompleted, staffList] = await Promise.all([
+    const [invoices, lines, uncompleted, staffList, customerCount] = await Promise.all([
       this.repository.getCompletedInvoices(storeId, fromMs, toMs),
       this.repository.getInvoiceLines(storeId, fromMs, toMs),
       this.repository.getUncompletedOrders(storeId),
       this.repository.getStaffUsers(storeId),
+      this.repository.countActiveCustomers(storeId),
     ]);
 
     // 1. Summary KPIs
@@ -50,9 +51,6 @@ export class OwnerDashboardService {
     const discountTotal = invoices.reduce((sum, i) => sum + i.discountTotal, 0);
     const revenue = invoices.reduce((sum, i) => sum + i.total, 0);
     const invoiceCount = invoices.length;
-
-    // Customer management is coming in a future feature; currently no distinct saved customers
-    const customerCount = 0;
 
     // Only count physical / retail products, excluding time duration service lines
     const productLines = lines.filter((l) => l.lineType === 'PRODUCT');

@@ -1,6 +1,5 @@
 import {
   REALTIME_REPLAY_LIMIT,
-  type PosRealtimeReason,
   type PosRealtimeTopic,
   type RealtimeEventV1,
   type RealtimeSyncResponse,
@@ -32,7 +31,7 @@ function parseJson<T>(value: string, fallback: T): T {
 }
 
 export function mapRealtimeEvent(row: RealtimeEventRow): RealtimeEventV1 {
-  const data = parseJson<{ reason: PosRealtimeReason; affectedTableIds?: string[] }>(row.dataJson, {
+  const data = parseJson<RealtimeEventV1['data']>(row.dataJson, {
     reason: 'ITEM_UPDATED',
   });
   return {

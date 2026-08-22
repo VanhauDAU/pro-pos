@@ -9,6 +9,7 @@ import {
   EditOutlined,
   FileTextOutlined,
   HistoryOutlined,
+  HourglassOutlined,
   MinusOutlined,
   PlusOutlined,
   RightOutlined,
@@ -19,7 +20,19 @@ import {
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, Drawer, Empty, Input, Modal, Popconfirm, Result, Spin, Tag, message } from 'antd';
+import {
+  Alert,
+  Button,
+  Drawer,
+  Empty,
+  Input,
+  Modal,
+  Popconfirm,
+  Result,
+  Spin,
+  Tag,
+  message,
+} from 'antd';
 import { useMemo, useState } from 'react';
 import { useParams } from 'react-router';
 
@@ -92,12 +105,14 @@ export function GuestOrderPage() {
     queryFn: () => apiRequest<GuestOrderContext>(`/api/v1/guest-order/resolve/${token}`),
     enabled: Boolean(token),
     retry: false,
+    refetchInterval: (query) =>
+      query.state.data?.tableStatus === 'OPEN_REQUESTED' ? 3_000 : false,
   });
 
   const requests = useQuery({
     queryKey: ['guest-order-own-requests'],
     queryFn: () => apiRequest<GuestOrderRequestDto[]>('/api/v1/guest-order/requests'),
-    enabled: context.isSuccess,
+    enabled: context.data?.tableStatus === 'OPEN',
     refetchInterval: 5_000,
   });
 
@@ -320,6 +335,25 @@ export function GuestOrderPage() {
     },
   });
 
+  const requestTableOpen = useMutation({
+    mutationFn: () =>
+      jsonRequest<{ requestId: string | null; alreadyOpen: boolean }>(
+        `/api/v1/guest-order/resolve/${token}/open-request`,
+        {},
+      ),
+    onSuccess: async (result) => {
+      messageApi.success(
+        result.alreadyOpen
+          ? 'Bàn đã được mở. Đang tải phiên gọi món...'
+          : 'Đã báo nhân viên. Bạn có thể chọn món trong lúc chờ.',
+      );
+      await context.refetch();
+    },
+    onError: (error) => {
+      messageApi.error(error instanceof Error ? error.message : 'Không thể gửi yêu cầu mở bàn.');
+    },
+  });
+
   // Loading & Error States
   if (context.isLoading) {
     return (
@@ -349,6 +383,12 @@ export function GuestOrderPage() {
   }
 
   const latestRequest = requests.data?.[0];
+  const isTableOpen = context.data.tableStatus === 'OPEN';
+  const isWaitingForOpen = context.data.tableStatus === 'OPEN_REQUESTED';
+  const mediaUrl = (mediaId: string) =>
+    isTableOpen
+      ? `/api/v1/guest-order/media/${mediaId}`
+      : `/api/v1/guest-order/resolve/${token}/media/${mediaId}`;
 
   return (
     <div className="qr-guest-layout">
@@ -386,6 +426,7 @@ export function GuestOrderPage() {
             <button
               type="button"
               className="qr-guest-service-btn qr-guest-service-btn--staff"
+              disabled={!isTableOpen}
               onClick={() => setServiceConfirm({ open: true, type: 'CALL_STAFF' })}
             >
               <div className="qr-guest-service-btn__icon">
@@ -400,6 +441,7 @@ export function GuestOrderPage() {
             <button
               type="button"
               className="qr-guest-service-btn qr-guest-service-btn--bill"
+              disabled={!isTableOpen}
               onClick={() => setServiceConfirm({ open: true, type: 'CHECKOUT_REQUEST' })}
             >
               <div className="qr-guest-service-btn__icon">
@@ -412,6 +454,33 @@ export function GuestOrderPage() {
             </button>
           </div>
         </header>
+
+        {!isTableOpen ? (
+          <Alert
+            className="qr-guest-table-open-alert"
+            type={isWaitingForOpen ? 'info' : 'warning'}
+            showIcon
+            icon={<HourglassOutlined />}
+            title={isWaitingForOpen ? 'Đang chờ nhân viên mở bàn' : 'Bàn chưa được mở'}
+            description={
+              <div className="qr-guest-table-open-alert__content">
+                <span>
+                  {isWaitingForOpen
+                    ? 'Bạn cứ chọn món vào giỏ. Trang sẽ tự cập nhật ngay khi bàn được mở.'
+                    : 'Gửi yêu cầu để nhân viên mở bàn. Bạn vẫn có thể xem menu và chọn món trước.'}
+                </span>
+                <Button
+                  type="primary"
+                  loading={requestTableOpen.isPending}
+                  disabled={isWaitingForOpen}
+                  onClick={() => requestTableOpen.mutate()}
+                >
+                  {isWaitingForOpen ? 'Đã gửi yêu cầu' : 'Yêu cầu mở bàn'}
+                </Button>
+              </div>
+            }
+          />
+        ) : null}
 
         {/* ── 2. Live Order Status Tracker (If previous requests exist) ─── */}
         {latestRequest ? (
@@ -527,7 +596,7 @@ export function GuestOrderPage() {
                       >
                         {product.avatarType === 'IMAGE' && product.mediaId ? (
                           <img
-                            src={`/api/v1/guest-order/media/${product.mediaId}`}
+                            src={mediaUrl(product.mediaId)}
                             alt={product.name}
                             className="qr-guest-card__img"
                             loading="lazy"
@@ -740,7 +809,7 @@ export function GuestOrderPage() {
                         >
                           {hasCustomAvatar ? (
                             <img
-                              src={`/api/v1/guest-order/media/${line.product.mediaId}`}
+                              src={mediaUrl(line.product.mediaId!)}
                               alt={line.product.name}
                               className="qr-cart-item-img"
                               loading="lazy"
@@ -936,7 +1005,7 @@ export function GuestOrderPage() {
                 <button
                   type="button"
                   className="qr-cart-submit-btn"
-                  disabled={submitOrder.isPending}
+                  disabled={submitOrder.isPending || !isTableOpen}
                   onClick={() => submitOrder.mutate()}
                 >
                   <div className="qr-cart-submit-btn__content">
@@ -944,7 +1013,11 @@ export function GuestOrderPage() {
                       {submitOrder.isPending ? <Spin size="small" /> : <SendOutlined />}
                     </span>
                     <span className="qr-cart-submit-btn__text">
-                      {submitOrder.isPending ? 'Đang gửi yêu cầu...' : 'Gửi yêu cầu gọi món'}
+                      {submitOrder.isPending
+                        ? 'Đang gửi yêu cầu...'
+                        : isTableOpen
+                          ? 'Gửi yêu cầu gọi món'
+                          : 'Chờ nhân viên mở bàn'}
                     </span>
                     <span className="qr-cart-submit-btn__badge">{formatVnd(totalAmount)}</span>
                   </div>

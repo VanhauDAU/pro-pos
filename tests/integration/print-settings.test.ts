@@ -219,11 +219,13 @@ describe('Owner print settings', () => {
       data: provData,
       storeInfo: { storeName: 'Quán Cafe Test', phone: '0988888888' },
     });
-    expect(provResult.escPosData).toContain('PHIẾU TẠM TÍNH');
+    expect(provResult.escPosData).toContain('HÓA ĐƠN TẠM TÍNH');
+    expect(provResult.escPosData).toContain('Liên 1/1');
     expect(provResult.escPosData).toContain('Bàn 01');
     expect(provResult.escPosData).toContain('Thông tin giờ');
     expect(provResult.escPosData).toContain('Mặt hàng');
     expect(provResult.escPosData).toContain('Cà phê sữa');
+    expect(provResult.escPosData).toContain('Tổng hàng & dịch vụ:');
 
     // 2. Payment Receipt
     const payData = buildPrintDataFromQuote(mockQuote, 'PAYMENT', 'CASH', 200000);

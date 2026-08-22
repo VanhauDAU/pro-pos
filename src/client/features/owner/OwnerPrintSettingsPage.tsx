@@ -51,6 +51,7 @@ import {
   printTestReceipt,
 } from '@client/lib/qz-tray-service';
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
+import { ReceiptPreviewPaper } from '@client/features/pos/ReceiptPreviewModal';
 
 function errorMessage(error: unknown, fallback: string) {
   if (error instanceof ApiError) return error.message;
@@ -615,6 +616,75 @@ export function OwnerPrintSettingsPage() {
     );
   }
 
+  const livePreviewSettings = {
+    ...printSettings.data,
+    ...form.getFieldsValue(),
+    storeId: printSettings.data?.storeId ?? '',
+    updatedAt: printSettings.data?.updatedAt ?? Date.now(),
+    paperSize: previewPaperSize,
+    logoMediaId: logoMediaId ?? null,
+    bottomImageMediaId: bottomImageMediaId ?? null,
+    templateConfigJson: printSettings.data?.templateConfigJson ?? null,
+  } as StorePrintSettings;
+  const previewReceiptData = {
+    receiptType: previewInvoiceType,
+    orderCode: previewInvoiceType === 'PROVISIONAL' ? 'D-260822-0012' : 'HD-260822-000012',
+    invoiceCode: previewInvoiceType === 'PAYMENT' ? 'HD-260822-000012' : null,
+    orderType: 'DINE_IN' as const,
+    tableName: 'Bàn 01',
+    areaName: 'Khu vực 1',
+    cashierName: 'Nguyễn Văn A',
+    customerName: 'Nguyễn Nhật Quang Minh',
+    guestPhone: '0966690040',
+    guestAddress: '266 Đội Cấn, Ba Đình, Hà Nội',
+    note: 'Ít đá, không lấy ống hút',
+    checkInTimeMs: Date.now() - 90 * 60_000,
+    issuedAtMs: Date.now(),
+    subtotal: 173_000,
+    discountTotal: 10_000,
+    total: 163_000,
+    ...(previewInvoiceType === 'PAYMENT'
+      ? {
+          paymentMethod: 'CASH' as const,
+          cashReceived: 200_000,
+          cashChange: 37_000,
+          paidAmountVnd: 163_000,
+          debtAmountVnd: 0,
+          paymentAllocations: [{ method: 'CASH' as const, amountVnd: 163_000 }],
+        }
+      : {}),
+    lines: [
+      {
+        id: 'preview-time',
+        name: 'Tiền giờ',
+        quantity: 1,
+        unitPrice: 50_000,
+        totalPrice: 48_000,
+        isTime: true,
+        timeStartedAtMs: Date.now() - 90 * 60_000,
+        timeEndedAtMs: Date.now(),
+        timeElapsedSeconds: 90 * 60,
+      },
+      {
+        id: 'preview-drink',
+        name: 'Trà sữa ô long (size L)',
+        quantity: 1,
+        unitPrice: 65_000,
+        totalPrice: 65_000,
+        unitName: 'Ly',
+        note: 'Không lấy ống hút',
+      },
+      {
+        id: 'preview-food',
+        name: 'Cơm gà chua ngọt',
+        quantity: 1,
+        unitPrice: 60_000,
+        totalPrice: 60_000,
+        unitName: 'Phần',
+      },
+    ],
+  };
+
   return (
     <div className="owner-print-settings-page">
       {contextHolder}
@@ -673,7 +743,6 @@ export function OwnerPrintSettingsPage() {
           onChange={(key) => setActiveTab(key as 'invoice' | 'printers')}
           items={[
             { key: 'invoice', label: 'Mẫu in hóa đơn' },
-            { key: 'printers', label: 'Cấu hình máy in' },
             { key: 'label_disabled', label: 'Mẫu in tem', disabled: true },
             { key: 'kitchen_disabled', label: 'Mẫu in bếp', disabled: true },
             { key: 'check_disabled', label: 'Mẫu in phiếu kiểm đồ', disabled: true },
@@ -1076,9 +1145,25 @@ export function OwnerPrintSettingsPage() {
                   />
                 </div>
 
+                <ReceiptPreviewPaper
+                  options={{
+                    data: previewReceiptData,
+                    printSettings: livePreviewSettings,
+                    storeInfo: {
+                      storeName: previewStoreName,
+                      phone: previewPhone,
+                      address: previewAddress,
+                      bankName: storeSettings.data?.bankName ?? null,
+                      bankAccountNumber: storeSettings.data?.bankAccountNumber ?? null,
+                      bankAccountName: storeSettings.data?.bankAccountName ?? null,
+                    },
+                  }}
+                />
+
                 {/* ── Thermal Paper Simulated Container ── */}
                 <div
                   className={`thermal-receipt-preview thermal-receipt-preview--${previewPaperSize.toLowerCase()}`}
+                  style={{ display: 'none' }}
                 >
                   <div className="thermal-receipt-inner">
                     {/* Header: Logo & Store Info */}

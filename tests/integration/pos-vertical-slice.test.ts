@@ -1669,8 +1669,9 @@ describe('online POS vertical slice', () => {
     expect(resumeResult.quote.order.status).toBe('OPEN');
     expect(resumeResult.quote.time?.status).toBe('RUNNING');
     expect(resumeResult.quote.time?.endedAtMs).toBeNull();
-    // At resume moment, elapsed seconds is exactly the previous 5235 seconds (waiting gap 07:27:15 - 07:30:42 not charged!)
-    expect(resumeResult.quote.time?.elapsedSeconds).toBe(5235);
+    // Returning from checkout restores one continuous interval, including time spent on checkout.
+    expect(resumeResult.quote.time?.elapsedSeconds).toBe(5442);
+    expect(resumeResult.quote.time?.tableSegments).toHaveLength(1);
 
     // 6b. Immediate stop-time right after resume (same millisecond/second) - must not crash
     const immediateStop = await pos.stopTimeForCheckout({
@@ -1683,7 +1684,7 @@ describe('online POS vertical slice', () => {
       now: tResume,
     });
     expect(immediateStop.status).toBe('PAYMENT_PENDING');
-    expect(immediateStop.quote.time?.elapsedSeconds).toBe(5235);
+    expect(immediateStop.quote.time?.elapsedSeconds).toBe(5442);
 
     // Resume again after immediate stop
     const resumeAgain = await pos.resumeCheckout({
@@ -1697,12 +1698,11 @@ describe('online POS vertical slice', () => {
     });
     expect(resumeAgain.status).toBe('OPEN');
 
-    // At 08:00:42 (30 minutes after resume): total elapsed is 5235s + 1800s = 7035s
+    // At 08:00:42 the original interval is still continuous from 06:00.
     const tPlayingLater = tResume + 1800 * 1000;
     const playingQuote = await pos.quote(storeId, opened.orderId, tPlayingLater);
-    expect(playingQuote.time?.elapsedSeconds).toBe(5235 + 1799); // 1799s since resumed at tResume + 1000
-    // Table segments show distinct intervals
-    expect(playingQuote.time?.tableSegments?.length).toBe(3);
+    expect(playingQuote.time?.elapsedSeconds).toBe(7242);
+    expect(playingQuote.time?.tableSegments?.length).toBe(1);
 
     // 7. Stop time again at 08:00:42
     const stopResult2 = await pos.stopTimeForCheckout({
@@ -1812,6 +1812,127 @@ describe('online POS vertical slice', () => {
     expect(quoteAfter3.order.status).toBe('PAYMENT_PENDING');
     expect(quoteAfter3.time?.status).toBe('ENDED');
     expect(quoteAfter3.time?.endedAtMs).toBe(tStop);
+  });
+
+  it('lets a QR guest request a closed table and enter the menu after staff opens it', async () => {
+    const catalog = new CatalogService(env);
+    const table = await catalog.createTable({
+      storeId,
+      areaId,
+      timeProductId,
+      name: 'Bàn chờ QR',
+      sortOrder: 119,
+    });
+    const qr = new QrOrderService(env);
+    const code = await qr.rotateQrCode(storeId, table.id, ownerUserId);
+
+    const closed = await qr.resolveQr({
+      rawQrToken: code.token,
+      ip: '127.0.0.1',
+      deviceNonce: 'waiting-device',
+    });
+    expect(closed.rawGuest).toBe('');
+    expect(closed.context).toMatchObject({
+      tableStatus: 'AVAILABLE',
+      tableName: 'Bàn chờ QR',
+      sessionExpiresAt: null,
+      openRequest: null,
+    });
+    expect(closed.context.menu.some((item) => item.id === productId)).toBe(true);
+
+    const requested = await qr.requestTableOpen(code.token, '127.0.0.1');
+    const replay = await qr.requestTableOpen(code.token, '127.0.0.1');
+    expect(requested).toMatchObject({ alreadyOpen: false, replayed: false });
+    expect(replay).toMatchObject({
+      alreadyOpen: false,
+      replayed: true,
+      requestId: requested.requestId,
+    });
+
+    await env.DB.prepare('UPDATE table_open_requests SET created_at = ? WHERE id = ?')
+      .bind(Date.now() - 11 * 60_000, requested.requestId)
+      .run();
+    const expired = await qr.resolveQr({
+      rawQrToken: code.token,
+      ip: '127.0.0.1',
+      deviceNonce: 'waiting-device',
+    });
+    expect(expired.context.tableStatus).toBe('AVAILABLE');
+
+    const freshRequested = await qr.requestTableOpen(code.token, '127.0.0.1');
+    expect(freshRequested).toMatchObject({ alreadyOpen: false, replayed: false });
+    expect(freshRequested.requestId).not.toBe(requested.requestId);
+    const createdRealtime = await env.DB.prepare(
+      `SELECT topics_json AS topicsJson, data_json AS dataJson
+       FROM realtime_events
+       WHERE store_id = ?
+         AND json_extract(data_json, '$.tableOpenRequestId') = ?
+         AND json_extract(data_json, '$.reason') = 'TABLE_OPEN_REQUEST_CREATED'
+       LIMIT 1`,
+    )
+      .bind(storeId, freshRequested.requestId)
+      .first<{ topicsJson: string; dataJson: string }>();
+    expect(JSON.parse(createdRealtime!.topicsJson)).toContain('guest.table-open-requests');
+    expect(JSON.parse(createdRealtime!.dataJson)).toMatchObject({
+      reason: 'TABLE_OPEN_REQUEST_CREATED',
+      tableOpenRequestId: freshRequested.requestId,
+      affectedTableIds: [table.id],
+    });
+
+    const waiting = await qr.resolveQr({
+      rawQrToken: code.token,
+      ip: '127.0.0.1',
+      deviceNonce: 'waiting-device',
+    });
+    expect(waiting.context).toMatchObject({
+      tableStatus: 'OPEN_REQUESTED',
+      openRequest: { id: freshRequested.requestId, status: 'OPEN' },
+    });
+    expect(await qr.listTableOpenRequests(storeId)).toEqual([
+      expect.objectContaining({
+        id: freshRequested.requestId,
+        tableId: table.id,
+        tableName: 'Bàn chờ QR',
+      }),
+    ]);
+
+    await qr.acceptTableOpenRequest({
+      storeId,
+      id: freshRequested.requestId!,
+      actorId: ownerUserId,
+      actorSessionId: null,
+      deviceId: null,
+      requestId: 'req-staff-open-qr-table',
+      idempotencyKey: 'cmd-staff-open-qr-table',
+    });
+    expect(await qr.listTableOpenRequests(storeId)).toHaveLength(0);
+    const completedRealtime = await env.DB.prepare(
+      `SELECT data_json AS dataJson
+       FROM realtime_events
+       WHERE store_id = ?
+         AND json_extract(data_json, '$.tableOpenRequestId') = ?
+         AND json_extract(data_json, '$.reason') = 'TABLE_OPEN_REQUEST_UPDATED'
+       ORDER BY sequence DESC LIMIT 1`,
+    )
+      .bind(storeId, freshRequested.requestId)
+      .first<{ dataJson: string }>();
+    expect(JSON.parse(completedRealtime!.dataJson)).toMatchObject({
+      reason: 'TABLE_OPEN_REQUEST_UPDATED',
+      tableOpenRequestId: freshRequested.requestId,
+      tableOpenRequestStatus: 'COMPLETED',
+    });
+
+    const active = await qr.resolveQr({
+      rawQrToken: code.token,
+      ip: '127.0.0.1',
+      deviceNonce: 'waiting-device',
+    });
+    expect(active.rawGuest).not.toBe('');
+    expect(active.context).toMatchObject({
+      tableStatus: 'OPEN',
+      tableName: 'Bàn chờ QR',
+      openRequest: null,
+    });
   });
 
   it('creates a QR guest request and atomically accepts it into the active table order', async () => {

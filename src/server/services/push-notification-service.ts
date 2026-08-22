@@ -4,8 +4,8 @@ import { PushSubscriptionRepository } from '@server/repositories/push-subscripti
 
 export interface StorePushNotification {
   storeId: string;
-  kind: 'QR_ORDER' | 'CALL_STAFF' | 'CHECKOUT_REQUEST';
-  soundType: 'NEW_QR_ORDER' | 'CHECKOUT_REQUEST';
+  kind: 'QR_ORDER' | 'CALL_STAFF' | 'CHECKOUT_REQUEST' | 'TABLE_OPEN_REQUEST';
+  soundType: 'NEW_QR_ORDER' | 'CHECKOUT_REQUEST' | 'TABLE_OPEN_REQUEST';
   title: string;
   body: string;
   url: string;

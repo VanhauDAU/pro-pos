@@ -39,7 +39,11 @@ self.addEventListener('push', (event) => {
         windowClients.find((client) => client.focused) ??
         windowClients.find((client) => client.visibilityState === 'visible');
       const soundType =
-        payload.soundType === 'CHECKOUT_REQUEST' ? 'CHECKOUT_REQUEST' : 'NEW_QR_ORDER';
+        payload.soundType === 'CHECKOUT_REQUEST'
+          ? 'CHECKOUT_REQUEST'
+          : payload.soundType === 'TABLE_OPEN_REQUEST'
+            ? 'TABLE_OPEN_REQUEST'
+            : 'NEW_QR_ORDER';
       const tag = payload.tag ?? 'propos-notification';
 
       if (audioClient) {

@@ -151,6 +151,11 @@ function paymentMethodTag(method: 'CASH' | 'BANK_TRANSFER') {
   );
 }
 
+function allocationMethodTag(method: 'CASH' | 'BANK_TRANSFER' | 'DEBT') {
+  if (method === 'DEBT') return <Tag color="orange">Ghi nợ - Thanh toán sau</Tag>;
+  return paymentMethodTag(method);
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function OrderDetailPage({
@@ -276,9 +281,10 @@ export function OrderDetailPage({
       }>('/api/v1/pos/context'),
   });
 
-  const handlePrintReceipt = (receiptType: 'PROVISIONAL' | 'PAYMENT') => {
+  const handlePrintReceipt = async (receiptType: 'PROVISIONAL' | 'PAYMENT') => {
     if (!data) return;
     const isPayment = receiptType === 'PAYMENT' && Boolean(data.invoice);
+    const successfulPayment = data.payments.find((payment) => payment.status === 'SUCCEEDED');
 
     const printData: PosReceiptPrintData = {
       receiptType,
@@ -289,7 +295,7 @@ export function OrderDetailPage({
       invoiceCode: data.invoice?.displayCode || null,
       orderType: data.order.orderType,
       tableName: data.order.tableName,
-      areaName: null,
+      areaName: data.order.areaName,
       cashierName: data.invoice?.issuedByName ?? null,
       customerName: data.customer?.name ?? null,
       guestPhone: data.customer?.phone ?? null,
@@ -298,11 +304,11 @@ export function OrderDetailPage({
       checkInTimeMs: data.order.openedAt,
       issuedAtMs: data.invoice?.issuedAt || Date.now(),
       subtotal: isPayment ? data.invoice!.subtotalVnd : liveGrandTotal,
-      discountTotal: isPayment ? data.invoice!.discountTotalVnd : 0,
+      discountTotal: isPayment ? data.invoice!.discountTotalVnd : data.totals.totalDiscountVnd,
       total: isPayment ? data.invoice!.totalVnd : liveGrandTotal,
-      paymentMethod: data.invoice ? 'CASH' : null,
-      cashReceived: null,
-      cashChange: null,
+      paymentMethod: isPayment ? (successfulPayment?.method ?? null) : null,
+      cashReceived: isPayment ? (successfulPayment?.cashReceived ?? null) : null,
+      cashChange: isPayment ? (successfulPayment?.cashChange ?? null) : null,
       lines: [
         ...(liveTimeSegments.length > 0
           ? [
@@ -335,11 +341,22 @@ export function OrderDetailPage({
           totalPrice: it.netLineTotalVnd,
           unitName: it.unitNameSnapshot,
           note: it.note,
+          isTime: it.productType === 'TIME',
+          timeStartedAtMs: it.timeStartedAtMs ?? undefined,
+          timeEndedAtMs: it.timeEndedAtMs,
         })),
       ],
     };
+    if (isPayment) {
+      printData.paymentAllocations = data.paymentAllocations.map((allocation) => ({
+        method: allocation.method,
+        amountVnd: allocation.amountVnd,
+      }));
+      printData.paidAmountVnd = data.totals.paidAmountVnd;
+      printData.debtAmountVnd = data.totals.debtAmountVnd;
+    }
 
-    void printReceipt({
+    const result = await printReceipt({
       data: printData,
       printSettings: printSettings.data,
       storeInfo: {
@@ -351,6 +368,8 @@ export function OrderDetailPage({
         bankAccountName: staffContext.data?.bankAccountName ?? null,
       },
     });
+    if (result.success) messageApi.success('Đã gửi lệnh in hóa đơn.');
+    else messageApi.error(result.message ?? 'Không thể in hóa đơn.');
   };
 
   if (detailQuery.isLoading) {
@@ -390,6 +409,7 @@ export function OrderDetailPage({
     items,
     checkout,
     payments,
+    paymentAllocations,
     invoice,
     auditEvents,
     totals,
@@ -864,6 +884,12 @@ export function OrderDetailPage({
                     )}
                   </>
                 )}
+                {totals.debtAmountVnd > 0 ? (
+                  <div className="order-detail-totals-row">
+                    <span className="text-secondary">Ghi công nợ:</span>
+                    <strong className="text-danger">{formatMoney(totals.debtAmountVnd)}</strong>
+                  </div>
+                ) : null}
               </div>
             </Card>
 
@@ -947,6 +973,12 @@ export function OrderDetailPage({
                     <span className="text-secondary">Tổng hóa đơn:</span>
                     <strong className="text-primary">{formatMoney(invoice.totalVnd)}</strong>
                   </div>
+                  {totals.debtAmountVnd > 0 ? (
+                    <div className="order-detail-checkout-row">
+                      <span className="text-secondary">Công nợ phát sinh:</span>
+                      <strong className="text-danger">{formatMoney(totals.debtAmountVnd)}</strong>
+                    </div>
+                  ) : null}
                 </div>
               </Card>
             )}
@@ -1134,8 +1166,46 @@ export function OrderDetailPage({
         <Row gutter={[16, 16]}>
           <Col xs={24} md={12}>
             <Card title="Giao dịch thanh toán" size="small" className="order-detail-card">
-              {payments.length === 0 ? (
+              {paymentAllocations.length === 0 && payments.length === 0 ? (
                 <Empty description="Đơn hàng chưa thực hiện thanh toán" />
+              ) : paymentAllocations.length > 0 ? (
+                <div className="order-detail-payments-list">
+                  {paymentAllocations.map((allocation) => (
+                    <Card
+                      key={allocation.id}
+                      type="inner"
+                      size="small"
+                      style={{ marginBottom: 12 }}
+                    >
+                      <Descriptions size="small" column={1} bordered>
+                        <Descriptions.Item label="Phương thức">
+                          {allocationMethodTag(allocation.method)}
+                        </Descriptions.Item>
+                        <Descriptions.Item
+                          label={
+                            allocation.method === 'DEBT' ? 'Số tiền ghi nợ' : 'Số tiền thanh toán'
+                          }
+                        >
+                          <strong
+                            className={
+                              allocation.method === 'DEBT' ? 'text-danger' : 'text-primary'
+                            }
+                          >
+                            {formatMoney(allocation.amountVnd)}
+                          </strong>
+                        </Descriptions.Item>
+                        {allocation.tenderedVnd !== null ? (
+                          <Descriptions.Item label="Tiền khách đưa">
+                            {formatMoney(allocation.tenderedVnd)}
+                          </Descriptions.Item>
+                        ) : null}
+                        <Descriptions.Item label="Thời gian">
+                          {formatDateTime(allocation.createdAt)}
+                        </Descriptions.Item>
+                      </Descriptions>
+                    </Card>
+                  ))}
+                </div>
               ) : (
                 <div className="order-detail-payments-list">
                   {payments.map((pm, idx) => (
@@ -1178,7 +1248,7 @@ export function OrderDetailPage({
             <Card
               title="Hóa đơn chính thức (Snapshot)"
               size="small"
-              className="order-detail-card"
+              className="order-detail-card order-detail-invoice-card"
               extra={
                 invoice && (
                   <Button
@@ -1194,31 +1264,47 @@ export function OrderDetailPage({
               {!invoice ? (
                 <Empty description="Chưa tạo hóa đơn chính thức cho đơn này" />
               ) : (
-                <Descriptions size="small" column={1} bordered>
-                  <Descriptions.Item label="Mã hóa đơn">
-                    <strong>{invoice.displayCode}</strong>
-                  </Descriptions.Item>
-                  <Descriptions.Item label="Trạng thái">
-                    <Tag color="success">Đã hoàn thành</Tag>
-                  </Descriptions.Item>
-                  <Descriptions.Item label="Thời gian xuất">
-                    {formatDateTime(invoice.issuedAt)}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="Thu ngân xuất">
-                    {invoice.issuedByName}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="Tiền hàng / giờ">
-                    {formatMoney(invoice.subtotalVnd)}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="Giảm giá">
-                    -{formatMoney(invoice.discountTotalVnd)}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="Tổng cộng">
-                    <strong className="text-primary font-bold">
-                      {formatMoney(invoice.totalVnd)}
-                    </strong>
-                  </Descriptions.Item>
-                </Descriptions>
+                <div className="order-detail-inline-receipt">
+                  <header>
+                    <strong>{order.storeName}</strong>
+                    <span>HÓA ĐƠN THANH TOÁN</span>
+                    <small>
+                      {invoice.displayCode} · {formatDateTime(invoice.issuedAt)}
+                    </small>
+                  </header>
+                  <div className="order-detail-inline-receipt__divider" />
+                  <div className="order-detail-inline-receipt__row">
+                    <span>Thu ngân</span>
+                    <b>{invoice.issuedByName}</b>
+                  </div>
+                  <div className="order-detail-inline-receipt__row">
+                    <span>Tiền hàng / giờ</span>
+                    <b>{formatMoney(invoice.subtotalVnd)}</b>
+                  </div>
+                  <div className="order-detail-inline-receipt__row">
+                    <span>Giảm giá</span>
+                    <b>-{formatMoney(invoice.discountTotalVnd)}</b>
+                  </div>
+                  <div className="order-detail-inline-receipt__divider" />
+                  <div className="order-detail-inline-receipt__row order-detail-inline-receipt__total">
+                    <span>TỔNG CỘNG</span>
+                    <b>{formatMoney(invoice.totalVnd)}</b>
+                  </div>
+                  {paymentAllocations.map((allocation) => (
+                    <div className="order-detail-inline-receipt__row" key={allocation.id}>
+                      <span>
+                        {allocation.method === 'CASH'
+                          ? 'Tiền mặt'
+                          : allocation.method === 'DEBT'
+                            ? 'Ghi nợ'
+                            : 'Chuyển khoản'}
+                      </span>
+                      <b className={allocation.method === 'DEBT' ? 'text-danger' : ''}>
+                        {formatMoney(allocation.amountVnd)}
+                      </b>
+                    </div>
+                  ))}
+                </div>
               )}
             </Card>
           </Col>
@@ -1237,31 +1323,33 @@ export function OrderDetailPage({
           ) : (
             <Timeline
               mode="left"
-              items={auditEvents.map((evt) => ({
-                label: formatClock(evt.eventAt),
-                color: evt.action.includes('CANCEL')
-                  ? 'red'
-                  : evt.action.includes('COMPLETE') || evt.action.includes('PAID')
-                    ? 'green'
-                    : evt.action.includes('TRANSFER')
-                      ? 'orange'
-                      : 'blue',
-                children: (
-                  <div className="order-detail-timeline-item">
-                    <div className="order-detail-timeline-title">
-                      <strong>{evt.title}</strong>
-                      <small className="text-secondary"> · {formatDateTime(evt.eventAt)}</small>
-                    </div>
-                    <div className="order-detail-timeline-desc">{evt.description}</div>
-                    {evt.actorName && (
-                      <div className="order-detail-timeline-actor">
-                        <UserOutlined style={{ marginRight: 4 }} />
-                        <span>{evt.actorName}</span>
+              items={auditEvents
+                .toSorted((left, right) => right.eventAt - left.eventAt)
+                .map((evt) => ({
+                  label: formatClock(evt.eventAt),
+                  color: evt.action.includes('CANCEL')
+                    ? 'red'
+                    : evt.action.includes('COMPLETE') || evt.action.includes('PAID')
+                      ? 'green'
+                      : evt.action.includes('TRANSFER')
+                        ? 'orange'
+                        : 'blue',
+                  children: (
+                    <div className="order-detail-timeline-item">
+                      <div className="order-detail-timeline-title">
+                        <strong>{evt.title}</strong>
+                        <small className="text-secondary"> · {formatDateTime(evt.eventAt)}</small>
                       </div>
-                    )}
-                  </div>
-                ),
-              }))}
+                      <div className="order-detail-timeline-desc">{evt.description}</div>
+                      {evt.actorName && (
+                        <div className="order-detail-timeline-actor">
+                          <UserOutlined style={{ marginRight: 4 }} />
+                          <span>{evt.actorName}</span>
+                        </div>
+                      )}
+                    </div>
+                  ),
+                }))}
             />
           )}
         </Card>

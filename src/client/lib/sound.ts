@@ -1,6 +1,7 @@
 export const POS_SOUNDS = {
   NEW_QR_ORDER: '/sound/sound_goimonmoi.ogg',
   CHECKOUT_REQUEST: '/sound/sound_yeucauthanhtoan.ogg',
+  TABLE_OPEN_REQUEST: '/sound/sound_yeuccaumoban.ogg',
 } as const;
 
 export type PosSoundType = keyof typeof POS_SOUNDS;
@@ -139,6 +140,8 @@ class PosSoundEngine {
       try {
         if (type === 'NEW_QR_ORDER') {
           navigator.vibrate([200, 100, 200]);
+        } else if (type === 'TABLE_OPEN_REQUEST') {
+          navigator.vibrate([250, 100, 250, 100, 250]);
         } else {
           navigator.vibrate([400, 150, 400]);
         }

@@ -53,6 +53,7 @@ export interface GuestMenuProduct {
 }
 
 export interface GuestOrderContext {
+  tableStatus: 'OPEN' | 'AVAILABLE' | 'OPEN_REQUESTED';
   storeName: string;
   tableName: string;
   areaName: string;
@@ -61,8 +62,23 @@ export interface GuestOrderContext {
     name: string;
     areaName: string;
   };
-  sessionExpiresAt: number;
+  sessionExpiresAt: number | null;
+  openRequest: {
+    id: string;
+    status: 'OPEN';
+    createdAt: number;
+  } | null;
   menu: GuestMenuProduct[];
+}
+
+export interface TableOpenRequestDto {
+  id: string;
+  status: 'OPEN';
+  tableId: string;
+  tableName: string;
+  areaName: string;
+  tableVersion: number;
+  createdAt: number;
 }
 
 export type GuestOrderStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'CANCELLED' | 'EXPIRED';

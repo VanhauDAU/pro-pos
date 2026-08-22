@@ -47,6 +47,7 @@ import logo from '@client/assets/logo-white.svg';
 import { apiRequest } from '@client/lib/api';
 
 import { OwnerStoreSettingsPage } from './OwnerStoreSettingsPage';
+import { OwnerAccountSettingsPage } from './OwnerAccountSettingsPage';
 import { OwnerAreaCreatePage, OwnerAreaSettingsPage } from './OwnerAreaSettingsPage';
 import { OwnerEmployeeFormPage, OwnerStaffListPage } from './OwnerStaffPages';
 import { OwnerRoleFormPage, OwnerRolesPage } from './OwnerRolePages';
@@ -61,6 +62,13 @@ import { OwnerInvoicesPage } from './OwnerInvoicesPage';
 import { OwnerPrintSettingsPage } from './OwnerPrintSettingsPage';
 import { OwnerPrintTemplateEditPage } from './OwnerPrintTemplateEditPage';
 import { OwnerDashboardPage } from './OwnerDashboardPage';
+import {
+  OwnerCustomerDetailPage,
+  OwnerCustomerFormPage,
+  OwnerCustomerGroupFormPage,
+  OwnerCustomerGroupListPage,
+  OwnerCustomerListPage,
+} from './OwnerCustomerPages';
 
 const BRAND = '#0975F7';
 
@@ -75,7 +83,7 @@ interface StoreSettings {
   businessDayCutoffMinutes: number;
 }
 
-type OwnerSection = 'reports' | 'catalog' | 'invoices' | 'staff';
+type OwnerSection = 'reports' | 'catalog' | 'invoices' | 'staff' | 'customers';
 
 interface OwnerMenuItem {
   key: string;
@@ -123,6 +131,16 @@ const menuItems: OwnerMenuItem[] = [
     children: [
       { key: '/owner/staff', label: 'Danh sách nhân viên', icon: <TeamOutlined /> },
       { key: '/owner/staff/roles', label: 'Vai trò & quyền', icon: <UserOutlined /> },
+    ],
+  },
+  {
+    key: 'customers',
+    label: 'Khách hàng',
+    icon: <TeamOutlined />,
+    section: 'customers',
+    children: [
+      { key: '/owner/customers', label: 'Danh sách khách hàng', icon: <UserOutlined /> },
+      { key: '/owner/customer-groups', label: 'Nhóm khách hàng', icon: <TeamOutlined /> },
     ],
   },
 ];
@@ -673,6 +691,15 @@ export function OwnerPortalPage() {
                 menu={{
                   items: [
                     {
+                      key: 'account-settings',
+                      icon: <UserOutlined />,
+                      label: 'Thiết lập tài khoản',
+                      onClick: () => navigate('/owner/settings/account'),
+                    },
+                    {
+                      type: 'divider',
+                    },
+                    {
                       key: 'logout',
                       icon: <LogoutOutlined />,
                       label: 'Đăng xuất',
@@ -707,6 +734,8 @@ export function OwnerPortalPage() {
               <OwnerDashboardPage settings={settings.data} />
             ) : location.pathname === '/owner/settings/store' ? (
               <OwnerStoreSettingsPage />
+            ) : location.pathname === '/owner/settings/account' ? (
+              <OwnerAccountSettingsPage />
             ) : location.pathname === '/owner/settings/areas' ? (
               <OwnerAreaSettingsPage />
             ) : location.pathname === '/owner/settings/areas/new' ? (
@@ -731,6 +760,21 @@ export function OwnerPortalPage() {
               <OwnerCategoryDetailPage categoryId={location.pathname.split('/').at(-1)!} />
             ) : location.pathname === '/owner/invoices' ? (
               <OwnerInvoicesPage />
+            ) : location.pathname === '/owner/customers' ? (
+              <OwnerCustomerListPage />
+            ) : location.pathname === '/owner/customers/new' ? (
+              <OwnerCustomerFormPage />
+            ) : location.pathname.endsWith('/edit') &&
+              location.pathname.startsWith('/owner/customers/') ? (
+              <OwnerCustomerFormPage customerId={location.pathname.split('/')[3]!} />
+            ) : location.pathname.startsWith('/owner/customers/') ? (
+              <OwnerCustomerDetailPage customerId={location.pathname.split('/')[3]!} />
+            ) : location.pathname === '/owner/customer-groups' ? (
+              <OwnerCustomerGroupListPage />
+            ) : location.pathname === '/owner/customer-groups/new' ? (
+              <OwnerCustomerGroupFormPage />
+            ) : location.pathname.startsWith('/owner/customer-groups/') ? (
+              <OwnerCustomerGroupFormPage groupId={location.pathname.split('/')[3]!} />
             ) : location.pathname === '/owner/staff' ? (
               <OwnerStaffListPage />
             ) : location.pathname === '/owner/staff/new' ? (

@@ -183,6 +183,7 @@ describe('POS Order Detail & Lifecycle Audit (Acceptance Test)', () => {
       discount: {
         type: 'FIXED',
         value: 5000,
+        reason: 'Khách quen',
       },
       now: tItem2,
     });
@@ -271,17 +272,17 @@ describe('POS Order Detail & Lifecycle Audit (Acceptance Test)', () => {
     expect(detail.timeSegments[0]!.unitPriceSnapshot).toBe(30_000);
     expect(detail.timeSegments[0]!.amountAfterRoundingVnd).toBe(30_000);
 
-    // Segment 2 remains continuous on Bàn Lỗ-02 despite entering and leaving checkout.
+    // Segment 2 stays visually continuous, while the 5-minute checkout pause is excluded.
     expect(detail.timeSegments[1]!.tableName).toBe('Bàn Lỗ-02');
     expect(detail.timeSegments[1]!.startedAt).toBe(t1);
     expect(detail.timeSegments[1]!.endedAt).toBe(t4);
-    expect(detail.timeSegments[1]!.elapsedSeconds).toBe(5400);
+    expect(detail.timeSegments[1]!.elapsedSeconds).toBe(5100);
     expect(detail.timeSegments[1]!.unitPriceSnapshot).toBe(60_000);
-    expect(detail.timeSegments[1]!.amountAfterRoundingVnd).toBe(90_000);
+    expect(detail.timeSegments[1]!.amountAfterRoundingVnd).toBe(85_000);
 
-    // Total Time: 1h on the first table + 1h30 on the current table.
-    expect(detail.timeSummary?.totalElapsedSeconds).toBe(9000);
-    expect(detail.timeSummary?.totalAmountAfterRoundingVnd).toBe(120_000);
+    // Total Time: 1h on the first table + 1h25 actual play on the current table.
+    expect(detail.timeSummary?.totalElapsedSeconds).toBe(8700);
+    expect(detail.timeSummary?.totalAmountAfterRoundingVnd).toBe(115_000);
 
     // 3. Table Transfer History
     expect(detail.tableTransfers).toHaveLength(1);
@@ -307,34 +308,35 @@ describe('POS Order Detail & Lifecycle Audit (Acceptance Test)', () => {
     expect(stingItem!.unitPriceSnapshot).toBe(15_000);
     expect(stingItem!.grossLineTotalVnd).toBe(15_000);
     expect(stingItem!.discountAmountVnd).toBe(5000);
+    expect(stingItem!.discountReason).toBe('Khách quen');
     expect(stingItem!.netLineTotalVnd).toBe(10_000);
 
     // 5. Financial Totals
-    // Time: 120,000 VND
+    // Time: 115,000 VND
     // Items Gross: 45,000 VND
     // Discount: 5,000 VND
-    // Subtotal: 165,000 VND
-    // Total: 160,000 VND
-    // Cash Received: 200,000 VND -> Change: 40,000 VND
-    expect(detail.totals.timeAmountVnd).toBe(120_000);
+    // Subtotal: 160,000 VND
+    // Total: 155,000 VND
+    // Cash Received: 200,000 VND -> Change: 45,000 VND
+    expect(detail.totals.timeAmountVnd).toBe(115_000);
     expect(detail.totals.itemGrossAmountVnd).toBe(45_000);
     expect(detail.totals.totalDiscountVnd).toBe(5000);
-    expect(detail.totals.totalVnd).toBe(160_000);
-    expect(detail.totals.paidAmountVnd).toBe(160_000);
-    expect(detail.totals.changeAmountVnd).toBe(40_000);
+    expect(detail.totals.totalVnd).toBe(155_000);
+    expect(detail.totals.paidAmountVnd).toBe(155_000);
+    expect(detail.totals.changeAmountVnd).toBe(45_000);
 
     // 6. Payments
     expect(detail.payments).toHaveLength(1);
     expect(detail.payments[0]!.method).toBe('CASH');
-    expect(detail.payments[0]!.amount).toBe(160_000);
+    expect(detail.payments[0]!.amount).toBe(155_000);
     expect(detail.payments[0]!.cashReceived).toBe(200_000);
-    expect(detail.payments[0]!.cashChange).toBe(40_000);
+    expect(detail.payments[0]!.cashChange).toBe(45_000);
     expect(detail.payments[0]!.status).toBe('SUCCEEDED');
 
     // 7. Invoice Snapshot
     expect(detail.invoice).toBeDefined();
     expect(detail.invoice!.status).toBe('COMPLETED');
-    expect(detail.invoice!.totalVnd).toBe(160_000);
+    expect(detail.invoice!.totalVnd).toBe(155_000);
 
     // 8. Audit Timeline
     expect(detail.auditEvents.length).toBeGreaterThanOrEqual(6);

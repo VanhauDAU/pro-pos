@@ -9,6 +9,7 @@ import {
   reorderServiceTablesSchema,
   updateProductSchema,
   updateServiceTableSchema,
+  updateServiceTableStatusSchema,
   updateServiceTablePricingSchema,
 } from '@contracts/catalog';
 import { success } from '@server/lib/response';
@@ -272,20 +273,23 @@ ownerCatalogRoutes.put('/products/:productId', requirePermission('catalog.manage
   );
 });
 
-ownerCatalogRoutes.delete('/products/:productId', requirePermission('catalog.manage'), async (c) =>
-  success(
-    c,
-    await new CatalogService(c.env).deleteProduct(
-      c.get('actor').storeId!,
-      c.req.param('productId'),
-      auditContext(c),
+ownerCatalogRoutes.delete(
+  '/products/:productId',
+  requirePermission('catalog.products.delete', 'catalog.manage'),
+  async (c) =>
+    success(
+      c,
+      await new CatalogService(c.env).deleteProduct(
+        c.get('actor').storeId!,
+        c.req.param('productId'),
+        auditContext(c),
+      ),
     ),
-  ),
 );
 
 ownerCatalogRoutes.post(
   '/products/:productId/restore',
-  requirePermission('catalog.manage'),
+  requirePermission('catalog.products.delete', 'catalog.products.edit', 'catalog.manage'),
   async (c) =>
     success(
       c,
@@ -348,6 +352,23 @@ ownerCatalogRoutes.patch('/tables/:tableId', requirePermission('table.manage'), 
     ),
   );
 });
+
+ownerCatalogRoutes.patch(
+  '/tables/:tableId/status',
+  requirePermission('table.manage', 'catalog.manage'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, updateServiceTableStatusSchema);
+    return success(
+      c,
+      await new CatalogService(c.env).updateTableStatus(
+        c.get('actor').storeId!,
+        c.req.param('tableId'),
+        body.status,
+        auditContext(c),
+      ),
+    );
+  },
+);
 
 ownerCatalogRoutes.patch(
   '/tables/:tableId/pricing',

@@ -365,16 +365,20 @@ export class PlatformRepository {
         .prepare(
           `SELECT
              s.id, s.user_id AS userId, u.display_name AS userName, u.username AS userUsername,
-             s.device_id AS deviceId, d.name AS deviceName,
+             r.code AS userRoleCode, r.name AS userRoleName,
+             s.device_id AS deviceId, d.name AS deviceName, d.status AS deviceStatus,
              s.session_kind AS sessionKind, s.status,
              s.created_at AS createdAt, s.last_seen_at AS lastSeenAt,
-             s.expires_at AS expiresAt, s.idle_expires_at AS idleExpiresAt
+             s.expires_at AS expiresAt, s.idle_expires_at AS idleExpiresAt,
+             s.revoked_at AS revokedAt
            FROM auth_sessions s
            JOIN users u ON u.id = s.user_id
+           LEFT JOIN store_memberships sm ON sm.user_id = u.id AND sm.store_id = s.store_id
+           LEFT JOIN roles r ON r.id = sm.role_id
            LEFT JOIN devices d ON d.id = s.device_id
-           WHERE s.store_id = ? AND s.status = 'ACTIVE'
-           ORDER BY s.last_seen_at DESC
-           LIMIT 50`,
+           WHERE s.store_id = ?
+           ORDER BY s.created_at DESC
+           LIMIT 100`,
         )
         .bind(storeId)
         .all<{
@@ -382,14 +386,18 @@ export class PlatformRepository {
           userId: string;
           userName: string;
           userUsername: string;
+          userRoleCode: string | null;
+          userRoleName: string | null;
           deviceId: string | null;
           deviceName: string | null;
+          deviceStatus: 'ACTIVE' | 'REVOKED' | null;
           sessionKind: 'SUPER_ADMIN' | 'OWNER' | 'EMPLOYEE';
           status: 'ACTIVE' | 'EXPIRED' | 'REVOKED';
           createdAt: number;
           lastSeenAt: number;
           expiresAt: number;
           idleExpiresAt: number;
+          revokedAt: number | null;
         }>(),
 
       Promise.all([
@@ -892,5 +900,32 @@ export class PlatformRepository {
       hourlyDistribution,
       topProducts,
     };
+  }
+
+  async revokeSession(storeId: string, sessionId: string, now: number) {
+    return this.db
+      .prepare(
+        `UPDATE auth_sessions SET status = 'REVOKED', revoked_at = ?
+         WHERE store_id = ? AND id = ? AND status = 'ACTIVE'`,
+      )
+      .bind(now, storeId, sessionId)
+      .run();
+  }
+
+  async revokeDevice(storeId: string, deviceId: string, now: number) {
+    return this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE devices SET status = 'REVOKED', revoked_at = ?, updated_at = ?
+           WHERE store_id = ? AND id = ?`,
+        )
+        .bind(now, now, storeId, deviceId),
+      this.db
+        .prepare(
+          `UPDATE auth_sessions SET status = 'REVOKED', revoked_at = ?
+           WHERE store_id = ? AND device_id = ? AND status = 'ACTIVE'`,
+        )
+        .bind(now, storeId, deviceId),
+    ]);
   }
 }

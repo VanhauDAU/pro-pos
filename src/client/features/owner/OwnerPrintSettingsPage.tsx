@@ -52,6 +52,7 @@ import {
 } from '@client/lib/qz-tray-service';
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 import { ReceiptPreviewPaper } from '@client/features/pos/ReceiptPreviewModal';
+import { buildOwnerPrintPreviewSample } from './print-preview-sample';
 
 function errorMessage(error: unknown, fallback: string) {
   if (error instanceof ApiError) return error.message;
@@ -91,7 +92,7 @@ export function OwnerPrintSettingsPage() {
 
   // Preview options
   const [previewInvoiceType, setPreviewInvoiceType] = useState<'PROVISIONAL' | 'PAYMENT'>(
-    'PROVISIONAL',
+    'PAYMENT',
   );
   const [previewPaperSize, setPreviewPaperSize] = useState<'K80' | 'K58'>('K80');
 
@@ -626,64 +627,7 @@ export function OwnerPrintSettingsPage() {
     bottomImageMediaId: bottomImageMediaId ?? null,
     templateConfigJson: printSettings.data?.templateConfigJson ?? null,
   } as StorePrintSettings;
-  const previewReceiptData = {
-    receiptType: previewInvoiceType,
-    orderCode: previewInvoiceType === 'PROVISIONAL' ? 'D-260822-0012' : 'HD-260822-000012',
-    invoiceCode: previewInvoiceType === 'PAYMENT' ? 'HD-260822-000012' : null,
-    orderType: 'DINE_IN' as const,
-    tableName: 'Bàn 01',
-    areaName: 'Khu vực 1',
-    cashierName: 'Nguyễn Văn A',
-    customerName: 'Nguyễn Nhật Quang Minh',
-    guestPhone: '0966690040',
-    guestAddress: '266 Đội Cấn, Ba Đình, Hà Nội',
-    note: 'Ít đá, không lấy ống hút',
-    checkInTimeMs: Date.now() - 90 * 60_000,
-    issuedAtMs: Date.now(),
-    subtotal: 173_000,
-    discountTotal: 10_000,
-    total: 163_000,
-    ...(previewInvoiceType === 'PAYMENT'
-      ? {
-          paymentMethod: 'CASH' as const,
-          cashReceived: 200_000,
-          cashChange: 37_000,
-          paidAmountVnd: 163_000,
-          debtAmountVnd: 0,
-          paymentAllocations: [{ method: 'CASH' as const, amountVnd: 163_000 }],
-        }
-      : {}),
-    lines: [
-      {
-        id: 'preview-time',
-        name: 'Tiền giờ',
-        quantity: 1,
-        unitPrice: 50_000,
-        totalPrice: 48_000,
-        isTime: true,
-        timeStartedAtMs: Date.now() - 90 * 60_000,
-        timeEndedAtMs: Date.now(),
-        timeElapsedSeconds: 90 * 60,
-      },
-      {
-        id: 'preview-drink',
-        name: 'Trà sữa ô long (size L)',
-        quantity: 1,
-        unitPrice: 65_000,
-        totalPrice: 65_000,
-        unitName: 'Ly',
-        note: 'Không lấy ống hút',
-      },
-      {
-        id: 'preview-food',
-        name: 'Cơm gà chua ngọt',
-        quantity: 1,
-        unitPrice: 60_000,
-        totalPrice: 60_000,
-        unitName: 'Phần',
-      },
-    ],
-  };
+  const previewReceiptData = buildOwnerPrintPreviewSample(previewInvoiceType);
 
   return (
     <div className="owner-print-settings-page">
@@ -1119,8 +1063,8 @@ export function OwnerPrintSettingsPage() {
                     size="large"
                     style={{ width: '100%', marginBottom: 10 }}
                     options={[
-                      { value: 'PROVISIONAL', label: 'Hóa đơn tạm tính' },
                       { value: 'PAYMENT', label: 'Hóa đơn thanh toán' },
+                      { value: 'PROVISIONAL', label: 'Hóa đơn tạm tính' },
                     ]}
                   />
                   <Select
@@ -1431,6 +1375,11 @@ export function OwnerPrintSettingsPage() {
                               * G/chú: Không lấy ống hút
                             </div>
                           )}
+                          {templateConfig.showItemDiscounts && (
+                            <div className="thermal-receipt-item-sub" style={{ color: '#d4380d' }}>
+                              * Giảm thủ công: -10,000 · Lý do: Khách thân thiết
+                            </div>
+                          )}
                         </div>
 
                         <div className="thermal-receipt-item-row" style={{ marginTop: 4 }}>
@@ -1514,17 +1463,13 @@ export function OwnerPrintSettingsPage() {
                           <span>173,000</span>
                         </div>
                       )}
-                      <div className="thermal-receipt-row">
-                        <span>Tổng giảm giá</span>
-                        <span>- 10,000</span>
-                      </div>
                       {templateConfig.showPromotionsList && (
                         <div
                           className="thermal-receipt-row"
                           style={{ fontSize: 10.5, color: '#64748b' }}
                         >
-                          <span>+ Giảm giá khai trương (10%)</span>
-                          <span>(10,000)</span>
+                          <span>KM: Giảm giá khai trương (10%)</span>
+                          <span>-10,000</span>
                         </div>
                       )}
                     </div>
@@ -1536,7 +1481,7 @@ export function OwnerPrintSettingsPage() {
                           <span>
                             {previewInvoiceType === 'PROVISIONAL' ? 'TỔNG TẠM TÍNH' : 'TỔNG CỘNG'}
                           </span>
-                          <span className="thermal-receipt-grand-total-amount">179,000đ</span>
+                          <span className="thermal-receipt-grand-total-amount">163,000đ</span>
                         </div>
                       </>
                     )}

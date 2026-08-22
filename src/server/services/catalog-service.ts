@@ -278,7 +278,7 @@ export class CatalogService {
 
   async updateTable(storeId: string, tableId: string, name: string, auditContext?: AuditContext) {
     const before = await this.repository.findServiceTable(storeId, tableId);
-    if (!before || before.status === 'DISABLED') {
+    if (!before) {
       throw new AppError('SERVICE_TABLE_NOT_FOUND', 'Không tìm thấy bàn/phòng.', 404);
     }
     const now = Date.now();
@@ -296,6 +296,36 @@ export class CatalogService {
       });
     }
     return { id: tableId, updated: true };
+  }
+
+  async updateTableStatus(
+    storeId: string,
+    tableId: string,
+    status: 'AVAILABLE' | 'DISABLED',
+    auditContext?: AuditContext,
+  ) {
+    const before = await this.repository.findServiceTable(storeId, tableId);
+    if (!before) {
+      throw new AppError('SERVICE_TABLE_NOT_FOUND', 'Không tìm thấy bàn/phòng.', 404);
+    }
+    if (status === 'DISABLED' && before.status === 'OCCUPIED') {
+      throw new AppError('SERVICE_TABLE_OCCUPIED', 'Không thể tạm ngưng bàn đang sử dụng.', 409);
+    }
+    const now = Date.now();
+    await this.repository.updateServiceTableStatus(storeId, tableId, status, now);
+    if (auditContext) {
+      await new AuditRepository(this.env.DB).record({
+        storeId,
+        context: auditContext,
+        action: status === 'DISABLED' ? 'SERVICE_TABLE_DISABLED' : 'SERVICE_TABLE_RESTORED',
+        entityType: 'SERVICE_TABLE',
+        entityId: tableId,
+        before: { status: before.status },
+        after: { status },
+        now,
+      });
+    }
+    return { id: tableId, status, updated: true };
   }
 
   async updateTablePricing(
@@ -341,14 +371,18 @@ export class CatalogService {
 
   async deleteTable(storeId: string, tableId: string, auditContext?: AuditContext) {
     const before = await this.repository.findServiceTable(storeId, tableId);
-    if (!before || before.status === 'DISABLED') {
+    if (!before) {
       throw new AppError('SERVICE_TABLE_NOT_FOUND', 'Không tìm thấy bàn/phòng.', 404);
     }
     if (before.status === 'OCCUPIED') {
       throw new AppError('SERVICE_TABLE_OCCUPIED', 'Không thể xóa bàn/phòng đang sử dụng.', 409);
     }
     const now = Date.now();
-    await this.repository.disableServiceTable(storeId, tableId, now);
+    try {
+      await this.repository.deleteServiceTable(storeId, tableId);
+    } catch {
+      await this.repository.disableServiceTable(storeId, tableId, now);
+    }
     if (auditContext) {
       await new AuditRepository(this.env.DB).record({
         storeId,
@@ -357,7 +391,7 @@ export class CatalogService {
         entityType: 'SERVICE_TABLE',
         entityId: tableId,
         before: { name: before.name, areaId: before.areaId, status: before.status },
-        after: { status: 'DISABLED' },
+        after: { status: 'DELETED' },
         now,
       });
     }

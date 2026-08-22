@@ -12,6 +12,8 @@ export interface PosReceiptLineItem {
   quantity: number;
   unitPrice: number;
   totalPrice: number;
+  discountAmount?: number | undefined;
+  discountReason?: string | null | undefined;
   note?: string | null | undefined;
   unitName?: string | null | undefined;
   isTime?: boolean | undefined;
@@ -53,6 +55,14 @@ export interface PosReceiptPrintData {
   issuedAtMs: number;
   subtotal: number;
   discountTotal: number;
+  promotionDiscount?: number | undefined;
+  promotion?:
+    | { name: string; type: string; value: number | null; discountAmountVnd: number }
+    | null
+    | undefined;
+  promotions?:
+    | Array<{ name: string; type: string; value: number | null; discountAmountVnd: number }>
+    | undefined;
   total: number;
   paymentMethod?: 'CASH' | 'BANK_TRANSFER' | null | undefined;
   cashReceived?: number | null | undefined;
@@ -158,6 +168,9 @@ export function buildEscPosReceipt(
         ? 'PHIẾU THU CÔNG NỢ'
         : 'HÓA ĐƠN THANH TOÁN';
   raw += '\n' + escBoldOn + title + '\n' + escBoldOff;
+  if (data.receiptType === 'PROVISIONAL') {
+    raw += escBoldOn + '*** CHƯA THANH TOÁN ***\n' + escBoldOff;
+  }
   raw += `Liên ${copy?.index ?? 1}/${copy?.total ?? 1}\n`;
   const code = data.invoiceCode || data.orderCode;
   raw += `Số: ${code}\n`;
@@ -175,6 +188,9 @@ export function buildEscPosReceipt(
   }
   if (template.showCheckInTime && data.checkInTimeMs) {
     raw += `Giờ vào      : ${formatDateTime(data.checkInTimeMs)}\n`;
+  }
+  if (template.showCustomerName && data.customerName) {
+    raw += `Khách hàng   : ${data.customerName}\n`;
   }
   if (template.showCustomerPhone && data.guestPhone) {
     raw += `SĐT Khách    : ${data.guestPhone}\n`;
@@ -321,6 +337,10 @@ export function buildEscPosReceipt(
       if (template.showItemNote && line.note) {
         raw += `   * G/chú: ${line.note}\n`;
       }
+      if (template.showItemDiscounts && (line.discountAmount ?? 0) > 0) {
+        raw += `   * Giảm thủ công: -${formatVnd(line.discountAmount ?? 0)}đ\n`;
+        raw += `   * Lý do: ${line.discountReason || 'Chưa có lý do'}\n`;
+      }
     }
     raw += divider + '\n';
   }
@@ -346,18 +366,34 @@ export function buildEscPosReceipt(
     const value = `${formatVnd(timeTotal + goodsTotal)}đ`;
     raw += `${label}${' '.repeat(Math.max(1, chars - label.length - value.length))}${value}\n`;
   }
-  if (template.showProvisionalTotal && data.discountTotal > 0) {
+  const promotionDiscount = data.promotionDiscount ?? 0;
+  if (template.showProvisionalTotal && promotionDiscount > 0) {
     const subLabel = 'Tổng tạm tính:';
-    const subVal = formatVnd(data.subtotal) + 'đ';
+    const subVal = formatVnd(timeTotal + goodsTotal) + 'đ';
     const padLen = chars - subLabel.length - subVal.length;
     raw += `${subLabel}${' '.repeat(Math.max(1, padLen))}${subVal}\n`;
   }
 
-  if (template.showPromotionsList && data.discountTotal > 0) {
-    const discLabel = 'Chiết khấu/Giảm giá:';
-    const discVal = '-' + formatVnd(data.discountTotal) + 'đ';
-    const padLen = chars - discLabel.length - discVal.length;
-    raw += `${discLabel}${' '.repeat(Math.max(1, padLen))}${discVal}\n`;
+  if (template.showPromotionsList && promotionDiscount > 0) {
+    const promotionLines =
+      data.promotions && data.promotions.length > 0
+        ? data.promotions
+        : data.promotion
+          ? [data.promotion]
+          : [];
+    if (promotionLines.length === 0)
+      promotionLines.push({
+        name: 'Khuyến mại',
+        type: '',
+        value: null,
+        discountAmountVnd: promotionDiscount,
+      });
+    for (const promotion of promotionLines) {
+      const discLabel = `KM: ${promotion.name}:`;
+      const discVal = '-' + formatVnd(promotion.discountAmountVnd) + 'đ';
+      const padLen = chars - discLabel.length - discVal.length;
+      raw += `${discLabel}${' '.repeat(Math.max(1, padLen))}${discVal}\n`;
+    }
   }
 
   const grandLabel =
@@ -370,7 +406,7 @@ export function buildEscPosReceipt(
   const grandPad = chars - grandLabel.length - grandVal.length;
   raw += escBoldOn + `${grandLabel}${' '.repeat(Math.max(1, grandPad))}${grandVal}\n` + escBoldOff;
 
-  if (data.receiptType === 'PAYMENT') {
+  if (data.receiptType === 'PAYMENT' && template.showPaymentMethod) {
     const allocations = data.paymentAllocations ?? [];
     const needsAllocationBreakdown =
       allocations.length > 1 || allocations.some((allocation) => allocation.method === 'DEBT');
@@ -396,12 +432,15 @@ export function buildEscPosReceipt(
     raw += `Số tiền vừa thu     : ${formatVnd(data.debtPaymentVnd ?? data.total)}đ\n`;
     raw += `Dư nợ còn lại       : ${formatVnd(data.debtAfterVnd ?? 0)}đ\n`;
     if (data.referenceCode) raw += `Mã tham chiếu       : ${data.referenceCode}\n`;
-    raw += `Phương thức         : ${data.paymentMethod === 'CASH' ? 'Tiền mặt' : 'Chuyển khoản'}\n`;
+    if (template.showPaymentMethod) {
+      raw += `Phương thức         : ${data.paymentMethod === 'CASH' ? 'Tiền mặt' : 'Chuyển khoản'}\n`;
+    }
   }
 
   // 6. Payment method & Cash details
   if (
     data.receiptType === 'PAYMENT' &&
+    template.showPaymentMethod &&
     data.paymentMethod &&
     (data.paymentAllocations?.length ?? 0) <= 1 &&
     !data.paymentAllocations?.some((allocation) => allocation.method === 'DEBT')
@@ -409,7 +448,7 @@ export function buildEscPosReceipt(
     raw += divider + '\n';
     const methodStr = data.paymentMethod === 'CASH' ? 'Tiền mặt' : 'Chuyển khoản (VietQR)';
     raw += `Hình thức thanh toán: ${methodStr}\n`;
-    if (data.paymentMethod === 'CASH') {
+    if (data.paymentMethod === 'CASH' && template.showCashDetails) {
       if (data.cashReceived !== null && data.cashReceived !== undefined) {
         raw += `Tiền khách đưa      : ${formatVnd(data.cashReceived)}đ\n`;
       }
@@ -482,6 +521,8 @@ export function buildPrintDataFromQuote(
       quantityMilli: number;
       unitPriceVnd: number;
       netLineTotalVnd: number;
+      discountAmountVnd?: number | undefined;
+      discountReason?: string | null | undefined;
       unitName?: string | null | undefined;
       note?: string | null | undefined;
     }>;
@@ -516,6 +557,14 @@ export function buildPrintDataFromQuote(
       | undefined;
     subtotalVnd?: number | undefined;
     discountTotalVnd?: number | undefined;
+    promotionDiscountVnd?: number | undefined;
+    promotion?:
+      | { name: string; type: string; value: number | null; discountAmountVnd: number }
+      | null
+      | undefined;
+    promotions?:
+      | Array<{ name: string; type: string; value: number | null; discountAmountVnd: number }>
+      | undefined;
     totalVnd?: number | undefined;
     totals?:
       | {
@@ -569,6 +618,8 @@ export function buildPrintDataFromQuote(
       totalPrice: item.netLineTotalVnd,
       unitName: item.unitName ?? null,
       note: item.note ?? null,
+      discountAmount: item.discountAmountVnd ?? 0,
+      discountReason: item.discountReason ?? null,
     });
   }
 
@@ -599,6 +650,9 @@ export function buildPrintDataFromQuote(
     issuedAtMs: Date.now(),
     subtotal,
     discountTotal,
+    promotionDiscount: quote.promotionDiscountVnd ?? quote.promotion?.discountAmountVnd ?? 0,
+    promotion: quote.promotion ?? null,
+    promotions: quote.promotions ?? (quote.promotion ? [quote.promotion] : []),
     total,
     paymentMethod: paymentMethod ?? null,
     cashReceived: cashReceived ?? null,
@@ -649,6 +703,24 @@ export function buildPrintDataFromInvoice(invoice: {
       customerPhone?: string | null;
       note?: string | null;
     };
+    items?: Array<{
+      productId: string;
+      variantId?: string | null;
+      discountAmountVnd?: number;
+      discountReason?: string | null;
+    }>;
+    promotion?: {
+      name: string;
+      type: string;
+      value: number | null;
+      discountAmountVnd: number;
+    } | null;
+    promotions?: Array<{
+      name: string;
+      type: string;
+      value: number | null;
+      discountAmountVnd: number;
+    }>;
   } = {};
   try {
     invoiceSnapshot = invoice.invoice.snapshotJson
@@ -660,6 +732,8 @@ export function buildPrintDataFromInvoice(invoice: {
 
   for (const line of invoice.lines) {
     let snapshot: {
+      productId?: string;
+      variantId?: string | null;
       productType?: 'QUANTITY' | 'WEIGHT' | 'TIME';
       unitName?: string | null;
       variantName?: string | null;
@@ -689,6 +763,11 @@ export function buildPrintDataFromInvoice(invoice: {
     }
 
     const isTime = line.lineType === 'TIME' || snapshot.productType === 'TIME';
+    const orderItemSnapshot = invoiceSnapshot.items?.find(
+      (item) =>
+        item.productId === snapshot.productId &&
+        (item.variantId ?? null) === (snapshot.variantId ?? null),
+    );
 
     lines.push({
       id: line.id,
@@ -698,6 +777,8 @@ export function buildPrintDataFromInvoice(invoice: {
       totalPrice: line.lineTotal,
       unitName: snapshot.unitName ?? null,
       note: snapshot.note ?? null,
+      discountAmount: orderItemSnapshot?.discountAmountVnd ?? 0,
+      discountReason: orderItemSnapshot?.discountReason ?? null,
       isTime,
       timeStartedAtMs: snapshot.startedAtMs,
       timeEndedAtMs: snapshot.endedAtMs ?? null,
@@ -734,6 +815,16 @@ export function buildPrintDataFromInvoice(invoice: {
     issuedAtMs: invoice.invoice.issuedAt,
     subtotal: invoice.invoice.subtotal,
     discountTotal: invoice.invoice.discountTotal,
+    promotionDiscount:
+      invoiceSnapshot.promotions?.reduce(
+        (sum, promotion) => sum + promotion.discountAmountVnd,
+        0,
+      ) ??
+      invoiceSnapshot.promotion?.discountAmountVnd ??
+      0,
+    promotion: invoiceSnapshot.promotion ?? null,
+    promotions:
+      invoiceSnapshot.promotions ?? (invoiceSnapshot.promotion ? [invoiceSnapshot.promotion] : []),
     total: invoice.invoice.total,
     paymentMethod: invoice.payment.method,
     cashReceived: invoice.payment.cashReceived ?? null,

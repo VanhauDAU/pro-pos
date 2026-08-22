@@ -12,6 +12,7 @@ import {
   type RawInvoiceRow,
   type RawLineItemRow,
 } from '@server/repositories/owner-dashboard-repository';
+import { PosService } from '@server/services/pos-service';
 import type { AppEnv } from '@server/types';
 
 const PALETTE = [
@@ -29,19 +30,21 @@ const PALETTE = [
 
 export class OwnerDashboardService {
   private repository: OwnerDashboardRepository;
+  private posService: PosService;
 
   constructor(env: AppEnv['Bindings']) {
     this.repository = new OwnerDashboardRepository(env.DB);
+    this.posService = new PosService(env);
   }
 
   async getDashboardData(storeId: string, query: DashboardQueryInput): Promise<DashboardDataDto> {
     const { fromMs, toMs, range } = this.calculateDateRange(query);
     const now = Date.now();
 
-    const [invoices, lines, uncompleted, staffList, customerCount] = await Promise.all([
+    const [invoices, lines, activeOrders, staffList, customerCount] = await Promise.all([
       this.repository.getCompletedInvoices(storeId, fromMs, toMs),
       this.repository.getInvoiceLines(storeId, fromMs, toMs),
-      this.repository.getUncompletedOrders(storeId),
+      this.posService.listOrders(storeId, now),
       this.repository.getStaffUsers(storeId),
       this.repository.countActiveCustomers(storeId),
     ]);
@@ -63,32 +66,16 @@ export class OwnerDashboardService {
     const avgRevenuePerInvoice = invoiceCount > 0 ? Math.round(revenue / invoiceCount) : 0;
 
     // 2. Uncompleted Orders Calculation
-    let dineInLiveRunningTime = 0;
-    for (const session of uncompleted.runningSessions) {
-      try {
-        const pricing = JSON.parse(session.pricingSnapshotJson) as {
-          basePriceVnd?: number;
-          baseDurationSeconds?: number;
-        };
-        const basePrice = pricing.basePriceVnd ?? 30_000;
-        const durationSec = pricing.baseDurationSeconds ?? 3600;
-        const elapsedSec = Math.max(1, Math.floor((now - session.startedAt) / 1000));
-        const ratePerSec = basePrice / durationSec;
-        const liveAmount = Math.ceil((elapsedSec * ratePerSec) / 1000) * 1000;
-        dineInLiveRunningTime += liveAmount;
-      } catch {
-        // Fallback default 30k/h
-        const elapsedSec = Math.max(1, Math.floor((now - session.startedAt) / 1000));
-        dineInLiveRunningTime += Math.ceil((elapsedSec * (30_000 / 3600)) / 1000) * 1000;
-      }
-    }
+    // Use the exact POS quote for every active order. This keeps dashboard money
+    // identical to checkout for time blocks, first periods, special windows,
+    // rounding, pauses, transfers, discounts and PAYMENT_PENDING snapshots.
+    const dineInOrders = activeOrders.filter((order) => order.orderType === 'DINE_IN');
+    const takeawayOrders = activeOrders.filter((order) => order.orderType === 'TAKEAWAY');
+    const dineInTotalAmount = dineInOrders.reduce((sum, order) => sum + order.totalVnd, 0);
+    const dineInCount = dineInOrders.length;
 
-    const dineInItemsSum = uncompleted.dineInOrders.reduce((sum, o) => sum + o.itemsTotal, 0);
-    const dineInTotalAmount = dineInItemsSum + dineInLiveRunningTime;
-    const dineInCount = uncompleted.dineInOrders.length;
-
-    const takeawayAmount = uncompleted.takeawayOrders.reduce((sum, o) => sum + o.itemsTotal, 0);
-    const takeawayCount = uncompleted.takeawayOrders.length;
+    const takeawayAmount = takeawayOrders.reduce((sum, order) => sum + order.totalVnd, 0);
+    const takeawayCount = takeawayOrders.length;
 
     const uncompletedSummary = {
       dineIn: { count: dineInCount, amount: dineInTotalAmount },

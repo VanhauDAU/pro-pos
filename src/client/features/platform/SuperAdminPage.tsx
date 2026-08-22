@@ -1,5 +1,6 @@
 import {
   AppstoreOutlined,
+  ClearOutlined,
   ClockCircleOutlined,
   CreditCardOutlined,
   DesktopOutlined,
@@ -7,6 +8,8 @@ import {
   EditOutlined,
   EyeOutlined,
   FireOutlined,
+  GlobalOutlined,
+  HistoryOutlined,
   InfoCircleOutlined,
   KeyOutlined,
   LineChartOutlined,
@@ -21,6 +24,7 @@ import {
   ShopOutlined,
   ShoppingOutlined,
   StarOutlined,
+  StopOutlined,
   TeamOutlined,
   TrophyOutlined,
   UnlockOutlined,
@@ -122,6 +126,29 @@ function formatDateTime(timestamp: number | null | undefined) {
     dateStyle: 'short',
     timeStyle: 'short',
   }).format(new Date(timestamp));
+}
+
+function formatDateTimeFull(timestamp: number | null | undefined) {
+  if (!timestamp) return 'Chưa ghi nhận';
+  return new Intl.DateTimeFormat('vi-VN', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(new Date(timestamp));
+}
+
+function formatRelativeTime(timestamp: number | null | undefined) {
+  if (!timestamp) return '';
+  const diffSec = Math.floor((Date.now() - timestamp) / 1000);
+  if (diffSec < 60) return 'Vừa xong';
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)} phút trước`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)} giờ trước`;
+  if (diffSec < 2592000) return `${Math.floor(diffSec / 86400)} ngày trước`;
+  return formatDateTime(timestamp);
 }
 
 function getInitials(name: string) {
@@ -677,6 +704,17 @@ export function SuperAdminPage() {
   // Member editing state
   const [editingMember, setEditingMember] = useState<StoreMember | null>(null);
   const [resetPasswordMember, setResetPasswordMember] = useState<StoreMember | null>(null);
+  const [selectedMemberForHistory, setSelectedMemberForHistory] = useState<StoreMember | null>(
+    null,
+  );
+  const [sessionStatusFilter, setSessionStatusFilter] = useState<
+    'ALL' | 'ACTIVE' | 'REVOKED' | 'EXPIRED'
+  >('ALL');
+  const [sessionSearchTerm, setSessionSearchTerm] = useState('');
+  const [memberHistoryFilter, setMemberHistoryFilter] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>(
+    'ALL',
+  );
+  const [cleaningDb, setCleaningDb] = useState(false);
 
   const context = useQuery({
     queryKey: ['auth-context'],
@@ -871,6 +909,79 @@ export function SuperAdminPage() {
     }
   };
 
+  const handleRevokeSession = async (sessionId: string) => {
+    if (!selectedStoreId) return;
+    setSubmitting(true);
+    try {
+      await jsonRequest(
+        `/api/v1/platform/stores/${selectedStoreId}/sessions/${sessionId}`,
+        undefined,
+        {
+          method: 'DELETE',
+          headers: csrfHeaders(),
+        },
+      );
+      message.success('Đã thu hồi phiên đăng nhập thiết bị thành công!');
+      await queryClient.invalidateQueries({
+        queryKey: ['platform-store-detail', selectedStoreId],
+      });
+    } catch (err) {
+      message.error(readableError(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleRevokeDevice = async (deviceId: string) => {
+    if (!selectedStoreId) return;
+    setSubmitting(true);
+    try {
+      await jsonRequest(
+        `/api/v1/platform/stores/${selectedStoreId}/devices/${deviceId}`,
+        undefined,
+        {
+          method: 'DELETE',
+          headers: csrfHeaders(),
+        },
+      );
+      message.success('Đã thu hồi quyền thiết bị POS thành công!');
+      await queryClient.invalidateQueries({
+        queryKey: ['platform-store-detail', selectedStoreId],
+      });
+    } catch (err) {
+      message.error(readableError(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleMaintenanceCleanup = async () => {
+    setCleaningDb(true);
+    try {
+      const res = await jsonRequest<{
+        totalDeleted: number;
+        retentionDays: number;
+        tables: Record<string, number>;
+      }>(
+        '/api/v1/platform/maintenance/cleanup',
+        { retentionDays: 7 },
+        {
+          method: 'POST',
+          headers: csrfHeaders(),
+        },
+      );
+      message.success(
+        `Đã dọn dẹp thành công ${res.totalDeleted.toLocaleString('vi-VN')} bản ghi logs cũ hơn 7 ngày!`,
+        5,
+      );
+      void queryClient.invalidateQueries({ queryKey: ['platform-analytics'] });
+    } catch (err) {
+      message.error(readableError(err));
+    } finally {
+      setCleaningDb(false);
+    }
+  };
+
   const logout = async () => {
     setSubmitting(true);
     try {
@@ -947,6 +1058,18 @@ export function SuperAdminPage() {
             </Typography.Text>
           </div>
           <div className="platform-actions-row">
+            <Popconfirm
+              title="Dọn dẹp nhật ký & dữ liệu cũ hơn 7 ngày?"
+              description="Hệ thống sẽ giải phóng audit logs, lệnh tạm, thông báo và phiên đăng nhập cũ hơn 7 ngày để tối ưu dung lượng DB Free Tier."
+              okText="Dọn dẹp ngay"
+              cancelText="Hủy"
+              okButtonProps={{ danger: true, loading: cleaningDb }}
+              onConfirm={handleMaintenanceCleanup}
+            >
+              <Button icon={<ClearOutlined />} loading={cleaningDb}>
+                Dọn dẹp DB (7 ngày)
+              </Button>
+            </Popconfirm>
             <Button
               icon={<ReloadOutlined />}
               onClick={() => {
@@ -1594,16 +1717,17 @@ export function SuperAdminPage() {
                 ),
                 children: (
                   <div>
-                    <div style={{ marginBottom: 12, color: '#64748b', fontSize: 13 }}>
-                      Danh sách tài khoản Chủ quán và Nhân sự. SuperAdmin có thể chỉnh sửa thông tin
-                      hoặc đặt lại mật khẩu trực tiếp.
+                    <div style={{ marginBottom: 14, color: '#64748b', fontSize: 13 }}>
+                      Danh sách tài khoản Chủ quán và Nhân sự. Bấm vào{' '}
+                      <strong>Lịch sử thiết bị</strong> để xem chi tiết tất cả các lần đăng nhập,
+                      thiết bị sử dụng và trạng thái phiên làm việc.
                     </div>
                     <Table
                       rowKey="id"
                       size="middle"
                       dataSource={detail.members}
                       pagination={false}
-                      scroll={{ x: 520 }}
+                      scroll={{ x: 720 }}
                       columns={[
                         {
                           title: 'Tài khoản',
@@ -1679,11 +1803,71 @@ export function SuperAdminPage() {
                           ),
                         },
                         {
+                          title: 'Thiết bị & Phiên',
+                          key: 'deviceSummary',
+                          render: (_, m) => {
+                            const userSessions = detail.sessions.filter(
+                              (s) => s.userId === m.userId,
+                            );
+                            const activeSessions = userSessions.filter(
+                              (s) => s.status === 'ACTIVE' && Date.now() < s.expiresAt,
+                            );
+                            return (
+                              <div>
+                                {activeSessions.length > 0 ? (
+                                  <Tag
+                                    color="success"
+                                    style={{
+                                      borderRadius: 6,
+                                      fontWeight: 600,
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: 4,
+                                    }}
+                                  >
+                                    <Badge status="processing" color="#10b981" />{' '}
+                                    {activeSessions.length} máy đang online
+                                  </Tag>
+                                ) : (
+                                  <Tag
+                                    color="default"
+                                    style={{ borderRadius: 6, color: '#64748b' }}
+                                  >
+                                    {userSessions.length > 0
+                                      ? `${userSessions.length} lịch sử phiên`
+                                      : 'Chưa có phiên'}
+                                  </Tag>
+                                )}
+                                {userSessions.length > 0 && userSessions[0] ? (
+                                  <div style={{ fontSize: 11.5, color: '#94a3b8', marginTop: 3 }}>
+                                    Gần nhất:{' '}
+                                    {formatRelativeTime(
+                                      userSessions[0].lastSeenAt || userSessions[0].createdAt,
+                                    )}
+                                  </div>
+                                ) : null}
+                              </div>
+                            );
+                          },
+                        },
+                        {
                           title: 'Thao tác',
                           key: 'actions',
                           align: 'right',
                           render: (_, m) => (
                             <Space size="small">
+                              <Button
+                                size="small"
+                                type="primary"
+                                ghost
+                                icon={<HistoryOutlined />}
+                                onClick={() => {
+                                  setSelectedMemberForHistory(m);
+                                  setMemberHistoryFilter('ALL');
+                                }}
+                              >
+                                Lịch sử thiết bị
+                              </Button>
                               <Button
                                 size="small"
                                 icon={<EditOutlined />}
@@ -1722,7 +1906,7 @@ export function SuperAdminPage() {
                       size="small"
                       dataSource={detail.devices}
                       pagination={false}
-                      scroll={{ x: 500 }}
+                      scroll={{ x: 650 }}
                       columns={[
                         {
                           title: 'Tên máy POS',
@@ -1760,7 +1944,55 @@ export function SuperAdminPage() {
                           title: 'Hoạt động gần nhất',
                           dataIndex: 'lastSeenAt',
                           key: 'lastSeenAt',
-                          render: (val: number | null) => formatDateTime(val),
+                          render: (val: number | null) => (
+                            <div>
+                              <div>{formatDateTime(val)}</div>
+                              <div style={{ fontSize: 11, color: '#10b981' }}>
+                                {formatRelativeTime(val)}
+                              </div>
+                            </div>
+                          ),
+                        },
+                        {
+                          title: 'Phiên trên máy',
+                          key: 'sessionsCount',
+                          render: (_, d) => {
+                            const devSessions = detail.sessions.filter((s) => s.deviceId === d.id);
+                            const activeDevSessions = devSessions.filter(
+                              (s) => s.status === 'ACTIVE' && Date.now() < s.expiresAt,
+                            );
+                            return (
+                              <div>
+                                {activeDevSessions.length > 0 ? (
+                                  <Tag color="success">🟢 {activeDevSessions.length} đang dùng</Tag>
+                                ) : (
+                                  <Tag color="default">{devSessions.length} lịch sử</Tag>
+                                )}
+                              </div>
+                            );
+                          },
+                        },
+                        {
+                          title: 'Thao tác',
+                          key: 'actions',
+                          align: 'right',
+                          render: (_, d) =>
+                            d.status === 'ACTIVE' ? (
+                              <Popconfirm
+                                title="Thu hồi máy POS này?"
+                                description="Thiết bị sẽ bị ngắt kết nối và tất cả phiên đăng nhập trên máy sẽ bị hủy."
+                                okText="Thu hồi"
+                                cancelText="Hủy"
+                                okButtonProps={{ danger: true, loading: submitting }}
+                                onConfirm={() => handleRevokeDevice(d.id)}
+                              >
+                                <Button size="small" danger icon={<StopOutlined />}>
+                                  Thu hồi máy
+                                </Button>
+                              </Popconfirm>
+                            ) : (
+                              <Tag color="default">Đã thu hồi</Tag>
+                            ),
                         },
                       ]}
                     />
@@ -1770,62 +2002,242 @@ export function SuperAdminPage() {
                 key: 'sessions',
                 label: (
                   <span>
-                    <ClockCircleOutlined /> Phiên đăng nhập ({detail.sessions.length})
+                    <ClockCircleOutlined /> Lịch sử đăng nhập ({detail.sessions.length})
                   </span>
                 ),
-                children:
-                  detail.sessions.length === 0 ? (
-                    <Empty description="Hiện không có phiên đăng nhập nào đang hoạt động." />
-                  ) : (
-                    <Table
-                      rowKey="id"
-                      size="small"
-                      dataSource={detail.sessions}
-                      pagination={false}
-                      scroll={{ x: 500 }}
-                      columns={[
-                        {
-                          title: 'Người dùng',
-                          key: 'user',
-                          render: (_, s) => (
-                            <div>
-                              <Typography.Text strong>{s.userName}</Typography.Text>
-                              <div style={{ fontSize: 12, color: '#64748b' }}>
-                                @{s.userUsername}{' '}
-                                <Tag color={s.sessionKind === 'OWNER' ? 'gold' : 'blue'}>
-                                  {s.sessionKind}
-                                </Tag>
-                              </div>
-                            </div>
-                          ),
-                        },
-                        {
-                          title: 'Thiết bị',
-                          dataIndex: 'deviceName',
-                          key: 'deviceName',
-                          render: (name: string | null) => name || 'Trình duyệt trực tiếp',
-                        },
-                        {
-                          title: 'Đăng nhập lúc',
-                          dataIndex: 'createdAt',
-                          key: 'createdAt',
-                          render: (val: number) => formatDateTime(val),
-                        },
-                        {
-                          title: 'Hoạt động gần nhất',
-                          dataIndex: 'lastSeenAt',
-                          key: 'lastSeenAt',
-                          render: (val: number) => formatDateTime(val),
-                        },
-                        {
-                          title: 'Hết hạn',
-                          dataIndex: 'expiresAt',
-                          key: 'expiresAt',
-                          render: (val: number) => formatDateTime(val),
-                        },
-                      ]}
-                    />
-                  ),
+                children: (() => {
+                  const filtered = detail.sessions.filter((s) => {
+                    const matchesStatus =
+                      sessionStatusFilter === 'ALL' ||
+                      (sessionStatusFilter === 'ACTIVE' &&
+                        s.status === 'ACTIVE' &&
+                        Date.now() < s.expiresAt) ||
+                      (sessionStatusFilter === 'REVOKED' && s.status === 'REVOKED') ||
+                      (sessionStatusFilter === 'EXPIRED' &&
+                        (s.status === 'EXPIRED' ||
+                          (s.status === 'ACTIVE' && Date.now() >= s.expiresAt)));
+
+                    const term = sessionSearchTerm.trim().toLowerCase();
+                    const matchesSearch =
+                      !term ||
+                      s.userName.toLowerCase().includes(term) ||
+                      s.userUsername.toLowerCase().includes(term) ||
+                      (s.deviceName && s.deviceName.toLowerCase().includes(term)) ||
+                      (s.deviceId && s.deviceId.toLowerCase().includes(term));
+
+                    return matchesStatus && matchesSearch;
+                  });
+
+                  return (
+                    <div>
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          gap: 12,
+                          marginBottom: 14,
+                        }}
+                      >
+                        <Segmented
+                          value={sessionStatusFilter}
+                          onChange={(val) =>
+                            setSessionStatusFilter(val as typeof sessionStatusFilter)
+                          }
+                          options={[
+                            { label: `Tất cả (${detail.sessions.length})`, value: 'ALL' },
+                            {
+                              label: `Đang hoạt động (${detail.sessions.filter((s) => s.status === 'ACTIVE' && Date.now() < s.expiresAt).length})`,
+                              value: 'ACTIVE',
+                            },
+                            {
+                              label: `Đã thu hồi (${detail.sessions.filter((s) => s.status === 'REVOKED').length})`,
+                              value: 'REVOKED',
+                            },
+                            {
+                              label: `Hết hạn (${detail.sessions.filter((s) => s.status === 'EXPIRED' || (s.status === 'ACTIVE' && Date.now() >= s.expiresAt)).length})`,
+                              value: 'EXPIRED',
+                            },
+                          ]}
+                        />
+                        <Input
+                          placeholder="Tìm theo nhân sự, máy POS..."
+                          prefix={<SearchOutlined style={{ color: '#94a3b8' }} />}
+                          value={sessionSearchTerm}
+                          onChange={(e) => setSessionSearchTerm(e.target.value)}
+                          allowClear
+                          style={{ width: isMobile ? '100%' : 260 }}
+                        />
+                      </div>
+
+                      {filtered.length === 0 ? (
+                        <Empty description="Không có phiên đăng nhập nào phù hợp." />
+                      ) : (
+                        <Table
+                          rowKey="id"
+                          size="small"
+                          dataSource={filtered}
+                          pagination={{
+                            pageSize: 10,
+                            size: 'small',
+                            showTotal: (t) => `Tổng ${t} phiên`,
+                          }}
+                          scroll={{ x: 750 }}
+                          columns={[
+                            {
+                              title: 'Người dùng',
+                              key: 'user',
+                              render: (_, s) => (
+                                <div>
+                                  <Typography.Text strong>{s.userName}</Typography.Text>
+                                  <div style={{ fontSize: 12, color: '#64748b' }}>
+                                    @{s.userUsername}{' '}
+                                    <Tag color={s.sessionKind === 'OWNER' ? 'gold' : 'blue'}>
+                                      {s.userRoleName || s.sessionKind}
+                                    </Tag>
+                                  </div>
+                                </div>
+                              ),
+                            },
+                            {
+                              title: 'Thiết bị đăng nhập',
+                              key: 'device',
+                              render: (_, s) => (
+                                <div>
+                                  {s.deviceId ? (
+                                    <div>
+                                      <DesktopOutlined
+                                        style={{ marginRight: 6, color: '#2563eb' }}
+                                      />
+                                      <Typography.Text strong>
+                                        {s.deviceName || 'Máy POS'}
+                                      </Typography.Text>
+                                      <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                                        ID: {s.deviceId}
+                                      </div>
+                                      {s.deviceStatus === 'REVOKED' && (
+                                        <Tag color="error" style={{ fontSize: 10, marginTop: 2 }}>
+                                          Máy đã thu hồi
+                                        </Tag>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <div>
+                                      <GlobalOutlined
+                                        style={{ marginRight: 6, color: '#0ea5e9' }}
+                                      />
+                                      <Typography.Text>
+                                        {s.deviceName || 'Trình duyệt trực tiếp'}
+                                      </Typography.Text>
+                                      <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                                        Web Session
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              ),
+                            },
+                            {
+                              title: 'Thời gian đăng nhập',
+                              dataIndex: 'createdAt',
+                              key: 'createdAt',
+                              render: (val: number) => (
+                                <div>
+                                  <div>{formatDateTimeFull(val)}</div>
+                                  <div style={{ fontSize: 11, color: '#64748b' }}>
+                                    {formatRelativeTime(val)}
+                                  </div>
+                                </div>
+                              ),
+                            },
+                            {
+                              title: 'Hoạt động gần nhất',
+                              dataIndex: 'lastSeenAt',
+                              key: 'lastSeenAt',
+                              render: (val: number) => (
+                                <div>
+                                  <div>{formatDateTimeFull(val)}</div>
+                                  <div style={{ fontSize: 11, color: '#10b981' }}>
+                                    {formatRelativeTime(val)}
+                                  </div>
+                                </div>
+                              ),
+                            },
+                            {
+                              title: 'Trạng thái phiên',
+                              key: 'sessionStatus',
+                              render: (_, s) => {
+                                const isLive = s.status === 'ACTIVE' && Date.now() < s.expiresAt;
+                                const isRevoked = s.status === 'REVOKED';
+                                if (isLive) {
+                                  return (
+                                    <div>
+                                      <Tag color="success" style={{ fontWeight: 600 }}>
+                                        🟢 Đang hoạt động
+                                      </Tag>
+                                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                                        Hết hạn: {formatDateTime(s.expiresAt)}
+                                      </div>
+                                    </div>
+                                  );
+                                }
+                                if (isRevoked) {
+                                  return (
+                                    <div>
+                                      <Tag color="error" style={{ fontWeight: 600 }}>
+                                        🔴 Đã thu hồi
+                                      </Tag>
+                                      {s.revokedAt ? (
+                                        <div
+                                          style={{ fontSize: 11, color: '#ef4444', marginTop: 2 }}
+                                        >
+                                          {formatDateTime(s.revokedAt)}
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                  );
+                                }
+                                return (
+                                  <div>
+                                    <Tag color="default">⚪ Hết hạn</Tag>
+                                    <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
+                                      {formatDateTime(s.expiresAt)}
+                                    </div>
+                                  </div>
+                                );
+                              },
+                            },
+                            {
+                              title: 'Thao tác',
+                              key: 'actions',
+                              align: 'right',
+                              render: (_, s) => {
+                                const isLive = s.status === 'ACTIVE' && Date.now() < s.expiresAt;
+                                return isLive ? (
+                                  <Popconfirm
+                                    title="Đăng xuất thiết bị này?"
+                                    description="Phiên làm việc trên thiết bị sẽ bị hủy ngay lập tức và buộc người dùng đăng nhập lại."
+                                    okText="Đăng xuất"
+                                    cancelText="Hủy"
+                                    okButtonProps={{ danger: true, loading: submitting }}
+                                    onConfirm={() => handleRevokeSession(s.id)}
+                                  >
+                                    <Button size="small" danger icon={<StopOutlined />}>
+                                      Thu hồi
+                                    </Button>
+                                  </Popconfirm>
+                                ) : (
+                                  <span style={{ color: '#cbd5e1' }}>—</span>
+                                );
+                              },
+                            },
+                          ]}
+                        />
+                      )}
+                    </div>
+                  );
+                })(),
               },
               {
                 key: 'stats',
@@ -1908,6 +2320,296 @@ export function SuperAdminPage() {
           />
         ) : null}
       </Drawer>
+
+      {/* Modal Lịch Sử Đăng Nhập Thiết Bị Của Thành Viên */}
+      <Modal
+        title={
+          selectedMemberForHistory ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <Avatar
+                size={36}
+                style={{
+                  background: selectedMemberForHistory.roleCode === 'OWNER' ? '#f59e0b' : '#3b82f6',
+                  fontWeight: 700,
+                }}
+              >
+                {getInitials(selectedMemberForHistory.displayName)}
+              </Avatar>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.3 }}>
+                  Lịch sử đăng nhập thiết bị
+                </div>
+                <div style={{ fontSize: 12.5, color: '#64748b', fontWeight: 400 }}>
+                  {selectedMemberForHistory.displayName} (@{selectedMemberForHistory.username}) ·{' '}
+                  <Tag
+                    color={selectedMemberForHistory.roleCode === 'OWNER' ? 'gold' : 'blue'}
+                    style={{ margin: 0, fontSize: 11 }}
+                  >
+                    {selectedMemberForHistory.roleName}
+                  </Tag>
+                </div>
+              </div>
+            </div>
+          ) : (
+            'Lịch sử đăng nhập thiết bị'
+          )
+        }
+        open={Boolean(selectedMemberForHistory)}
+        footer={[
+          <Button key="close" type="primary" onClick={() => setSelectedMemberForHistory(null)}>
+            Đóng
+          </Button>,
+        ]}
+        width={isMobile ? 'calc(100vw - 24px)' : 860}
+        onCancel={() => setSelectedMemberForHistory(null)}
+        destroyOnClose
+      >
+        {selectedMemberForHistory && detail
+          ? (() => {
+              const userSessions = detail.sessions.filter(
+                (s) => s.userId === selectedMemberForHistory.userId,
+              );
+              const activeSessions = userSessions.filter(
+                (s) => s.status === 'ACTIVE' && Date.now() < s.expiresAt,
+              );
+              const inactiveSessions = userSessions.filter(
+                (s) => s.status !== 'ACTIVE' || Date.now() >= s.expiresAt,
+              );
+
+              const displayedSessions =
+                memberHistoryFilter === 'ACTIVE'
+                  ? activeSessions
+                  : memberHistoryFilter === 'INACTIVE'
+                    ? inactiveSessions
+                    : userSessions;
+
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 12 }}>
+                  <Row gutter={[12, 12]}>
+                    <Col xs={12} sm={8}>
+                      <Card size="small" style={{ background: '#f8fafc', borderRadius: 8 }}>
+                        <Statistic
+                          title="Tổng lượt đăng nhập"
+                          value={userSessions.length}
+                          prefix={<HistoryOutlined style={{ color: '#2563eb' }} />}
+                        />
+                      </Card>
+                    </Col>
+                    <Col xs={12} sm={8}>
+                      <Card size="small" style={{ background: '#f0fdf4', borderRadius: 8 }}>
+                        <Statistic
+                          title="Thiết bị đang Online"
+                          value={activeSessions.length}
+                          prefix={<Badge status="processing" color="#10b981" />}
+                          valueStyle={{ color: '#10b981', fontWeight: 700 }}
+                        />
+                      </Card>
+                    </Col>
+                    <Col xs={24} sm={8}>
+                      <Card size="small" style={{ background: '#f8fafc', borderRadius: 8 }}>
+                        <div style={{ fontSize: 12, color: '#64748b' }}>Thiết bị gần nhất</div>
+                        <div
+                          style={{
+                            fontSize: 14,
+                            fontWeight: 650,
+                            marginTop: 4,
+                            color: '#0f172a',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                        >
+                          {userSessions[0]?.deviceName ||
+                            (userSessions[0] ? 'Trình duyệt Web' : '—')}
+                        </div>
+                        <div style={{ fontSize: 11.5, color: '#94a3b8', marginTop: 2 }}>
+                          {userSessions[0]
+                            ? formatRelativeTime(
+                                userSessions[0]?.lastSeenAt || userSessions[0]?.createdAt,
+                              )
+                            : 'Chưa có'}
+                        </div>
+                      </Card>
+                    </Col>
+                  </Row>
+
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                      gap: 10,
+                    }}
+                  >
+                    <Segmented
+                      value={memberHistoryFilter}
+                      onChange={(val) => setMemberHistoryFilter(val as typeof memberHistoryFilter)}
+                      options={[
+                        { label: `Tất cả (${userSessions.length})`, value: 'ALL' },
+                        { label: `Đang Online (${activeSessions.length})`, value: 'ACTIVE' },
+                        {
+                          label: `Đã kết thúc / Hết hạn (${inactiveSessions.length})`,
+                          value: 'INACTIVE',
+                        },
+                      ]}
+                    />
+                    <span style={{ fontSize: 12, color: '#64748b' }}>
+                      SuperAdmin có thể thu hồi phiên từ xa để đăng xuất thiết bị ngay lập tức
+                    </span>
+                  </div>
+
+                  {displayedSessions.length === 0 ? (
+                    <Empty
+                      description="Không có phiên đăng nhập nào trong bộ lọc này."
+                      style={{ margin: '24px 0' }}
+                    />
+                  ) : (
+                    <Table
+                      rowKey="id"
+                      size="small"
+                      dataSource={displayedSessions}
+                      pagination={{
+                        pageSize: 5,
+                        size: 'small',
+                        showTotal: (t) => `Tổng ${t} phiên`,
+                      }}
+                      scroll={{ x: 680 }}
+                      columns={[
+                        {
+                          title: 'Thiết bị & Nền tảng',
+                          key: 'device',
+                          render: (_, s) => (
+                            <div>
+                              {s.deviceId ? (
+                                <div>
+                                  <DesktopOutlined style={{ marginRight: 6, color: '#2563eb' }} />
+                                  <Typography.Text strong>
+                                    {s.deviceName || 'Máy POS'}
+                                  </Typography.Text>
+                                  <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                                    Mã POS: {s.deviceId}
+                                  </div>
+                                  {s.deviceStatus === 'REVOKED' && (
+                                    <Tag color="error" style={{ fontSize: 10, marginTop: 2 }}>
+                                      Máy POS đã thu hồi
+                                    </Tag>
+                                  )}
+                                </div>
+                              ) : (
+                                <div>
+                                  <GlobalOutlined style={{ marginRight: 6, color: '#0ea5e9' }} />
+                                  <Typography.Text strong>
+                                    {s.deviceName || 'Trình duyệt Web / POS Trực tiếp'}
+                                  </Typography.Text>
+                                  <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                                    Web Browser Session
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          ),
+                        },
+                        {
+                          title: 'Thời gian đăng nhập',
+                          dataIndex: 'createdAt',
+                          key: 'createdAt',
+                          render: (val: number) => (
+                            <div>
+                              <div style={{ fontWeight: 500 }}>{formatDateTimeFull(val)}</div>
+                              <div style={{ fontSize: 11, color: '#64748b' }}>
+                                {formatRelativeTime(val)}
+                              </div>
+                            </div>
+                          ),
+                        },
+                        {
+                          title: 'Hoạt động lần cuối',
+                          dataIndex: 'lastSeenAt',
+                          key: 'lastSeenAt',
+                          render: (val: number) => (
+                            <div>
+                              <div>{formatDateTimeFull(val)}</div>
+                              <div style={{ fontSize: 11, color: '#10b981' }}>
+                                {formatRelativeTime(val)}
+                              </div>
+                            </div>
+                          ),
+                        },
+                        {
+                          title: 'Trạng thái phiên',
+                          key: 'sessionStatus',
+                          render: (_, s) => {
+                            const isLive = s.status === 'ACTIVE' && Date.now() < s.expiresAt;
+                            const isRevoked = s.status === 'REVOKED';
+                            if (isLive) {
+                              return (
+                                <div>
+                                  <Tag color="success" style={{ fontWeight: 600 }}>
+                                    🟢 Đang hoạt động
+                                  </Tag>
+                                  <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                                    Hết hạn: {formatDateTime(s.expiresAt)}
+                                  </div>
+                                </div>
+                              );
+                            }
+                            if (isRevoked) {
+                              return (
+                                <div>
+                                  <Tag color="error" style={{ fontWeight: 600 }}>
+                                    🔴 Đã thu hồi
+                                  </Tag>
+                                  {s.revokedAt ? (
+                                    <div style={{ fontSize: 11, color: '#ef4444', marginTop: 2 }}>
+                                      {formatDateTime(s.revokedAt)}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              );
+                            }
+                            return (
+                              <div>
+                                <Tag color="default">⚪ Hết hạn</Tag>
+                                <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
+                                  {formatDateTime(s.expiresAt)}
+                                </div>
+                              </div>
+                            );
+                          },
+                        },
+                        {
+                          title: 'Hành động',
+                          key: 'actions',
+                          align: 'right',
+                          render: (_, s) => {
+                            const isLive = s.status === 'ACTIVE' && Date.now() < s.expiresAt;
+                            return isLive ? (
+                              <Popconfirm
+                                title="Đăng xuất thiết bị này từ xa?"
+                                description="Phiên làm việc trên thiết bị sẽ bị hủy ngay lập tức và buộc người dùng đăng nhập lại."
+                                okText="Đăng xuất"
+                                cancelText="Hủy"
+                                okButtonProps={{ danger: true, loading: submitting }}
+                                onConfirm={() => handleRevokeSession(s.id)}
+                              >
+                                <Button size="small" danger icon={<StopOutlined />}>
+                                  Thu hồi phiên
+                                </Button>
+                              </Popconfirm>
+                            ) : (
+                              <span style={{ color: '#cbd5e1' }}>—</span>
+                            );
+                          },
+                        },
+                      ]}
+                    />
+                  )}
+                </div>
+              );
+            })()
+          : null}
+      </Modal>
 
       {/* Modal Chỉnh Sửa Thông Tin Tài Khoản */}
       <Modal

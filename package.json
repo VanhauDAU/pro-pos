@@ -42,7 +42,13 @@
     "secrets:generate:production": "node scripts/generate-secrets.mjs production",
     "bootstrap:local": "node scripts/bootstrap-platform.mjs local",
     "bootstrap:staging": "node scripts/bootstrap-platform.mjs staging",
-    "bootstrap:production": "node scripts/bootstrap-platform.mjs production"
+    "bootstrap:production": "node scripts/bootstrap-platform.mjs production",
+    "sound:upload:local": "node scripts/upload-sounds-r2.mjs local",
+    "sound:upload:staging": "node scripts/upload-sounds-r2.mjs staging",
+    "sound:upload:production": "node scripts/upload-sounds-r2.mjs production",
+    "db:cleanup:local": "node scripts/cleanup-db.mjs local",
+    "db:cleanup:staging": "node scripts/cleanup-db.mjs staging",
+    "db:cleanup:production": "node scripts/cleanup-db.mjs production"
   },
   "dependencies": {
     "@ant-design/icons": "^6.3.2",

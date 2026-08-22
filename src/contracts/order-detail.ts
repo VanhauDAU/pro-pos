@@ -97,6 +97,7 @@ export interface OrderItemDetail {
   discountType: 'FIXED' | 'PERCENT' | null;
   discountInputValue: number | null;
   discountAmountVnd: number;
+  discountReason: string | null;
   netLineTotalVnd: number;
   note: string | null;
   addedById: string | null;

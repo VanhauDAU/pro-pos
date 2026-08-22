@@ -47,6 +47,7 @@ import {
   Avatar,
   Button,
   Card,
+  Checkbox,
   ConfigProvider,
   Drawer,
   Dropdown,
@@ -94,6 +95,7 @@ import { PosCustomerSelector } from './PosCustomerSelector';
 import { ReceiptPreviewModal, ReceiptPreviewPaper } from './ReceiptPreviewModal';
 import { TableQrModal } from '@client/components/TableQrModal';
 import type { CustomerSummary } from '@contracts/customer';
+import type { PosPromotionOption } from '@contracts/promotion';
 import { PushNotificationControl } from '@client/features/pwa/PushNotificationControl';
 import { OwnerInvoicesPage } from '@client/features/owner/OwnerInvoicesPage';
 import {
@@ -210,6 +212,7 @@ interface OrderQuote {
     note: string | null;
     discountType: 'FIXED' | 'PERCENT' | null;
     discountInputValue: number | null;
+    discountReason: string | null;
     grossLineTotalVnd: number;
     discountAmountVnd: number;
     netLineTotalVnd: number;
@@ -245,12 +248,118 @@ interface OrderQuote {
   };
   subtotalVnd: number;
   discountTotalVnd: number;
+  itemDiscountTotalVnd: number;
+  promotionDiscountVnd: number;
+  promotions: PosPromotionOption[];
+  promotion: PosPromotionOption | null;
+  promotionOptions: PosPromotionOption[];
   totalVnd: number;
   bankSettings?: {
     bankName: string | null;
     bankAccountNumber: string | null;
     bankAccountName: string | null;
   } | null;
+}
+
+const promotionTypeCopy: Record<PosPromotionOption['type'], string> = {
+  FIXED_AMOUNT: 'Giảm theo số tiền',
+  PERCENT: 'Giảm theo phần trăm',
+  FLAT_PRICE: 'Đồng giá',
+  GIFT: 'Tặng món',
+};
+
+function PosPromotionModal({
+  open,
+  options,
+  appliedIds,
+  loading,
+  onClose,
+  onApply,
+}: {
+  open: boolean;
+  options: PosPromotionOption[];
+  appliedIds: string[];
+  loading: boolean;
+  onClose: () => void;
+  onApply: (ids: string[]) => void;
+}) {
+  const [selected, setSelected] = useState<string[]>(appliedIds);
+  useEffect(() => setSelected(appliedIds), [appliedIds, open]);
+  return (
+    <Modal
+      open={open}
+      width={760}
+      title="Giảm giá"
+      onCancel={onClose}
+      className="staff-promotion-modal"
+      footer={[
+        <Button
+          key="remove"
+          danger
+          disabled={selected.length === 0 || loading}
+          onClick={() => onApply([])}
+        >
+          Bỏ tất cả khuyến mại
+        </Button>,
+        <Button key="save" type="primary" loading={loading} onClick={() => onApply(selected)}>
+          Lưu
+        </Button>,
+      ]}
+    >
+      <div className="staff-promotion-modal__tab">
+        <strong>Chương trình khuyến mại · Đã chọn {selected.length}</strong>
+        <small>Có thể chọn đồng thời nhiều chương trình đủ điều kiện</small>
+      </div>
+      <div className="staff-promotion-modal__list">
+        {options.length === 0 ? (
+          <Empty description="Không có chương trình đang hoạt động" />
+        ) : (
+          options.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              className={`staff-promotion-option${selected.includes(option.id) ? ' staff-promotion-option--selected' : ''}`}
+              disabled={!option.eligible}
+              onClick={() =>
+                setSelected((current) =>
+                  current.includes(option.id)
+                    ? current.filter((id) => id !== option.id)
+                    : [...current, option.id],
+                )
+              }
+            >
+              <Checkbox checked={selected.includes(option.id)} disabled={!option.eligible} />
+              <span className="staff-promotion-option__copy">
+                <strong>{option.name}</strong>
+                <small>
+                  {promotionTypeCopy[option.type]}
+                  {option.minimumOrderVnd > 0
+                    ? ` · Hóa đơn tối thiểu ${formatMoney(option.minimumOrderVnd)}`
+                    : ''}
+                </small>
+                {option.type === 'GIFT' && option.giftProductNames.length > 0 ? (
+                  <small>Tặng: {option.giftProductNames.join(', ')}</small>
+                ) : null}
+                {!option.eligible ? (
+                  <em>
+                    <CloseCircleFilled /> ! Không đủ điều kiện
+                    {option.reason ? ` · ${option.reason}` : ''}
+                  </em>
+                ) : null}
+              </span>
+              <b>
+                {option.discountAmountVnd > 0
+                  ? `-${formatMoney(option.discountAmountVnd)}`
+                  : option.type === 'GIFT'
+                    ? 'Tặng món'
+                    : ''}
+              </b>
+            </button>
+          ))
+        )}
+      </div>
+    </Modal>
+  );
 }
 
 interface DraftLine {
@@ -261,6 +370,7 @@ interface DraftLine {
   note: string | null;
   discountType: 'FIXED' | 'PERCENT' | null;
   discountInputValue: number | null;
+  discountReason: string | null;
 }
 
 interface EditingOrderItem {
@@ -279,6 +389,7 @@ interface EditingOrderItem {
   discountAmountVnd: number;
   discountType: 'FIXED' | 'PERCENT' | null;
   discountInputValue: number | null;
+  discountReason: string | null;
   netLineTotalVnd: number;
   discardOnCancel?: boolean | undefined;
 }
@@ -332,6 +443,16 @@ function calculateLineTotal(unitPriceVnd: number, quantityMilli: number) {
 
 function formatMoney(value: number) {
   return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(value);
+}
+
+function ItemDiscountDetail({ amount, reason }: { amount: number; reason: string | null }) {
+  if (amount <= 0) return null;
+  return (
+    <span className="staff-item-discount-detail">
+      <strong>Giảm thủ công: -{formatMoney(amount)}</strong>
+      <small>Lý do: {reason || 'Chưa có lý do'}</small>
+    </span>
+  );
 }
 
 function calculateDiscountAmount(
@@ -536,6 +657,52 @@ function mutationHeaders(csrfToken: string) {
   return { 'X-CSRF-Token': csrfToken, 'Idempotency-Key': crypto.randomUUID() };
 }
 
+function paymentReturnKey(orderId: string) {
+  return `pos-payment-return:${orderId}`;
+}
+
+interface PaymentReturnMarker {
+  enteredAt: number;
+  pendingVersion: number | null;
+  returnArmed: boolean;
+}
+
+// Module state is intentionally scoped to one browser tab/runtime. Persisted
+// storage can be copied when a tab is duplicated and must not grant another tab
+// permission to resume an order it did not leave from checkout.
+const activePaymentReturns = new Map<string, PaymentReturnMarker>();
+
+function markPaymentNavigationStarted(orderId: string) {
+  activePaymentReturns.set(paymentReturnKey(orderId), {
+    enteredAt: Date.now(),
+    pendingVersion: null,
+    returnArmed: false,
+  });
+}
+
+function armPaymentReturn(orderId: string, pendingVersion: number | null = null) {
+  const key = paymentReturnKey(orderId);
+  const current = activePaymentReturns.get(key);
+  activePaymentReturns.set(paymentReturnKey(orderId), {
+    enteredAt: current?.enteredAt ?? Date.now(),
+    pendingVersion,
+    returnArmed: true,
+  });
+}
+
+function clearPaymentPageActive(orderId: string) {
+  activePaymentReturns.delete(paymentReturnKey(orderId));
+}
+
+function isReturningFromPayment(orderId: string, pendingVersion: number) {
+  const marker = activePaymentReturns.get(paymentReturnKey(orderId));
+  if (!marker?.returnArmed) return false;
+  if (marker.pendingVersion !== null) {
+    return marker.pendingVersion === pendingVersion;
+  }
+  return Date.now() - marker.enteredAt < 120_000;
+}
+
 function StaffHeader({
   context,
   searchSlot,
@@ -683,7 +850,7 @@ function StaffHeader({
           </span>
         </div>
       </Tooltip>
-      <Tooltip title="Mở trung tâm thông báo 3 ngày gần nhất">
+      <Tooltip title="Trung tâm thông báo">
         <Button
           type="text"
           className="staff-header-notification-btn"
@@ -1057,7 +1224,15 @@ function StaffNotificationCenter({ open, onClose }: { open: boolean; onClose: ()
           {(notificationAudit.data?.items ?? []).map((event) => {
             const status = notificationStatusMeta(event.status);
             return (
-              <article key={event.id} className="staff-notification-audit-item">
+              <article
+                key={event.id}
+                className="staff-notification-audit-item"
+                style={{ cursor: 'pointer' }}
+                onClick={() => {
+                  onClose();
+                  navigate('/pos/qr-order');
+                }}
+              >
                 <div
                   className={`staff-notification-audit-icon is-${event.eventType.toLowerCase()}`}
                 >
@@ -1098,12 +1273,14 @@ function StaffNotificationCenter({ open, onClose }: { open: boolean; onClose: ()
                   <Button
                     type="link"
                     size="small"
-                    onClick={() => {
+                    style={{ padding: 0, marginTop: 4 }}
+                    onClick={(e) => {
+                      e.stopPropagation();
                       onClose();
-                      navigate(`/pos/orders/${event.orderId}`);
+                      navigate('/pos/qr-order');
                     }}
                   >
-                    Mở đơn liên quan
+                    Mở tab QR Order →
                   </Button>
                 </div>
               </article>
@@ -2495,6 +2672,113 @@ function StaffItemDetailModal({
   );
 }
 
+function SwipeableOrderItemRow({
+  children,
+  onClick,
+  onDelete,
+  className = '',
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  onDelete: () => void;
+  className?: string;
+}) {
+  const [offsetX, setOffsetX] = useState(0);
+  const [isSwiping, setIsSwiping] = useState(false);
+  const touchStartRef = useRef<{ x: number; y: number; startOffset: number } | null>(null);
+  const isHorizontalSwipeRef = useRef<boolean | null>(null);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    if (!touch) return;
+    touchStartRef.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      startOffset: offsetX,
+    };
+    isHorizontalSwipeRef.current = null;
+    setIsSwiping(true);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!touchStartRef.current) return;
+    const touch = e.touches[0];
+    if (!touch) return;
+    const diffX = touch.clientX - touchStartRef.current.x;
+    const diffY = touch.clientY - touchStartRef.current.y;
+
+    if (isHorizontalSwipeRef.current === null) {
+      if (Math.abs(diffX) > 8 || Math.abs(diffY) > 8) {
+        isHorizontalSwipeRef.current = Math.abs(diffX) > Math.abs(diffY);
+      }
+    }
+
+    if (isHorizontalSwipeRef.current) {
+      const rawOffset = touchStartRef.current.startOffset + diffX;
+      // Allow swiping left between -90px and 0px
+      const clampedOffset = Math.min(0, Math.max(-90, rawOffset));
+      setOffsetX(clampedOffset);
+    }
+  };
+
+  const handleTouchEnd = () => {
+    setIsSwiping(false);
+    touchStartRef.current = null;
+    if (isHorizontalSwipeRef.current) {
+      if (offsetX < -35) {
+        setOffsetX(-76);
+      } else {
+        setOffsetX(0);
+      }
+    }
+    isHorizontalSwipeRef.current = null;
+  };
+
+  const handleClick = () => {
+    if (offsetX !== 0) {
+      setOffsetX(0);
+      return;
+    }
+    onClick();
+  };
+
+  const handleDeleteClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setOffsetX(0);
+    onDelete();
+  };
+
+  return (
+    <div className="staff-swipeable-item-wrapper">
+      <div className="staff-swipeable-delete-action">
+        <button
+          type="button"
+          className="staff-swipeable-delete-btn"
+          onClick={handleDeleteClick}
+          aria-label="Xóa món"
+        >
+          <DeleteOutlined />
+          <span>Xóa</span>
+        </button>
+      </div>
+      <button
+        type="button"
+        className={`staff-compact-order-row staff-compact-order-row--editable ${className}`}
+        style={{
+          transform: `translateX(${offsetX}px)`,
+          transition: isSwiping ? 'none' : 'transform 0.22s cubic-bezier(0.2, 0.9, 0.4, 1)',
+        }}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onClick={handleClick}
+      >
+        {children}
+      </button>
+    </div>
+  );
+}
+
 function WeightInputSection({
   unitName,
   unitPriceVnd,
@@ -2734,6 +3018,7 @@ function OrderItemDetailModal({
   const [itemQuantityMilli, setItemQuantityMilli] = useState<number>(item.quantityMilli);
   const [discountType, setDiscountType] = useState<'FIXED' | 'PERCENT' | null>(item.discountType);
   const [discountValue, setDiscountValue] = useState<number | null>(item.discountInputValue);
+  const [discountReason, setDiscountReason] = useState(item.discountReason ?? '');
   const [showDiscountInput, setShowDiscountInput] = useState<boolean>(
     Boolean(item.discountType && item.discountInputValue),
   );
@@ -2748,6 +3033,10 @@ function OrderItemDetailModal({
   const handleSave = () => {
     if (item.productType === 'WEIGHT' && itemQuantityMilli <= 0) {
       message.warning('Vui lòng nhập trọng lượng lớn hơn 0');
+      return;
+    }
+    if (discountAmount > 0 && !discountReason.trim()) {
+      message.warning('Vui lòng nhập lý do giảm giá');
       return;
     }
 
@@ -2770,6 +3059,7 @@ function OrderItemDetailModal({
         discountAmountVnd: saveDiscountAmount,
         discountType,
         discountInputValue: discountValue,
+        discountReason: discountAmount > 0 ? discountReason.trim() : null,
         netLineTotalVnd: saveNetTotal,
       },
       currentVariant,
@@ -2908,6 +3198,7 @@ function OrderItemDetailModal({
                   onClick={() => {
                     setDiscountType(null);
                     setDiscountValue(null);
+                    setDiscountReason('');
                     setShowDiscountInput(false);
                   }}
                 />
@@ -2917,6 +3208,16 @@ function OrderItemDetailModal({
                   Giảm: -{formatMoney(discountAmount)} (Còn {formatMoney(netTotal)})
                 </div>
               ) : null}
+              <Input.TextArea
+                rows={2}
+                maxLength={300}
+                showCount
+                value={discountReason}
+                status={discountAmount > 0 && !discountReason.trim() ? 'error' : ''}
+                placeholder="Nhập lý do giảm giá (*)"
+                onChange={(event) => setDiscountReason(event.target.value)}
+                className="staff-item-modal__discount-reason"
+              />
             </div>
           )}
         </div>
@@ -3044,6 +3345,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const [provisionalBillOpen, setProvisionalBillOpen] = useState(false);
   const [resumeModalOpen, setResumeModalOpen] = useState(false);
   const [resuming, setResuming] = useState(false);
+  const [autoResumeRetryToken, setAutoResumeRetryToken] = useState(0);
   const [stoppingTime, setStoppingTime] = useState(false);
   const [clockNow, setClockNow] = useState(() => Date.now());
   const [isMobile, setIsMobile] = useState(() =>
@@ -3055,10 +3357,13 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const [editingNoteItemIndex, setEditingNoteItemIndex] = useState<number | null>(null);
   const [itemNoteDraft, setItemNoteDraft] = useState('');
   const cartIconRef = useRef<HTMLButtonElement>(null);
+  const autoResumePaymentInFlightRef = useRef(false);
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
   const [guestCount, setGuestCount] = useState<number>(1);
   const [guestModalOpen, setGuestModalOpen] = useState(false);
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
+  const [promotionModalOpen, setPromotionModalOpen] = useState(false);
+  const [promotionSaving, setPromotionSaving] = useState(false);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerId, setCustomerId] = useState<string | null>(null);
@@ -3080,6 +3385,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   });
   const [isResizing, setIsResizing] = useState(false);
   const csrf = auth.csrfToken!;
+
+  const navigateToPayment = (targetOrderId: string, replace = false) => {
+    markPaymentNavigationStarted(targetOrderId);
+    navigate(`/pos/orders/${targetOrderId}/payment`, replace ? { replace: true } : undefined);
+  };
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth <= 900);
@@ -3161,7 +3471,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
 
   useEffect(() => {
     if (!isNew && quote.data && searchParams.get('checkout') === '1') {
-      navigate(`/pos/orders/${quote.data.order.id}/payment`, { replace: true });
+      navigateToPayment(quote.data.order.id, true);
     }
   }, [isNew, quote.data, searchParams, navigate]);
 
@@ -3294,6 +3604,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         note: null,
         discountType: null,
         discountInputValue: null,
+        discountReason: null,
       };
       setDraftLines((lines) => [...lines, line]);
       setEditingItem({
@@ -3312,6 +3623,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         discountAmountVnd: 0,
         discountType: null,
         discountInputValue: null,
+        discountReason: null,
         netLineTotalVnd: effectiveVariant.salePriceVnd,
         discardOnCancel: true,
       });
@@ -3338,6 +3650,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           note: null,
           discountType: null,
           discountInputValue: null,
+          discountReason: null,
         },
       ];
     });
@@ -3361,6 +3674,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         note: null,
         discountType: null,
         discountInputValue: null,
+        discountReason: null,
       };
       setPickingCart((lines) => [...lines, line]);
       return;
@@ -3386,6 +3700,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           note: null,
           discountType: null,
           discountInputValue: null,
+          discountReason: null,
         },
       ];
     });
@@ -3501,7 +3816,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           note: line.note,
           discount:
             line.discountType && line.discountInputValue !== null
-              ? { type: line.discountType, value: line.discountInputValue }
+              ? {
+                  type: line.discountType,
+                  value: line.discountInputValue,
+                  reason: line.discountReason ?? '',
+                }
               : null,
         },
         { headers: mutationHeaders(csrf) },
@@ -3609,7 +3928,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     if (!quote.data) return;
     if (draftLines.length === 0) {
       if (openPaymentAfterSave) {
-        navigate(`/pos/orders/${quote.data.order.id}/payment`);
+        navigateToPayment(quote.data.order.id);
       } else {
         messageApi.success('Lưu đơn hàng thành công.');
         navigate('/pos', { replace: true });
@@ -3625,7 +3944,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       await queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
       messageApi.success('Lưu đơn hàng thành công.');
       if (openPaymentAfterSave) {
-        navigate(`/pos/orders/${quote.data.order.id}/payment`);
+        navigateToPayment(quote.data.order.id);
       } else {
         navigate('/pos', { replace: true });
       }
@@ -3636,20 +3955,48 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     }
   };
 
-  const handleResumeCheckout = async () => {
-    if (!quote.data || resuming) return;
+  const handleResumeCheckout = async (automatic = false) => {
+    if (!quote.data || resuming) return false;
+    const frozenQuote = quote.data;
     setResuming(true);
     try {
-      const result = await jsonRequest<{
-        orderId: string;
-        status: 'OPEN';
-        resumedAt: number;
-        quote: OrderQuote;
-      }>(
-        `/api/v1/pos/orders/${quote.data.order.id}/resume-checkout`,
-        { expectedOrderVersion: quote.data.order.version },
-        { headers: mutationHeaders(csrf) },
-      );
+      const sendResume = (expectedOrderVersion: number) =>
+        jsonRequest<{
+          orderId: string;
+          status: 'OPEN';
+          resumedAt: number;
+          quote: OrderQuote;
+        }>(
+          `/api/v1/pos/orders/${frozenQuote.order.id}/resume-checkout`,
+          { expectedOrderVersion },
+          { headers: mutationHeaders(csrf) },
+        );
+
+      let result;
+      try {
+        result = await sendResume(frozenQuote.order.version);
+      } catch (error) {
+        const refreshed = await apiRequest<OrderQuote>(
+          `/api/v1/pos/orders/${frozenQuote.order.id}/quote`,
+        );
+        if (!refreshed.time || refreshed.order.status === 'OPEN') {
+          queryClient.setQueryData<OrderQuote>(['pos-order-quote', orderId], (cached) =>
+            !cached || refreshed.order.version >= cached.order.version ? refreshed : cached,
+          );
+          clearPaymentPageActive(frozenQuote.order.id);
+          void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
+          void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
+          setResumeModalOpen(false);
+          return true;
+        }
+        if (
+          refreshed.order.status !== 'PAYMENT_PENDING' ||
+          refreshed.order.version === frozenQuote.order.version
+        ) {
+          throw error;
+        }
+        result = await sendResume(refreshed.order.version);
+      }
       const openQuote: OrderQuote = {
         ...result.quote,
         order: {
@@ -3657,17 +4004,52 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           status: 'OPEN',
         },
       };
-      queryClient.setQueryData(['pos-order-quote', orderId], openQuote);
+      queryClient.setQueryData<OrderQuote>(['pos-order-quote', orderId], (cached) =>
+        !cached || openQuote.order.version >= cached.order.version ? openQuote : cached,
+      );
+      clearPaymentPageActive(frozenQuote.order.id);
+      void queryClient.invalidateQueries({ queryKey: ['pos-order-quote', orderId] });
       void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
       void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
-      messageApi.success(`Đã tiếp tục tính giờ cho ${quote.data.order.tableName}`);
+      messageApi.success(`Đã tiếp tục tính giờ cho ${frozenQuote.order.tableName}`);
       setResumeModalOpen(false);
+      return true;
     } catch (error) {
-      messageApi.error(errorText(error));
+      if (!automatic) messageApi.error(errorText(error));
+      return false;
     } finally {
       setResuming(false);
     }
   };
+
+  useEffect(() => {
+    const currentQuote = quote.data;
+    if (
+      !currentQuote?.time ||
+      currentQuote.order.status !== 'PAYMENT_PENDING' ||
+      !isReturningFromPayment(currentQuote.order.id, currentQuote.order.version) ||
+      autoResumePaymentInFlightRef.current
+    ) {
+      return;
+    }
+    let retryTimer: number | null = null;
+    autoResumePaymentInFlightRef.current = true;
+    void handleResumeCheckout(true)
+      .then((resumed) => {
+        if (!resumed) {
+          retryTimer = window.setTimeout(
+            () => setAutoResumeRetryToken((token) => token + 1),
+            1_000,
+          );
+        }
+      })
+      .finally(() => {
+        autoResumePaymentInFlightRef.current = false;
+      });
+    return () => {
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+    };
+  }, [autoResumeRetryToken, quote.data]);
 
   const handleOpenTableQrModal = async () => {
     const tableId = quote.data?.order.tableId ?? selectedTable?.id ?? preselectedTableId;
@@ -3719,7 +4101,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     }
     if (!isNew) {
       if (isPaymentPending) {
-        navigate(`/pos/orders/${quote.data!.order.id}/payment`);
+        navigateToPayment(quote.data!.order.id);
         return;
       }
       if (quote.data?.time) {
@@ -3747,10 +4129,14 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
               status: 'PAYMENT_PENDING',
             },
           };
-          queryClient.setQueryData(['pos-order-quote', quote.data.order.id], pendingQuote);
+          queryClient.setQueryData<OrderQuote>(
+            ['pos-order-quote', quote.data.order.id],
+            (cached) =>
+              !cached || pendingQuote.order.version >= cached.order.version ? pendingQuote : cached,
+          );
           void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
           void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
-          navigate(`/pos/orders/${quote.data.order.id}/payment`);
+          navigateToPayment(quote.data.order.id);
         } catch (error) {
           messageApi.error(errorText(error));
         } finally {
@@ -3791,7 +4177,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     id: string;
     quantityMilli: number;
     variantId?: string | null | undefined;
-    discount?: null | { type: 'FIXED' | 'PERCENT'; value: number } | undefined;
+    discount?: null | { type: 'FIXED' | 'PERCENT'; value: number; reason: string } | undefined;
     note: string | null;
   }) => {
     if (!quote.data) return;
@@ -4024,6 +4410,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       discountAmountVnd: discount,
       discountType: line.discountType,
       discountInputValue: line.discountInputValue,
+      discountReason: line.discountReason,
       netLineTotalVnd: net,
       note: line.note,
     };
@@ -4034,14 +4421,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const displayedItems = isNew ? draftDisplayItems : (quote.data?.items ?? []);
 
   // 1. Tiền hàng (mặt hàng số lượng và trọng lượng)
-  const regularProductGross = allCurrentItems.reduce(
-    (sum, item) => sum + item.grossLineTotalVnd,
-    0,
-  );
-  const regularProductDiscount = allCurrentItems.reduce(
-    (sum, item) => sum + item.discountAmountVnd,
-    0,
-  );
+  const regularProductGross = allCurrentItems.reduce((sum, item) => sum + item.netLineTotalVnd, 0);
   const regularProductCount = allCurrentItems.length;
 
   // Tiền trong giỏ hàng tạm khi chọn món
@@ -4060,7 +4440,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const totalTimeGross = quote.data?.time ? quote.data.time.amountAfterRoundingVnd : 0;
 
   // 3. Giảm giá và Tổng khách phải trả
-  const totalDiscount = regularProductDiscount;
+  const totalDiscount = isNew ? 0 : (quote.data?.promotionDiscountVnd ?? 0);
+  const appliedPromotions = isNew ? [] : (quote.data?.promotions ?? []);
   const pendingTotal = draftDisplayItems.reduce((sum, item) => sum + item.netLineTotalVnd, 0);
   const displayedTotal = isNew ? pendingTotal : (quote.data?.totalVnd ?? 0) + pendingTotal;
   const liveElapsedSeconds = quote.data?.time
@@ -4070,9 +4451,40 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         : 0)
     : 0;
 
+  const applyPromotion = async (promotionIds: string[]) => {
+    if (!quote.data || isNew) return;
+    setPromotionSaving(true);
+    try {
+      await jsonRequest(
+        `/api/v1/pos/orders/${quote.data.order.id}/promotion`,
+        { promotionIds, expectedOrderVersion: quote.data.order.version },
+        { method: 'PUT', headers: mutationHeaders(csrf) },
+      );
+      setPromotionModalOpen(false);
+      await refreshOrder();
+      messageApi.success(
+        promotionIds.length > 0
+          ? `Đã áp dụng ${promotionIds.length} chương trình khuyến mại.`
+          : 'Đã bỏ tất cả khuyến mại.',
+      );
+    } catch (error) {
+      messageApi.error(errorText(error));
+    } finally {
+      setPromotionSaving(false);
+    }
+  };
+
   return (
     <div className="staff-order-editor">
       {holder}
+      <PosPromotionModal
+        open={promotionModalOpen}
+        options={quote.data?.promotionOptions ?? []}
+        appliedIds={(quote.data?.promotions ?? []).map((promotion) => promotion.id)}
+        loading={promotionSaving}
+        onClose={() => setPromotionModalOpen(false)}
+        onApply={(ids) => void applyPromotion(ids)}
+      />
 
       {isMobile ? (
         mobileView === 'PRODUCTS' ? (
@@ -4181,21 +4593,25 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                               getProductInitials(product.productName)
                             )}
                           </div>
-                          <strong className="staff-product-mobile-card__name">
-                            {product.productName}
-                          </strong>
-                          {product.variants.length > 1 ? (
-                            <small className="staff-product-mobile-card__variant">
-                              {product.variants.length} phiên bản
-                            </small>
-                          ) : null}
-                          <b className="staff-product-mobile-card__price">
-                            {minPrice === null
-                              ? 'Nhập giá'
-                              : minPrice === maxPrice
-                                ? `${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`
-                                : `Từ ${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`}
-                          </b>
+                          <div className="staff-product-mobile-card__info">
+                            <strong className="staff-product-mobile-card__name">
+                              {product.productName}
+                            </strong>
+                            <div className="staff-product-mobile-card__meta">
+                              {product.variants.length > 1 ? (
+                                <small className="staff-product-mobile-card__variant">
+                                  {product.variants.length} phiên bản
+                                </small>
+                              ) : null}
+                            </div>
+                            <b className="staff-product-mobile-card__price">
+                              {minPrice === null
+                                ? 'Nhập giá'
+                                : minPrice === maxPrice
+                                  ? `${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`
+                                  : `Từ ${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`}
+                            </b>
+                          </div>
                         </button>
                       );
                     })}
@@ -4558,6 +4974,10 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                               Ghi chú: {item.note}
                             </div>
                           )}
+                          <ItemDiscountDetail
+                            amount={item.discountAmountVnd}
+                            reason={item.discountReason}
+                          />
                         </span>
                         <span className="staff-order-mobile-item__price">
                           {formatMoney(item.netLineTotalVnd)}
@@ -4588,6 +5008,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                           discountAmountVnd: item.discountAmountVnd,
                           discountType: item.discountType,
                           discountInputValue: item.discountInputValue,
+                          discountReason: item.discountReason,
                           netLineTotalVnd: item.netLineTotalVnd,
                         })
                       }
@@ -4606,6 +5027,10 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                               Ghi chú: {item.note}
                             </div>
                           )}
+                          <ItemDiscountDetail
+                            amount={item.discountAmountVnd}
+                            reason={item.discountReason}
+                          />
                         </span>
                         <span className="staff-order-mobile-item__price">
                           {formatMoney(item.netLineTotalVnd)}
@@ -4653,6 +5078,54 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
               <EditOutlined className="staff-order-mobile-note__icon" />
             </div>
 
+            {/* Mobile Order Financial Summary Details (In-Flow / Non-Sticky) */}
+            <div className="staff-order-mobile-summary-card">
+              <div className="staff-order-mobile-summary__title">Tổng tiền</div>
+              <div className="staff-order-mobile-summary__row">
+                <span>Tổng tiền hàng ({regularProductCount} món)</span>
+                <span>{formatMoney(regularProductGross)}</span>
+              </div>
+              {totalTimeGross > 0 && (
+                <div className="staff-order-mobile-summary__row">
+                  <span>Tiền giờ</span>
+                  <span>{formatMoney(totalTimeGross)}</span>
+                </div>
+              )}
+              <div
+                className="staff-order-mobile-summary__row staff-promotion-trigger"
+                onClick={() => !isNew && setPromotionModalOpen(true)}
+              >
+                <span>Giảm giá {!isNew ? <EditOutlined /> : null}</span>
+                <span className="staff-cart-discount-amount">
+                  {totalDiscount > 0 ? `-${formatMoney(totalDiscount)}` : '0đ'}
+                </span>
+              </div>
+              {appliedPromotions.length > 0 ? (
+                <div
+                  className="staff-applied-promotions-box"
+                  onClick={() => !isNew && setPromotionModalOpen(true)}
+                >
+                  {appliedPromotions.map((promotion) => (
+                    <div key={promotion.id} className="staff-applied-promotion-row-item">
+                      <span className="staff-applied-promotion-name">{promotion.name}</span>
+                      <span className="staff-applied-promotion-amount">
+                        {promotion.discountAmountVnd > 0
+                          ? `-${formatMoney(promotion.discountAmountVnd)}`
+                          : promotion.type === 'GIFT'
+                            ? 'Tặng món'
+                            : '-0đ'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <div className="staff-order-mobile-divider" />
+              <div className="staff-order-mobile-summary__total-row">
+                <strong>Khách phải trả</strong>
+                <strong>{formatMoney(displayedTotal)}</strong>
+              </div>
+            </div>
+
             {/* Floating "+ Thêm món" Button */}
             <button
               type="button"
@@ -4667,26 +5140,9 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
               <span>Thêm món</span>
             </button>
 
-            {/* Sticky Bottom Billing Summary & Actions */}
+            {/* Sticky Bottom Billing Summary & Actions (Only Khách phải trả) */}
             <div className="staff-order-mobile-footer">
-              <div className="staff-order-mobile-summary">
-                <div className="staff-order-mobile-summary__title">Tổng tiền</div>
-                <div className="staff-order-mobile-summary__row">
-                  <span>Tổng tiền hàng ({regularProductCount} món)</span>
-                  <span>{formatMoney(regularProductGross)}</span>
-                </div>
-                {totalTimeGross > 0 && (
-                  <div className="staff-order-mobile-summary__row">
-                    <span>Tiền giờ</span>
-                    <span>{formatMoney(totalTimeGross)}</span>
-                  </div>
-                )}
-                {totalDiscount > 0 && (
-                  <div className="staff-order-mobile-summary__row">
-                    <span>Giảm giá</span>
-                    <span className="text-danger">-{formatMoney(totalDiscount)}</span>
-                  </div>
-                )}
+              <div className="staff-order-mobile-summary-compact">
                 <div className="staff-order-mobile-summary__total-row">
                   <strong>Khách phải trả</strong>
                   <strong>{formatMoney(displayedTotal)}</strong>
@@ -4708,7 +5164,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                     <Button
                       type="primary"
                       size="large"
-                      onClick={() => navigate(`/pos/orders/${quote.data!.order.id}/payment`)}
+                      onClick={() => navigateToPayment(quote.data!.order.id)}
                       className="staff-order-mobile-btn-pay"
                     >
                       Thanh toán
@@ -4901,19 +5357,23 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                             getProductInitials(product.productName)
                           )}
                         </span>
-                        <strong>{product.productName}</strong>
-                        <small>
-                          {product.variants.length > 1
-                            ? `${product.variants.length} phiên bản`
-                            : '\u00a0'}
-                        </small>
-                        <b>
-                          {minPrice === null
-                            ? 'Nhập giá'
-                            : minPrice === maxPrice
-                              ? `${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`
-                              : `Từ ${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`}
-                        </b>
+                        <div className="staff-product-card__info">
+                          <strong className="staff-product-card__name">
+                            {product.productName}
+                          </strong>
+                          <div className="staff-product-card__meta">
+                            {product.variants.length > 1 ? (
+                              <small>{product.variants.length} phiên bản</small>
+                            ) : null}
+                          </div>
+                          <b className="staff-product-card__price">
+                            {minPrice === null
+                              ? 'Nhập giá'
+                              : minPrice === maxPrice
+                                ? `${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`
+                                : `Từ ${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`}
+                          </b>
+                        </div>
                       </button>
                     );
                   })}
@@ -4982,16 +5442,19 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                         </div>
                         <div className="staff-compact-order-list">
                           {draftDisplayItems.map((item) => (
-                            <button
-                              type="button"
+                            <SwipeableOrderItemRow
                               key={item.id}
-                              className="staff-compact-order-row staff-compact-order-row--editable"
                               onClick={() =>
                                 setEditingItem({
                                   source: 'DRAFT',
                                   ...item,
                                   note: item.note ?? '',
                                 })
+                              }
+                              onDelete={() =>
+                                setDraftLines((lines) =>
+                                  lines.filter((line) => line.id !== item.id),
+                                )
                               }
                             >
                               <span className="staff-order-quantity">
@@ -5004,9 +5467,13 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                               <span className="staff-order-item-name">
                                 <strong>{item.productName}</strong>
                                 <small>{item.variantName}</small>
+                                <ItemDiscountDetail
+                                  amount={item.discountAmountVnd}
+                                  reason={item.discountReason}
+                                />
                               </span>
                               <b>{formatMoney(item.netLineTotalVnd)}</b>
-                            </button>
+                            </SwipeableOrderItemRow>
                           ))}
                         </div>
                       </section>
@@ -5248,10 +5715,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                         ) : (
                           <div className="staff-compact-order-list">
                             {displayedItems.map((item) => (
-                              <button
-                                type="button"
+                              <SwipeableOrderItemRow
                                 key={item.id}
-                                className="staff-compact-order-row staff-compact-order-row--editable"
                                 onClick={() =>
                                   setEditingItem({
                                     source: 'SAVED',
@@ -5269,9 +5734,25 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                                     discountAmountVnd: item.discountAmountVnd,
                                     discountType: item.discountType,
                                     discountInputValue: item.discountInputValue,
+                                    discountReason: item.discountReason,
                                     netLineTotalVnd: item.netLineTotalVnd,
                                   })
                                 }
+                                onDelete={() => {
+                                  if (isNew) {
+                                    setDraftLines((lines) =>
+                                      lines.filter((line) => line.id !== item.id),
+                                    );
+                                  } else {
+                                    setDeleteItemTarget({
+                                      id: item.id,
+                                      name: item.productName,
+                                      source: 'SAVED',
+                                    });
+                                    setDeleteItemReason('');
+                                    setDeleteItemModalOpen(true);
+                                  }
+                                }}
                               >
                                 <span className="staff-order-quantity">
                                   {formatItemQuantity(
@@ -5284,9 +5765,13 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                                   <strong>{item.productName}</strong>
                                   <small>{item.variantName}</small>
                                   {item.note ? <small>Ghi chú: {item.note}</small> : null}
+                                  <ItemDiscountDetail
+                                    amount={item.discountAmountVnd}
+                                    reason={item.discountReason}
+                                  />
                                 </span>
                                 <b>{formatMoney(item.netLineTotalVnd)}</b>
-                              </button>
+                              </SwipeableOrderItemRow>
                             ))}
                           </div>
                         )}
@@ -5363,8 +5848,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       <div className="staff-action-buttons-group">
                         {(quote.data?.order.tableId || selectedTable?.id || preselectedTableId) && (
                           <Button
-                            size="large"
-                            block
                             icon={<QrcodeOutlined />}
                             loading={tableQrLoading}
                             onClick={() => void handleOpenTableQrModal()}
@@ -5375,45 +5858,38 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                               fontWeight: 600,
                             }}
                           >
-                            Lấy mã QR Order của bàn
+                            Mã QR bàn
                           </Button>
                         )}
                         {!isNew ? (
                           <>
                             <Button
-                              size="large"
-                              block
                               icon={<PrinterOutlined />}
                               disabled={printSettings.data?.allowProvisionalPrint === false}
                               onClick={() => void printProvisionalReceipt()}
                               className="staff-action-provisional-btn"
                             >
-                              In phiếu tạm tính
+                              In tạm tính
                             </Button>
                             <Button
-                              size="large"
-                              block
                               icon={<FileTextOutlined />}
                               disabled={printSettings.data?.allowProvisionalPrint === false}
                               onClick={() => setProvisionalBillOpen(true)}
+                              className="staff-action-preview-btn"
                             >
-                              Xem trước phiếu tạm tính
+                              Xem tạm tính
                             </Button>
                             {quote.data?.order.orderType === 'DINE_IN' ? (
                               <Button
-                                size="large"
-                                block
                                 icon={<SwapOutlined />}
                                 onClick={() => setTransferOpen(true)}
                                 className="staff-action-transfer-btn"
                               >
-                                Chuyển bàn/phòng
+                                Chuyển bàn
                               </Button>
                             ) : null}
                             <Button
                               danger
-                              size="large"
-                              block
                               icon={<StopOutlined />}
                               onClick={() => setCancelOpen(true)}
                               className="staff-action-cancel-btn"
@@ -5425,7 +5901,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                           <Alert
                             type="info"
                             showIcon
-                            description="In phiếu tạm tính, Chuyển bàn và Hủy đơn sẽ khả dụng sau khi đơn hàng được lưu."
+                            className="staff-action-alert"
+                            description="In tạm tính, Chuyển bàn và Hủy đơn sẽ khả dụng sau khi lưu đơn."
                           />
                         )}
                       </div>
@@ -5459,10 +5936,34 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       <b>{formatMoney(totalTimeGross)}</b>
                     </div>
                   ) : null}
-                  <div>
-                    <span>Giảm giá</span>
-                    <b>{totalDiscount > 0 ? `-${formatMoney(totalDiscount)}` : '0đ'}</b>
+                  <div
+                    className="staff-promotion-trigger"
+                    onClick={() => !isNew && setPromotionModalOpen(true)}
+                  >
+                    <span>Giảm giá {!isNew ? <EditOutlined /> : null}</span>
+                    <span className="staff-cart-discount-amount">
+                      {totalDiscount > 0 ? `-${formatMoney(totalDiscount)}` : '0đ'}
+                    </span>
                   </div>
+                  {appliedPromotions.length > 0 ? (
+                    <div
+                      className="staff-applied-promotions-box"
+                      onClick={() => !isNew && setPromotionModalOpen(true)}
+                    >
+                      {appliedPromotions.map((promotion) => (
+                        <div key={promotion.id} className="staff-applied-promotion-row-item">
+                          <span className="staff-applied-promotion-name">{promotion.name}</span>
+                          <span className="staff-applied-promotion-amount">
+                            {promotion.discountAmountVnd > 0
+                              ? `-${formatMoney(promotion.discountAmountVnd)}`
+                              : promotion.type === 'GIFT'
+                                ? 'Tặng món'
+                                : '-0đ'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                   <div className="staff-cart-total">
                     <span>Khách phải trả</span>
                     <b>{formatMoney(displayedTotal)}</b>
@@ -5485,7 +5986,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       type="primary"
                       size="large"
                       onClick={() => {
-                        navigate(`/pos/orders/${quote.data!.order.id}/payment`);
+                        navigateToPayment(quote.data!.order.id);
                       }}
                     >
                       Tiếp tục thanh toán
@@ -5634,6 +6135,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   note: updated.note.trim() || null,
                   discountType: updated.discountType,
                   discountInputValue: updated.discountInputValue,
+                  discountReason: updated.discountReason,
                 };
               }),
             );
@@ -5650,7 +6152,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                 updated.discountType &&
                 updated.discountInputValue !== null &&
                 updated.discountInputValue !== undefined
-                  ? { type: updated.discountType, value: updated.discountInputValue }
+                  ? {
+                      type: updated.discountType,
+                      value: updated.discountInputValue,
+                      reason: updated.discountReason ?? '',
+                    }
                   : null,
               note: updated.note.trim() || null,
             });
@@ -6058,68 +6564,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                 },
               }}
             />
-            <Alert
-              type="info"
-              showIcon
-              message="Số tiền có thể tiếp tục thay đổi do bàn vẫn đang tính giờ."
-              style={{ marginBottom: 14 }}
-            />
-            <div className="staff-provisional-info-card">
-              <div className="staff-provisional-row">
-                <span>Bàn</span>
-                <strong>{quote.data.order.tableName}</strong>
-              </div>
-              {quote.data.time ? (
-                <>
-                  <div className="staff-provisional-row">
-                    <span>Giờ vào</span>
-                    <span>{formatDateTime(quote.data.time.startedAtMs)}</span>
-                  </div>
-                  <div className="staff-provisional-row">
-                    <span>Thời gian hiện tại</span>
-                    <strong>{formatElapsed(liveElapsedSeconds)}</strong>
-                  </div>
-                  <div className="staff-provisional-row">
-                    <span>Tiền giờ tạm tính</span>
-                    <b>{formatMoney(quote.data.time.amountAfterRoundingVnd)}</b>
-                  </div>
-                </>
-              ) : null}
-            </div>
-
-            <div className="staff-provisional-items-list">
-              {displayedItems.map((item) => (
-                <div key={item.id} className="staff-provisional-item-row">
-                  <span>
-                    {item.productName} ({item.quantityMilli / 1000} {item.unitName ?? ''})
-                  </span>
-                  <b>{formatMoney(item.netLineTotalVnd)}</b>
-                </div>
-              ))}
-            </div>
-
-            <div className="staff-provisional-totals-card">
-              <div className="staff-provisional-row">
-                <span>Tổng tiền hàng</span>
-                <span>{formatMoney(regularProductGross)}</span>
-              </div>
-              {totalTimeGross > 0 ? (
-                <div className="staff-provisional-row">
-                  <span>Tiền giờ</span>
-                  <span>{formatMoney(totalTimeGross)}</span>
-                </div>
-              ) : null}
-              {totalDiscount > 0 ? (
-                <div className="staff-provisional-row">
-                  <span>Giảm giá</span>
-                  <span>-{formatMoney(totalDiscount)}</span>
-                </div>
-              ) : null}
-              <div className="staff-provisional-row staff-provisional-row--total">
-                <span>TỔNG TẠM TÍNH</span>
-                <b>{formatMoney(displayedTotal)}</b>
-              </div>
-            </div>
           </div>
         ) : null}
       </Modal>
@@ -6426,7 +6870,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   fontWeight: 600,
                 }}
               >
-                Lấy mã QR Order của bàn
+                Mã QR bàn
               </Button>
             )}
             {!isNew && (
@@ -6441,7 +6885,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                     void printProvisionalReceipt();
                   }}
                 >
-                  In phiếu tạm tính
+                  In tạm tính
                 </Button>
                 <Button
                   size="large"
@@ -6453,7 +6897,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                     setProvisionalBillOpen(true);
                   }}
                 >
-                  Xem trước phiếu tạm tính
+                  Xem tạm tính
                 </Button>
 
                 {quote.data?.order.orderType === 'DINE_IN' && (
@@ -6466,7 +6910,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       setTransferOpen(true);
                     }}
                   >
-                    Chuyển bàn/phòng
+                    Chuyển bàn
                   </Button>
                 )}
 
@@ -6480,21 +6924,9 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       navigate(`/pos/orders/${orderId}/detail`);
                     }}
                   >
-                    Chi tiết & Lịch sử đơn
+                    Lịch sử đơn
                   </Button>
                 )}
-
-                <Button
-                  size="large"
-                  block
-                  icon={<UserOutlined />}
-                  onClick={() => {
-                    setMobileActionsOpen(false);
-                    setGuestModalOpen(true);
-                  }}
-                >
-                  Đổi số lượng khách ({guestCount} khách)
-                </Button>
 
                 <Button
                   size="large"
@@ -6505,7 +6937,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                     setCustomerModalOpen(true);
                   }}
                 >
-                  {customerName ? `Khách hàng: ${customerName}` : 'Thêm / Đổi khách hàng'}
+                  {customerName ? customerName : 'Chọn khách'}
                 </Button>
 
                 <Button
@@ -6518,7 +6950,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                     setCancelOpen(true);
                   }}
                 >
-                  Hủy đơn hàng
+                  Hủy đơn
                 </Button>
               </>
             )}
@@ -6533,7 +6965,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   handleExit();
                 }}
               >
-                Hủy tạo đơn & Thoát
+                Thoát tạo đơn
               </Button>
             )}
           </div>
@@ -6887,6 +7319,7 @@ function InvoicePage() {
         </header>
         <div className="staff-invoice-lines">
           {data.lines.map((line) => {
+            const printLine = invoicePrintData.lines.find((item) => item.id === line.id);
             const snapshot = JSON.parse(line.snapshotJson) as {
               productType?: 'QUANTITY' | 'WEIGHT' | 'TIME';
               unitName?: string | null;
@@ -6984,6 +7417,10 @@ function InvoicePage() {
                       {formatMoney(segment.amountBeforeRoundingVnd)}
                     </small>
                   ))}
+                  <ItemDiscountDetail
+                    amount={printLine?.discountAmount ?? 0}
+                    reason={printLine?.discountReason ?? null}
+                  />
                 </span>
                 <span>
                   {line.lineType === 'PRODUCT' && snapshot.productType !== 'TIME'
@@ -7001,13 +7438,15 @@ function InvoicePage() {
         </div>
         <footer>
           <div>
-            <span>Tạm tính</span>
-            <b>{formatMoney(data.invoice.subtotal)}</b>
+            <span>Tạm tính trước khuyến mại</span>
+            <b>{formatMoney(data.invoice.total + (invoicePrintData.promotionDiscount ?? 0))}</b>
           </div>
-          <div>
-            <span>Giảm giá</span>
-            <b>{formatMoney(data.invoice.discountTotal)}</b>
-          </div>
+          {(invoicePrintData.promotions ?? []).map((promotion) => (
+            <div key={promotion.name}>
+              <span>Khuyến mại · {promotion.name}</span>
+              <b>-{formatMoney(promotion.discountAmountVnd)}</b>
+            </div>
+          ))}
           <div className="staff-invoice-grand-total">
             <span>Khách đã trả</span>
             <b>{formatMoney(data.invoice.total)}</b>
@@ -7175,8 +7614,12 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
   } | null>(null);
   const [qrModalOpen, setQrModalOpen] = useState(false);
   const [paymentPreviewOpen, setPaymentPreviewOpen] = useState(false);
+  const [preparingCheckout, setPreparingCheckout] = useState(false);
+  const [prepareCheckoutError, setPrepareCheckoutError] = useState<string | null>(null);
   const [returningToOrder, setReturningToOrder] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const checkoutPreparationStartedRef = useRef(false);
+  const checkoutWasFrozenRef = useRef(false);
   const csrf = auth.csrfToken!;
 
   const quote = useQuery({
@@ -7194,6 +7637,129 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
     queryKey: ['pos-context'],
     queryFn: () => apiRequest<StaffContext>('/api/v1/pos/context'),
   });
+
+  useEffect(() => {
+    const currentQuote = quote.data;
+    if (!currentQuote?.time) return;
+    if (currentQuote.order.status === 'PAYMENT_PENDING') {
+      armPaymentReturn(orderId, currentQuote.order.version);
+    } else if (currentQuote.order.status === 'OPEN' && !checkoutWasFrozenRef.current) {
+      armPaymentReturn(orderId);
+    }
+  }, [orderId, quote.data?.order.status, quote.data?.order.version, Boolean(quote.data?.time)]);
+
+  const resumeFrozenCheckout = async (frozenQuote: OrderQuote, notify: boolean) => {
+    const sendResume = (expectedOrderVersion: number) =>
+      jsonRequest<{
+        orderId: string;
+        status: 'OPEN';
+        resumedAt: number;
+        quote: OrderQuote;
+      }>(
+        `/api/v1/pos/orders/${frozenQuote.order.id}/resume-checkout`,
+        { expectedOrderVersion },
+        { headers: mutationHeaders(csrf) },
+      );
+
+    let result;
+    try {
+      result = await sendResume(frozenQuote.order.version);
+    } catch (error) {
+      // Another tab may have updated customer/order metadata while checkout was
+      // pending. Reload the authoritative version and retry the resume once.
+      const refreshed = await apiRequest<OrderQuote>(
+        `/api/v1/pos/orders/${frozenQuote.order.id}/quote`,
+      );
+      if (!refreshed.time || refreshed.order.status === 'OPEN') return true;
+      if (
+        refreshed.order.status !== 'PAYMENT_PENDING' ||
+        refreshed.order.version === frozenQuote.order.version
+      ) {
+        throw error;
+      }
+      result = await sendResume(refreshed.order.version);
+    }
+
+    queryClient.setQueryData<OrderQuote>(['pos-order-quote', orderId], (cached) =>
+      !cached || result.quote.order.version >= cached.order.version ? result.quote : cached,
+    );
+    clearPaymentPageActive(frozenQuote.order.id);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['pos-order-quote', orderId] }),
+      queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
+      queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
+    ]);
+    if (notify) {
+      messageApi.success(
+        `Đã tự động tiếp tục tính giờ cho ${frozenQuote.order.tableName ?? 'bàn'}.`,
+      );
+    }
+    return true;
+  };
+
+  // Payment must always use a server-frozen quote. Several screens can navigate
+  // directly to this route, so the payment page is the final safety boundary.
+  useEffect(() => {
+    const currentQuote = quote.data;
+    if (currentQuote?.order.status === 'PAYMENT_PENDING') {
+      checkoutPreparationStartedRef.current = true;
+      checkoutWasFrozenRef.current = true;
+      return;
+    }
+    if (currentQuote?.order.status === 'OPEN' && checkoutWasFrozenRef.current) {
+      clearPaymentPageActive(currentQuote.order.id);
+      navigate(`/pos/orders/${currentQuote.order.id}`, { replace: true });
+      return;
+    }
+    if (
+      !currentQuote?.time ||
+      currentQuote.order.status !== 'OPEN' ||
+      checkoutPreparationStartedRef.current
+    ) {
+      return;
+    }
+
+    checkoutPreparationStartedRef.current = true;
+    setPreparingCheckout(true);
+    setPrepareCheckoutError(null);
+
+    void jsonRequest<{
+      orderId: string;
+      status: 'PAYMENT_PENDING';
+      stoppedAt: number;
+      quote: OrderQuote;
+    }>(
+      `/api/v1/pos/orders/${currentQuote.order.id}/stop-time`,
+      { expectedOrderVersion: currentQuote.order.version },
+      { headers: mutationHeaders(csrf) },
+    )
+      .then(async (result) => {
+        checkoutWasFrozenRef.current = true;
+        const cachedQuote = queryClient.getQueryData<OrderQuote>(['pos-order-quote', orderId]);
+        if (!cachedQuote || result.quote.order.version >= cachedQuote.order.version) {
+          queryClient.setQueryData(['pos-order-quote', orderId], result.quote);
+        } else if (cachedQuote.order.status === 'OPEN') {
+          clearPaymentPageActive(result.quote.order.id);
+          navigate(`/pos/orders/${result.quote.order.id}`, { replace: true });
+        }
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
+          queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
+        ]);
+      })
+      .catch(async (error) => {
+        // A concurrent order update can make the version stale. Refetching lets
+        // this effect retry with the authoritative version; other failures stay
+        // visible and keep all payment controls blocked.
+        const refreshed = await quote.refetch();
+        if (refreshed.data?.order.version !== currentQuote.order.version) {
+          checkoutPreparationStartedRef.current = false;
+          return;
+        }
+        setPrepareCheckoutError(errorText(error));
+      })
+      .finally(() => setPreparingCheckout(false));
+  }, [csrf, navigate, orderId, prepareCheckoutError, preparingCheckout, queryClient, quote.data]);
 
   const handleCopy = (text: string, label: string) => {
     if (!text) return;
@@ -7269,42 +7835,32 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
       }
     : null;
 
-  const handleBackToOrder = async () => {
-    if (!quote.data || returningToOrder) return;
-    if (!quote.data.time || quote.data.order.status !== 'PAYMENT_PENDING') {
-      navigate(`/pos/orders/${orderId}`);
-      return;
-    }
+  const resumeCheckoutForReturn = async () => {
+    if (!quote.data?.time || quote.data.order.status !== 'PAYMENT_PENDING') return true;
     setReturningToOrder(true);
     try {
-      const result = await jsonRequest<{
-        orderId: string;
-        status: 'OPEN';
-        resumedAt: number;
-        quote: OrderQuote;
-      }>(
-        `/api/v1/pos/orders/${quote.data.order.id}/resume-checkout`,
-        { expectedOrderVersion: quote.data.order.version },
-        { headers: mutationHeaders(csrf) },
-      );
-      queryClient.setQueryData(['pos-order-quote', orderId], result.quote);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
-        queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
-      ]);
-      messageApi.success(
-        `Đã tự động tiếp tục tính giờ cho ${quote.data.order.tableName ?? 'bàn'}.`,
-      );
-      navigate(`/pos/orders/${orderId}`, { replace: true });
+      return await resumeFrozenCheckout(quote.data, true);
     } catch (error) {
       messageApi.error(errorText(error));
+      return false;
     } finally {
       setReturningToOrder(false);
     }
   };
 
+  const handleBackToOrder = async () => {
+    if (!quote.data || returningToOrder || preparingCheckout || submitting) return;
+    const resumed = await resumeCheckoutForReturn();
+    if (!resumed) return;
+    navigate(`/pos/orders/${orderId}`, { replace: true });
+  };
+
   const handleConfirmPayment = async (andPrint = false) => {
     if (!quote.data || submitting) return;
+    if (quote.data.time && quote.data.order.status !== 'PAYMENT_PENDING') {
+      messageApi.error('Chưa thể chốt số tiền. Vui lòng đợi hệ thống dừng giờ của bàn.');
+      return;
+    }
     if (
       !isMultiMethod &&
       selectedMethod === 'CASH' &&
@@ -7360,6 +7916,7 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
         },
         { headers: mutationHeaders(csrf) },
       );
+      playPosSound('PAYMENT_SUCCESS');
       void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
       void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
 
@@ -7395,6 +7952,7 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
       }
 
       // Return directly to POS home
+      clearPaymentPageActive(quote.data.order.id);
       navigate('/pos', { replace: true });
     } catch (error) {
       messageApi.error(errorText(error));
@@ -7423,8 +7981,8 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
         <Button
           type="text"
           icon={<LeftOutlined />}
-          loading={returningToOrder}
-          disabled={returningToOrder}
+          loading={returningToOrder || preparingCheckout}
+          disabled={returningToOrder || preparingCheckout || submitting}
           className="staff-payment-page__back-btn"
           aria-label="Quay lại đơn hàng"
           onClick={() => void handleBackToOrder()}
@@ -7451,6 +8009,31 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
               </Button>
             }
           />
+        </div>
+      ) : prepareCheckoutError ? (
+        <div style={{ padding: 40 }}>
+          <Alert
+            type="error"
+            showIcon
+            title="Chưa thể chốt số tiền thanh toán"
+            description={prepareCheckoutError}
+            action={
+              <Button
+                type="primary"
+                onClick={() => {
+                  checkoutPreparationStartedRef.current = false;
+                  setPrepareCheckoutError(null);
+                  void quote.refetch();
+                }}
+              >
+                Thử lại
+              </Button>
+            }
+          />
+        </div>
+      ) : preparingCheckout || (quote.data.time && quote.data.order.status === 'OPEN') ? (
+        <div style={{ padding: 40, textAlign: 'center' }}>
+          <Spin size="large" description="Đang dừng giờ và chốt số tiền trên máy chủ..." />
         </div>
       ) : (
         <div className="staff-payment-page__body">
@@ -8132,6 +8715,8 @@ export function StaffPosPortalPage() {
                 <div className="staff-invoices-container">
                   <OwnerProductFormPage
                     baseRoute="/pos/catalog"
+                    userPermissions={posContext.data?.permissions}
+                    isOwner={false}
                     onBack={() => navigate('/pos/catalog/products')}
                   />
                 </div>
@@ -8142,6 +8727,8 @@ export function StaffPosPortalPage() {
                   <OwnerProductFormPage
                     productId={location.pathname.split('/').at(-1)!}
                     baseRoute="/pos/catalog"
+                    userPermissions={posContext.data?.permissions}
+                    isOwner={false}
                     onBack={() => navigate('/pos/catalog/products')}
                   />
                 </div>
@@ -8170,6 +8757,8 @@ export function StaffPosPortalPage() {
                 <div className="staff-invoices-container">
                   <OwnerProductListPage
                     baseRoute="/pos/catalog"
+                    userPermissions={posContext.data?.permissions}
+                    isOwner={false}
                     onBack={() => navigate('/pos/more')}
                   />
                 </div>

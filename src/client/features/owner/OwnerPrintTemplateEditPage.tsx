@@ -22,11 +22,12 @@ import {
   type PrintTemplateDisplayConfig,
   type PrintTemplateSettingsMap,
   type StorePrintSettings,
-  defaultPrintTemplateConfig,
+  defaultPrintTemplateConfigFor,
   parsePrintTemplateConfigs,
 } from '@contracts/store';
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 import { ReceiptPreviewPaper } from '@client/features/pos/ReceiptPreviewModal';
+import { buildOwnerPrintPreviewSample } from './print-preview-sample';
 
 function errorMessage(error: unknown, fallback: string) {
   if (error instanceof ApiError) return error.message;
@@ -56,7 +57,7 @@ export function OwnerPrintTemplateEditPage() {
 
   // Top selector bar
   const [previewInvoiceType, setPreviewInvoiceType] = useState<'PROVISIONAL' | 'PAYMENT'>(
-    'PROVISIONAL',
+    'PAYMENT',
   );
   const [previewPaperSize, setPreviewPaperSize] = useState<'K80' | 'K58'>('K80');
 
@@ -80,69 +81,69 @@ export function OwnerPrintTemplateEditPage() {
     queryKey: PRINT_SETTINGS_QUERY,
     queryFn: () => apiRequest<StorePrintSettings>('/api/v1/owner/store/print-settings'),
   });
+  const activeDefaultTemplate = defaultPrintTemplateConfigFor(previewInvoiceType);
 
   // Watch form fields for live receipt preview
-  const showLogo = Form.useWatch('showLogo', form) ?? defaultPrintTemplateConfig.showLogo;
+  const showLogo = Form.useWatch('showLogo', form) ?? activeDefaultTemplate.showLogo;
   const showTableAreaName =
-    Form.useWatch('showTableAreaName', form) ?? defaultPrintTemplateConfig.showTableAreaName;
+    Form.useWatch('showTableAreaName', form) ?? activeDefaultTemplate.showTableAreaName;
   const showCashierName =
-    Form.useWatch('showCashierName', form) ?? defaultPrintTemplateConfig.showCashierName;
+    Form.useWatch('showCashierName', form) ?? activeDefaultTemplate.showCashierName;
   const showCheckInTime =
-    Form.useWatch('showCheckInTime', form) ?? defaultPrintTemplateConfig.showCheckInTime;
+    Form.useWatch('showCheckInTime', form) ?? activeDefaultTemplate.showCheckInTime;
   const showCustomerPhone =
-    Form.useWatch('showCustomerPhone', form) ?? defaultPrintTemplateConfig.showCustomerPhone;
+    Form.useWatch('showCustomerPhone', form) ?? activeDefaultTemplate.showCustomerPhone;
   const showCustomerAddress =
-    Form.useWatch('showCustomerAddress', form) ?? defaultPrintTemplateConfig.showCustomerAddress;
-  const showOrderNote =
-    Form.useWatch('showOrderNote', form) ?? defaultPrintTemplateConfig.showOrderNote;
+    Form.useWatch('showCustomerAddress', form) ?? activeDefaultTemplate.showCustomerAddress;
+  const showOrderNote = Form.useWatch('showOrderNote', form) ?? activeDefaultTemplate.showOrderNote;
 
-  const itemFontSize =
-    Form.useWatch('itemFontSize', form) ?? defaultPrintTemplateConfig.itemFontSize;
+  const itemFontSize = Form.useWatch('itemFontSize', form) ?? activeDefaultTemplate.itemFontSize;
   const showItemTableBorder =
-    Form.useWatch('showItemTableBorder', form) ?? defaultPrintTemplateConfig.showItemTableBorder;
-  const showItemIndex =
-    Form.useWatch('showItemIndex', form) ?? defaultPrintTemplateConfig.showItemIndex;
-  const showItemNote =
-    Form.useWatch('showItemNote', form) ?? defaultPrintTemplateConfig.showItemNote;
+    Form.useWatch('showItemTableBorder', form) ?? activeDefaultTemplate.showItemTableBorder;
+  const showItemIndex = Form.useWatch('showItemIndex', form) ?? activeDefaultTemplate.showItemIndex;
+  const showItemNote = Form.useWatch('showItemNote', form) ?? activeDefaultTemplate.showItemNote;
+  const showItemDiscounts =
+    Form.useWatch('showItemDiscounts', form) ?? activeDefaultTemplate.showItemDiscounts;
 
   const showHourlyDetail =
-    Form.useWatch('showHourlyDetail', form) ?? defaultPrintTemplateConfig.showHourlyDetail;
+    Form.useWatch('showHourlyDetail', form) ?? activeDefaultTemplate.showHourlyDetail;
   const hourlyDetailMode =
-    Form.useWatch('hourlyDetailMode', form) ?? defaultPrintTemplateConfig.hourlyDetailMode;
+    Form.useWatch('hourlyDetailMode', form) ?? activeDefaultTemplate.hourlyDetailMode;
   const showHourlyUnitPrice =
-    Form.useWatch('showHourlyUnitPrice', form) ?? defaultPrintTemplateConfig.showHourlyUnitPrice;
+    Form.useWatch('showHourlyUnitPrice', form) ?? activeDefaultTemplate.showHourlyUnitPrice;
   const showHourlyUnitDuration =
-    Form.useWatch('showHourlyUnitDuration', form) ??
-    defaultPrintTemplateConfig.showHourlyUnitDuration;
+    Form.useWatch('showHourlyUnitDuration', form) ?? activeDefaultTemplate.showHourlyUnitDuration;
   const showHourlyTimeWithSeconds =
     Form.useWatch('showHourlyTimeWithSeconds', form) ??
-    defaultPrintTemplateConfig.showHourlyTimeWithSeconds;
+    activeDefaultTemplate.showHourlyTimeWithSeconds;
 
   const showItemPriceName =
-    Form.useWatch('showItemPriceName', form) ?? defaultPrintTemplateConfig.showItemPriceName;
+    Form.useWatch('showItemPriceName', form) ?? activeDefaultTemplate.showItemPriceName;
   const showItemUnitPrice =
-    Form.useWatch('showItemUnitPrice', form) ?? defaultPrintTemplateConfig.showItemUnitPrice;
+    Form.useWatch('showItemUnitPrice', form) ?? activeDefaultTemplate.showItemUnitPrice;
   const itemUnitPricePlacement =
-    Form.useWatch('itemUnitPricePlacement', form) ??
-    defaultPrintTemplateConfig.itemUnitPricePlacement;
+    Form.useWatch('itemUnitPricePlacement', form) ?? activeDefaultTemplate.itemUnitPricePlacement;
   const hideZeroPriceItems =
-    Form.useWatch('hideZeroPriceItems', form) ?? defaultPrintTemplateConfig.hideZeroPriceItems;
+    Form.useWatch('hideZeroPriceItems', form) ?? activeDefaultTemplate.hideZeroPriceItems;
 
   const combineGoodsAndServiceTotal =
     Form.useWatch('combineGoodsAndServiceTotal', form) ??
-    defaultPrintTemplateConfig.combineGoodsAndServiceTotal;
+    activeDefaultTemplate.combineGoodsAndServiceTotal;
   const showPromotionsList =
-    Form.useWatch('showPromotionsList', form) ?? defaultPrintTemplateConfig.showPromotionsList;
+    Form.useWatch('showPromotionsList', form) ?? activeDefaultTemplate.showPromotionsList;
   const showProvisionalTotal =
-    Form.useWatch('showProvisionalTotal', form) ?? defaultPrintTemplateConfig.showProvisionalTotal;
+    Form.useWatch('showProvisionalTotal', form) ?? activeDefaultTemplate.showProvisionalTotal;
   const showBottomImage =
-    Form.useWatch('showBottomImage', form) ?? defaultPrintTemplateConfig.showBottomImage;
+    Form.useWatch('showBottomImage', form) ?? activeDefaultTemplate.showBottomImage;
+  const isPaymentTemplate = previewInvoiceType === 'PAYMENT';
+  const bottomImageIsVietQr = printSettings.data?.bottomImageType === 'VIETQR';
 
   // Initialize form values from DB
   useEffect(() => {
     if (!printSettings.data) return;
     const configs = parsePrintTemplateConfigs(printSettings.data.templateConfigJson);
     setTemplateConfigs(configs);
+    form.resetFields();
     form.setFieldsValue(configs[previewInvoiceType]);
     if (printSettings.data.paperSize) {
       setPreviewPaperSize(printSettings.data.paperSize);
@@ -153,14 +154,18 @@ export function OwnerPrintTemplateEditPage() {
   // Switch invoice type handler
   const handleSwitchInvoiceType = (newType: 'PROVISIONAL' | 'PAYMENT') => {
     if (newType === previewInvoiceType) return;
-    const currentValues = form.getFieldsValue();
+    const currentValues = form.getFieldsValue(true);
     const updatedMap: PrintTemplateSettingsMap = {
       ...templateConfigs,
-      [previewInvoiceType]: currentValues,
+      [previewInvoiceType]: {
+        ...templateConfigs[previewInvoiceType],
+        ...currentValues,
+      },
     };
     setTemplateConfigs(updatedMap);
-    setPreviewInvoiceType(newType);
+    form.resetFields();
     form.setFieldsValue(updatedMap[newType]);
+    setPreviewInvoiceType(newType);
   };
 
   // Form value change handler
@@ -171,7 +176,10 @@ export function OwnerPrintTemplateEditPage() {
     setIsDirty(true);
     setTemplateConfigs((prev) => ({
       ...prev,
-      [previewInvoiceType]: allValues,
+      [previewInvoiceType]: {
+        ...prev[previewInvoiceType],
+        ...allValues,
+      },
     }));
   };
 
@@ -183,6 +191,7 @@ export function OwnerPrintTemplateEditPage() {
     }
     const configs = parsePrintTemplateConfigs(printSettings.data?.templateConfigJson);
     setTemplateConfigs(configs);
+    form.resetFields();
     form.setFieldsValue(configs[previewInvoiceType]);
     setIsDirty(false);
     messageApi.info('Đã hủy các thay đổi chưa lưu.');
@@ -195,7 +204,10 @@ export function OwnerPrintTemplateEditPage() {
     try {
       const updatedMap: PrintTemplateSettingsMap = {
         ...templateConfigs,
-        [previewInvoiceType]: values,
+        [previewInvoiceType]: {
+          ...templateConfigs[previewInvoiceType],
+          ...values,
+        },
       };
       const payload: StorePrintSettings = {
         ...printSettings.data,
@@ -209,7 +221,9 @@ export function OwnerPrintTemplateEditPage() {
       setTemplateConfigs(updatedMap);
       await queryClient.invalidateQueries({ queryKey: PRINT_SETTINGS_QUERY });
       setIsDirty(false);
-      messageApi.success('Đã lưu mẫu in thành công.');
+      messageApi.success(
+        `Đã lưu cấu hình ${previewInvoiceType === 'PROVISIONAL' ? 'hóa đơn tạm tính' : 'hóa đơn thanh toán'}.`,
+      );
     } catch (error) {
       messageApi.error(errorMessage(error, 'Không thể lưu mẫu in.'));
     } finally {
@@ -268,7 +282,7 @@ export function OwnerPrintTemplateEditPage() {
     ...templateConfigs,
     [previewInvoiceType]: {
       ...templateConfigs[previewInvoiceType],
-      ...form.getFieldsValue(),
+      ...form.getFieldsValue(true),
     },
   };
   const livePreviewSettings = {
@@ -278,64 +292,7 @@ export function OwnerPrintTemplateEditPage() {
     paperSize: previewPaperSize,
     templateConfigJson: JSON.stringify(liveTemplateConfigs),
   } as StorePrintSettings;
-  const previewReceiptData = {
-    receiptType: previewInvoiceType,
-    orderCode: previewInvoiceType === 'PROVISIONAL' ? 'D-260822-0012' : 'HD-260822-000012',
-    invoiceCode: previewInvoiceType === 'PAYMENT' ? 'HD-260822-000012' : null,
-    orderType: 'DINE_IN' as const,
-    tableName: 'Bàn 01',
-    areaName: 'Khu vực 1',
-    cashierName: 'Nguyễn Văn A',
-    customerName: 'Nguyễn Nhật Quang Minh',
-    guestPhone: '0966690040',
-    guestAddress: '266 Đội Cấn, Ba Đình, Hà Nội',
-    note: 'Ít đá, không lấy ống hút',
-    checkInTimeMs: Date.now() - 90 * 60_000,
-    issuedAtMs: Date.now(),
-    subtotal: 173_000,
-    discountTotal: 10_000,
-    total: 163_000,
-    ...(previewInvoiceType === 'PAYMENT'
-      ? {
-          paymentMethod: 'CASH' as const,
-          cashReceived: 200_000,
-          cashChange: 37_000,
-          paidAmountVnd: 163_000,
-          debtAmountVnd: 0,
-          paymentAllocations: [{ method: 'CASH' as const, amountVnd: 163_000 }],
-        }
-      : {}),
-    lines: [
-      {
-        id: 'preview-time',
-        name: 'Tiền giờ',
-        quantity: 1,
-        unitPrice: 50_000,
-        totalPrice: 48_000,
-        isTime: true,
-        timeStartedAtMs: Date.now() - 90 * 60_000,
-        timeEndedAtMs: Date.now(),
-        timeElapsedSeconds: 90 * 60,
-      },
-      {
-        id: 'preview-drink',
-        name: 'Trà sữa ô long (size L)',
-        quantity: 1,
-        unitPrice: 65_000,
-        totalPrice: 65_000,
-        unitName: 'Ly',
-        note: 'Không lấy ống hút',
-      },
-      {
-        id: 'preview-food',
-        name: 'Cơm gà chua ngọt',
-        quantity: 1,
-        unitPrice: 60_000,
-        totalPrice: 60_000,
-        unitName: 'Phần',
-      },
-    ],
-  };
+  const previewReceiptData = buildOwnerPrintPreviewSample(previewInvoiceType);
 
   return (
     <div className="owner-print-settings-page">
@@ -370,7 +327,7 @@ export function OwnerPrintTemplateEditPage() {
               icon={<SaveOutlined />}
               loading={saving}
             >
-              Lưu
+              Lưu {previewInvoiceType === 'PROVISIONAL' ? 'mẫu tạm tính' : 'mẫu thanh toán'}
             </Button>
           </Space>
         </div>
@@ -379,24 +336,26 @@ export function OwnerPrintTemplateEditPage() {
       {/* Top Selector Bar: Invoice Type & Paper Size */}
       <Card
         bordered={false}
-        className="owner-print-card"
+        className="owner-print-card owner-print-template-scope-bar"
         style={{ marginBottom: 20 }}
         styles={{ body: { padding: '14px 20px' } }}
       >
         <Row gutter={[16, 16]}>
           <Col xs={24} sm={12}>
+            <Typography.Text strong>Loại hóa đơn đang cấu hình</Typography.Text>
             <Select
               size="middle"
               style={{ width: '100%' }}
               value={previewInvoiceType}
               onChange={handleSwitchInvoiceType}
               options={[
-                { value: 'PROVISIONAL', label: 'Hóa đơn tạm tính' },
                 { value: 'PAYMENT', label: 'Hóa đơn thanh toán' },
+                { value: 'PROVISIONAL', label: 'Hóa đơn tạm tính' },
               ]}
             />
           </Col>
           <Col xs={24} sm={12}>
+            <Typography.Text strong>Khổ giấy xem trước</Typography.Text>
             <Select
               size="middle"
               style={{ width: '100%' }}
@@ -450,6 +409,9 @@ export function OwnerPrintTemplateEditPage() {
                   <Form.Item name="showCheckInTime" valuePropName="checked" noStyle>
                     <Checkbox>Giờ vào</Checkbox>
                   </Form.Item>
+                  <Form.Item name="showCustomerName" valuePropName="checked" noStyle>
+                    <Checkbox>Tên khách hàng</Checkbox>
+                  </Form.Item>
                   <Form.Item name="showCustomerPhone" valuePropName="checked" noStyle>
                     <Checkbox>Số điện thoại khách hàng</Checkbox>
                   </Form.Item>
@@ -485,6 +447,9 @@ export function OwnerPrintTemplateEditPage() {
                   </Form.Item>
                   <Form.Item name="showItemNote" valuePropName="checked" noStyle>
                     <Checkbox>Ghi chú theo mặt hàng/ dịch vụ</Checkbox>
+                  </Form.Item>
+                  <Form.Item name="showItemDiscounts" valuePropName="checked" noStyle>
+                    <Checkbox>Chi tiết giảm giá thủ công và lý do theo mặt hàng</Checkbox>
                   </Form.Item>
                 </Space>
               </Card>
@@ -562,20 +527,45 @@ export function OwnerPrintTemplateEditPage() {
               </Card>
 
               {/* ── Nhóm 6: Thông tin thanh toán ── */}
-              <Card title="Thông tin thanh toán" bordered={false} className="owner-print-card">
+              <Card
+                title={isPaymentTemplate ? 'Thông tin thanh toán' : 'Thông tin tổng tiền'}
+                bordered={false}
+                className="owner-print-card"
+              >
                 <Space direction="vertical" size={12} style={{ width: '100%' }}>
                   <Form.Item name="combineGoodsAndServiceTotal" valuePropName="checked" noStyle>
                     <Checkbox>Tính tổng Tiền hàng và Tiền dịch vụ</Checkbox>
                   </Form.Item>
                   <Form.Item name="showPromotionsList" valuePropName="checked" noStyle>
-                    <Checkbox>Danh sách các khuyến mãi</Checkbox>
+                    <Checkbox>Chi tiết chương trình khuyến mại (tên và số tiền giảm)</Checkbox>
                   </Form.Item>
                   <Form.Item name="showProvisionalTotal" valuePropName="checked" noStyle>
                     <Checkbox>Thông tin tổng tiền tạm tính</Checkbox>
                   </Form.Item>
-                  <Form.Item name="showBottomImage" valuePropName="checked" noStyle>
-                    <Checkbox>Hiển thị ảnh cuối hóa đơn</Checkbox>
-                  </Form.Item>
+                  {isPaymentTemplate ? (
+                    <>
+                      <Form.Item name="showPaymentMethod" valuePropName="checked" noStyle>
+                        <Checkbox>Phương thức và phân bổ thanh toán</Checkbox>
+                      </Form.Item>
+                      <Form.Item name="showCashDetails" valuePropName="checked" noStyle>
+                        <Checkbox>Tiền khách đưa và tiền thừa</Checkbox>
+                      </Form.Item>
+                    </>
+                  ) : null}
+                  {!bottomImageIsVietQr || isPaymentTemplate ? (
+                    <Form.Item name="showBottomImage" valuePropName="checked" noStyle>
+                      <Checkbox>
+                        {bottomImageIsVietQr
+                          ? 'Hiển thị VietQR theo số tiền đã chốt'
+                          : 'Hiển thị ảnh cuối hóa đơn'}
+                      </Checkbox>
+                    </Form.Item>
+                  ) : (
+                    <Typography.Text type="secondary">
+                      VietQR không hiển thị trên hóa đơn tạm tính vì bàn vẫn chạy giờ và tổng tiền
+                      chưa được chốt.
+                    </Typography.Text>
+                  )}
                 </Space>
               </Card>
             </Space>
@@ -858,6 +848,11 @@ export function OwnerPrintTemplateEditPage() {
                           * Chú ý: Không lấy ống hút
                         </div>
                       )}
+                      {showItemDiscounts && (
+                        <div className="thermal-receipt-item-sub" style={{ color: '#d4380d' }}>
+                          * Giảm thủ công: -10,000 · Lý do: Khách thân thiết
+                        </div>
+                      )}
                     </div>
 
                     {/* Item 2 */}
@@ -942,17 +937,13 @@ export function OwnerPrintTemplateEditPage() {
                         <span>173,000</span>
                       </div>
                     )}
-                    <div className="thermal-receipt-row">
-                      <span>Tổng giảm giá</span>
-                      <span>-10,000</span>
-                    </div>
                     {showPromotionsList && (
                       <div
                         className="thermal-receipt-row"
                         style={{ color: '#64748b', fontSize: 10.5 }}
                       >
-                        <span>* Giảm giá khai trương [10%]</span>
-                        <span>(10,000)</span>
+                        <span>KM: Giảm giá khai trương [10%]</span>
+                        <span>-10,000</span>
                       </div>
                     )}
 
@@ -963,7 +954,7 @@ export function OwnerPrintTemplateEditPage() {
                           <span>
                             {previewInvoiceType === 'PROVISIONAL' ? 'TỔNG TẠM TÍNH' : 'TỔNG CỘNG'}
                           </span>
-                          <span className="thermal-receipt-grand-total-amount">173,000đ</span>
+                          <span className="thermal-receipt-grand-total-amount">163,000đ</span>
                         </div>
                       </>
                     )}

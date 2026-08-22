@@ -8,7 +8,10 @@ export class AuthorizationRepository {
       .first<{ status: 'ACTIVE' | 'LOCKED' }>();
   }
 
-  async hasPermission(storeId: string, userId: string, permissionKey: string) {
+  async hasPermission(storeId: string, userId: string, permissionKey: string | string[]) {
+    const keys = Array.isArray(permissionKey) ? permissionKey : [permissionKey];
+    if (keys.length === 0) return false;
+    const placeholders = keys.map(() => '?').join(', ');
     const row = await this.db
       .prepare(
         `SELECT 1 AS allowed
@@ -16,10 +19,10 @@ export class AuthorizationRepository {
          JOIN role_permissions rp
            ON rp.store_id = sm.store_id AND rp.role_id = sm.role_id
          WHERE sm.store_id = ? AND sm.user_id = ? AND sm.status = 'ACTIVE'
-           AND rp.permission_key = ?
+           AND rp.permission_key IN (${placeholders})
          LIMIT 1`,
       )
-      .bind(storeId, userId, permissionKey)
+      .bind(storeId, userId, ...keys)
       .first<{ allowed: 1 }>();
     return row?.allowed === 1;
   }

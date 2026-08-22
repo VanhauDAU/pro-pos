@@ -4,6 +4,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { CatalogService } from '@server/services/catalog-service';
 import { PlatformService } from '@server/services/platform-service';
 import { PosService } from '@server/services/pos-service';
+import { PromotionService } from '@server/services/promotion-service';
 import { QrOrderService } from '@server/services/qr-order-service';
 import { QrOrderRepository } from '@server/repositories/qr-order-repository';
 
@@ -167,6 +168,230 @@ describe('online POS vertical slice', () => {
         expectedTableVersion: 1,
       }),
     ).rejects.toMatchObject({ code: 'TABLE_NOT_AVAILABLE' });
+  });
+
+  it('creates, selects, prices, and snapshots an invoice promotion', async () => {
+    const pos = new PosService(env);
+    const order = await pos.createTakeaway({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-promotion-order',
+      idempotencyKey: 'promotion-order-001',
+      note: null,
+    });
+    await pos.addItem({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-promotion-item',
+      idempotencyKey: 'promotion-item-001',
+      orderId: order.orderId,
+      productId,
+      variantId,
+      quantityMilli: 1000,
+      expectedOrderVersion: 1,
+      discount: null,
+    });
+    const promotionService = new PromotionService(env);
+    const promotion = await promotionService.save(storeId, ownerUserId, {
+      name: 'Giảm 15.000đ hóa đơn',
+      type: 'FIXED_AMOUNT',
+      value: 15_000,
+      minimumOrderVnd: 10_000,
+      maximumDiscountVnd: null,
+      autoApply: false,
+      startsAt: Date.now() - 10_000,
+      endsAt: null,
+      weekdaysMask: null,
+      timeRanges: [],
+      scope: 'INVOICE' as const,
+      categoryIds: [],
+      productIds: [],
+      productTargets: [],
+      customerGroupIds: [],
+      giftProductIds: [],
+      giftTargets: [],
+      giftBuyAny: false,
+      maximumGiftQuantity: null,
+    });
+    const before = await pos.quote(storeId, order.orderId);
+    expect(before.promotionOptions.find((item) => item.id === promotion.id)).toMatchObject({
+      eligible: true,
+      discountAmountVnd: 15_000,
+    });
+    await pos.applyPromotion({
+      storeId,
+      orderId: order.orderId,
+      promotionIds: [promotion.id],
+      expectedOrderVersion: 2,
+      actorId: ownerUserId,
+    });
+    const discounted = await pos.quote(storeId, order.orderId);
+    expect(discounted).toMatchObject({
+      order: { version: 3 },
+      subtotalVnd: 20_000,
+      discountTotalVnd: 15_000,
+      promotionDiscountVnd: 15_000,
+      totalVnd: 5_000,
+      promotion: { id: promotion.id, name: 'Giảm 15.000đ hóa đơn' },
+    });
+    const checkout = await pos.checkout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-promotion-checkout',
+      idempotencyKey: 'promotion-checkout-001',
+      orderId: order.orderId,
+      expectedOrderVersion: 3,
+      method: 'CASH',
+      cashReceivedVnd: 5_000,
+    });
+    const snapshot = await env.DB.prepare(
+      'SELECT discount_amount_vnd AS amount FROM invoice_promotions WHERE store_id = ? AND invoice_id = ?',
+    )
+      .bind(storeId, checkout.invoiceId)
+      .first<{ amount: number }>();
+    expect(snapshot?.amount).toBe(15_000);
+  });
+
+  it('evaluates gift purchase quantities by selected price variant and buy-any mode', async () => {
+    const pos = new PosService(env);
+    const order = await pos.createTakeaway({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-gift-promotion-order',
+      idempotencyKey: 'gift-promotion-order-001',
+      note: null,
+    });
+    await pos.addItem({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-gift-promotion-item',
+      idempotencyKey: 'gift-promotion-item-001',
+      orderId: order.orderId,
+      productId,
+      variantId,
+      quantityMilli: 1000,
+      expectedOrderVersion: 1,
+      discount: null,
+    });
+    const service = new PromotionService(env);
+    const input = {
+      name: 'Mua một trong hai món tặng nước',
+      type: 'GIFT' as const,
+      value: null,
+      minimumOrderVnd: 0,
+      maximumDiscountVnd: null,
+      autoApply: false,
+      startsAt: Date.now() - 10_000,
+      endsAt: null,
+      weekdaysMask: null,
+      timeRanges: [],
+      scope: 'PRODUCT' as const,
+      categoryIds: [],
+      productIds: [],
+      productTargets: [
+        { productId, variantId, quantity: 1 },
+        { productId: promptProductId, variantId: promptVariantId, quantity: 1 },
+      ],
+      customerGroupIds: [],
+      giftProductIds: [],
+      giftTargets: [{ productId, variantId, quantity: 1 }],
+      giftBuyAny: false,
+      maximumGiftQuantity: 1,
+    };
+    const promotion = await service.save(storeId, ownerUserId, input);
+    const requiresAll = await pos.quote(storeId, order.orderId);
+    expect(requiresAll.promotionOptions.find((item) => item.id === promotion.id)).toMatchObject({
+      eligible: false,
+      reason: 'Chưa đủ số lượng mặt hàng mua để nhận món tặng',
+    });
+    await service.save(storeId, ownerUserId, { ...input, giftBuyAny: true }, promotion.id);
+    const requiresAny = await pos.quote(storeId, order.orderId);
+    expect(requiresAny.promotionOptions.find((item) => item.id === promotion.id)).toMatchObject({
+      eligible: true,
+      discountAmountVnd: 20_000,
+    });
+  });
+
+  it('stacks eligible auto promotions and keeps each cashier selection independently', async () => {
+    const pos = new PosService(env);
+    const order = await pos.createTakeaway({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-auto-promotion-order',
+      idempotencyKey: 'auto-promotion-order-001',
+      note: null,
+    });
+    await pos.addItem({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-auto-promotion-item',
+      idempotencyKey: 'auto-promotion-item-001',
+      orderId: order.orderId,
+      productId,
+      variantId,
+      quantityMilli: 1000,
+      expectedOrderVersion: 1,
+      discount: null,
+    });
+    const promotionService = new PromotionService(env);
+    const autoPromotionInput = {
+      name: 'Tự động giảm 5.000đ',
+      type: 'FIXED_AMOUNT' as const,
+      value: 5_000,
+      minimumOrderVnd: 0,
+      maximumDiscountVnd: null,
+      autoApply: true,
+      startsAt: Date.now() - 10_000,
+      endsAt: null,
+      weekdaysMask: null,
+      timeRanges: [],
+      scope: 'INVOICE' as const,
+      categoryIds: [],
+      productIds: [],
+      productTargets: [],
+      customerGroupIds: [],
+      giftProductIds: [],
+      giftTargets: [],
+      giftBuyAny: false,
+      maximumGiftQuantity: null,
+    };
+    const promotion = await promotionService.save(storeId, ownerUserId, autoPromotionInput);
+    const secondPromotion = await promotionService.save(storeId, ownerUserId, {
+      ...autoPromotionInput,
+      name: 'Tự động giảm thêm 3.000đ',
+      value: 3_000,
+    });
+    const autoApplied = await pos.quote(storeId, order.orderId);
+    expect(autoApplied.promotions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: promotion.id, discountAmountVnd: 5_000 }),
+        expect.objectContaining({ id: secondPromotion.id, discountAmountVnd: 3_000 }),
+      ]),
+    );
+    expect(autoApplied.promotionDiscountVnd).toBe(8_000);
+
+    await pos.applyPromotion({
+      storeId,
+      orderId: order.orderId,
+      promotionIds: [promotion.id],
+      expectedOrderVersion: 2,
+      actorId: ownerUserId,
+    });
+    const removed = await pos.quote(storeId, order.orderId);
+    expect(removed.order.version).toBe(3);
+    expect(removed.promotions).toHaveLength(1);
+    expect(removed.promotions[0]).toMatchObject({ id: promotion.id });
+    expect(removed.promotionDiscountVnd).toBe(5_000);
+    expect(
+      removed.promotionOptions.find((option) => option.id === secondPromotion.id),
+    ).toMatchObject({
+      eligible: true,
+      selected: false,
+    });
+    await Promise.all([
+      promotionService.setActive(storeId, promotion.id, false),
+      promotionService.setActive(storeId, secondPromotion.id, false),
+    ]);
   });
 
   it('hides soft-deleted areas and disabled tables from the staff POS', async () => {
@@ -402,7 +627,7 @@ describe('online POS vertical slice', () => {
       expectedOrderVersion: 2,
       quantityMilli: 2000,
       variantId: sizeL.id,
-      discount: { type: 'PERCENT', value: 10 },
+      discount: { type: 'PERCENT', value: 10, reason: 'Giảm 10%' },
       note: 'Ít đá',
     });
 
@@ -859,9 +1084,27 @@ describe('online POS vertical slice', () => {
 
   it.each([
     ['no discount', null, 100_000, 0, 100_000],
-    ['FIXED discount', { type: 'FIXED' as const, value: 20_000 }, 100_000, 20_000, 80_000],
-    ['PERCENT discount', { type: 'PERCENT' as const, value: 20 }, 100_000, 20_000, 80_000],
-    ['capped discount', { type: 'FIXED' as const, value: 120_000 }, 100_000, 100_000, 0],
+    [
+      'FIXED discount',
+      { type: 'FIXED' as const, value: 20_000, reason: 'Giảm 20k' },
+      100_000,
+      20_000,
+      80_000,
+    ],
+    [
+      'PERCENT discount',
+      { type: 'PERCENT' as const, value: 20, reason: 'Giảm 20%' },
+      100_000,
+      20_000,
+      80_000,
+    ],
+    [
+      'capped discount',
+      { type: 'FIXED' as const, value: 120_000, reason: 'Giảm 120k' },
+      100_000,
+      100_000,
+      0,
+    ],
   ])(
     'accounts for %s using gross - discount = total',
     async (label, discount, gross, reduced, net) => {
@@ -1669,8 +1912,8 @@ describe('online POS vertical slice', () => {
     expect(resumeResult.quote.order.status).toBe('OPEN');
     expect(resumeResult.quote.time?.status).toBe('RUNNING');
     expect(resumeResult.quote.time?.endedAtMs).toBeNull();
-    // Returning from checkout restores one continuous interval, including time spent on checkout.
-    expect(resumeResult.quote.time?.elapsedSeconds).toBe(5442);
+    // The checkout window is frozen and is not charged after returning to the order.
+    expect(resumeResult.quote.time?.elapsedSeconds).toBe(5235);
     expect(resumeResult.quote.time?.tableSegments).toHaveLength(1);
 
     // 6b. Immediate stop-time right after resume (same millisecond/second) - must not crash
@@ -1684,7 +1927,7 @@ describe('online POS vertical slice', () => {
       now: tResume,
     });
     expect(immediateStop.status).toBe('PAYMENT_PENDING');
-    expect(immediateStop.quote.time?.elapsedSeconds).toBe(5442);
+    expect(immediateStop.quote.time?.elapsedSeconds).toBe(5235);
 
     // Resume again after immediate stop
     const resumeAgain = await pos.resumeCheckout({
@@ -1698,10 +1941,10 @@ describe('online POS vertical slice', () => {
     });
     expect(resumeAgain.status).toBe('OPEN');
 
-    // At 08:00:42 the original interval is still continuous from 06:00.
+    // At 08:00:42 only actual playing time is charged; checkout time stays excluded.
     const tPlayingLater = tResume + 1800 * 1000;
     const playingQuote = await pos.quote(storeId, opened.orderId, tPlayingLater);
-    expect(playingQuote.time?.elapsedSeconds).toBe(7242);
+    expect(playingQuote.time?.elapsedSeconds).toBe(7034);
     expect(playingQuote.time?.tableSegments?.length).toBe(1);
 
     // 7. Stop time again at 08:00:42

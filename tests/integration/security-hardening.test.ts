@@ -303,8 +303,8 @@ describe('PRO-010A API security and tenant boundaries', () => {
 
     const deniedDiscountResponses = await Promise.all(
       [
-        { type: 'FIXED', value: 10_000 },
-        { type: 'PERCENT', value: 10 },
+        { type: 'FIXED', value: 10_000, reason: 'Kiểm tra quyền' },
+        { type: 'PERCENT', value: 10, reason: 'Kiểm tra quyền' },
       ].map((discount) =>
         SELF.fetch(`${ORIGIN}/api/v1/pos/orders/${orderId}/items`, {
           method: 'POST',
@@ -344,7 +344,7 @@ describe('PRO-010A API security and tenant boundaries', () => {
         variantId,
         quantityMilli: 1000,
         expectedOrderVersion: 2,
-        discount: { type: 'FIXED', value: 10_000 },
+        discount: { type: 'FIXED', value: 10_000, reason: 'Khách quen' },
       }),
     });
     expect(allowed.status).toBe(201);
@@ -357,7 +357,7 @@ describe('PRO-010A API security and tenant boundaries', () => {
         variantId,
         quantityMilli: 1000,
         expectedOrderVersion: 3,
-        discount: { type: 'PERCENT', value: 10 },
+        discount: { type: 'PERCENT', value: 10, reason: 'Ưu đãi chủ quán' },
       }),
     });
     expect(ownerAdd.status).toBe(201);

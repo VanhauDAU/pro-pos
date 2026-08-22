@@ -1,15 +1,22 @@
 import {
   AppstoreOutlined,
+  ArrowRightOutlined,
+  BankOutlined,
+  CheckCircleFilled,
   ClockCircleOutlined,
   DollarCircleOutlined,
+  DownOutlined,
   FileTextOutlined,
   ReloadOutlined,
+  RightOutlined,
   RiseOutlined,
+  RocketOutlined,
   ShopOutlined,
   ShoppingCartOutlined,
   ShoppingOutlined,
   TagsOutlined,
   TeamOutlined,
+  UpOutlined,
   UsergroupAddOutlined,
   WalletOutlined,
 } from '@ant-design/icons';
@@ -20,6 +27,7 @@ import {
   Card,
   Empty,
   Input,
+  Progress,
   Select,
   Skeleton,
   Table,
@@ -30,6 +38,7 @@ import {
 } from 'antd';
 import type { TableColumnsType } from 'antd';
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router';
 
 import type {
   DashboardDataDto,
@@ -48,6 +57,27 @@ export interface StoreSettings {
   address: string | null;
   currency: string;
   businessDayCutoffMinutes: number;
+  bankName?: string | null;
+  bankAccountNumber?: string | null;
+  bankAccountName?: string | null;
+  bankQrMediaId?: string | null;
+}
+
+interface AreaTableInfo {
+  id: string;
+  name: string;
+}
+
+interface AreaLayoutInfo {
+  id: string;
+  name: string;
+  tables: AreaTableInfo[];
+}
+
+interface ProductSummaryInfo {
+  id: string;
+  name: string;
+  isSystem?: boolean | number;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -242,7 +272,10 @@ function SvgTimelineBarChart({ points }: { points: DashboardTimelinePoint[] }) {
           <div className="dashboard-barchart__gridline" style={{ top: '100%' }} />
 
           {/* Columns */}
-          <div className="dashboard-barchart__columns">
+          <div
+            className="dashboard-barchart__columns"
+            style={{ minWidth: points.length > 7 ? `${points.length * 28}px` : '100%' }}
+          >
             {points.map((p, idx) => {
               const heightPct = Math.min(
                 100,
@@ -343,7 +376,10 @@ function SvgPaymentTimeChart({ points }: { points: DashboardPaymentTimePoint[] }
           <div className="dashboard-barchart__gridline" style={{ top: '50%' }} />
           <div className="dashboard-barchart__gridline" style={{ top: '100%' }} />
 
-          <div className="dashboard-barchart__columns">
+          <div
+            className="dashboard-barchart__columns"
+            style={{ minWidth: points.length > 8 ? `${points.length * 24}px` : '100%' }}
+          >
             {points.map((p) => {
               const heightPct = Math.min(
                 100,
@@ -394,6 +430,194 @@ function SvgPaymentTimeChart({ points }: { points: DashboardPaymentTimePoint[] }
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Onboarding Checklist Component ──────────────────────────────────────────
+
+interface OnboardingTask {
+  key: string;
+  title: string;
+  description: string;
+  icon: React.ReactNode;
+  route: string;
+  completed: boolean;
+  actionText: string;
+}
+
+function OwnerOnboardingChecklist({ settings }: { settings: StoreSettings | undefined }) {
+  const navigate = useNavigate();
+  const [collapsed, setCollapsed] = useState(false);
+
+  const areaLayouts = useQuery({
+    queryKey: ['owner-area-layouts'],
+    queryFn: () => apiRequest<AreaLayoutInfo[]>('/api/v1/owner/catalog/area-layouts'),
+  });
+
+  const products = useQuery({
+    queryKey: ['owner-products'],
+    queryFn: () => apiRequest<ProductSummaryInfo[]>('/api/v1/owner/catalog/products'),
+  });
+
+  const employees = useQuery({
+    queryKey: ['owner-staff-list'],
+    queryFn: () => apiRequest<any[]>('/api/v1/owner/staff'),
+  });
+
+  const hasAreas = Boolean(
+    (areaLayouts.data ?? []).length > 0 &&
+    areaLayouts.data?.some((a) => a.tables && a.tables.length > 0),
+  );
+  const hasProducts = Boolean(
+    (products.data ?? []).some((p) => !p.isSystem) || (products.data ?? []).length > 0,
+  );
+  const hasEmployees = Boolean((employees.data ?? []).length > 0);
+  const hasBanking = Boolean(settings?.bankAccountNumber && settings?.bankName);
+
+  const tasks: OnboardingTask[] = [
+    {
+      key: 'areas',
+      title: 'Tạo khu vực & Bàn / Phòng',
+      description: 'Thiết lập sơ đồ tầng, khu vực và danh sách bàn/phòng phục vụ.',
+      icon: <AppstoreOutlined />,
+      route: '/owner/settings/areas',
+      completed: hasAreas,
+      actionText: 'Tạo bàn/phòng',
+    },
+    {
+      key: 'products',
+      title: 'Tạo thực đơn & Mặt hàng',
+      description: 'Thêm các món ăn, đồ uống, hàng hóa hoặc bảng giá tính giờ.',
+      icon: <ShoppingOutlined />,
+      route: '/owner/catalog/products/new',
+      completed: hasProducts,
+      actionText: 'Thêm mặt hàng',
+    },
+    {
+      key: 'employees',
+      title: 'Thêm nhân viên',
+      description: 'Tạo tài khoản và mã PIN để nhân viên đăng nhập bán hàng trên POS.',
+      icon: <TeamOutlined />,
+      route: '/owner/staff/new',
+      completed: hasEmployees,
+      actionText: 'Thêm nhân viên',
+    },
+    {
+      key: 'banking',
+      title: 'Thiết lập tài khoản ngân hàng (VietQR)',
+      description: 'Nhập số tài khoản để tự động sinh mã VietQR nhận tiền chuyển khoản.',
+      icon: <BankOutlined />,
+      route: '/owner/settings/store',
+      completed: hasBanking,
+      actionText: 'Thiết lập STK',
+    },
+  ];
+
+  const completedCount = tasks.filter((t) => t.completed).length;
+  const isAllCompleted = completedCount === tasks.length;
+  const progressPercent = Math.round((completedCount / tasks.length) * 100);
+
+  // Ẩn hoàn toàn nếu đang tải hoặc tất cả 4 bước đã hoàn thành
+  if (areaLayouts.isLoading || products.isLoading || employees.isLoading || isAllCompleted) {
+    return null;
+  }
+
+  return (
+    <div className="owner-onboarding-card">
+      <div className="owner-onboarding-card__header" onClick={() => setCollapsed(!collapsed)}>
+        <div className="owner-onboarding-card__title-group">
+          <div className="owner-onboarding-card__badge">
+            <RocketOutlined />
+          </div>
+          <div>
+            <div className="owner-onboarding-card__heading-row">
+              <strong className="owner-onboarding-card__title">
+                {isAllCompleted
+                  ? 'Tuyệt vời! Cửa hàng đã sẵn sàng hoạt động'
+                  : 'Danh sách việc cần làm cho cửa hàng mới'}
+              </strong>
+              <Tag
+                color={isAllCompleted ? 'success' : 'processing'}
+                className="owner-onboarding-status-tag"
+              >
+                {completedCount}/{tasks.length} hoàn thành ({progressPercent}%)
+              </Tag>
+            </div>
+            <p className="owner-onboarding-card__subtitle">
+              {isAllCompleted
+                ? 'Toàn bộ 4 bước thiết lập cơ bản đã hoàn tất. Bạn có thể bắt đầu bán hàng ngay trên POS!'
+                : 'Hoàn thành 4 bước cơ bản sau để bắt đầu bán hàng và nhận thanh toán trên POS.'}
+            </p>
+          </div>
+        </div>
+        <div className="owner-onboarding-card__header-actions">
+          <Progress
+            percent={progressPercent}
+            size="small"
+            strokeColor={isAllCompleted ? '#10b981' : '#0975F7'}
+            style={{ width: 100, marginRight: 12 }}
+            showInfo={false}
+          />
+          <Button
+            type="text"
+            size="small"
+            icon={collapsed ? <DownOutlined /> : <UpOutlined />}
+            aria-label={collapsed ? 'Mở rộng checklist' : 'Thu gọn checklist'}
+          />
+        </div>
+      </div>
+
+      {!collapsed && (
+        <div className="owner-onboarding-grid">
+          {tasks.map((task, idx) => (
+            <div
+              key={task.key}
+              className={`owner-onboarding-item${task.completed ? ' is-completed' : ''}`}
+              onClick={() => navigate(task.route)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') navigate(task.route);
+              }}
+            >
+              <div className="owner-onboarding-item__left">
+                <div className={`owner-onboarding-item__step${task.completed ? ' is-done' : ''}`}>
+                  {task.completed ? <CheckCircleFilled /> : <span>{idx + 1}</span>}
+                </div>
+                <div className="owner-onboarding-item__icon-wrap">{task.icon}</div>
+              </div>
+              <div className="owner-onboarding-item__body">
+                <div className="owner-onboarding-item__title-row">
+                  <strong className="owner-onboarding-item__title">{task.title}</strong>
+                  {task.completed ? (
+                    <Tag color="success" className="owner-onboarding-item__tag">
+                      Đã xong
+                    </Tag>
+                  ) : null}
+                </div>
+                <p className="owner-onboarding-item__desc">{task.description}</p>
+              </div>
+              <div className="owner-onboarding-item__action">
+                {task.completed ? (
+                  <Button type="text" size="small" className="owner-onboarding-item__btn-done">
+                    Xem lại <RightOutlined />
+                  </Button>
+                ) : (
+                  <Button
+                    type="primary"
+                    ghost
+                    size="small"
+                    className="owner-onboarding-item__btn-start"
+                  >
+                    {task.actionText} <ArrowRightOutlined />
+                  </Button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -528,6 +752,9 @@ export function OwnerDashboardPage({ settings }: { settings: StoreSettings | und
           </Typography.Text>
         </div>
       </div>
+
+      {/* ── Danh sách việc cần làm khi mới tạo tài khoản ── */}
+      <OwnerOnboardingChecklist settings={settings} />
 
       {isLoading ? (
         <div style={{ padding: 24 }}>
@@ -860,6 +1087,7 @@ export function OwnerDashboardPage({ settings }: { settings: StoreSettings | und
                 rowKey="userId"
                 pagination={false}
                 size="small"
+                scroll={{ x: 'max-content' }}
                 className="owner-staff-table"
                 locale={{
                   emptyText: <Empty description="Chưa có dữ liệu nhân viên trong kỳ" />,

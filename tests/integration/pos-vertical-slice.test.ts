@@ -1669,8 +1669,8 @@ describe('online POS vertical slice', () => {
     expect(resumeResult.quote.order.status).toBe('OPEN');
     expect(resumeResult.quote.time?.status).toBe('RUNNING');
     expect(resumeResult.quote.time?.endedAtMs).toBeNull();
-    // Returning from checkout restores one continuous interval, including time spent on checkout.
-    expect(resumeResult.quote.time?.elapsedSeconds).toBe(5442);
+    // The checkout window is frozen and is not charged after returning to the order.
+    expect(resumeResult.quote.time?.elapsedSeconds).toBe(5235);
     expect(resumeResult.quote.time?.tableSegments).toHaveLength(1);
 
     // 6b. Immediate stop-time right after resume (same millisecond/second) - must not crash
@@ -1684,7 +1684,7 @@ describe('online POS vertical slice', () => {
       now: tResume,
     });
     expect(immediateStop.status).toBe('PAYMENT_PENDING');
-    expect(immediateStop.quote.time?.elapsedSeconds).toBe(5442);
+    expect(immediateStop.quote.time?.elapsedSeconds).toBe(5235);
 
     // Resume again after immediate stop
     const resumeAgain = await pos.resumeCheckout({
@@ -1698,10 +1698,10 @@ describe('online POS vertical slice', () => {
     });
     expect(resumeAgain.status).toBe('OPEN');
 
-    // At 08:00:42 the original interval is still continuous from 06:00.
+    // At 08:00:42 only actual playing time is charged; checkout time stays excluded.
     const tPlayingLater = tResume + 1800 * 1000;
     const playingQuote = await pos.quote(storeId, opened.orderId, tPlayingLater);
-    expect(playingQuote.time?.elapsedSeconds).toBe(7242);
+    expect(playingQuote.time?.elapsedSeconds).toBe(7034);
     expect(playingQuote.time?.tableSegments?.length).toBe(1);
 
     // 7. Stop time again at 08:00:42

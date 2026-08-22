@@ -536,6 +536,52 @@ function mutationHeaders(csrfToken: string) {
   return { 'X-CSRF-Token': csrfToken, 'Idempotency-Key': crypto.randomUUID() };
 }
 
+function paymentReturnKey(orderId: string) {
+  return `pos-payment-return:${orderId}`;
+}
+
+interface PaymentReturnMarker {
+  enteredAt: number;
+  pendingVersion: number | null;
+  returnArmed: boolean;
+}
+
+// Module state is intentionally scoped to one browser tab/runtime. Persisted
+// storage can be copied when a tab is duplicated and must not grant another tab
+// permission to resume an order it did not leave from checkout.
+const activePaymentReturns = new Map<string, PaymentReturnMarker>();
+
+function markPaymentNavigationStarted(orderId: string) {
+  activePaymentReturns.set(paymentReturnKey(orderId), {
+    enteredAt: Date.now(),
+    pendingVersion: null,
+    returnArmed: false,
+  });
+}
+
+function armPaymentReturn(orderId: string, pendingVersion: number | null = null) {
+  const key = paymentReturnKey(orderId);
+  const current = activePaymentReturns.get(key);
+  activePaymentReturns.set(paymentReturnKey(orderId), {
+    enteredAt: current?.enteredAt ?? Date.now(),
+    pendingVersion,
+    returnArmed: true,
+  });
+}
+
+function clearPaymentPageActive(orderId: string) {
+  activePaymentReturns.delete(paymentReturnKey(orderId));
+}
+
+function isReturningFromPayment(orderId: string, pendingVersion: number) {
+  const marker = activePaymentReturns.get(paymentReturnKey(orderId));
+  if (!marker?.returnArmed) return false;
+  if (marker.pendingVersion !== null) {
+    return marker.pendingVersion === pendingVersion;
+  }
+  return Date.now() - marker.enteredAt < 120_000;
+}
+
 function StaffHeader({
   context,
   searchSlot,
@@ -3044,6 +3090,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const [provisionalBillOpen, setProvisionalBillOpen] = useState(false);
   const [resumeModalOpen, setResumeModalOpen] = useState(false);
   const [resuming, setResuming] = useState(false);
+  const [autoResumeRetryToken, setAutoResumeRetryToken] = useState(0);
   const [stoppingTime, setStoppingTime] = useState(false);
   const [clockNow, setClockNow] = useState(() => Date.now());
   const [isMobile, setIsMobile] = useState(() =>
@@ -3055,6 +3102,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const [editingNoteItemIndex, setEditingNoteItemIndex] = useState<number | null>(null);
   const [itemNoteDraft, setItemNoteDraft] = useState('');
   const cartIconRef = useRef<HTMLButtonElement>(null);
+  const autoResumePaymentInFlightRef = useRef(false);
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
   const [guestCount, setGuestCount] = useState<number>(1);
   const [guestModalOpen, setGuestModalOpen] = useState(false);
@@ -3080,6 +3128,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   });
   const [isResizing, setIsResizing] = useState(false);
   const csrf = auth.csrfToken!;
+
+  const navigateToPayment = (targetOrderId: string, replace = false) => {
+    markPaymentNavigationStarted(targetOrderId);
+    navigate(`/pos/orders/${targetOrderId}/payment`, replace ? { replace: true } : undefined);
+  };
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth <= 900);
@@ -3161,7 +3214,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
 
   useEffect(() => {
     if (!isNew && quote.data && searchParams.get('checkout') === '1') {
-      navigate(`/pos/orders/${quote.data.order.id}/payment`, { replace: true });
+      navigateToPayment(quote.data.order.id, true);
     }
   }, [isNew, quote.data, searchParams, navigate]);
 
@@ -3609,7 +3662,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     if (!quote.data) return;
     if (draftLines.length === 0) {
       if (openPaymentAfterSave) {
-        navigate(`/pos/orders/${quote.data.order.id}/payment`);
+        navigateToPayment(quote.data.order.id);
       } else {
         messageApi.success('Lưu đơn hàng thành công.');
         navigate('/pos', { replace: true });
@@ -3625,7 +3678,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       await queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
       messageApi.success('Lưu đơn hàng thành công.');
       if (openPaymentAfterSave) {
-        navigate(`/pos/orders/${quote.data.order.id}/payment`);
+        navigateToPayment(quote.data.order.id);
       } else {
         navigate('/pos', { replace: true });
       }
@@ -3636,20 +3689,48 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     }
   };
 
-  const handleResumeCheckout = async () => {
-    if (!quote.data || resuming) return;
+  const handleResumeCheckout = async (automatic = false) => {
+    if (!quote.data || resuming) return false;
+    const frozenQuote = quote.data;
     setResuming(true);
     try {
-      const result = await jsonRequest<{
-        orderId: string;
-        status: 'OPEN';
-        resumedAt: number;
-        quote: OrderQuote;
-      }>(
-        `/api/v1/pos/orders/${quote.data.order.id}/resume-checkout`,
-        { expectedOrderVersion: quote.data.order.version },
-        { headers: mutationHeaders(csrf) },
-      );
+      const sendResume = (expectedOrderVersion: number) =>
+        jsonRequest<{
+          orderId: string;
+          status: 'OPEN';
+          resumedAt: number;
+          quote: OrderQuote;
+        }>(
+          `/api/v1/pos/orders/${frozenQuote.order.id}/resume-checkout`,
+          { expectedOrderVersion },
+          { headers: mutationHeaders(csrf) },
+        );
+
+      let result;
+      try {
+        result = await sendResume(frozenQuote.order.version);
+      } catch (error) {
+        const refreshed = await apiRequest<OrderQuote>(
+          `/api/v1/pos/orders/${frozenQuote.order.id}/quote`,
+        );
+        if (!refreshed.time || refreshed.order.status === 'OPEN') {
+          queryClient.setQueryData<OrderQuote>(['pos-order-quote', orderId], (cached) =>
+            !cached || refreshed.order.version >= cached.order.version ? refreshed : cached,
+          );
+          clearPaymentPageActive(frozenQuote.order.id);
+          void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
+          void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
+          setResumeModalOpen(false);
+          return true;
+        }
+        if (
+          refreshed.order.status !== 'PAYMENT_PENDING' ||
+          refreshed.order.version === frozenQuote.order.version
+        ) {
+          throw error;
+        }
+        result = await sendResume(refreshed.order.version);
+      }
       const openQuote: OrderQuote = {
         ...result.quote,
         order: {
@@ -3657,17 +3738,52 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           status: 'OPEN',
         },
       };
-      queryClient.setQueryData(['pos-order-quote', orderId], openQuote);
+      queryClient.setQueryData<OrderQuote>(['pos-order-quote', orderId], (cached) =>
+        !cached || openQuote.order.version >= cached.order.version ? openQuote : cached,
+      );
+      clearPaymentPageActive(frozenQuote.order.id);
+      void queryClient.invalidateQueries({ queryKey: ['pos-order-quote', orderId] });
       void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
       void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
-      messageApi.success(`Đã tiếp tục tính giờ cho ${quote.data.order.tableName}`);
+      messageApi.success(`Đã tiếp tục tính giờ cho ${frozenQuote.order.tableName}`);
       setResumeModalOpen(false);
+      return true;
     } catch (error) {
-      messageApi.error(errorText(error));
+      if (!automatic) messageApi.error(errorText(error));
+      return false;
     } finally {
       setResuming(false);
     }
   };
+
+  useEffect(() => {
+    const currentQuote = quote.data;
+    if (
+      !currentQuote?.time ||
+      currentQuote.order.status !== 'PAYMENT_PENDING' ||
+      !isReturningFromPayment(currentQuote.order.id, currentQuote.order.version) ||
+      autoResumePaymentInFlightRef.current
+    ) {
+      return;
+    }
+    let retryTimer: number | null = null;
+    autoResumePaymentInFlightRef.current = true;
+    void handleResumeCheckout(true)
+      .then((resumed) => {
+        if (!resumed) {
+          retryTimer = window.setTimeout(
+            () => setAutoResumeRetryToken((token) => token + 1),
+            1_000,
+          );
+        }
+      })
+      .finally(() => {
+        autoResumePaymentInFlightRef.current = false;
+      });
+    return () => {
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+    };
+  }, [autoResumeRetryToken, quote.data]);
 
   const handleOpenTableQrModal = async () => {
     const tableId = quote.data?.order.tableId ?? selectedTable?.id ?? preselectedTableId;
@@ -3719,7 +3835,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     }
     if (!isNew) {
       if (isPaymentPending) {
-        navigate(`/pos/orders/${quote.data!.order.id}/payment`);
+        navigateToPayment(quote.data!.order.id);
         return;
       }
       if (quote.data?.time) {
@@ -3747,10 +3863,14 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
               status: 'PAYMENT_PENDING',
             },
           };
-          queryClient.setQueryData(['pos-order-quote', quote.data.order.id], pendingQuote);
+          queryClient.setQueryData<OrderQuote>(
+            ['pos-order-quote', quote.data.order.id],
+            (cached) =>
+              !cached || pendingQuote.order.version >= cached.order.version ? pendingQuote : cached,
+          );
           void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
           void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
-          navigate(`/pos/orders/${quote.data.order.id}/payment`);
+          navigateToPayment(quote.data.order.id);
         } catch (error) {
           messageApi.error(errorText(error));
         } finally {
@@ -4708,7 +4828,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                     <Button
                       type="primary"
                       size="large"
-                      onClick={() => navigate(`/pos/orders/${quote.data!.order.id}/payment`)}
+                      onClick={() => navigateToPayment(quote.data!.order.id)}
                       className="staff-order-mobile-btn-pay"
                     >
                       Thanh toán
@@ -5485,7 +5605,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       type="primary"
                       size="large"
                       onClick={() => {
-                        navigate(`/pos/orders/${quote.data!.order.id}/payment`);
+                        navigateToPayment(quote.data!.order.id);
                       }}
                     >
                       Tiếp tục thanh toán
@@ -7175,8 +7295,12 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
   } | null>(null);
   const [qrModalOpen, setQrModalOpen] = useState(false);
   const [paymentPreviewOpen, setPaymentPreviewOpen] = useState(false);
+  const [preparingCheckout, setPreparingCheckout] = useState(false);
+  const [prepareCheckoutError, setPrepareCheckoutError] = useState<string | null>(null);
   const [returningToOrder, setReturningToOrder] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const checkoutPreparationStartedRef = useRef(false);
+  const checkoutWasFrozenRef = useRef(false);
   const csrf = auth.csrfToken!;
 
   const quote = useQuery({
@@ -7194,6 +7318,129 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
     queryKey: ['pos-context'],
     queryFn: () => apiRequest<StaffContext>('/api/v1/pos/context'),
   });
+
+  useEffect(() => {
+    const currentQuote = quote.data;
+    if (!currentQuote?.time) return;
+    if (currentQuote.order.status === 'PAYMENT_PENDING') {
+      armPaymentReturn(orderId, currentQuote.order.version);
+    } else if (currentQuote.order.status === 'OPEN' && !checkoutWasFrozenRef.current) {
+      armPaymentReturn(orderId);
+    }
+  }, [orderId, quote.data?.order.status, quote.data?.order.version, Boolean(quote.data?.time)]);
+
+  const resumeFrozenCheckout = async (frozenQuote: OrderQuote, notify: boolean) => {
+    const sendResume = (expectedOrderVersion: number) =>
+      jsonRequest<{
+        orderId: string;
+        status: 'OPEN';
+        resumedAt: number;
+        quote: OrderQuote;
+      }>(
+        `/api/v1/pos/orders/${frozenQuote.order.id}/resume-checkout`,
+        { expectedOrderVersion },
+        { headers: mutationHeaders(csrf) },
+      );
+
+    let result;
+    try {
+      result = await sendResume(frozenQuote.order.version);
+    } catch (error) {
+      // Another tab may have updated customer/order metadata while checkout was
+      // pending. Reload the authoritative version and retry the resume once.
+      const refreshed = await apiRequest<OrderQuote>(
+        `/api/v1/pos/orders/${frozenQuote.order.id}/quote`,
+      );
+      if (!refreshed.time || refreshed.order.status === 'OPEN') return true;
+      if (
+        refreshed.order.status !== 'PAYMENT_PENDING' ||
+        refreshed.order.version === frozenQuote.order.version
+      ) {
+        throw error;
+      }
+      result = await sendResume(refreshed.order.version);
+    }
+
+    queryClient.setQueryData<OrderQuote>(['pos-order-quote', orderId], (cached) =>
+      !cached || result.quote.order.version >= cached.order.version ? result.quote : cached,
+    );
+    clearPaymentPageActive(frozenQuote.order.id);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['pos-order-quote', orderId] }),
+      queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
+      queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
+    ]);
+    if (notify) {
+      messageApi.success(
+        `Đã tự động tiếp tục tính giờ cho ${frozenQuote.order.tableName ?? 'bàn'}.`,
+      );
+    }
+    return true;
+  };
+
+  // Payment must always use a server-frozen quote. Several screens can navigate
+  // directly to this route, so the payment page is the final safety boundary.
+  useEffect(() => {
+    const currentQuote = quote.data;
+    if (currentQuote?.order.status === 'PAYMENT_PENDING') {
+      checkoutPreparationStartedRef.current = true;
+      checkoutWasFrozenRef.current = true;
+      return;
+    }
+    if (currentQuote?.order.status === 'OPEN' && checkoutWasFrozenRef.current) {
+      clearPaymentPageActive(currentQuote.order.id);
+      navigate(`/pos/orders/${currentQuote.order.id}`, { replace: true });
+      return;
+    }
+    if (
+      !currentQuote?.time ||
+      currentQuote.order.status !== 'OPEN' ||
+      checkoutPreparationStartedRef.current
+    ) {
+      return;
+    }
+
+    checkoutPreparationStartedRef.current = true;
+    setPreparingCheckout(true);
+    setPrepareCheckoutError(null);
+
+    void jsonRequest<{
+      orderId: string;
+      status: 'PAYMENT_PENDING';
+      stoppedAt: number;
+      quote: OrderQuote;
+    }>(
+      `/api/v1/pos/orders/${currentQuote.order.id}/stop-time`,
+      { expectedOrderVersion: currentQuote.order.version },
+      { headers: mutationHeaders(csrf) },
+    )
+      .then(async (result) => {
+        checkoutWasFrozenRef.current = true;
+        const cachedQuote = queryClient.getQueryData<OrderQuote>(['pos-order-quote', orderId]);
+        if (!cachedQuote || result.quote.order.version >= cachedQuote.order.version) {
+          queryClient.setQueryData(['pos-order-quote', orderId], result.quote);
+        } else if (cachedQuote.order.status === 'OPEN') {
+          clearPaymentPageActive(result.quote.order.id);
+          navigate(`/pos/orders/${result.quote.order.id}`, { replace: true });
+        }
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
+          queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
+        ]);
+      })
+      .catch(async (error) => {
+        // A concurrent order update can make the version stale. Refetching lets
+        // this effect retry with the authoritative version; other failures stay
+        // visible and keep all payment controls blocked.
+        const refreshed = await quote.refetch();
+        if (refreshed.data?.order.version !== currentQuote.order.version) {
+          checkoutPreparationStartedRef.current = false;
+          return;
+        }
+        setPrepareCheckoutError(errorText(error));
+      })
+      .finally(() => setPreparingCheckout(false));
+  }, [csrf, navigate, orderId, prepareCheckoutError, preparingCheckout, queryClient, quote.data]);
 
   const handleCopy = (text: string, label: string) => {
     if (!text) return;
@@ -7269,42 +7516,32 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
       }
     : null;
 
-  const handleBackToOrder = async () => {
-    if (!quote.data || returningToOrder) return;
-    if (!quote.data.time || quote.data.order.status !== 'PAYMENT_PENDING') {
-      navigate(`/pos/orders/${orderId}`);
-      return;
-    }
+  const resumeCheckoutForReturn = async () => {
+    if (!quote.data?.time || quote.data.order.status !== 'PAYMENT_PENDING') return true;
     setReturningToOrder(true);
     try {
-      const result = await jsonRequest<{
-        orderId: string;
-        status: 'OPEN';
-        resumedAt: number;
-        quote: OrderQuote;
-      }>(
-        `/api/v1/pos/orders/${quote.data.order.id}/resume-checkout`,
-        { expectedOrderVersion: quote.data.order.version },
-        { headers: mutationHeaders(csrf) },
-      );
-      queryClient.setQueryData(['pos-order-quote', orderId], result.quote);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
-        queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
-      ]);
-      messageApi.success(
-        `Đã tự động tiếp tục tính giờ cho ${quote.data.order.tableName ?? 'bàn'}.`,
-      );
-      navigate(`/pos/orders/${orderId}`, { replace: true });
+      return await resumeFrozenCheckout(quote.data, true);
     } catch (error) {
       messageApi.error(errorText(error));
+      return false;
     } finally {
       setReturningToOrder(false);
     }
   };
 
+  const handleBackToOrder = async () => {
+    if (!quote.data || returningToOrder || preparingCheckout || submitting) return;
+    const resumed = await resumeCheckoutForReturn();
+    if (!resumed) return;
+    navigate(`/pos/orders/${orderId}`, { replace: true });
+  };
+
   const handleConfirmPayment = async (andPrint = false) => {
     if (!quote.data || submitting) return;
+    if (quote.data.time && quote.data.order.status !== 'PAYMENT_PENDING') {
+      messageApi.error('Chưa thể chốt số tiền. Vui lòng đợi hệ thống dừng giờ của bàn.');
+      return;
+    }
     if (
       !isMultiMethod &&
       selectedMethod === 'CASH' &&
@@ -7395,6 +7632,7 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
       }
 
       // Return directly to POS home
+      clearPaymentPageActive(quote.data.order.id);
       navigate('/pos', { replace: true });
     } catch (error) {
       messageApi.error(errorText(error));
@@ -7423,8 +7661,8 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
         <Button
           type="text"
           icon={<LeftOutlined />}
-          loading={returningToOrder}
-          disabled={returningToOrder}
+          loading={returningToOrder || preparingCheckout}
+          disabled={returningToOrder || preparingCheckout || submitting}
           className="staff-payment-page__back-btn"
           aria-label="Quay lại đơn hàng"
           onClick={() => void handleBackToOrder()}
@@ -7451,6 +7689,31 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
               </Button>
             }
           />
+        </div>
+      ) : prepareCheckoutError ? (
+        <div style={{ padding: 40 }}>
+          <Alert
+            type="error"
+            showIcon
+            title="Chưa thể chốt số tiền thanh toán"
+            description={prepareCheckoutError}
+            action={
+              <Button
+                type="primary"
+                onClick={() => {
+                  checkoutPreparationStartedRef.current = false;
+                  setPrepareCheckoutError(null);
+                  void quote.refetch();
+                }}
+              >
+                Thử lại
+              </Button>
+            }
+          />
+        </div>
+      ) : preparingCheckout || (quote.data.time && quote.data.order.status === 'OPEN') ? (
+        <div style={{ padding: 40, textAlign: 'center' }}>
+          <Spin size="large" description="Đang dừng giờ và chốt số tiền trên máy chủ..." />
         </div>
       ) : (
         <div className="staff-payment-page__body">

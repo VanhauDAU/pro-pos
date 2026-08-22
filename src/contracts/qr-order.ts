@@ -1,5 +1,17 @@
 import { z } from 'zod';
 
+export const GUEST_VOICE_NAMES = [
+  'guest_qr_available.ogg',
+  'guest_qr_open_requested.ogg',
+  'guest_qr_open.ogg',
+  'guest_open_request_sent.ogg',
+  'guest_call_staff_sent.ogg',
+  'guest_checkout_request_sent.ogg',
+  'guest_order_sent.ogg',
+] as const;
+
+export type GuestVoiceName = (typeof GUEST_VOICE_NAMES)[number];
+
 export const guestOrderItemSchema = z.object({
   productId: z.uuid(),
   variantId: z.uuid().nullable().optional(),

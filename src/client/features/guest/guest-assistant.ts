@@ -1,10 +1,10 @@
-import type { GuestOrderContext } from '@contracts/qr-order';
+import type { GuestOrderContext, GuestVoiceName } from '@contracts/qr-order';
 
 export type GuestAssistantTableStatus = GuestOrderContext['tableStatus'];
 
 export type GuestAssistantAction = 'OPEN_TABLE' | 'BROWSE_MENU' | 'CALL_STAFF' | 'CHECKOUT';
 
-export type GuestAssistantPhase = 'LOCKED' | 'SPEAKING' | 'CHOOSING' | 'DOCKED' | 'FEEDBACK';
+export type GuestAssistantPhase = 'SPEAKING' | 'CHOOSING' | 'DOCKED' | 'FEEDBACK';
 
 export interface GuestAssistantActionOption {
   action: GuestAssistantAction;
@@ -17,6 +17,19 @@ export interface GuestAssistantFeedback {
   id: number;
   tone: 'success' | 'error';
   message: string;
+  audioSrc?: string;
+}
+
+export function guestAssistantVoiceUrl(voiceName: GuestVoiceName) {
+  return `/api/v1/guest-order/voice/${voiceName}`;
+}
+
+export function getGuestAssistantVoiceUrl(status: GuestAssistantTableStatus): string {
+  if (status === 'AVAILABLE') return guestAssistantVoiceUrl('guest_qr_available.ogg');
+  if (status === 'OPEN_REQUESTED') {
+    return guestAssistantVoiceUrl('guest_qr_open_requested.ogg');
+  }
+  return guestAssistantVoiceUrl('guest_qr_open.ogg');
 }
 
 export function guestAssistantStorageKey(token: string) {

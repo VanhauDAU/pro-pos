@@ -1103,7 +1103,15 @@ function StaffNotificationCenter({ open, onClose }: { open: boolean; onClose: ()
           {(notificationAudit.data?.items ?? []).map((event) => {
             const status = notificationStatusMeta(event.status);
             return (
-              <article key={event.id} className="staff-notification-audit-item">
+              <article
+                key={event.id}
+                className="staff-notification-audit-item"
+                style={{ cursor: 'pointer' }}
+                onClick={() => {
+                  onClose();
+                  navigate('/pos/qr-order');
+                }}
+              >
                 <div
                   className={`staff-notification-audit-icon is-${event.eventType.toLowerCase()}`}
                 >
@@ -1144,12 +1152,14 @@ function StaffNotificationCenter({ open, onClose }: { open: boolean; onClose: ()
                   <Button
                     type="link"
                     size="small"
-                    onClick={() => {
+                    style={{ padding: 0, marginTop: 4 }}
+                    onClick={(e) => {
+                      e.stopPropagation();
                       onClose();
                       navigate('/pos/qr-order');
                     }}
                   >
-                    Mở tab QR Order
+                    Mở tab QR Order →
                   </Button>
                 </div>
               </article>
@@ -8474,7 +8484,7 @@ export function StaffPosPortalPage() {
           {!isFullScreen ? (
             <StaffHeader
               context={auth.data}
-              onOpenNotifications={() => navigate('/pos/qr-order')}
+              onOpenNotifications={() => setNotificationCenterOpen(true)}
               searchSlot={
                 active === 'orders' ? (
                   <Input

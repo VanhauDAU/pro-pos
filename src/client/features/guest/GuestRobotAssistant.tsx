@@ -143,12 +143,29 @@ function RobotVisual({
           draggable={false}
         />
       ) : null}
-      <img
-        className="guest-robot__layer guest-robot__mouth"
-        src={`/image/mascot/face/mouths/robot-mouth-${mouth}.webp`}
-        alt=""
-        draggable={false}
-      />
+      {speaking ? (
+        <>
+          <img
+            className="guest-robot__layer guest-robot__mouth guest-robot__mouth--talk-neutral"
+            src="/image/mascot/face/mouths/robot-mouth-neutral.webp"
+            alt=""
+            draggable={false}
+          />
+          <img
+            className="guest-robot__layer guest-robot__mouth guest-robot__mouth--talk-happy"
+            src="/image/mascot/face/mouths/robot-mouth-happy.webp"
+            alt=""
+            draggable={false}
+          />
+        </>
+      ) : (
+        <img
+          className="guest-robot__layer guest-robot__mouth"
+          src={`/image/mascot/face/mouths/robot-mouth-${mouth}.webp`}
+          alt=""
+          draggable={false}
+        />
+      )}
     </div>
   );
 }
@@ -163,8 +180,10 @@ export function GuestRobotAssistant({
   onAction,
 }: GuestRobotAssistantProps) {
   const introWasSeen = useMemo(() => wasIntroSeen(token), [token]);
-  const [phase, setPhase] = useState<GuestAssistantPhase>(introWasSeen ? 'DOCKED' : 'LOCKED');
+  const [phase, setPhase] = useState<GuestAssistantPhase>(introWasSeen ? 'DOCKED' : 'CHOOSING');
   const [introActive, setIntroActive] = useState(!introWasSeen);
+  const [introSpeaking, setIntroSpeaking] = useState(!introWasSeen);
+  const [feedbackSpeaking, setFeedbackSpeaking] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const [message, setMessage] = useState(() => getGuestAssistantNarration(tableStatus));
   const actions = useMemo(() => getGuestAssistantActions(tableStatus), [tableStatus]);
@@ -178,6 +197,42 @@ export function GuestRobotAssistant({
   useEffect(() => {
     if (phase !== 'FEEDBACK') setMessage(getGuestAssistantNarration(tableStatus));
   }, [phase, tableStatus]);
+
+  useEffect(() => {
+    if (introActive) markIntroSeen(token);
+  }, [introActive, token]);
+
+  useEffect(() => {
+    if (!introSpeaking || !introActive) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setIntroSpeaking(false);
+      return;
+    }
+    let audio: HTMLAudioElement | null = null;
+    let timer = window.setTimeout(
+      () => setIntroSpeaking(false),
+      audioSrc ? AUDIO_SAFETY_TIMEOUT_MS : FALLBACK_SPEECH_DURATION_MS,
+    );
+    const stopSpeaking = () => {
+      window.clearTimeout(timer);
+      setIntroSpeaking(false);
+    };
+    if (audioSrc) {
+      audio = new Audio(audioSrc);
+      audio.addEventListener('ended', stopSpeaking, { once: true });
+      void audio.play().catch(() => {
+        window.clearTimeout(timer);
+        timer = window.setTimeout(() => setIntroSpeaking(false), FALLBACK_SPEECH_DURATION_MS);
+      });
+    }
+    return () => {
+      window.clearTimeout(timer);
+      if (audio) {
+        audio.pause();
+        audio.removeEventListener('ended', stopSpeaking);
+      }
+    };
+  }, [audioSrc, introActive, introSpeaking]);
 
   useEffect(() => {
     if (!introActive) return;
@@ -228,6 +283,21 @@ export function GuestRobotAssistant({
     setMessage(feedback.message);
     setPhase('FEEDBACK');
     setPanelOpen(true);
+    let audio: HTMLAudioElement | null = null;
+    let audioTimer: number | null = null;
+    const stopFeedbackAudio = () => {
+      setFeedbackSpeaking(false);
+      if (audioTimer !== null) window.clearTimeout(audioTimer);
+    };
+    if (feedback.audioSrc) {
+      setFeedbackSpeaking(true);
+      audio = new Audio(feedback.audioSrc);
+      audio.addEventListener('ended', stopFeedbackAudio, { once: true });
+      audioTimer = window.setTimeout(stopFeedbackAudio, AUDIO_SAFETY_TIMEOUT_MS);
+      void audio.play().catch(stopFeedbackAudio);
+    } else {
+      setFeedbackSpeaking(false);
+    }
     const timer = window.setTimeout(() => {
       if (feedback.tone === 'error') {
         setPhase('CHOOSING');
@@ -237,7 +307,14 @@ export function GuestRobotAssistant({
         setPanelOpen(false);
       }
     }, FEEDBACK_DURATION_MS);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      if (audioTimer !== null) window.clearTimeout(audioTimer);
+      if (audio) {
+        audio.pause();
+        audio.removeEventListener('ended', stopFeedbackAudio);
+      }
+    };
   }, [feedback]);
 
   const startSpeaking = () => {
@@ -322,18 +399,14 @@ export function GuestRobotAssistant({
               <span>TRỢ LÝ PRO POS</span>
               <strong>Tôi luôn sẵn sàng hỗ trợ bạn</strong>
             </div>
-            <RobotVisual expression={expression} speaking={phase === 'SPEAKING'} />
+            <RobotVisual expression={expression} speaking={phase === 'SPEAKING' || introSpeaking} />
             <div
-              className={`guest-assistant-bubble ${phase === 'SPEAKING' ? 'is-speaking' : ''}`}
+              className={`guest-assistant-bubble ${phase === 'SPEAKING' || introSpeaking ? 'is-speaking' : ''}`}
               aria-live="polite"
             >
-              {phase === 'LOCKED' ? 'Xin chào! Chạm nút bên dưới để tôi hỗ trợ bạn nhé.' : message}
+              {message}
             </div>
-            {phase === 'LOCKED' ? (
-              <button type="button" className="guest-assistant-start" onClick={startSpeaking}>
-                <PlayCircleFilled /> Chạm để bắt đầu
-              </button>
-            ) : phase === 'CHOOSING' ? (
+            {phase === 'CHOOSING' ? (
               actionList
             ) : (
               <div className="guest-assistant-listening" aria-hidden="true">
@@ -373,6 +446,21 @@ export function GuestRobotAssistant({
               ) : null}
             </div>
           ) : null}
+          {!panelOpen ? (
+            <div className="guest-assistant-dock__quick-actions" aria-label="Chọn hỗ trợ nhanh">
+              {actions.map((option) => (
+                <button
+                  key={`quick-${option.action}-${option.label}`}
+                  type="button"
+                  disabled={option.disabled || actionPending}
+                  onClick={() => chooseAction(option.action, option.disabled)}
+                >
+                  <span>{actionIcon(option.action, option.disabled)}</span>
+                  <strong>{option.label}</strong>
+                </button>
+              ))}
+            </div>
+          ) : null}
           <button
             type="button"
             className="guest-assistant-dock__button"
@@ -380,8 +468,11 @@ export function GuestRobotAssistant({
             aria-label={panelOpen ? 'Thu gọn trợ lý Pro POS' : 'Mở trợ lý Pro POS'}
             onClick={toggleDock}
           >
-            <RobotVisual expression={expression} speaking={phase === 'SPEAKING'} compact />
-            {!panelOpen ? <span className="guest-assistant-dock__hint">Bạn cần gì?</span> : null}
+            <RobotVisual
+              expression={expression}
+              speaking={phase === 'SPEAKING' || feedbackSpeaking}
+              compact
+            />
           </button>
         </aside>
       )}

@@ -42,7 +42,12 @@ import type {
 } from '@contracts/qr-order';
 import { apiRequest, jsonRequest } from '@client/lib/api';
 import { GuestRobotAssistant } from './GuestRobotAssistant';
-import type { GuestAssistantAction, GuestAssistantFeedback } from './guest-assistant';
+import {
+  getGuestAssistantVoiceUrl,
+  guestAssistantVoiceUrl,
+  type GuestAssistantAction,
+  type GuestAssistantFeedback,
+} from './guest-assistant';
 
 interface CartLine {
   id: string; // variantId
@@ -103,9 +108,14 @@ export function GuestOrderPage() {
   const [assistantFeedback, setAssistantFeedback] = useState<GuestAssistantFeedback | null>(null);
 
   const showAssistantFeedback = useCallback(
-    (tone: GuestAssistantFeedback['tone'], feedbackMessage: string) => {
+    (tone: GuestAssistantFeedback['tone'], feedbackMessage: string, audioSrc?: string) => {
       assistantFeedbackId.current += 1;
-      setAssistantFeedback({ id: assistantFeedbackId.current, tone, message: feedbackMessage });
+      setAssistantFeedback({
+        id: assistantFeedbackId.current,
+        tone,
+        message: feedbackMessage,
+        ...(audioSrc ? { audioSrc } : {}),
+      });
     },
     [],
   );
@@ -322,6 +332,7 @@ export function GuestOrderPage() {
       showAssistantFeedback(
         'success',
         'Đã gửi gọi món thành công. Quán đang chuẩn bị món cho bạn.',
+        guestAssistantVoiceUrl('guest_order_sent.ogg'),
       );
       messageApi.success('Đã gửi gọi món thành công! Quán đang chuẩn bị món cho bạn.');
       await queryClient.invalidateQueries({ queryKey: ['guest-order-own-requests'] });
@@ -351,6 +362,9 @@ export function GuestOrderPage() {
         type === 'CALL_STAFF'
           ? 'Đã gọi nhân viên. Bạn vui lòng chờ trong giây lát.'
           : 'Đã gửi yêu cầu thanh toán. Nhân viên sẽ mang hóa đơn tới bàn.',
+        guestAssistantVoiceUrl(
+          type === 'CALL_STAFF' ? 'guest_call_staff_sent.ogg' : 'guest_checkout_request_sent.ogg',
+        ),
       );
       void queryClient.invalidateQueries({ queryKey: ['guest-order-own-requests'] });
     },
@@ -381,6 +395,7 @@ export function GuestOrderPage() {
         result.alreadyOpen
           ? 'Bàn đã sẵn sàng. Bạn có thể gọi món ngay.'
           : 'Đã gửi yêu cầu mở bàn. Nhân viên sẽ hỗ trợ bạn ngay.',
+        guestAssistantVoiceUrl('guest_open_request_sent.ogg'),
       );
       await context.refetch();
     },
@@ -505,6 +520,7 @@ export function GuestOrderPage() {
           hasCart={totalItemCount > 0}
           actionPending={requestTableOpen.isPending || submitService.isPending}
           feedback={assistantFeedback}
+          audioSrc={getGuestAssistantVoiceUrl(context.data.tableStatus)}
           onAction={handleAssistantAction}
         />
 

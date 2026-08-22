@@ -38,7 +38,7 @@ export interface PosReceiptLineItem {
 }
 
 export interface PosReceiptPrintData {
-  receiptType: 'PROVISIONAL' | 'PAYMENT';
+  receiptType: 'PROVISIONAL' | 'PAYMENT' | 'DEBT_PAYMENT';
   orderCode: string;
   invoiceCode?: string | null | undefined;
   orderType: 'DINE_IN' | 'TAKEAWAY';
@@ -57,6 +57,14 @@ export interface PosReceiptPrintData {
   paymentMethod?: 'CASH' | 'BANK_TRANSFER' | null | undefined;
   cashReceived?: number | null | undefined;
   cashChange?: number | null | undefined;
+  paymentAllocations?:
+    Array<{ method: 'CASH' | 'BANK_TRANSFER' | 'DEBT'; amountVnd: number }> | undefined;
+  paidAmountVnd?: number | undefined;
+  debtAmountVnd?: number | undefined;
+  debtBeforeVnd?: number | undefined;
+  debtPaymentVnd?: number | undefined;
+  debtAfterVnd?: number | undefined;
+  referenceCode?: string | null | undefined;
   lines: PosReceiptLineItem[];
 }
 
@@ -143,7 +151,12 @@ export function buildEscPosReceipt(
   if (storePhone) raw += `SĐT: ${storePhone}\n`;
 
   // 2. Receipt Title
-  const title = data.receiptType === 'PROVISIONAL' ? 'HÓA ĐƠN TẠM TÍNH' : 'HÓA ĐƠN THANH TOÁN';
+  const title =
+    data.receiptType === 'PROVISIONAL'
+      ? 'HÓA ĐƠN TẠM TÍNH'
+      : data.receiptType === 'DEBT_PAYMENT'
+        ? 'PHIẾU THU CÔNG NỢ'
+        : 'HÓA ĐƠN THANH TOÁN';
   raw += '\n' + escBoldOn + title + '\n' + escBoldOff;
   raw += `Liên ${copy?.index ?? 1}/${copy?.total ?? 1}\n`;
   const code = data.invoiceCode || data.orderCode;
@@ -323,7 +336,12 @@ export function buildEscPosReceipt(
     const value = `${formatVnd(goodsTotal)}đ`;
     raw += `${label}${' '.repeat(Math.max(1, chars - label.length - value.length))}${value}\n`;
   }
-  if (template.combineGoodsAndServiceTotal && timeLines.length > 0 && productLines.length > 0) {
+  if (
+    template.combineGoodsAndServiceTotal &&
+    timeLines.length > 0 &&
+    productLines.length > 0 &&
+    (data.receiptType !== 'PAYMENT' || data.discountTotal > 0)
+  ) {
     const label = 'Tổng hàng & dịch vụ:';
     const value = `${formatVnd(timeTotal + goodsTotal)}đ`;
     raw += `${label}${' '.repeat(Math.max(1, chars - label.length - value.length))}${value}\n`;
@@ -342,13 +360,52 @@ export function buildEscPosReceipt(
     raw += `${discLabel}${' '.repeat(Math.max(1, padLen))}${discVal}\n`;
   }
 
-  const grandLabel = data.receiptType === 'PROVISIONAL' ? 'TỔNG TẠM TÍNH:' : 'TỔNG CỘNG:';
+  const grandLabel =
+    data.receiptType === 'PROVISIONAL'
+      ? 'TỔNG TẠM TÍNH:'
+      : data.receiptType === 'DEBT_PAYMENT'
+        ? 'SỐ TIỀN THU:'
+        : 'TỔNG CỘNG:';
   const grandVal = formatVnd(data.total) + 'đ';
   const grandPad = chars - grandLabel.length - grandVal.length;
   raw += escBoldOn + `${grandLabel}${' '.repeat(Math.max(1, grandPad))}${grandVal}\n` + escBoldOff;
 
+  if (data.receiptType === 'PAYMENT') {
+    const allocations = data.paymentAllocations ?? [];
+    const needsAllocationBreakdown =
+      allocations.length > 1 || allocations.some((allocation) => allocation.method === 'DEBT');
+    if (needsAllocationBreakdown) {
+      for (const allocation of allocations) {
+        const label =
+          allocation.method === 'CASH'
+            ? 'Tiền mặt đã thu'
+            : allocation.method === 'DEBT'
+              ? 'Ghi công nợ'
+              : 'CK đã thu';
+        raw += `${label.padEnd(20, ' ')}: ${formatVnd(allocation.amountVnd)}đ\n`;
+      }
+    } else if (allocations.length === 0 && (data.debtAmountVnd ?? 0) > 0) {
+      if ((data.paidAmountVnd ?? 0) > 0)
+        raw += `Đã thu             : ${formatVnd(data.paidAmountVnd!)}đ\n`;
+      raw += `Ghi công nợ         : ${formatVnd(data.debtAmountVnd!)}đ\n`;
+    }
+  }
+  if (data.receiptType === 'DEBT_PAYMENT') {
+    raw += divider + '\n';
+    raw += `Dư nợ trước         : ${formatVnd(data.debtBeforeVnd ?? 0)}đ\n`;
+    raw += `Số tiền vừa thu     : ${formatVnd(data.debtPaymentVnd ?? data.total)}đ\n`;
+    raw += `Dư nợ còn lại       : ${formatVnd(data.debtAfterVnd ?? 0)}đ\n`;
+    if (data.referenceCode) raw += `Mã tham chiếu       : ${data.referenceCode}\n`;
+    raw += `Phương thức         : ${data.paymentMethod === 'CASH' ? 'Tiền mặt' : 'Chuyển khoản'}\n`;
+  }
+
   // 6. Payment method & Cash details
-  if (data.receiptType === 'PAYMENT' && data.paymentMethod) {
+  if (
+    data.receiptType === 'PAYMENT' &&
+    data.paymentMethod &&
+    (data.paymentAllocations?.length ?? 0) <= 1 &&
+    !data.paymentAllocations?.some((allocation) => allocation.method === 'DEBT')
+  ) {
     raw += divider + '\n';
     const methodStr = data.paymentMethod === 'CASH' ? 'Tiền mặt' : 'Chuyển khoản (VietQR)';
     raw += `Hình thức thanh toán: ${methodStr}\n`;

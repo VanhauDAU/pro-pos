@@ -12,6 +12,7 @@ import { AppError } from '@server/lib/app-error';
 import { PosRepository } from '@server/repositories/pos-repository';
 import { AuditRepository } from '@server/repositories/audit-repository';
 import { AuthorizationRepository } from '@server/repositories/authorization-repository';
+import { CustomerService } from '@server/services/customer-service';
 
 function checkedMoneyFromMilli(unitPriceVnd: number, quantityMilli: number) {
   const amount = (BigInt(unitPriceVnd) * BigInt(quantityMilli) + 500n) / 1000n;
@@ -818,6 +819,7 @@ export class PosService {
     guestCount: number;
     customerName?: string | null;
     customerPhone?: string | null;
+    customerId?: string | null;
   }) {
     const replay = await this.repository.findUpdateOrderGuestCommand(
       input.storeId,
@@ -828,6 +830,15 @@ export class PosService {
       (await this.repository.findOrder(input.storeId, input.orderId)) ??
       (await this.repository.findTakeawayOrder(input.storeId, input.orderId));
     if (!order) throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn.', 404);
+    let customerName = input.customerName?.trim() || null;
+    let customerPhone = input.customerPhone?.trim() || null;
+    if (input.customerId) {
+      const customer = await new CustomerService(this.env).detail(input.storeId, input.customerId);
+      if (customer.status !== 'ACTIVE')
+        throw new AppError('CUSTOMER_ARCHIVED', 'Khách hàng đã được lưu trữ.', 409);
+      customerName = customer.name;
+      customerPhone = customer.phone;
+    }
     try {
       await this.repository.updateOrderGuest({
         commandId: input.idempotencyKey,
@@ -836,8 +847,9 @@ export class PosService {
         orderId: input.orderId,
         expectedOrderVersion: input.expectedOrderVersion,
         guestCount: Math.max(1, input.guestCount),
-        customerName: input.customerName?.trim() || null,
-        customerPhone: input.customerPhone?.trim() || null,
+        customerName,
+        customerPhone,
+        customerId: input.customerId ?? null,
         actorId: input.actorId,
         requestId: input.requestId,
         issuedAt: Date.now(),
@@ -1041,6 +1053,7 @@ export class PosService {
         guestCount: order.guest_count ?? 1,
         customerName: order.customer_name ?? null,
         customerPhone: order.customer_phone ?? null,
+        customerId: order.customer_id ?? null,
       },
       items: processedItems,
       time: pricing,
@@ -1396,6 +1409,12 @@ export class PosService {
     expectedOrderVersion: number;
     method: 'CASH' | 'BANK_TRANSFER';
     cashReceivedVnd: number | null;
+    allocations?: Array<{
+      method: 'CASH' | 'BANK_TRANSFER';
+      amountVnd: number;
+      tenderedVnd?: number | undefined;
+    }>;
+    debtAmountVnd?: number;
     actorSessionId?: string | null;
     deviceId?: string | null;
     now?: number;
@@ -1415,8 +1434,50 @@ export class PosService {
     if (quote.order.version !== input.expectedOrderVersion) {
       throw new AppError('ORDER_VERSION_CONFLICT', 'Đơn hàng đã thay đổi. Vui lòng tải lại.', 409);
     }
-    const cashReceived = input.method === 'CASH' ? input.cashReceivedVnd : null;
-    if (input.method === 'CASH' && (cashReceived === null || cashReceived < quote.totalVnd)) {
+    const allocationsInput = input.allocations ?? [];
+    const debtAmountVnd = input.debtAmountVnd ?? 0;
+    const usingAllocations = allocationsInput.length > 0 || debtAmountVnd > 0;
+    const paidVnd = allocationsInput.reduce((sum, allocation) => sum + allocation.amountVnd, 0);
+    if (usingAllocations && paidVnd + debtAmountVnd !== quote.totalVnd) {
+      throw new AppError(
+        'PAYMENT_ALLOCATION_INVALID',
+        'Tổng thanh toán và công nợ không khớp giá trị hóa đơn.',
+        422,
+      );
+    }
+    if (debtAmountVnd > 0 && !quote.order.customerId) {
+      throw new AppError(
+        'CUSTOMER_REQUIRED_FOR_DEBT',
+        'Vui lòng chọn khách hàng trước khi ghi nợ.',
+        422,
+      );
+    }
+    for (const allocation of allocationsInput) {
+      if (
+        allocation.method === 'CASH' &&
+        (allocation.tenderedVnd ?? allocation.amountVnd) < allocation.amountVnd
+      ) {
+        throw new AppError('INSUFFICIENT_CASH', 'Tiền khách đưa không đủ.', 422);
+      }
+    }
+    const firstAllocationMethod = allocationsInput[0]?.method;
+    const legacyMethod = usingAllocations
+      ? firstAllocationMethod === 'CASH'
+        ? 'CASH'
+        : 'BANK_TRANSFER'
+      : input.method;
+    const cashReceived = usingAllocations
+      ? legacyMethod === 'CASH'
+        ? quote.totalVnd
+        : null
+      : input.method === 'CASH'
+        ? input.cashReceivedVnd
+        : null;
+    if (
+      !usingAllocations &&
+      input.method === 'CASH' &&
+      (cashReceived === null || cashReceived < quote.totalVnd)
+    ) {
       throw new AppError('INSUFFICIENT_CASH', 'Tiền khách đưa không đủ.', 422);
     }
     const invoiceId = crypto.randomUUID();
@@ -1456,7 +1517,7 @@ export class PosService {
           paymentId,
           invoiceId,
           businessDay,
-          method: input.method,
+          method: legacyMethod,
           subtotal: quote.subtotalVnd,
           discountTotal: quote.discountTotalVnd,
           total: quote.totalVnd,
@@ -1477,7 +1538,7 @@ export class PosService {
           paymentId,
           invoiceId,
           businessDay,
-          method: input.method,
+          method: legacyMethod,
           subtotal: quote.subtotalVnd,
           discountTotal: quote.discountTotalVnd,
           total: quote.totalVnd,
@@ -1496,6 +1557,100 @@ export class PosService {
     } catch (error) {
       mapDatabaseError(error);
     }
+    if (quote.order.customerId) {
+      const settings = await new CustomerService(this.env).loyaltySettings(input.storeId);
+      const points = settings.enabled ? Math.floor(quote.totalVnd / settings.vndPerPoint) : 0;
+      const statements: D1PreparedStatement[] = [
+        this.env.DB.prepare(
+          `UPDATE customers SET invoice_count = invoice_count + 1,
+          total_spent_vnd = total_spent_vnd + ?, loyalty_points = loyalty_points + ?,
+          debt_balance_vnd = debt_balance_vnd + ?, last_order_at = ?, updated_at = ?
+          WHERE store_id = ? AND id = ?`,
+        ).bind(
+          quote.totalVnd,
+          points,
+          debtAmountVnd,
+          now,
+          now,
+          input.storeId,
+          quote.order.customerId,
+        ),
+      ];
+      const invoiceTable = quote.order.orderType === 'TAKEAWAY' ? 'takeaway_invoices' : 'invoices';
+      statements.push(
+        this.env.DB.prepare(
+          `UPDATE ${invoiceTable} SET customer_id = ? WHERE store_id = ? AND id = ?`,
+        ).bind(quote.order.customerId, input.storeId, invoiceId),
+      );
+      const allocations = usingAllocations
+        ? allocationsInput
+        : [
+            {
+              method: input.method,
+              amountVnd: quote.totalVnd,
+              ...(cashReceived === null ? {} : { tenderedVnd: cashReceived }),
+            },
+          ];
+      for (const allocation of allocations)
+        statements.push(
+          this.env.DB.prepare(
+            `INSERT INTO invoice_payment_allocations
+        (id, store_id, invoice_id, method, amount_vnd, tendered_vnd, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          ).bind(
+            crypto.randomUUID(),
+            input.storeId,
+            invoiceId,
+            allocation.method,
+            allocation.amountVnd,
+            allocation.tenderedVnd ?? null,
+            now,
+          ),
+        );
+      if (debtAmountVnd > 0) {
+        statements.push(
+          this.env.DB.prepare(
+            `INSERT INTO invoice_payment_allocations
+          (id, store_id, invoice_id, method, amount_vnd, created_at) VALUES (?, ?, ?, 'DEBT', ?, ?)`,
+          ).bind(crypto.randomUUID(), input.storeId, invoiceId, debtAmountVnd, now),
+        );
+        statements.push(
+          this.env.DB.prepare(
+            `INSERT INTO customer_debt_entries
+          (id, store_id, customer_id, invoice_id, entry_type, amount_vnd, reference, actor_user_id, idempotency_key, created_at)
+          VALUES (?, ?, ?, ?, 'CHARGE', ?, ?, ?, ?, ?)`,
+          ).bind(
+            crypto.randomUUID(),
+            input.storeId,
+            quote.order.customerId,
+            invoiceId,
+            debtAmountVnd,
+            quote.order.displayCode ?? null,
+            input.actorId,
+            `checkout-debt:${invoiceId}`,
+            now,
+          ),
+        );
+      }
+      if (points > 0)
+        statements.push(
+          this.env.DB.prepare(
+            `INSERT INTO customer_loyalty_entries
+        (id, store_id, customer_id, invoice_id, entry_type, points, balance_after, note, actor_user_id, created_at)
+        SELECT ?, ?, ?, ?, 'EARN', ?, loyalty_points, 'Tích điểm từ hóa đơn', ?, ? FROM customers WHERE store_id = ? AND id = ?`,
+          ).bind(
+            crypto.randomUUID(),
+            input.storeId,
+            quote.order.customerId,
+            invoiceId,
+            points,
+            input.actorId,
+            now,
+            input.storeId,
+            quote.order.customerId,
+          ),
+        );
+      await this.env.DB.batch(statements);
+    }
     await new AuditRepository(this.env.DB).enrichByRequest(input.storeId, input.requestId, {
       actorUserId: input.actorId,
       actorSessionId: input.actorSessionId ?? null,
@@ -1511,7 +1666,7 @@ export class PosService {
       orderId: input.orderId,
       displayCode: completed!.displayCode,
       total: quote.totalVnd,
-      method: input.method,
+      method: legacyMethod,
     };
   }
 
@@ -1977,6 +2132,9 @@ export class PosService {
           snapshotJson: invoiceRaw.snapshotJson,
         }
       : null;
+    const paymentAllocations = invoice
+      ? (await this.repository.listInvoicePaymentAllocations(storeId, invoice.id)).results
+      : [];
 
     // 8. Audit logs & timeline
     const auditLogsRaw = await this.repository.listOrderAuditLogsDetail(storeId, orderId);
@@ -2105,9 +2263,14 @@ export class PosService {
       totalVnd = invoice.totalVnd;
     }
 
-    const paidAmountVnd = payments
-      .filter((p) => p.status === 'SUCCEEDED')
-      .reduce((sum, p) => sum + p.amount, 0);
+    const paidAmountVnd = paymentAllocations.length
+      ? paymentAllocations
+          .filter((allocation) => allocation.method !== 'DEBT')
+          .reduce((sum, allocation) => sum + allocation.amountVnd, 0)
+      : payments.filter((p) => p.status === 'SUCCEEDED').reduce((sum, p) => sum + p.amount, 0);
+    const debtAmountVnd = paymentAllocations
+      .filter((allocation) => allocation.method === 'DEBT')
+      .reduce((sum, allocation) => sum + allocation.amountVnd, 0);
 
     const changeAmountVnd =
       payments.find((p) => p.cashChange !== null && p.cashChange !== undefined)?.cashChange ?? 0;
@@ -2146,6 +2309,7 @@ export class PosService {
       items,
       checkout,
       payments,
+      paymentAllocations,
       invoice,
       auditEvents,
       totals: {
@@ -2158,6 +2322,7 @@ export class PosService {
         totalVnd,
         paidAmountVnd,
         changeAmountVnd,
+        debtAmountVnd,
       },
     };
   }

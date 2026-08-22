@@ -27,6 +27,7 @@ vi.mock('qz-tray', () => ({
 
 import { printEscPosReceipt } from '../../src/client/lib/qz-tray-service';
 import { generateThermalReceiptHtml } from '../../src/client/lib/pos-receipt-printer';
+import { buildEscPosReceipt } from '../../src/domain/receipt/receipt-generator';
 
 const baseOptions = {
   paperSize: 'K80' as const,
@@ -115,5 +116,63 @@ describe('QZ receipt dispatch', () => {
       format: 'command',
       data: 'REAL-ORDER-1',
     });
+  });
+
+  it('renders partial payment and remaining debt on payment receipts', () => {
+    const options = {
+      data: {
+        receiptType: 'PAYMENT' as const,
+        orderCode: 'HD-001',
+        orderType: 'DINE_IN' as const,
+        issuedAtMs: Date.now(),
+        subtotal: 170_000,
+        discountTotal: 0,
+        total: 170_000,
+        paidAmountVnd: 70_000,
+        debtAmountVnd: 100_000,
+        paymentAllocations: [
+          { method: 'CASH' as const, amountVnd: 70_000 },
+          { method: 'DEBT' as const, amountVnd: 100_000 },
+        ],
+        lines: [],
+      },
+    };
+    const html = generateThermalReceiptHtml(options);
+    const escPos = buildEscPosReceipt(options).escPosData;
+    expect(html).toContain('Tiền mặt đã thu');
+    expect(html).toContain('Ghi công nợ');
+    expect(html).toContain('100.000đ');
+    expect(escPos).toContain('Tiền mặt đã thu');
+    expect(escPos).toContain('Ghi công nợ');
+  });
+
+  it('renders a debt collection receipt with balances before and after', () => {
+    const options = {
+      data: {
+        receiptType: 'DEBT_PAYMENT' as const,
+        orderCode: 'PTN-001',
+        invoiceCode: 'PTN-001',
+        orderType: 'TAKEAWAY' as const,
+        customerName: 'Nguyễn Văn A',
+        guestPhone: '0901234567',
+        issuedAtMs: Date.now(),
+        subtotal: 100_000,
+        discountTotal: 0,
+        total: 40_000,
+        paymentMethod: 'CASH' as const,
+        debtBeforeVnd: 100_000,
+        debtPaymentVnd: 40_000,
+        debtAfterVnd: 60_000,
+        referenceCode: 'PTN-001',
+        lines: [],
+      },
+    };
+    const html = generateThermalReceiptHtml(options);
+    const escPos = buildEscPosReceipt(options).escPosData;
+    expect(html).toContain('PHIẾU THU CÔNG NỢ');
+    expect(html).toContain('Dư nợ trước');
+    expect(html).toContain('Dư nợ còn lại');
+    expect(escPos).toContain('PHIẾU THU CÔNG NỢ');
+    expect(escPos).toContain('60.000đ');
   });
 });

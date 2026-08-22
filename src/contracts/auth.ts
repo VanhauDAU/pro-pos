@@ -125,4 +125,3 @@ export interface ActivationAuthorizationResponse {
 export interface ActivationConfirmationResponse {
   device: NonNullable<AuthContextResponse['device']>;
 }
-

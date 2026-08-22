@@ -219,4 +219,3 @@ describe('Owner Account Settings API', () => {
     expect(loginRes.response.actor.displayName).toBe('Nguyễn Văn Chủ Mới');
   });
 });
-

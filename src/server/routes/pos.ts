@@ -29,10 +29,13 @@ import {
 } from '@server/middleware/authorization';
 import { PosService } from '@server/services/pos-service';
 import { StoreService } from '@server/services/store-service';
+import { CustomerService } from '@server/services/customer-service';
+import { customerInputSchema, debtPaymentSchema } from '@contracts/customer';
 import { OwnerInvoiceService } from '@server/services/owner-invoice-service';
 import { RealtimeRepository } from '@server/repositories/realtime-repository';
 import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
 import { qrOrderStaffRoutes } from '@server/routes/qr-order-staff';
+import { QrOrderService } from '@server/services/qr-order-service';
 import { pushNotificationRoutes } from '@server/routes/push-notifications';
 import type { AppEnv } from '@server/types';
 
@@ -151,6 +154,39 @@ posRoutes.get('/print-settings', requirePermission('order.manage'), async (c) =>
   success(c, await new StoreService(c.env).getPrintSettings(c.get('actor').storeId!)),
 );
 
+posRoutes.get('/customers', requirePermission('order.add_customer'), async (c) => {
+  const search = c.req.query('search')?.trim();
+  return success(
+    c,
+    await new CustomerService(c.env).list(c.get('actor').storeId!, {
+      ...(search ? { search } : {}),
+      status: 'ACTIVE',
+      page: 1,
+      limit: 50,
+    }),
+  );
+});
+posRoutes.get('/customers/:id', requirePermission('order.add_customer'), async (c) =>
+  success(c, await new CustomerService(c.env).detail(c.get('actor').storeId!, c.req.param('id'))),
+);
+posRoutes.post('/customers', requirePermission('order.add_customer'), async (c) => {
+  const body = await parseJson(c.req.raw, customerInputSchema);
+  const actor = c.get('actor');
+  return success(c, await new CustomerService(c.env).create(actor.storeId!, actor.id, body), 201);
+});
+posRoutes.post(
+  '/customers/:id/debt-payments',
+  requirePermission('checkout.complete'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, debtPaymentSchema);
+    const actor = c.get('actor');
+    return success(
+      c,
+      await new CustomerService(c.env).payDebt(actor.storeId!, c.req.param('id'), actor.id, body),
+    );
+  },
+);
+
 posRoutes.put('/printer-settings', requirePermission('order.manage'), async (c) => {
   const printer = await parseJson(c.req.raw, updatePrinterDeviceSettingsSchema);
   const actor = c.get('actor');
@@ -216,6 +252,18 @@ posRoutes.post('/tables/open', requirePermission('table.open'), async (c) => {
     201,
   );
 });
+
+posRoutes.post('/tables/:tableId/qr-code', requirePermission('table.view'), async (c) =>
+  success(
+    c,
+    await new QrOrderService(c.env).rotateQrCode(
+      c.get('actor').storeId!,
+      c.req.param('tableId'),
+      c.get('actor').id,
+    ),
+    201,
+  ),
+);
 
 posRoutes.get('/orders/:orderId/quote', requirePermission('table.view'), async (c) =>
   success(c, await new PosService(c.env).quote(c.get('actor').storeId!, c.req.param('orderId'))),
@@ -350,6 +398,7 @@ posRoutes.patch('/orders/:orderId/guest', requirePermission('order.manage'), asy
       guestCount: body.guestCount,
       customerName: body.customerName ?? null,
       customerPhone: body.customerPhone ?? null,
+      customerId: body.customerId ?? null,
     }),
   );
 });
@@ -464,6 +513,8 @@ posRoutes.post('/orders/:orderId/checkout', requirePermission('checkout.complete
       expectedOrderVersion: body.expectedOrderVersion,
       method: body.method,
       cashReceivedVnd: body.cashReceivedVnd ?? null,
+      allocations: body.allocations ?? [],
+      debtAmountVnd: body.debtAmountVnd,
       actorSessionId: c.get('sessionId'),
       deviceId: c.get('device')?.id ?? null,
     }),

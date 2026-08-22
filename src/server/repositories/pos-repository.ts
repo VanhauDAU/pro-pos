@@ -34,6 +34,7 @@ export interface OrderRow {
   guest_count: number;
   customer_name: string | null;
   customer_phone: string | null;
+  customer_id: string | null;
 }
 
 export interface TimeSessionRow {
@@ -305,7 +306,7 @@ export class PosRepository {
         `SELECT o.id, o.store_id, o.table_id, o.order_type,
                 COALESCE(o.display_code, 'D' || strftime('%y%m%d', o.opened_at / 1000, 'unixepoch') || '-' || substr(o.id, 1, 4)) AS display_code,
                 o.status, o.version, o.opened_at, COALESCE(o.updated_at, o.opened_at) AS updated_at, o.note,
-                COALESCE(o.guest_count, 1) AS guest_count, o.customer_name, o.customer_phone,
+                COALESCE(o.guest_count, 1) AS guest_count, o.customer_name, o.customer_phone, o.customer_id,
                 COALESCE(st.display_name, st.name) AS table_name,
                 a.id AS area_id, a.name AS area_name,
                 COALESCE(u.display_name, 'Nhân viên') AS opened_by_name
@@ -325,7 +326,7 @@ export class PosRepository {
         `SELECT o.id, o.store_id, o.table_id, o.order_type,
                 COALESCE(o.display_code, 'D' || strftime('%y%m%d', o.opened_at / 1000, 'unixepoch') || '-' || substr(o.id, 1, 4)) AS display_code,
                 o.status, o.version, o.opened_at, COALESCE(o.updated_at, o.opened_at) AS updated_at, o.note,
-                COALESCE(o.guest_count, 1) AS guest_count, o.customer_name, o.customer_phone,
+                COALESCE(o.guest_count, 1) AS guest_count, o.customer_name, o.customer_phone, o.customer_id,
                 COALESCE(st.display_name, st.name) AS table_name,
                 a.id AS area_id, a.name AS area_name,
                 COALESCE(u.display_name, 'Nhân viên') AS opened_by_name
@@ -338,7 +339,7 @@ export class PosRepository {
          SELECT t.id, t.store_id, NULL AS table_id, 'TAKEAWAY' AS order_type,
                 COALESCE(t.display_code, 'D' || strftime('%y%m%d', t.opened_at / 1000, 'unixepoch') || '-' || substr(t.id, 1, 4)) AS display_code,
                 t.status, t.version, t.opened_at, COALESCE(t.updated_at, t.opened_at) AS updated_at, t.note,
-                COALESCE(t.guest_count, 1) AS guest_count, t.customer_name, t.customer_phone,
+                COALESCE(t.guest_count, 1) AS guest_count, t.customer_name, t.customer_phone, t.customer_id,
                 NULL AS table_name, NULL AS area_id, NULL AS area_name,
                 COALESCE(u.display_name, 'Nhân viên') AS opened_by_name
          FROM takeaway_orders t
@@ -356,7 +357,7 @@ export class PosRepository {
         `SELECT t.id, t.store_id, NULL AS table_id, 'TAKEAWAY' AS order_type,
                 COALESCE(t.display_code, 'D' || strftime('%y%m%d', t.opened_at / 1000, 'unixepoch') || '-' || substr(t.id, 1, 4)) AS display_code,
                 t.status, t.version, t.opened_at, COALESCE(t.updated_at, t.opened_at) AS updated_at, t.note,
-                COALESCE(t.guest_count, 1) AS guest_count, t.customer_name, t.customer_phone,
+                COALESCE(t.guest_count, 1) AS guest_count, t.customer_name, t.customer_phone, t.customer_id,
                 NULL AS table_name, NULL AS area_id, NULL AS area_name,
                 COALESCE(u.display_name, 'Nhân viên') AS opened_by_name
          FROM takeaway_orders t
@@ -1101,6 +1102,7 @@ export class PosRepository {
     guestCount: number;
     customerName: string | null;
     customerPhone: string | null;
+    customerId: string | null;
     actorId: string;
     requestId: string;
     issuedAt: number;
@@ -1109,8 +1111,8 @@ export class PosRepository {
       .prepare(
         `INSERT INTO update_order_guest_commands (
           id, store_id, order_type, order_id, expected_order_version, guest_count,
-          customer_name, customer_phone, actor_user_id, request_id, issued_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          customer_name, customer_phone, customer_id, actor_user_id, request_id, issued_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         input.commandId,
@@ -1121,6 +1123,7 @@ export class PosRepository {
         input.guestCount,
         input.customerName,
         input.customerPhone,
+        input.customerId,
         input.actorId,
         input.requestId,
         input.issuedAt,
@@ -1722,7 +1725,10 @@ export class PosRepository {
           .bind(storeId, invoice.orderId)
           .first()
       : null;
-    return { invoice, lines: lines.results, payment };
+    const allocations = invoice
+      ? await this.listInvoicePaymentAllocations(storeId, invoiceId)
+      : { results: [] };
+    return { invoice, lines: lines.results, payment, allocations: allocations.results };
   }
 
   async findOrderDetailRaw(storeId: string, orderId: string) {
@@ -2166,7 +2172,7 @@ export class PosRepository {
           OR al.entity_id IN (SELECT id FROM invoices WHERE store_id = ? AND order_id = ?)
           OR al.entity_id IN (SELECT id FROM takeaway_invoices WHERE store_id = ? AND order_id = ?)
         )
-        ORDER BY al.created_at ASC`,
+        ORDER BY al.created_at DESC`,
       )
       .bind(
         storeId,
@@ -2193,6 +2199,25 @@ export class PosRepository {
         beforeJson: string | null;
         afterJson: string | null;
         eventAt: number;
+      }>();
+  }
+
+  async listInvoicePaymentAllocations(storeId: string, invoiceId: string) {
+    return this.db
+      .prepare(
+        `SELECT id, method, amount_vnd AS amountVnd, tendered_vnd AS tenderedVnd,
+                created_at AS createdAt
+         FROM invoice_payment_allocations
+         WHERE store_id = ? AND invoice_id = ?
+         ORDER BY created_at DESC, id DESC`,
+      )
+      .bind(storeId, invoiceId)
+      .all<{
+        id: string;
+        method: 'CASH' | 'BANK_TRANSFER' | 'DEBT';
+        amountVnd: number;
+        tenderedVnd: number | null;
+        createdAt: number;
       }>();
   }
 }

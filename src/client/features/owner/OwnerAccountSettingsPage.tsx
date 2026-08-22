@@ -130,19 +130,21 @@ export function OwnerAccountSettingsPage() {
   const handleChangePassword = async (values: ChangePasswordFormValues) => {
     setSavingPassword(true);
     try {
-      await jsonRequest('/api/v1/owner/account/change-password', {
-        currentPassword: values.currentPassword,
-        newPassword: values.newPassword,
-      }, {
-        headers: { 'X-CSRF-Token': authContextQuery.data?.csrfToken ?? '' },
-      });
+      await jsonRequest(
+        '/api/v1/owner/account/change-password',
+        {
+          currentPassword: values.currentPassword,
+          newPassword: values.newPassword,
+        },
+        {
+          headers: { 'X-CSRF-Token': authContextQuery.data?.csrfToken ?? '' },
+        },
+      );
 
       messageApi.success('Đổi mật khẩu thành công. Vui lòng ghi nhớ mật khẩu mới.');
       passwordForm.resetFields();
     } catch (error) {
-      messageApi.error(
-        error instanceof ApiError ? error.message : 'Không thể đổi mật khẩu.',
-      );
+      messageApi.error(error instanceof ApiError ? error.message : 'Không thể đổi mật khẩu.');
     } finally {
       setSavingPassword(false);
     }
@@ -166,7 +168,11 @@ export function OwnerAccountSettingsPage() {
   if (accountQuery.isError || !accountQuery.data) {
     return (
       <div className="owner-store-settings-page">
-        <button className="owner-back-link" type="button" onClick={() => navigate('/owner/settings')}>
+        <button
+          className="owner-back-link"
+          type="button"
+          onClick={() => navigate('/owner/settings')}
+        >
           <ArrowLeftOutlined /> Quay lại thiết lập
         </button>
         <Alert
@@ -229,7 +235,12 @@ export function OwnerAccountSettingsPage() {
                 <Space orientation="horizontal" size={8} align="center">
                   <Typography.Title
                     level={3}
-                    style={{ color: '#ffffff', margin: 0, fontWeight: 700, letterSpacing: '-0.02em' }}
+                    style={{
+                      color: '#ffffff',
+                      margin: 0,
+                      fontWeight: 700,
+                      letterSpacing: '-0.02em',
+                    }}
                   >
                     {account.displayName}
                   </Typography.Title>
@@ -279,7 +290,8 @@ export function OwnerAccountSettingsPage() {
         <aside className="owner-store-settings-intro">
           <Typography.Title level={4}>Thông tin cá nhân</Typography.Title>
           <Typography.Paragraph type="secondary">
-            Thông tin định danh của chủ cửa hàng dùng để liên hệ, nhận thông báo và quản trị hệ thống.
+            Thông tin định danh của chủ cửa hàng dùng để liên hệ, nhận thông báo và quản trị hệ
+            thống.
           </Typography.Paragraph>
           <div className="owner-store-settings-tip">
             <InfoCircleOutlined />
@@ -514,7 +526,9 @@ export function OwnerAccountSettingsPage() {
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                   MÃ ĐỊNH DANH TÀI KHOẢN (USER ID)
                 </Typography.Text>
-                <div style={{ marginTop: 4, fontFamily: 'monospace', fontSize: 13, color: '#334155' }}>
+                <div
+                  style={{ marginTop: 4, fontFamily: 'monospace', fontSize: 13, color: '#334155' }}
+                >
                   {account.id}
                 </div>
               </div>

@@ -134,6 +134,14 @@ export interface OrderPaymentDetail {
   createdAt: number;
 }
 
+export interface OrderPaymentAllocationDetail {
+  id: string;
+  method: 'CASH' | 'BANK_TRANSFER' | 'DEBT';
+  amountVnd: number;
+  tenderedVnd: number | null;
+  createdAt: number;
+}
+
 export interface OrderInvoiceDetail {
   id: string;
   displayCode: string;
@@ -170,6 +178,7 @@ export interface OrderTotalsDetail {
   totalVnd: number;
   paidAmountVnd: number;
   changeAmountVnd: number;
+  debtAmountVnd: number;
 }
 
 export interface OrderDetailDto {
@@ -182,6 +191,7 @@ export interface OrderDetailDto {
   items: OrderItemDetail[];
   checkout: OrderCheckoutSnapshotDetail | null;
   payments: OrderPaymentDetail[];
+  paymentAllocations: OrderPaymentAllocationDetail[];
   invoice: OrderInvoiceDetail | null;
   auditEvents: OrderAuditEventDetail[];
   totals: OrderTotalsDetail;

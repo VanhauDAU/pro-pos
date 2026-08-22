@@ -69,6 +69,7 @@ import {
 import type { MenuProps } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router';
+import QRCode from 'qrcode';
 
 import type { AuthContextResponse } from '@contracts/auth';
 import type {
@@ -89,6 +90,10 @@ import {
 import { OrderDetailPage } from './OrderDetailPage';
 import { StaffOnboarding } from './StaffOnboarding';
 import { StaffPrinterSettingsPage } from './StaffPrinterSettingsPage';
+import { PosCustomerSelector } from './PosCustomerSelector';
+import { ReceiptPreviewModal, ReceiptPreviewPaper } from './ReceiptPreviewModal';
+import { TableQrModal } from '@client/components/TableQrModal';
+import type { CustomerSummary } from '@contracts/customer';
 import { PushNotificationControl } from '@client/features/pwa/PushNotificationControl';
 import { OwnerInvoicesPage } from '@client/features/owner/OwnerInvoicesPage';
 import {
@@ -190,6 +195,7 @@ interface OrderQuote {
     guestCount?: number;
     customerName?: string | null;
     customerPhone?: string | null;
+    customerId?: string | null;
   };
   items: Array<{
     id: string;
@@ -310,6 +316,13 @@ interface InvoiceDetail {
     status: 'SUCCEEDED' | 'FAILED';
     createdAt: number;
   };
+  allocations: Array<{
+    id: string;
+    method: 'CASH' | 'BANK_TRANSFER' | 'DEBT';
+    amountVnd: number;
+    tenderedVnd: number | null;
+    createdAt: number;
+  }>;
   snapshot: Record<string, unknown> | null;
 }
 
@@ -3048,6 +3061,15 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
+  const [customerId, setCustomerId] = useState<string | null>(null);
+  const [tableQrModalOpen, setTableQrModalOpen] = useState(false);
+  const [tableQrData, setTableQrData] = useState<{
+    tableName: string;
+    url: string;
+    image: string;
+    orderCode?: string;
+  } | null>(null);
+  const [tableQrLoading, setTableQrLoading] = useState(false);
   const [cartWidth, setCartWidth] = useState<number>(() => {
     try {
       const saved = localStorage.getItem('pos_cart_width');
@@ -3155,6 +3177,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       if (quote.data.order.customerPhone !== undefined) {
         setCustomerPhone(quote.data.order.customerPhone ?? '');
       }
+      if (quote.data.order.customerId !== undefined)
+        setCustomerId(quote.data.order.customerId ?? null);
     }
   }, [isNew, quote.data]);
 
@@ -3169,6 +3193,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
             guestCount: Math.max(1, count),
             customerName: customerName.trim() || null,
             customerPhone: customerPhone.trim() || null,
+            customerId,
           },
           { method: 'PATCH', headers: mutationHeaders(csrf) },
         );
@@ -3180,7 +3205,10 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     }
   };
 
-  const saveCustomerInfo = async (name: string, phone: string) => {
+  const saveCustomerInfo = async (customer: CustomerSummary | null) => {
+    const name = customer?.name ?? '';
+    const phone = customer?.phone ?? '';
+    setCustomerId(customer?.id ?? null);
     setCustomerName(name);
     setCustomerPhone(phone);
     if (!isNew && orderId && quote.data) {
@@ -3192,16 +3220,35 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
             guestCount: Math.max(1, guestCount),
             customerName: name.trim() || null,
             customerPhone: phone.trim() || null,
+            customerId: customer?.id ?? null,
           },
           { method: 'PATCH', headers: mutationHeaders(csrf) },
         );
         void queryClient.invalidateQueries({ queryKey: ['pos-order-quote', orderId] });
         void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
-        messageApi.success('Đã lưu thông tin khách hàng.');
+        messageApi.success(customer ? 'Đã chọn khách hàng.' : 'Đã bỏ chọn khách hàng.');
       } catch (err) {
         messageApi.error(errorText(err));
       }
     }
+  };
+
+  const printProvisionalReceipt = async () => {
+    if (!quote.data) return;
+    const result = await printReceipt({
+      data: buildPrintDataFromQuote(quote.data, 'PROVISIONAL'),
+      printSettings: printSettings.data,
+      storeInfo: {
+        storeName: staffContext.data?.storeName ?? null,
+        phone: staffContext.data?.storePhone ?? null,
+        address: staffContext.data?.storeAddress ?? null,
+        bankName: staffContext.data?.bankName ?? null,
+        bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
+        bankAccountName: staffContext.data?.bankAccountName ?? null,
+      },
+    });
+    if (result.success) messageApi.success('Đã gửi lệnh in phiếu tạm tính!');
+    else messageApi.error(result.message ?? 'Không thể in phiếu tạm tính.');
   };
 
   const categories = useMemo(() => {
@@ -3501,6 +3548,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
             guestCount: Math.max(1, guestCount),
             customerName: customerName.trim() || null,
             customerPhone: customerPhone.trim() || null,
+            customerId,
           },
           { method: 'PATCH', headers: mutationHeaders(csrf) },
         );
@@ -3543,6 +3591,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
             guestCount: Math.max(1, guestCount),
             customerName: customerName.trim() || null,
             customerPhone: customerPhone.trim() || null,
+            customerId,
           },
           { method: 'PATCH', headers: mutationHeaders(csrf) },
         );
@@ -3617,6 +3666,49 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       messageApi.error(errorText(error));
     } finally {
       setResuming(false);
+    }
+  };
+
+  const handleOpenTableQrModal = async () => {
+    const tableId = quote.data?.order.tableId ?? selectedTable?.id ?? preselectedTableId;
+    const tableName = quote.data?.order.tableName ?? selectedTable?.name ?? 'Bàn';
+    if (!tableId) {
+      messageApi.warning('Vui lòng chọn bàn/phòng để lấy mã QR Order.');
+      return;
+    }
+    setTableQrLoading(true);
+    try {
+      const result = await apiRequest<{ token: string; path: string }>(
+        `/api/v1/pos/tables/${tableId}/qr-code`,
+        {
+          method: 'POST',
+          headers: { 'X-CSRF-Token': csrf ?? '' },
+        },
+      );
+      const url = new URL(result.path, window.location.origin).toString();
+      const qrImage = await QRCode.toDataURL(url, {
+        width: 640,
+        margin: 2,
+        color: {
+          dark: '#0f172a',
+          light: '#ffffff',
+        },
+      });
+      setTableQrData({
+        tableName,
+        url,
+        image: qrImage,
+        ...(quote.data?.order.displayCode || (orderId && orderId !== 'new')
+          ? {
+              orderCode: quote.data?.order.displayCode || `D-${orderId!.slice(0, 8).toUpperCase()}`,
+            }
+          : {}),
+      });
+      setTableQrModalOpen(true);
+    } catch (error) {
+      messageApi.error(errorText(error) || 'Không thể tạo mã QR Order của bàn.');
+    } finally {
+      setTableQrLoading(false);
     }
   };
 
@@ -4874,308 +4966,31 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   Thao tác khác
                 </button>
               </div>
-              {cartTab === 'DETAILS' ? (
-                <div className="staff-cart-tab-content">
-                  {!isNew && draftDisplayItems.length > 0 ? (
-                    <section className="staff-additional-products">
-                      <div className="staff-order-section-heading">
-                        <Typography.Title level={4}>Sản phẩm gọi thêm</Typography.Title>
-                        <Button
-                          type="text"
-                          icon={<DeleteOutlined />}
-                          aria-label="Xóa tất cả sản phẩm gọi thêm"
-                          onClick={() => setDraftLines([])}
-                        />
-                      </div>
-                      <div className="staff-compact-order-list">
-                        {draftDisplayItems.map((item) => (
-                          <button
-                            type="button"
-                            key={item.id}
-                            className="staff-compact-order-row staff-compact-order-row--editable"
-                            onClick={() =>
-                              setEditingItem({
-                                source: 'DRAFT',
-                                ...item,
-                                note: item.note ?? '',
-                              })
-                            }
-                          >
-                            <span className="staff-order-quantity">
-                              {formatItemQuantity(
-                                item.productType,
-                                item.quantityMilli,
-                                item.unitName,
-                              )}
-                            </span>
-                            <span className="staff-order-item-name">
-                              <strong>{item.productName}</strong>
-                              <small>{item.variantName}</small>
-                            </span>
-                            <b>{formatMoney(item.netLineTotalVnd)}</b>
-                          </button>
-                        ))}
-                      </div>
-                    </section>
-                  ) : null}
-                  <div className="staff-cart-section-header">
-                    <Typography.Title level={4} style={{ margin: 0 }}>
-                      Sản phẩm đã gọi (
-                      {displayedItems.length +
-                        (quote.data?.time ||
-                        (isNew &&
-                          orderType === 'DINE_IN' &&
-                          selectedTable?.timeProductId &&
-                          !timeRemoved) ||
-                        timeRestoringDraft
-                          ? 1
-                          : 0)}
-                      )
-                    </Typography.Title>
-                    <Button
-                      type="text"
-                      size="small"
-                      className="staff-cart-collapse-btn"
-                      icon={orderedItemsCollapsed ? <DownOutlined /> : <UpOutlined />}
-                      aria-label={
-                        orderedItemsCollapsed
-                          ? 'Mở rộng sản phẩm đã gọi'
-                          : 'Thu gọn sản phẩm đã gọi'
-                      }
-                      onClick={() => setOrderedItemsCollapsed((prev) => !prev)}
-                    />
-                  </div>
-                  {!orderedItemsCollapsed ? (
-                    <>
-                      {/* Small restore button if default time was deleted */}
-                      {(!isNew &&
-                        quote.data?.order.orderType === 'DINE_IN' &&
-                        !quote.data?.time &&
-                        !timeRestoringDraft) ||
-                      (isNew &&
-                        orderType === 'DINE_IN' &&
-                        selectedTable?.timeProductId &&
-                        timeRemoved) ? (
-                        <div style={{ margin: '0 0 14px' }}>
+              <div className="staff-cart-scroll-region">
+                {cartTab === 'DETAILS' ? (
+                  <div className="staff-cart-tab-content">
+                    {!isNew && draftDisplayItems.length > 0 ? (
+                      <section className="staff-additional-products">
+                        <div className="staff-order-section-heading">
+                          <Typography.Title level={4}>Sản phẩm gọi thêm</Typography.Title>
                           <Button
-                            size="small"
-                            type="dashed"
-                            icon={<PlusOutlined />}
-                            onClick={() => {
-                              if (isNew) {
-                                setTimeRemoved(false);
-                              } else {
-                                setTimeRestoringDraft(true);
-                                setTimeRangeDraft({ startedAt: '', endedAt: '' });
-                                setTimeDetailOpen(true);
-                              }
-                            }}
-                            style={{
-                              fontSize: 12.5,
-                              color: '#0975F7',
-                              borderColor: '#91caff',
-                              borderRadius: 6,
-                              fontWeight: 500,
-                            }}
-                          >
-                            Khôi phục tính giờ
-                          </Button>
+                            type="text"
+                            icon={<DeleteOutlined />}
+                            aria-label="Xóa tất cả sản phẩm gọi thêm"
+                            onClick={() => setDraftLines([])}
+                          />
                         </div>
-                      ) : null}
-
-                      {quote.data?.time ? (
-                        quote.data.time.tableSegments &&
-                        quote.data.time.tableSegments.length > 1 ? (
-                          <button
-                            type="button"
-                            className="staff-time-line staff-time-line--editable staff-time-line--transfer"
-                            onClick={openTimeDetails}
-                          >
-                            <div className="staff-time-line__heading">
-                              <span className="staff-order-quantity">1x</span>
-                              <span className="staff-order-item-name">
-                                <div className="staff-time-line__title-row">
-                                  <strong>Tiền giờ</strong>
-                                  <span className="staff-time-transfer-badge">
-                                    <SwapOutlined /> Chuyển bàn
-                                  </span>
-                                </div>
-                                <small className="staff-time-transfer-chain">
-                                  {quote.data.time.tableSegments
-                                    .map((s) => s.tableName)
-                                    .join(' → ')}
-                                </small>
-                              </span>
-                              <b className="staff-time-line__price">
-                                {formatMoney(quote.data.time.amountAfterRoundingVnd)}
-                              </b>
-                            </div>
-
-                            {/* Detailed transfer breakdown in Cart */}
-                            <div className="staff-time-cart-breakdown">
-                              {quote.data.time.tableSegments.map((tSeg, idx) => (
-                                <div
-                                  key={`${tSeg.tableId}-${tSeg.startedAtMs}-${idx}`}
-                                  className="staff-time-cart-row"
-                                >
-                                  <div className="staff-time-cart-row__left">
-                                    <span className="staff-time-cart-dot">•</span>
-                                    <strong className="staff-time-cart-tbl-name">
-                                      {tSeg.tableName}
-                                    </strong>
-                                    <span className="staff-time-cart-tbl-time">
-                                      {formatClock(tSeg.startedAtMs)}–
-                                      {tSeg.endedAtMs ? formatClock(tSeg.endedAtMs) : 'Hiện tại'} (
-                                      {formatElapsed(tSeg.elapsedSeconds)})
-                                    </span>
-                                    <span className="staff-time-cart-tbl-rate">
-                                      {formatMoney(tSeg.pricingConfig.basePriceVnd)}/h
-                                    </span>
-                                  </div>
-                                  <b className="staff-time-cart-row__amount">
-                                    {formatMoney(tSeg.amountAfterRoundingVnd)}
-                                  </b>
-                                </div>
-                              ))}
-                            </div>
-
-                            <div className="staff-time-line__summary">
-                              <span>
-                                Tổng thời gian: <strong>{formatElapsed(liveElapsedSeconds)}</strong>
-                              </span>
-                            </div>
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            className="staff-time-line staff-time-line--editable"
-                            onClick={openTimeDetails}
-                          >
-                            <div className="staff-time-line__heading">
-                              <span className="staff-order-quantity">1x</span>
-                              <span className="staff-order-item-name">
-                                <strong>Tiền giờ · {quote.data.order.tableName}</strong>
-                                <small>
-                                  {quote.data.time.pricingConfig
-                                    ? `${formatMoney(quote.data.time.pricingConfig.basePriceVnd)}/giờ`
-                                    : ''}
-                                </small>
-                              </span>
-                              <b>{formatMoney(quote.data.time.amountAfterRoundingVnd)}</b>
-                            </div>
-                            <div className="staff-time-line__details">
-                              <span>
-                                {formatClock(quote.data.time.startedAtMs)}–
-                                {quote.data.time.endedAtMs
-                                  ? formatClock(quote.data.time.endedAtMs)
-                                  : quote.data.time.status === 'PAUSED'
-                                    ? formatClock(
-                                        quote.data.time.startedAtMs +
-                                          quote.data.time.elapsedSeconds * 1000,
-                                      )
-                                    : 'Hiện tại'}{' '}
-                                · Tổng: <strong>{formatElapsed(liveElapsedSeconds)}</strong>
-                              </span>
-                            </div>
-                          </button>
-                        )
-                      ) : isNew &&
-                        orderType === 'DINE_IN' &&
-                        selectedTable?.timeProductId &&
-                        !timeRemoved ? (
-                        <button
-                          type="button"
-                          className="staff-time-line staff-time-line--editable"
-                          onClick={() => {
-                            setTableAction('SELECT');
-                            setTableModalOpen(true);
-                          }}
-                        >
-                          <div className="staff-time-line__heading">
-                            <span className="staff-order-quantity">1x</span>
-                            <span className="staff-order-item-name">
-                              <strong>Tiền giờ · {selectedTable.name}</strong>
-                              <small>
-                                {selectedTable.defaultPriceVnd
-                                  ? `${formatMoney(selectedTable.defaultPriceVnd)}/giờ`
-                                  : (selectedTable.timeProductName ?? '')}
-                              </small>
-                            </span>
-                            <b>0 đ</b>
-                          </div>
-                          <div className="staff-time-line__details">
-                            <span>
-                              --:--:--–--:--:-- · Tổng: <strong>--:--:--</strong>
-                            </span>
-                          </div>
-                        </button>
-                      ) : timeRestoringDraft ? (
-                        <button
-                          type="button"
-                          className="staff-time-line staff-time-line--editable"
-                          onClick={openTimeDetails}
-                        >
-                          <div className="staff-time-line__heading">
-                            <span className="staff-order-quantity">1x</span>
-                            <span className="staff-order-item-name">
-                              <strong>
-                                Tiền giờ ·{' '}
-                                {quote.data?.order.tableName ?? selectedTable?.name ?? 'Bàn'}
-                              </strong>
-                              <small>
-                                {selectedTable?.defaultPriceVnd
-                                  ? `${formatMoney(selectedTable.defaultPriceVnd)}/giờ`
-                                  : (selectedTable?.timeProductName ?? '')}
-                              </small>
-                            </span>
-                            <b>0 đ</b>
-                          </div>
-                          <div className="staff-time-line__details">
-                            <span>
-                              --:--:--–--:--:-- · Tổng: <strong>--:--:--</strong>
-                            </span>
-                          </div>
-                        </button>
-                      ) : null}
-                      {quote.isLoading && !isNew ? (
-                        <Skeleton active />
-                      ) : displayedItems.length === 0 &&
-                        !(
-                          isNew &&
-                          orderType === 'DINE_IN' &&
-                          selectedTable?.timeProductId &&
-                          !timeRemoved
-                        ) &&
-                        !timeRestoringDraft ? (
-                        <Empty
-                          image={Empty.PRESENTED_IMAGE_SIMPLE}
-                          description="Chưa có mặt hàng"
-                        />
-                      ) : (
                         <div className="staff-compact-order-list">
-                          {displayedItems.map((item) => (
+                          {draftDisplayItems.map((item) => (
                             <button
                               type="button"
                               key={item.id}
                               className="staff-compact-order-row staff-compact-order-row--editable"
                               onClick={() =>
                                 setEditingItem({
-                                  source: 'SAVED',
-                                  id: item.id,
-                                  productId: item.productId,
-                                  variantId: item.variantId,
-                                  productType: item.productType,
-                                  productName: item.productName,
-                                  variantName: item.variantName,
-                                  unitName: item.unitName,
-                                  unitPriceVnd: item.unitPriceVnd,
-                                  quantityMilli: item.quantityMilli,
+                                  source: 'DRAFT',
+                                  ...item,
                                   note: item.note ?? '',
-                                  grossLineTotalVnd: item.grossLineTotalVnd,
-                                  discountAmountVnd: item.discountAmountVnd,
-                                  discountType: item.discountType,
-                                  discountInputValue: item.discountInputValue,
-                                  netLineTotalVnd: item.netLineTotalVnd,
                                 })
                               }
                             >
@@ -5189,15 +5004,437 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                               <span className="staff-order-item-name">
                                 <strong>{item.productName}</strong>
                                 <small>{item.variantName}</small>
-                                {item.note ? <small>Ghi chú: {item.note}</small> : null}
                               </span>
                               <b>{formatMoney(item.netLineTotalVnd)}</b>
                             </button>
                           ))}
                         </div>
-                      )}
-                    </>
-                  ) : null}
+                      </section>
+                    ) : null}
+                    <div className="staff-cart-section-header">
+                      <Typography.Title level={4} style={{ margin: 0 }}>
+                        Sản phẩm đã gọi (
+                        {displayedItems.length +
+                          (quote.data?.time ||
+                          (isNew &&
+                            orderType === 'DINE_IN' &&
+                            selectedTable?.timeProductId &&
+                            !timeRemoved) ||
+                          timeRestoringDraft
+                            ? 1
+                            : 0)}
+                        )
+                      </Typography.Title>
+                      <Button
+                        type="text"
+                        size="small"
+                        className="staff-cart-collapse-btn"
+                        icon={orderedItemsCollapsed ? <DownOutlined /> : <UpOutlined />}
+                        aria-label={
+                          orderedItemsCollapsed
+                            ? 'Mở rộng sản phẩm đã gọi'
+                            : 'Thu gọn sản phẩm đã gọi'
+                        }
+                        onClick={() => setOrderedItemsCollapsed((prev) => !prev)}
+                      />
+                    </div>
+                    {!orderedItemsCollapsed ? (
+                      <>
+                        {/* Small restore button if default time was deleted */}
+                        {(!isNew &&
+                          quote.data?.order.orderType === 'DINE_IN' &&
+                          !quote.data?.time &&
+                          !timeRestoringDraft) ||
+                        (isNew &&
+                          orderType === 'DINE_IN' &&
+                          selectedTable?.timeProductId &&
+                          timeRemoved) ? (
+                          <div style={{ margin: '0 0 14px' }}>
+                            <Button
+                              size="small"
+                              type="dashed"
+                              icon={<PlusOutlined />}
+                              onClick={() => {
+                                if (isNew) {
+                                  setTimeRemoved(false);
+                                } else {
+                                  setTimeRestoringDraft(true);
+                                  setTimeRangeDraft({ startedAt: '', endedAt: '' });
+                                  setTimeDetailOpen(true);
+                                }
+                              }}
+                              style={{
+                                fontSize: 12.5,
+                                color: '#0975F7',
+                                borderColor: '#91caff',
+                                borderRadius: 6,
+                                fontWeight: 500,
+                              }}
+                            >
+                              Khôi phục tính giờ
+                            </Button>
+                          </div>
+                        ) : null}
+
+                        {quote.data?.time ? (
+                          quote.data.time.tableSegments &&
+                          quote.data.time.tableSegments.length > 1 ? (
+                            <button
+                              type="button"
+                              className="staff-time-line staff-time-line--editable staff-time-line--transfer"
+                              onClick={openTimeDetails}
+                            >
+                              <div className="staff-time-line__heading">
+                                <span className="staff-order-quantity">1x</span>
+                                <span className="staff-order-item-name">
+                                  <div className="staff-time-line__title-row">
+                                    <strong>Tiền giờ</strong>
+                                    <span className="staff-time-transfer-badge">
+                                      <SwapOutlined /> Chuyển bàn
+                                    </span>
+                                  </div>
+                                  <small className="staff-time-transfer-chain">
+                                    {quote.data.time.tableSegments
+                                      .map((s) => s.tableName)
+                                      .join(' → ')}
+                                  </small>
+                                </span>
+                                <b className="staff-time-line__price">
+                                  {formatMoney(quote.data.time.amountAfterRoundingVnd)}
+                                </b>
+                              </div>
+
+                              {/* Detailed transfer breakdown in Cart */}
+                              <div className="staff-time-cart-breakdown">
+                                {quote.data.time.tableSegments.map((tSeg, idx) => (
+                                  <div
+                                    key={`${tSeg.tableId}-${tSeg.startedAtMs}-${idx}`}
+                                    className="staff-time-cart-row"
+                                  >
+                                    <div className="staff-time-cart-row__left">
+                                      <span className="staff-time-cart-dot">•</span>
+                                      <strong className="staff-time-cart-tbl-name">
+                                        {tSeg.tableName}
+                                      </strong>
+                                      <span className="staff-time-cart-tbl-time">
+                                        {formatClock(tSeg.startedAtMs)}–
+                                        {tSeg.endedAtMs ? formatClock(tSeg.endedAtMs) : 'Hiện tại'}{' '}
+                                        ({formatElapsed(tSeg.elapsedSeconds)})
+                                      </span>
+                                      <span className="staff-time-cart-tbl-rate">
+                                        {formatMoney(tSeg.pricingConfig.basePriceVnd)}/h
+                                      </span>
+                                    </div>
+                                    <b className="staff-time-cart-row__amount">
+                                      {formatMoney(tSeg.amountAfterRoundingVnd)}
+                                    </b>
+                                  </div>
+                                ))}
+                              </div>
+
+                              <div className="staff-time-line__summary">
+                                <span>
+                                  Tổng thời gian:{' '}
+                                  <strong>{formatElapsed(liveElapsedSeconds)}</strong>
+                                </span>
+                              </div>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="staff-time-line staff-time-line--editable"
+                              onClick={openTimeDetails}
+                            >
+                              <div className="staff-time-line__heading">
+                                <span className="staff-order-quantity">1x</span>
+                                <span className="staff-order-item-name">
+                                  <strong>Tiền giờ · {quote.data.order.tableName}</strong>
+                                  <small>
+                                    {quote.data.time.pricingConfig
+                                      ? `${formatMoney(quote.data.time.pricingConfig.basePriceVnd)}/giờ`
+                                      : ''}
+                                  </small>
+                                </span>
+                                <b>{formatMoney(quote.data.time.amountAfterRoundingVnd)}</b>
+                              </div>
+                              <div className="staff-time-line__details">
+                                <span>
+                                  {formatClock(quote.data.time.startedAtMs)}–
+                                  {quote.data.time.endedAtMs
+                                    ? formatClock(quote.data.time.endedAtMs)
+                                    : quote.data.time.status === 'PAUSED'
+                                      ? formatClock(
+                                          quote.data.time.startedAtMs +
+                                            quote.data.time.elapsedSeconds * 1000,
+                                        )
+                                      : 'Hiện tại'}{' '}
+                                  · Tổng: <strong>{formatElapsed(liveElapsedSeconds)}</strong>
+                                </span>
+                              </div>
+                            </button>
+                          )
+                        ) : isNew &&
+                          orderType === 'DINE_IN' &&
+                          selectedTable?.timeProductId &&
+                          !timeRemoved ? (
+                          <button
+                            type="button"
+                            className="staff-time-line staff-time-line--editable"
+                            onClick={() => {
+                              setTableAction('SELECT');
+                              setTableModalOpen(true);
+                            }}
+                          >
+                            <div className="staff-time-line__heading">
+                              <span className="staff-order-quantity">1x</span>
+                              <span className="staff-order-item-name">
+                                <strong>Tiền giờ · {selectedTable.name}</strong>
+                                <small>
+                                  {selectedTable.defaultPriceVnd
+                                    ? `${formatMoney(selectedTable.defaultPriceVnd)}/giờ`
+                                    : (selectedTable.timeProductName ?? '')}
+                                </small>
+                              </span>
+                              <b>0 đ</b>
+                            </div>
+                            <div className="staff-time-line__details">
+                              <span>
+                                --:--:--–--:--:-- · Tổng: <strong>--:--:--</strong>
+                              </span>
+                            </div>
+                          </button>
+                        ) : timeRestoringDraft ? (
+                          <button
+                            type="button"
+                            className="staff-time-line staff-time-line--editable"
+                            onClick={openTimeDetails}
+                          >
+                            <div className="staff-time-line__heading">
+                              <span className="staff-order-quantity">1x</span>
+                              <span className="staff-order-item-name">
+                                <strong>
+                                  Tiền giờ ·{' '}
+                                  {quote.data?.order.tableName ?? selectedTable?.name ?? 'Bàn'}
+                                </strong>
+                                <small>
+                                  {selectedTable?.defaultPriceVnd
+                                    ? `${formatMoney(selectedTable.defaultPriceVnd)}/giờ`
+                                    : (selectedTable?.timeProductName ?? '')}
+                                </small>
+                              </span>
+                              <b>0 đ</b>
+                            </div>
+                            <div className="staff-time-line__details">
+                              <span>
+                                --:--:--–--:--:-- · Tổng: <strong>--:--:--</strong>
+                              </span>
+                            </div>
+                          </button>
+                        ) : null}
+                        {quote.isLoading && !isNew ? (
+                          <Skeleton active />
+                        ) : displayedItems.length === 0 &&
+                          !(
+                            isNew &&
+                            orderType === 'DINE_IN' &&
+                            selectedTable?.timeProductId &&
+                            !timeRemoved
+                          ) &&
+                          !timeRestoringDraft ? (
+                          <Empty
+                            image={Empty.PRESENTED_IMAGE_SIMPLE}
+                            description="Chưa có mặt hàng"
+                          />
+                        ) : (
+                          <div className="staff-compact-order-list">
+                            {displayedItems.map((item) => (
+                              <button
+                                type="button"
+                                key={item.id}
+                                className="staff-compact-order-row staff-compact-order-row--editable"
+                                onClick={() =>
+                                  setEditingItem({
+                                    source: 'SAVED',
+                                    id: item.id,
+                                    productId: item.productId,
+                                    variantId: item.variantId,
+                                    productType: item.productType,
+                                    productName: item.productName,
+                                    variantName: item.variantName,
+                                    unitName: item.unitName,
+                                    unitPriceVnd: item.unitPriceVnd,
+                                    quantityMilli: item.quantityMilli,
+                                    note: item.note ?? '',
+                                    grossLineTotalVnd: item.grossLineTotalVnd,
+                                    discountAmountVnd: item.discountAmountVnd,
+                                    discountType: item.discountType,
+                                    discountInputValue: item.discountInputValue,
+                                    netLineTotalVnd: item.netLineTotalVnd,
+                                  })
+                                }
+                              >
+                                <span className="staff-order-quantity">
+                                  {formatItemQuantity(
+                                    item.productType,
+                                    item.quantityMilli,
+                                    item.unitName,
+                                  )}
+                                </span>
+                                <span className="staff-order-item-name">
+                                  <strong>{item.productName}</strong>
+                                  <small>{item.variantName}</small>
+                                  {item.note ? <small>Ghi chú: {item.note}</small> : null}
+                                </span>
+                                <b>{formatMoney(item.netLineTotalVnd)}</b>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    ) : null}
+                  </div>
+                ) : cartTab === 'CUSTOMER' ? (
+                  <div className="staff-cart-tab-content staff-customer-tab">
+                    <PosCustomerSelector
+                      customerId={customerId}
+                      csrfToken={csrf}
+                      allowCreate
+                      onSelect={saveCustomerInfo}
+                    />
+                  </div>
+                ) : (
+                  <div className="staff-cart-tab-content staff-actions-tab">
+                    <div className="staff-order-info-section">
+                      <Typography.Title level={5} style={{ marginBottom: 12 }}>
+                        Thông tin đơn hàng
+                      </Typography.Title>
+                      <div className="staff-order-info-grid">
+                        <div className="staff-order-info-item">
+                          <span className="staff-order-info-label">
+                            <ClockCircleOutlined /> Thời gian tạo đơn
+                          </span>
+                          <strong className="staff-order-info-value">
+                            {isNew ? 'Chưa tạo' : formatDateTime(quote.data?.order.openedAt ?? 0)}
+                          </strong>
+                        </div>
+                        <div className="staff-order-info-item">
+                          <span className="staff-order-info-label">
+                            <UserOutlined /> Người tạo đơn
+                          </span>
+                          <strong className="staff-order-info-value">
+                            {isNew
+                              ? (auth.actor?.displayName ?? 'Nhân viên')
+                              : (quote.data?.order.openedByName ??
+                                auth.actor?.displayName ??
+                                'Nhân viên')}
+                          </strong>
+                        </div>
+                        <div className="staff-order-info-item">
+                          <span className="staff-order-info-label">
+                            <ShopOutlined /> Loại đơn
+                          </span>
+                          <strong className="staff-order-info-value">
+                            {orderType === 'DINE_IN'
+                              ? `Tại chỗ · ${quote.data?.order.tableName ?? selectedTable?.name ?? 'Chưa chọn bàn'}`
+                              : 'Mang đi'}
+                          </strong>
+                        </div>
+                        <div className="staff-order-info-item">
+                          <span className="staff-order-info-label">
+                            <FileTextOutlined /> Mã đơn
+                          </span>
+                          <strong
+                            className="staff-order-info-value"
+                            style={{ color: '#0975F7', fontFamily: 'monospace' }}
+                          >
+                            {isNew
+                              ? 'Sinh khi lưu'
+                              : quote.data?.order.displayCode ||
+                                (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
+                          </strong>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="staff-order-action-buttons">
+                      <Typography.Title level={5} style={{ marginBottom: 12 }}>
+                        Thao tác khác
+                      </Typography.Title>
+                      <div className="staff-action-buttons-group">
+                        {(quote.data?.order.tableId || selectedTable?.id || preselectedTableId) && (
+                          <Button
+                            size="large"
+                            block
+                            icon={<QrcodeOutlined />}
+                            loading={tableQrLoading}
+                            onClick={() => void handleOpenTableQrModal()}
+                            className="staff-action-qr-btn"
+                            style={{
+                              borderColor: '#0975F7',
+                              color: '#0975F7',
+                              fontWeight: 600,
+                            }}
+                          >
+                            Lấy mã QR Order của bàn
+                          </Button>
+                        )}
+                        {!isNew ? (
+                          <>
+                            <Button
+                              size="large"
+                              block
+                              icon={<PrinterOutlined />}
+                              disabled={printSettings.data?.allowProvisionalPrint === false}
+                              onClick={() => void printProvisionalReceipt()}
+                              className="staff-action-provisional-btn"
+                            >
+                              In phiếu tạm tính
+                            </Button>
+                            <Button
+                              size="large"
+                              block
+                              icon={<FileTextOutlined />}
+                              disabled={printSettings.data?.allowProvisionalPrint === false}
+                              onClick={() => setProvisionalBillOpen(true)}
+                            >
+                              Xem trước phiếu tạm tính
+                            </Button>
+                            {quote.data?.order.orderType === 'DINE_IN' ? (
+                              <Button
+                                size="large"
+                                block
+                                icon={<SwapOutlined />}
+                                onClick={() => setTransferOpen(true)}
+                                className="staff-action-transfer-btn"
+                              >
+                                Chuyển bàn/phòng
+                              </Button>
+                            ) : null}
+                            <Button
+                              danger
+                              size="large"
+                              block
+                              icon={<StopOutlined />}
+                              onClick={() => setCancelOpen(true)}
+                              className="staff-action-cancel-btn"
+                            >
+                              Hủy đơn hàng
+                            </Button>
+                          </>
+                        ) : (
+                          <Alert
+                            type="info"
+                            showIcon
+                            description="In phiếu tạm tính, Chuyển bàn và Hủy đơn sẽ khả dụng sau khi đơn hàng được lưu."
+                          />
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="staff-cart-billing">
+                {cartTab === 'DETAILS' ? (
                   <button
                     type="button"
                     className="staff-cart-note"
@@ -5209,146 +5446,27 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                     </span>
                     <EditOutlined />
                   </button>
-                </div>
-              ) : cartTab === 'CUSTOMER' ? (
-                <div className="staff-cart-tab-content staff-customer-tab">
-                  <div className="staff-info-card">
-                    <strong>Khách lẻ</strong>
-                    <span>Chưa liên kết thông tin thành viên</span>
-                  </div>
-                  <Typography.Text
-                    type="secondary"
-                    style={{
-                      fontSize: 13,
-                      textAlign: 'center',
-                      display: 'block',
-                      margin: '20px 0',
-                    }}
-                  >
-                    Tính năng tích điểm và thông tin thành viên sẽ ra mắt ở giai đoạn tiếp theo.
-                  </Typography.Text>
-                </div>
-              ) : (
-                <div className="staff-cart-tab-content staff-actions-tab">
-                  <div className="staff-order-info-section">
-                    <Typography.Title level={5} style={{ marginBottom: 12 }}>
-                      Thông tin đơn hàng
-                    </Typography.Title>
-                    <div className="staff-order-info-grid">
-                      <div className="staff-order-info-item">
-                        <span className="staff-order-info-label">
-                          <ClockCircleOutlined /> Thời gian tạo đơn
-                        </span>
-                        <strong className="staff-order-info-value">
-                          {isNew ? 'Chưa tạo' : formatDateTime(quote.data?.order.openedAt ?? 0)}
-                        </strong>
-                      </div>
-                      <div className="staff-order-info-item">
-                        <span className="staff-order-info-label">
-                          <UserOutlined /> Người tạo đơn
-                        </span>
-                        <strong className="staff-order-info-value">
-                          {isNew
-                            ? (auth.actor?.displayName ?? 'Nhân viên')
-                            : (quote.data?.order.openedByName ??
-                              auth.actor?.displayName ??
-                              'Nhân viên')}
-                        </strong>
-                      </div>
-                      <div className="staff-order-info-item">
-                        <span className="staff-order-info-label">
-                          <ShopOutlined /> Loại đơn
-                        </span>
-                        <strong className="staff-order-info-value">
-                          {orderType === 'DINE_IN'
-                            ? `Tại chỗ · ${quote.data?.order.tableName ?? selectedTable?.name ?? 'Chưa chọn bàn'}`
-                            : 'Mang đi'}
-                        </strong>
-                      </div>
-                      <div className="staff-order-info-item">
-                        <span className="staff-order-info-label">
-                          <FileTextOutlined /> Mã đơn
-                        </span>
-                        <strong
-                          className="staff-order-info-value"
-                          style={{ color: '#0975F7', fontFamily: 'monospace' }}
-                        >
-                          {isNew
-                            ? 'Sinh khi lưu'
-                            : quote.data?.order.displayCode ||
-                              (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
-                        </strong>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="staff-order-action-buttons">
-                    <Typography.Title level={5} style={{ marginBottom: 12 }}>
-                      Thao tác khác
-                    </Typography.Title>
-                    {!isNew ? (
-                      <div className="staff-action-buttons-group">
-                        <Button
-                          size="large"
-                          block
-                          icon={<PrinterOutlined />}
-                          disabled={printSettings.data?.allowProvisionalPrint === false}
-                          onClick={() => setProvisionalBillOpen(true)}
-                          className="staff-action-provisional-btn"
-                        >
-                          In phiếu tạm tính
-                        </Button>
-                        {quote.data?.order.orderType === 'DINE_IN' ? (
-                          <Button
-                            size="large"
-                            block
-                            icon={<SwapOutlined />}
-                            onClick={() => setTransferOpen(true)}
-                            className="staff-action-transfer-btn"
-                          >
-                            Chuyển bàn/phòng
-                          </Button>
-                        ) : null}
-                        <Button
-                          danger
-                          size="large"
-                          block
-                          icon={<StopOutlined />}
-                          onClick={() => setCancelOpen(true)}
-                          className="staff-action-cancel-btn"
-                        >
-                          Hủy đơn hàng
-                        </Button>
-                      </div>
-                    ) : (
-                      <Alert
-                        type="info"
-                        showIcon
-                        description="In phiếu tạm tính, Chuyển bàn và Hủy đơn sẽ khả dụng sau khi đơn hàng được lưu."
-                      />
-                    )}
-                  </div>
-                </div>
-              )}
-              <div className="staff-cart-summary">
-                <Typography.Title level={4}>Tổng tiền</Typography.Title>
-                <div>
-                  <span>Tổng tiền hàng ({regularProductCount} món)</span>
-                  <b>{formatMoney(regularProductGross)}</b>
-                </div>
-                {totalTimeGross > 0 ? (
-                  <div>
-                    <span>Tiền giờ</span>
-                    <b>{formatMoney(totalTimeGross)}</b>
-                  </div>
                 ) : null}
-                <div>
-                  <span>Giảm giá</span>
-                  <b>{totalDiscount > 0 ? `-${formatMoney(totalDiscount)}` : '0đ'}</b>
-                </div>
-                <div className="staff-cart-total">
-                  <span>Khách phải trả</span>
-                  <b>{formatMoney(displayedTotal)}</b>
+                <div className="staff-cart-summary">
+                  <Typography.Title level={4}>Tổng tiền</Typography.Title>
+                  <div>
+                    <span>Tổng tiền hàng ({regularProductCount} món)</span>
+                    <b>{formatMoney(regularProductGross)}</b>
+                  </div>
+                  {totalTimeGross > 0 ? (
+                    <div>
+                      <span>Tiền giờ</span>
+                      <b>{formatMoney(totalTimeGross)}</b>
+                    </div>
+                  ) : null}
+                  <div>
+                    <span>Giảm giá</span>
+                    <b>{totalDiscount > 0 ? `-${formatMoney(totalDiscount)}` : '0đ'}</b>
+                  </div>
+                  <div className="staff-cart-total">
+                    <span>Khách phải trả</span>
+                    <b>{formatMoney(displayedTotal)}</b>
+                  </div>
                 </div>
               </div>
               <div className="staff-cart-actions">
@@ -5912,7 +6030,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         title={
           <div className="staff-provisional-modal-header">
             <FileTextOutlined />
-            <span>Phiếu tạm tính · {quote.data?.order.tableName}</span>
+            <span>Xem trước phiếu tạm tính · {quote.data?.order.tableName}</span>
           </div>
         }
         width={500}
@@ -5922,14 +6040,13 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           <Button key="close" onClick={() => setProvisionalBillOpen(false)}>
             Đóng
           </Button>,
-          <Button
-            key="print"
-            icon={<PrinterOutlined />}
-            onClick={async () => {
-              if (!quote.data) return;
-              const printData = buildPrintDataFromQuote(quote.data, 'PROVISIONAL');
-              const result = await printReceipt({
-                data: printData,
+        ]}
+      >
+        {quote.data ? (
+          <div className="staff-provisional-bill-content">
+            <ReceiptPreviewPaper
+              options={{
+                data: buildPrintDataFromQuote(quote.data, 'PROVISIONAL'),
                 printSettings: printSettings.data,
                 storeInfo: {
                   storeName: staffContext.data?.storeName ?? null,
@@ -5939,28 +6056,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
                   bankAccountName: staffContext.data?.bankAccountName ?? null,
                 },
-              });
-              if (result.success) messageApi.success('Đã gửi lệnh in phiếu tạm tính!');
-              else messageApi.error(result.message ?? 'Không thể in phiếu tạm tính.');
-            }}
-          >
-            In tạm tính
-          </Button>,
-          <Button
-            key="checkout"
-            type="primary"
-            loading={stoppingTime}
-            onClick={() => {
-              setProvisionalBillOpen(false);
-              void beginCheckout();
-            }}
-          >
-            Dừng giờ & Thanh toán
-          </Button>,
-        ]}
-      >
-        {quote.data ? (
-          <div className="staff-provisional-bill-content">
+              }}
+            />
             <Alert
               type="info"
               showIcon
@@ -6313,6 +6410,25 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           </div>
 
           <div className="staff-mobile-actions-buttons">
+            {(quote.data?.order.tableId || selectedTable?.id || preselectedTableId) && (
+              <Button
+                size="large"
+                block
+                icon={<QrcodeOutlined />}
+                loading={tableQrLoading}
+                onClick={() => {
+                  setMobileActionsOpen(false);
+                  void handleOpenTableQrModal();
+                }}
+                style={{
+                  borderColor: '#0975F7',
+                  color: '#0975F7',
+                  fontWeight: 600,
+                }}
+              >
+                Lấy mã QR Order của bàn
+              </Button>
+            )}
             {!isNew && (
               <>
                 <Button
@@ -6322,10 +6438,22 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   disabled={printSettings.data?.allowProvisionalPrint === false}
                   onClick={() => {
                     setMobileActionsOpen(false);
-                    setProvisionalBillOpen(true);
+                    void printProvisionalReceipt();
                   }}
                 >
                   In phiếu tạm tính
+                </Button>
+                <Button
+                  size="large"
+                  block
+                  icon={<FileTextOutlined />}
+                  disabled={printSettings.data?.allowProvisionalPrint === false}
+                  onClick={() => {
+                    setMobileActionsOpen(false);
+                    setProvisionalBillOpen(true);
+                  }}
+                >
+                  Xem trước phiếu tạm tính
                 </Button>
 
                 {quote.data?.order.orderType === 'DINE_IN' && (
@@ -6461,40 +6589,22 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       </Modal>
       <Modal
         open={customerModalOpen}
-        title="Thông tin khách hàng"
-        okText="Lưu thông tin"
-        cancelText="Hủy"
-        onOk={() => {
-          void saveCustomerInfo(customerName, customerPhone);
-          setCustomerModalOpen(false);
-        }}
+        title="Khách hàng"
+        footer={null}
         onCancel={() => setCustomerModalOpen(false)}
-        width={400}
+        width={680}
+        className="pos-customer-selection-shell"
       >
-        <div style={{ display: 'grid', gap: 14, paddingTop: 10 }}>
-          <label>
-            <span style={{ fontWeight: 600, display: 'block', marginBottom: 6 }}>
-              Tên khách hàng
-            </span>
-            <Input
-              size="large"
-              placeholder="Nhập tên khách hàng"
-              value={customerName}
-              onChange={(e) => setCustomerName(e.target.value)}
-            />
-          </label>
-          <label>
-            <span style={{ fontWeight: 600, display: 'block', marginBottom: 6 }}>
-              Số điện thoại
-            </span>
-            <Input
-              size="large"
-              placeholder="Nhập số điện thoại"
-              value={customerPhone}
-              onChange={(e) => setCustomerPhone(e.target.value)}
-            />
-          </label>
-        </div>
+        <PosCustomerSelector
+          customerId={customerId}
+          csrfToken={csrf}
+          allowCreate
+          reopenPickerOnDeselect={isMobile}
+          onSelect={async (customer) => {
+            await saveCustomerInfo(customer);
+            if (customer) setCustomerModalOpen(false);
+          }}
+        />
       </Modal>
 
       {/* Modal Xem trước đơn hàng (Mobile Cart Review) */}
@@ -6685,6 +6795,19 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           onChange={(e) => setItemNoteDraft(e.target.value)}
         />
       </Modal>
+
+      {/* Modal hiển thị mã QR Order của bàn (Standee & Frame đẹp) */}
+      {tableQrData && (
+        <TableQrModal
+          open={tableQrModalOpen}
+          onClose={() => setTableQrModalOpen(false)}
+          tableName={tableQrData.tableName}
+          url={tableQrData.url}
+          qrImageSrc={tableQrData.image}
+          storeName={staffContext.data?.storeName ?? 'PRO POS'}
+          orderCode={tableQrData.orderCode}
+        />
+      )}
     </div>
   );
 }
@@ -6693,6 +6816,8 @@ function InvoicePage() {
   const location = useLocation();
   const navigate = useNavigate();
   const [messageApi, holder] = message.useMessage();
+  const [printPreviewOpen, setPrintPreviewOpen] = useState(false);
+  const [printing, setPrinting] = useState(false);
   const invoiceId = location.pathname.match(/^\/pos\/invoices\/([^/]+)$/u)?.[1];
   const invoice = useQuery({
     queryKey: ['pos-invoice', invoiceId],
@@ -6718,6 +6843,29 @@ function InvoicePage() {
     );
   }
   const data = invoice.data;
+  const invoicePrintData = buildPrintDataFromInvoice(data);
+  invoicePrintData.paymentAllocations = data.allocations.map((allocation) => ({
+    method: allocation.method,
+    amountVnd: allocation.amountVnd,
+  }));
+  invoicePrintData.paidAmountVnd = data.allocations
+    .filter((allocation) => allocation.method !== 'DEBT')
+    .reduce((sum, allocation) => sum + allocation.amountVnd, 0);
+  invoicePrintData.debtAmountVnd = data.allocations
+    .filter((allocation) => allocation.method === 'DEBT')
+    .reduce((sum, allocation) => sum + allocation.amountVnd, 0);
+  const invoicePrintOptions = {
+    data: invoicePrintData,
+    printSettings: printSettings.data,
+    storeInfo: {
+      storeName: staffContext.data?.storeName ?? null,
+      phone: staffContext.data?.storePhone ?? null,
+      address: staffContext.data?.storeAddress ?? null,
+      bankName: staffContext.data?.bankName ?? null,
+      bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
+      bankAccountName: staffContext.data?.bankAccountName ?? null,
+    },
+  };
   return (
     <main className="staff-invoice-page">
       {holder}
@@ -6880,47 +7028,90 @@ function InvoicePage() {
               </div>
             </>
           ) : null}
+          {data.allocations.length > 0 ? (
+            <>
+              {data.allocations.map((allocation) => (
+                <div key={allocation.id}>
+                  <span>
+                    {allocation.method === 'CASH'
+                      ? 'Tiền mặt'
+                      : allocation.method === 'DEBT'
+                        ? 'Ghi công nợ'
+                        : 'Chuyển khoản'}
+                  </span>
+                  <b className={allocation.method === 'DEBT' ? 'text-danger' : ''}>
+                    {formatMoney(allocation.amountVnd)}
+                  </b>
+                </div>
+              ))}
+              <div>
+                <span>Đã thanh toán</span>
+                <b>
+                  {formatMoney(
+                    data.allocations
+                      .filter((allocation) => allocation.method !== 'DEBT')
+                      .reduce((sum, allocation) => sum + allocation.amountVnd, 0),
+                  )}
+                </b>
+              </div>
+              <div>
+                <span>Còn ghi nợ</span>
+                <b className="text-danger">
+                  {formatMoney(
+                    data.allocations
+                      .filter((allocation) => allocation.method === 'DEBT')
+                      .reduce((sum, allocation) => sum + allocation.amountVnd, 0),
+                  )}
+                </b>
+              </div>
+            </>
+          ) : null}
         </footer>
       </section>
       <div className="staff-invoice-actions">
         <Button size="large" onClick={() => navigate('/pos')}>
           Về danh sách đơn
         </Button>
+        <Button size="large" icon={<FileTextOutlined />} onClick={() => setPrintPreviewOpen(true)}>
+          Xem trước hóa đơn
+        </Button>
         <Button
           type="primary"
           size="large"
           icon={<PrinterOutlined />}
+          loading={printing}
           onClick={async () => {
-            const printData = buildPrintDataFromInvoice(data);
-            const result = await printReceipt({
-              data: printData,
-              printSettings: printSettings.data,
-              storeInfo: {
-                storeName: staffContext.data?.storeName ?? null,
-                phone: staffContext.data?.storePhone ?? null,
-                address: staffContext.data?.storeAddress ?? null,
-                bankName: staffContext.data?.bankName ?? null,
-                bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
-                bankAccountName: staffContext.data?.bankAccountName ?? null,
-              },
-            });
-            if (result.success) messageApi.success('Đã gửi lệnh in hóa đơn!');
-            else messageApi.error(result.message ?? 'Không thể in hóa đơn.');
+            setPrinting(true);
+            try {
+              const result = await printReceipt(invoicePrintOptions);
+              if (result.success) messageApi.success('Đã gửi lệnh in hóa đơn!');
+              else messageApi.error(result.message ?? 'Không thể in hóa đơn.');
+            } finally {
+              setPrinting(false);
+            }
           }}
         >
           In hóa đơn
         </Button>
       </div>
+      <ReceiptPreviewModal
+        open={printPreviewOpen}
+        title={`Xem trước hóa đơn ${data.invoice.displayCode}`}
+        options={invoicePrintOptions}
+        onCancel={() => setPrintPreviewOpen(false)}
+        previewOnly
+      />
     </main>
   );
 }
 
-type PaymentMethodType = 'CASH' | 'BANK_TRANSFER';
+type PaymentMethodType = 'CASH' | 'BANK_TRANSFER' | 'DEBT';
 
 interface PaymentMethodItem {
   key: PaymentMethodType;
   label: string;
   backendMethod: 'CASH' | 'BANK_TRANSFER';
+  allocationMethod?: 'CASH' | 'BANK_TRANSFER';
   icon: React.ReactNode;
 }
 
@@ -6929,6 +7120,7 @@ const PAYMENT_METHODS: PaymentMethodItem[] = [
     key: 'CASH',
     label: 'Tiền mặt',
     backendMethod: 'CASH',
+    allocationMethod: 'CASH',
     icon: (
       <div
         style={{
@@ -6950,9 +7142,16 @@ const PAYMENT_METHODS: PaymentMethodItem[] = [
   },
   {
     key: 'BANK_TRANSFER',
-    label: 'Chuyển khoản ngân hàng',
+    label: 'Chuyển khoản',
     backendMethod: 'BANK_TRANSFER',
+    allocationMethod: 'BANK_TRANSFER',
     icon: <CreditCardOutlined style={{ fontSize: 24, color: '#0877ee' }} />,
+  },
+  {
+    key: 'DEBT',
+    label: 'Ghi nợ - Thanh toán sau',
+    backendMethod: 'BANK_TRANSFER',
+    icon: <HistoryOutlined style={{ fontSize: 26, color: '#0877ee' }} />,
   },
 ];
 
@@ -6964,17 +7163,19 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
   const [selectedMethod, setSelectedMethod] = useState<PaymentMethodType>('CASH');
   const [isMultiMethod, setIsMultiMethod] = useState(false);
   const [cashReceived, setCashReceived] = useState<number | null>(null);
+  const [cashApplied, setCashApplied] = useState(0);
+  const [bankApplied, setBankApplied] = useState(0);
+  const [debtAmount, setDebtAmount] = useState(0);
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
-  const [attachedCustomer, setAttachedCustomer] = useState<{
+  const [_attachedCustomer, setAttachedCustomer] = useState<{
     name: string;
     phone?: string | undefined;
   } | null>(null);
-  const [resumeModalOpen, setResumeModalOpen] = useState(false);
-  const [backConfirmOpen, setBackConfirmOpen] = useState(false);
   const [qrModalOpen, setQrModalOpen] = useState(false);
-  const [resuming, setResuming] = useState(false);
+  const [paymentPreviewOpen, setPaymentPreviewOpen] = useState(false);
+  const [returningToOrder, setReturningToOrder] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const csrf = auth.csrfToken!;
 
@@ -7010,12 +7211,71 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
   const totalVnd = quote.data?.totalVnd ?? 0;
   const currentMethodItem =
     PAYMENT_METHODS.find((m) => m.key === selectedMethod) ?? PAYMENT_METHODS[0]!;
+  const isDebtMethod = selectedMethod === 'DEBT';
 
   const changeVnd = selectedMethod === 'CASH' ? Math.max(0, (cashReceived ?? 0) - totalVnd) : 0;
+  const currentDebtAmount = isMultiMethod
+    ? debtAmount
+    : isDebtMethod
+      ? Math.max(0, totalVnd - cashApplied)
+      : 0;
+  const currentReceiptAllocations: Array<{
+    method: 'CASH' | 'BANK_TRANSFER' | 'DEBT';
+    amountVnd: number;
+  }> = isMultiMethod
+    ? [
+        ...(cashApplied > 0 ? [{ method: 'CASH' as const, amountVnd: cashApplied }] : []),
+        ...(bankApplied > 0 ? [{ method: 'BANK_TRANSFER' as const, amountVnd: bankApplied }] : []),
+        ...(debtAmount > 0 ? [{ method: 'DEBT' as const, amountVnd: debtAmount }] : []),
+      ]
+    : isDebtMethod
+      ? [
+          ...(cashApplied > 0 ? [{ method: 'CASH' as const, amountVnd: cashApplied }] : []),
+          ...(currentDebtAmount > 0
+            ? [{ method: 'DEBT' as const, amountVnd: currentDebtAmount }]
+            : []),
+        ]
+      : [
+          {
+            method: selectedMethod === 'CASH' ? ('CASH' as const) : ('BANK_TRANSFER' as const),
+            amountVnd: totalVnd,
+          },
+        ];
+  const buildCurrentPaymentPrintData = () => {
+    if (!quote.data) return null;
+    const data = buildPrintDataFromQuote(
+      quote.data,
+      'PAYMENT',
+      currentMethodItem.backendMethod,
+      cashReceived,
+    );
+    data.paymentAllocations = currentReceiptAllocations;
+    data.paidAmountVnd = Math.max(0, totalVnd - currentDebtAmount);
+    data.debtAmountVnd = currentDebtAmount;
+    return data;
+  };
+  const paymentPreviewOptions = quote.data
+    ? {
+        data: buildCurrentPaymentPrintData()!,
+        printSettings: printSettings.data,
+        storeInfo: {
+          storeName: staffContext.data?.storeName ?? null,
+          phone: staffContext.data?.storePhone ?? null,
+          address: staffContext.data?.storeAddress ?? null,
+          bankName: staffContext.data?.bankName ?? null,
+          bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
+          bankAccountName: staffContext.data?.bankAccountName ?? null,
+        },
+      }
+    : null;
 
-  const handleResumeCheckout = async () => {
-    if (!quote.data || resuming) return;
-    setResuming(true);
+  const handleBackToOrder = async () => {
+    if (!quote.data || returningToOrder) return;
+    if (!quote.data.time || quote.data.order.status !== 'PAYMENT_PENDING') {
+      navigate(`/pos/orders/${orderId}`);
+      return;
+    }
+    setReturningToOrder(true);
     try {
       const result = await jsonRequest<{
         orderId: string;
@@ -7027,30 +7287,42 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
         { expectedOrderVersion: quote.data.order.version },
         { headers: mutationHeaders(csrf) },
       );
-      const openQuote: OrderQuote = {
-        ...result.quote,
-        order: {
-          ...result.quote.order,
-          status: 'OPEN',
-        },
-      };
-      queryClient.setQueryData(['pos-order-quote', orderId], openQuote);
-      void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
-      void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
-      messageApi.success(`Đã tiếp tục tính giờ cho ${quote.data.order.tableName}`);
-      setResumeModalOpen(false);
+      queryClient.setQueryData(['pos-order-quote', orderId], result.quote);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
+      ]);
+      messageApi.success(
+        `Đã tự động tiếp tục tính giờ cho ${quote.data.order.tableName ?? 'bàn'}.`,
+      );
       navigate(`/pos/orders/${orderId}`, { replace: true });
     } catch (error) {
       messageApi.error(errorText(error));
     } finally {
-      setResuming(false);
+      setReturningToOrder(false);
     }
   };
 
   const handleConfirmPayment = async (andPrint = false) => {
     if (!quote.data || submitting) return;
-    if (selectedMethod === 'CASH' && (cashReceived === null || cashReceived < totalVnd)) {
+    if (
+      !isMultiMethod &&
+      selectedMethod === 'CASH' &&
+      (cashReceived === null || cashReceived < totalVnd)
+    ) {
       messageApi.warning('Số tiền khách đưa chưa đủ để thanh toán.');
+      return;
+    }
+    if (isMultiMethod && cashApplied + bankApplied + debtAmount !== totalVnd) {
+      messageApi.warning('Tổng tiền mặt, chuyển khoản và công nợ phải bằng giá trị hóa đơn.');
+      return;
+    }
+    if (debtAmount > 0 && !quote.data.order.customerId) {
+      messageApi.warning('Vui lòng chọn khách hàng trước khi ghi nợ.');
+      return;
+    }
+    if (isDebtMethod && !quote.data.order.customerId) {
+      messageApi.warning('Vui lòng chọn hoặc tạo khách hàng để ghi nợ.');
       return;
     }
     setSubmitting(true);
@@ -7064,6 +7336,27 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
           expectedOrderVersion: quote.data.order.version,
           method: currentMethodItem.backendMethod,
           cashReceivedVnd: currentMethodItem.backendMethod === 'CASH' ? cashReceived : null,
+          allocations: isMultiMethod
+            ? [
+                ...(cashApplied > 0
+                  ? [
+                      {
+                        method: 'CASH',
+                        amountVnd: cashApplied,
+                        tenderedVnd: cashReceived ?? cashApplied,
+                      },
+                    ]
+                  : []),
+                ...(bankApplied > 0 ? [{ method: 'BANK_TRANSFER', amountVnd: bankApplied }] : []),
+              ]
+            : isDebtMethod
+              ? cashApplied > 0
+                ? [{ method: 'CASH', amountVnd: cashApplied, tenderedVnd: cashApplied }]
+                : []
+              : currentMethodItem.allocationMethod && selectedMethod !== 'CASH'
+                ? [{ method: currentMethodItem.allocationMethod, amountVnd: totalVnd }]
+                : undefined,
+          debtAmountVnd: isMultiMethod ? debtAmount : isDebtMethod ? totalVnd - cashApplied : 0,
         },
         { headers: mutationHeaders(csrf) },
       );
@@ -7071,12 +7364,7 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
       void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
 
       if (andPrint) {
-        const printData = buildPrintDataFromQuote(
-          quote.data,
-          'PAYMENT',
-          currentMethodItem.backendMethod,
-          cashReceived,
-        );
+        const printData = buildCurrentPaymentPrintData()!;
         const resolvedCode =
           result.displayCode ||
           quote.data.order.displayCode ||
@@ -7135,54 +7423,16 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
         <Button
           type="text"
           icon={<LeftOutlined />}
+          loading={returningToOrder}
+          disabled={returningToOrder}
           className="staff-payment-page__back-btn"
           aria-label="Quay lại đơn hàng"
-          onClick={() => {
-            if (quote.data?.time && quote.data.order.status === 'PAYMENT_PENDING') {
-              setBackConfirmOpen(true);
-            } else {
-              navigate(`/pos/orders/${orderId}`);
-            }
-          }}
+          onClick={() => void handleBackToOrder()}
         />
         <Typography.Title level={4} className="staff-payment-page__title">
           Thanh toán
         </Typography.Title>
       </header>
-
-      <Modal
-        open={backConfirmOpen}
-        title="Xác nhận quay lại"
-        onCancel={() => setBackConfirmOpen(false)}
-        footer={[
-          <Button
-            key="resume"
-            type="primary"
-            loading={resuming}
-            onClick={async () => {
-              setBackConfirmOpen(false);
-              await handleResumeCheckout();
-            }}
-          >
-            Đồng ý (Tiếp tục chơi)
-          </Button>,
-          <Button
-            key="leave"
-            danger
-            onClick={() => {
-              setBackConfirmOpen(false);
-              navigate(`/pos/orders/${orderId}`);
-            }}
-          >
-            Không (Vẫn dừng giờ)
-          </Button>,
-        ]}
-      >
-        <p>Bàn này đang được tạm dừng tính giờ để thanh toán.</p>
-        <p>
-          Bạn có muốn <strong>Tiếp tục chơi</strong> cho bàn này không?
-        </p>
-      </Modal>
 
       {quote.isLoading ? (
         <div style={{ padding: 40, textAlign: 'center' }}>
@@ -7205,73 +7455,26 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
       ) : (
         <div className="staff-payment-page__body">
           <div className="staff-payment-page__left">
-            {quote.data.time ? (
-              <section className="staff-payment-session-card">
-                <div className="staff-payment-session-info">
-                  <div className="staff-payment-session-title-row">
-                    <strong className="staff-payment-session-table-name">
-                      {quote.data.order.tableName}
-                    </strong>
-                    <span className="staff-payment-frozen-badge">
-                      <CheckCircleOutlined /> ĐÃ DỪNG TÍNH GIỜ
-                    </span>
-                  </div>
-                  <div className="staff-payment-session-meta">
-                    <span>
-                      Thời gian chơi:{' '}
-                      <strong>{formatElapsed(quote.data.time.elapsedSeconds)}</strong>
-                    </span>
-                    {quote.data.time.endedAtMs ? (
-                      <>
-                        <span className="staff-payment-session-dot">•</span>
-                        <span>
-                          Đã dừng lúc: <strong>{formatClock(quote.data.time.endedAtMs)}</strong>
-                        </span>
-                      </>
-                    ) : null}
-                  </div>
-                </div>
-                <Button
-                  icon={<PlayCircleOutlined />}
-                  onClick={() => setResumeModalOpen(true)}
-                  className="staff-payment-resume-btn"
-                >
-                  Tiếp tục chơi
-                </Button>
-              </section>
-            ) : null}
-
             <section className="staff-payment-page__section">
               <div className="staff-payment-page__section-title">Khách hàng</div>
-              {attachedCustomer ? (
-                <div className="staff-payment-page__customer-card">
-                  <UserOutlined style={{ color: '#0877ee', fontSize: 18 }} />
-                  <div>
-                    <strong>{attachedCustomer.name}</strong>
-                    {attachedCustomer.phone ? (
-                      <span style={{ marginLeft: 8, color: '#656a75', fontSize: 13 }}>
-                        ({attachedCustomer.phone})
-                      </span>
-                    ) : null}
-                  </div>
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={<CloseOutlined />}
-                    onClick={() => setAttachedCustomer(null)}
-                    style={{ marginLeft: 8 }}
-                  />
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  className="staff-payment-page__customer-btn"
-                  onClick={() => setCustomerModalOpen(true)}
-                >
-                  <PlusCircleOutlined />
-                  <span>Thêm khách hàng</span>
-                </button>
-              )}
+              <PosCustomerSelector
+                customerId={quote.data.order.customerId ?? null}
+                csrfToken={csrf}
+                allowCreate
+                variant="compact"
+                onSelect={async (customer) => {
+                  await jsonRequest(
+                    `/api/v1/pos/orders/${orderId}/guest`,
+                    {
+                      expectedOrderVersion: quote.data!.order.version,
+                      guestCount: quote.data!.order.guestCount ?? 1,
+                      customerId: customer?.id ?? null,
+                    },
+                    { method: 'PATCH', headers: mutationHeaders(csrf) },
+                  );
+                  await queryClient.invalidateQueries({ queryKey: ['pos-order-quote', orderId] });
+                }}
+              />
             </section>
 
             <section className="staff-payment-page__section">
@@ -7295,6 +7498,13 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
                       className={`staff-payment-method-card ${isActive ? 'is-active' : ''}`}
                       onClick={() => {
                         setSelectedMethod(method.key);
+                        if (method.key === 'DEBT') {
+                          setCashApplied(0);
+                          setBankApplied(0);
+                          setDebtAmount(totalVnd);
+                        } else {
+                          setDebtAmount(0);
+                        }
                         if (cashReceived === null || cashReceived === 0) {
                           setCashReceived(totalVnd);
                         }
@@ -7311,6 +7521,47 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
                   );
                 })}
               </div>
+              {isMultiMethod ? (
+                <div className="staff-payment-allocations">
+                  <label>
+                    Tiền mặt
+                    <InputNumber
+                      min={0}
+                      max={totalVnd}
+                      value={cashApplied}
+                      onChange={(v) => setCashApplied(Number(v ?? 0))}
+                      addonAfter="đ"
+                    />
+                  </label>
+                  <label>
+                    Chuyển khoản
+                    <InputNumber
+                      min={0}
+                      max={totalVnd}
+                      value={bankApplied}
+                      onChange={(v) => setBankApplied(Number(v ?? 0))}
+                      addonAfter="đ"
+                    />
+                  </label>
+                  <label>
+                    Ghi công nợ
+                    <InputNumber
+                      min={0}
+                      max={totalVnd}
+                      value={debtAmount}
+                      onChange={(v) => setDebtAmount(Number(v ?? 0))}
+                      addonAfter="đ"
+                    />
+                  </label>
+                  <Typography.Text
+                    type={
+                      cashApplied + bankApplied + debtAmount === totalVnd ? 'success' : 'danger'
+                    }
+                  >
+                    Còn lại: {formatMoney(totalVnd - cashApplied - bankApplied - debtAmount)}
+                  </Typography.Text>
+                </div>
+              ) : null}
             </section>
 
             {selectedMethod === 'BANK_TRANSFER'
@@ -7442,11 +7693,6 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
 
           <div className="staff-payment-page__right">
             <div className="staff-payment-page__right-top">
-              <div className="staff-payment-page__row">
-                <span className="staff-payment-page__row-label">Khách phải trả</span>
-                <strong className="staff-payment-page__total-val">{formatMoney(totalVnd)}</strong>
-              </div>
-
               {selectedMethod === 'CASH' ? (
                 <>
                   <div className="staff-payment-page__input-row">
@@ -7477,6 +7723,57 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
                       ))}
                   </div>
                 </>
+              ) : isDebtMethod ? (
+                <div className="staff-payment-debt-panel">
+                  <div className="staff-payment-page__input-row">
+                    <span className="staff-payment-page__input-label">Tiền khách trả trước</span>
+                    <div className="staff-payment-page__input-wrap">
+                      <InputNumber
+                        className="staff-payment-page__amount-input"
+                        min={0}
+                        max={totalVnd}
+                        value={cashApplied}
+                        onChange={(value) => {
+                          const paid = Number(value ?? 0);
+                          setCashApplied(paid);
+                          setDebtAmount(Math.max(0, totalVnd - paid));
+                        }}
+                        formatter={(value) =>
+                          `${value ?? ''}`.replace(/\B(?=(\d{3})+(?!\d))/gu, ',')
+                        }
+                        parser={(value) => Number((value ?? '').replaceAll(',', ''))}
+                        addonAfter="đ"
+                      />
+                    </div>
+                  </div>
+                  <div className="staff-payment-page__input-row">
+                    <span className="staff-payment-page__input-label">Ghi công nợ</span>
+                    <div className="staff-payment-page__input-wrap">
+                      <InputNumber
+                        className="staff-payment-page__amount-input"
+                        value={Math.max(0, totalVnd - cashApplied)}
+                        readOnly
+                        formatter={(value) =>
+                          `${value ?? ''}`.replace(/\B(?=(\d{3})+(?!\d))/gu, ',')
+                        }
+                        addonAfter="đ"
+                      />
+                    </div>
+                  </div>
+                  {!quote.data.order.customerId ? (
+                    <Alert
+                      type="error"
+                      showIcon
+                      message="Vui lòng chọn hoặc tạo khách hàng để ghi nợ."
+                    />
+                  ) : (
+                    <Alert
+                      type="info"
+                      showIcon
+                      message={`Khoản nợ ${formatMoney(Math.max(0, totalVnd - cashApplied))} sẽ được ghi vào hồ sơ khách hàng.`}
+                    />
+                  )}
+                </div>
               ) : (
                 <>
                   <div className="staff-payment-bank-summary">
@@ -7557,67 +7854,72 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
             </div>
 
             <div className="staff-payment-page__right-bottom">
-              {selectedMethod === 'CASH' ? (
-                <div className="staff-payment-page__change-row">
-                  <span className="staff-payment-page__change-label">Tiền thừa trả khách</span>
-                  <strong className="staff-payment-page__change-val">
-                    {formatMoney(changeVnd)}
-                  </strong>
+              <div className="staff-payment-sticky-summary">
+                <div className="staff-payment-page__change-row staff-payment-page__change-row--total">
+                  <span className="staff-payment-page__change-label">Khách phải trả</span>
+                  <strong className="staff-payment-page__total-val">{formatMoney(totalVnd)}</strong>
                 </div>
-              ) : (
-                <div className="staff-payment-page__change-row">
-                  <span className="staff-payment-page__change-label">Phương thức</span>
-                  <Tag color="blue" style={{ fontSize: 13, padding: '2px 10px', borderRadius: 6 }}>
-                    Chuyển khoản VietQR
-                  </Tag>
-                </div>
-              )}
+                {selectedMethod === 'CASH' ? (
+                  <div className="staff-payment-page__change-row">
+                    <span className="staff-payment-page__change-label">Tiền thừa trả khách</span>
+                    <strong className="staff-payment-page__change-val">
+                      {formatMoney(changeVnd)}
+                    </strong>
+                  </div>
+                ) : (
+                  <div className="staff-payment-page__change-row">
+                    <span className="staff-payment-page__change-label">Phương thức</span>
+                    <Tag color="blue">
+                      {isDebtMethod ? 'Ghi nợ - Thanh toán sau' : 'Chuyển khoản VietQR'}
+                    </Tag>
+                  </div>
+                )}
+              </div>
 
-              <div
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 10,
-                  width: '100%',
-                }}
-              >
+              <div className="staff-payment-actions-grid">
                 <Button
                   type="primary"
-                  size="large"
-                  block
                   icon={<PrinterOutlined />}
                   className="staff-payment-page__submit-btn"
-                  style={{
-                    backgroundColor: '#10b981',
-                    borderColor: '#10b981',
-                    height: 48,
-                    fontWeight: 700,
-                    fontSize: 15.5,
-                  }}
                   loading={submitting}
                   disabled={
-                    !quote.data || (selectedMethod === 'CASH' && (cashReceived ?? 0) < totalVnd)
+                    !quote.data ||
+                    (selectedMethod === 'CASH' && (cashReceived ?? 0) < totalVnd) ||
+                    (isDebtMethod && !quote.data.order.customerId)
                   }
                   onClick={() => {
                     void handleConfirmPayment(true);
                   }}
                 >
-                  {selectedMethod === 'CASH'
-                    ? 'Xác nhận thanh toán & in'
-                    : 'Xác nhận đã nhận tiền & in'}
+                  {isDebtMethod
+                    ? 'Ghi nợ & in'
+                    : selectedMethod === 'CASH'
+                      ? 'Thanh toán & in'
+                      : 'Đã nhận tiền & in'}
                 </Button>
                 <Button
-                  size="large"
-                  block
+                  icon={<FileTextOutlined />}
+                  disabled={!quote.data}
+                  onClick={() => setPaymentPreviewOpen(true)}
+                >
+                  Xem trước
+                </Button>
+                <Button
                   icon={<CheckOutlined />}
                   disabled={
-                    !quote.data || (selectedMethod === 'CASH' && (cashReceived ?? 0) < totalVnd)
+                    !quote.data ||
+                    (selectedMethod === 'CASH' && (cashReceived ?? 0) < totalVnd) ||
+                    (isDebtMethod && !quote.data.order.customerId)
                   }
                   onClick={() => {
                     void handleConfirmPayment(false);
                   }}
                 >
-                  {selectedMethod === 'CASH' ? 'Xác nhận thanh toán' : 'Xác nhận đã nhận tiền'}
+                  {isDebtMethod
+                    ? 'Ghi nợ'
+                    : selectedMethod === 'CASH'
+                      ? 'Thanh toán'
+                      : 'Đã nhận tiền'}
                 </Button>
               </div>
             </div>
@@ -7675,6 +7977,13 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
           );
         })()}
       </Modal>
+      <ReceiptPreviewModal
+        open={paymentPreviewOpen}
+        title="Xem trước hóa đơn thanh toán"
+        options={paymentPreviewOptions}
+        onCancel={() => setPaymentPreviewOpen(false)}
+        previewOnly
+      />
 
       <Modal
         open={customerModalOpen}
@@ -7705,32 +8014,6 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
               onChange={(e) => setCustomerPhone(e.target.value)}
             />
           </label>
-        </div>
-      </Modal>
-      <Modal
-        open={resumeModalOpen}
-        title="Tiếp tục tính giờ?"
-        okText="Tiếp tục chơi"
-        cancelText="Hủy"
-        okButtonProps={{ loading: resuming }}
-        onCancel={() => !resuming && setResumeModalOpen(false)}
-        onOk={() => void handleResumeCheckout()}
-      >
-        <div
-          className="staff-confirm-resume-body"
-          style={{ display: 'grid', gap: 10, paddingTop: 6 }}
-        >
-          <p style={{ margin: 0 }}>
-            Bàn đã dừng tính giờ lúc{' '}
-            <strong>
-              {quote.data?.time?.endedAtMs ? formatClock(quote.data.time.endedAtMs) : 'trước đó'}
-            </strong>
-            .
-          </p>
-          <p style={{ margin: 0, color: '#475569' }}>
-            Một khoảng tính giờ mới sẽ bắt đầu từ thời điểm xác nhận tiếp tục. Khoảng thời gian chờ
-            thanh toán sẽ <strong>không được tính tiền</strong>.
-          </p>
         </div>
       </Modal>
     </div>

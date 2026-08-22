@@ -56,6 +56,11 @@ export interface GuestOrderContext {
   storeName: string;
   tableName: string;
   areaName: string;
+  table: {
+    id: string;
+    name: string;
+    areaName: string;
+  };
   sessionExpiresAt: number;
   menu: GuestMenuProduct[];
 }
@@ -88,7 +93,10 @@ export interface ServiceRequestDto {
   id: string;
   type: 'CALL_STAFF' | 'CHECKOUT_REQUEST';
   status: 'OPEN' | 'ACKNOWLEDGED' | 'COMPLETED' | 'CANCELLED';
+  tableId: string;
   tableName: string;
   areaName: string;
+  orderId: string;
   createdAt: number;
+  acknowledgedAt: number | null;
 }

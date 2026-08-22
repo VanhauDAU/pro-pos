@@ -13,6 +13,15 @@ import type { AppEnv } from '@server/types';
 
 const guestOrderRoutes = new Hono<AppEnv>();
 
+function formatPushMoney(value: number) {
+  return `${new Intl.NumberFormat('vi-VN').format(value)}đ`;
+}
+
+function compactPushBody(parts: Array<string | null | undefined>, maxLength = 220) {
+  const value = parts.filter(Boolean).join(' • ');
+  return value.length <= maxLength ? value : `${value.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
 function guestCredential(c: Parameters<typeof success>[0]) {
   const raw = readCredentialCookie(c, 'guest');
   if (!raw) throw new AppError('GUEST_SESSION_REQUIRED', 'Vui lòng quét lại mã QR trên bàn.', 401);
@@ -64,18 +73,44 @@ guestOrderRoutes.post('/requests', async (c) => {
   const body = await parseJson(c.req.raw, submitGuestOrderSchema);
   const rawGuest = guestCredential(c);
   const result = await new QrOrderService(c.env).submitOrder(rawGuest, body, clientIp(c));
-  c.executionCtx.waitUntil(
-    Promise.all([
-      new RealtimeDispatcher(c.env).dispatchStore(result.storeId),
-      new PushNotificationService(c.env).sendStoreNotification({
-        storeId: result.storeId,
-        title: 'QR Order mới',
-        body: `${result.tableName} vừa gọi món`,
-        url: '/pos/qr-order',
-        tag: `qr-order:${result.requestId}`,
-      }),
-    ]).catch(() => undefined),
-  );
+  if ('items' in result) {
+    const totalQuantity = result.items.reduce((sum, item) => sum + item.quantity, 0);
+    const totalVnd = result.items.reduce((sum, item) => sum + item.lineTotalVnd, 0);
+    const itemSummary = result.items
+      .slice(0, 3)
+      .map((item) => {
+        const variant =
+          item.variantName && item.variantName !== 'Mặc định' ? ` ${item.variantName}` : '';
+        return `${item.productName}${variant} ×${item.quantity}`;
+      })
+      .join(', ');
+    const moreCount = Math.max(0, result.items.length - 3);
+    c.executionCtx.waitUntil(
+      Promise.all([
+        new RealtimeDispatcher(c.env).dispatchStore(result.storeId),
+        new PushNotificationService(c.env).sendStoreNotification({
+          storeId: result.storeId,
+          kind: 'QR_ORDER',
+          soundType: 'NEW_QR_ORDER',
+          title: `🍽️ ${result.tableName}: ${totalQuantity} món mới`,
+          body: compactPushBody([
+            result.areaName,
+            `${itemSummary}${moreCount > 0 ? `, +${moreCount} dòng món` : ''}`,
+            `Tổng ${formatPushMoney(totalVnd)}`,
+            result.note ? `Ghi chú: ${result.note}` : null,
+          ]),
+          url: '/pos/qr-order',
+          tag: `qr-order:${result.requestId}`,
+          timestamp: result.createdAt,
+          requestId: result.requestId,
+          orderId: result.orderId,
+          actionTitle: 'Xem và xác nhận',
+          badgeCount: 1,
+          requireInteraction: true,
+        }),
+      ]).catch(() => undefined),
+    );
+  }
   return success(c, { requestId: result.requestId, replayed: result.replayed }, 201);
 });
 
@@ -91,10 +126,33 @@ guestOrderRoutes.post('/service-requests', async (c) => {
       new RealtimeDispatcher(c.env).dispatchStore(result.storeId),
       new PushNotificationService(c.env).sendStoreNotification({
         storeId: result.storeId,
-        title: result.status === 'OPEN' ? 'Yêu cầu từ khách' : 'Pro POS',
-        body: `${result.tableName}: ${body.type === 'CALL_STAFF' ? 'Gọi nhân viên' : 'Yêu cầu thanh toán'}`,
+        kind: body.type,
+        soundType: body.type === 'CHECKOUT_REQUEST' ? 'CHECKOUT_REQUEST' : 'NEW_QR_ORDER',
+        title:
+          body.type === 'CALL_STAFF'
+            ? `🔔 ${result.tableName} gọi nhân viên`
+            : `💳 ${result.tableName} yêu cầu thanh toán`,
+        body: compactPushBody([
+          result.areaName,
+          body.type === 'CALL_STAFF'
+            ? 'Khách đang chờ nhân viên hỗ trợ'
+            : 'Khách đã sẵn sàng thanh toán',
+          `Gửi lúc ${new Intl.DateTimeFormat('vi-VN', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+            timeZone: 'Asia/Ho_Chi_Minh',
+          }).format(result.createdAt)}`,
+        ]),
         url: '/pos/qr-order',
         tag: `service-request:${result.id}`,
+        timestamp: result.createdAt,
+        requestId: result.id,
+        orderId: result.orderId,
+        actionTitle: body.type === 'CALL_STAFF' ? 'Tiếp nhận' : 'Mở thanh toán',
+        badgeCount: 1,
+        requireInteraction: true,
       }),
     ]).catch(() => undefined),
   );

@@ -56,7 +56,7 @@ import {
   Typography,
   message,
 } from 'antd';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Navigate } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
@@ -571,6 +571,7 @@ function StoreLeaderboardWidget({
       rowKey="storeId"
       pagination={{ pageSize: 5, hideOnSinglePage: true }}
       locale={{ emptyText: 'Chưa có dữ liệu cửa hàng' }}
+      scroll={{ x: 600 }}
     />
   );
 }
@@ -639,6 +640,7 @@ function TopProductsWidget({ products }: { products: PlatformAnalytics['topProdu
       pagination={{ pageSize: 5, hideOnSinglePage: true }}
       locale={{ emptyText: 'Chưa có mặt hàng nào được bán' }}
       size="middle"
+      scroll={{ x: 480 }}
     />
   );
 }
@@ -653,6 +655,16 @@ export function SuperAdminPage() {
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 768 : false,
+  );
+
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
 
   // Navigation & Filter state
   const [activeTab, setActiveTab] = useState<'analytics' | 'stores'>('analytics');
@@ -900,7 +912,7 @@ export function SuperAdminPage() {
       <header className="platform-header">
         <div className="platform-brand">
           <img src={logo} alt="Pro POS" />
-          <div>
+          <div className="platform-brand-text">
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <Typography.Text strong style={{ fontSize: 16 }}>
                 Quản trị nền tảng
@@ -914,22 +926,27 @@ export function SuperAdminPage() {
             </Typography.Text>
           </div>
         </div>
-        <Button icon={<LogoutOutlined />} loading={submitting} onClick={logout}>
-          Đăng xuất
+        <Button
+          icon={<LogoutOutlined />}
+          loading={submitting}
+          onClick={logout}
+          className="platform-logout-btn"
+        >
+          <span className="platform-logout-text">Đăng xuất</span>
         </Button>
       </header>
 
       <main className="platform-content">
         <div className="platform-title-row">
-          <div>
-            <Typography.Title level={2} style={{ margin: 0, fontWeight: 800 }}>
+          <div className="platform-title-text">
+            <Typography.Title level={2} className="platform-main-title">
               Quản trị Nền tảng Pro POS
             </Typography.Title>
-            <Typography.Text type="secondary" style={{ fontSize: 14 }}>
+            <Typography.Text type="secondary" className="platform-main-subtitle">
               Theo dõi hiệu suất kinh doanh toàn hệ thống, quản lý cơ sở và cấp quyền tài khoản.
             </Typography.Text>
           </div>
-          <Space>
+          <div className="platform-actions-row">
             <Button
               icon={<ReloadOutlined />}
               onClick={() => {
@@ -937,6 +954,7 @@ export function SuperAdminPage() {
                 void queryClient.invalidateQueries({ queryKey: ['platform-stores'] });
                 message.info('Đang làm mới dữ liệu...');
               }}
+              className="platform-refresh-btn"
             >
               Làm mới
             </Button>
@@ -944,7 +962,7 @@ export function SuperAdminPage() {
               type="primary"
               size="large"
               icon={<PlusOutlined />}
-              style={{ borderRadius: 10, fontWeight: 600, height: 40 }}
+              className="platform-create-btn"
               onClick={() => {
                 setError(null);
                 setCreateOpen(true);
@@ -952,7 +970,7 @@ export function SuperAdminPage() {
             >
               Tạo cửa hàng mới
             </Button>
-          </Space>
+          </div>
         </div>
 
         {error ? (
@@ -968,57 +986,41 @@ export function SuperAdminPage() {
         ) : null}
 
         {/* Tab Navigation */}
-        <div style={{ marginTop: 24, marginBottom: 16 }}>
+        <div className="platform-tabs-wrapper">
           <Segmented
+            block
             size="large"
             value={activeTab}
             onChange={(val) => setActiveTab(val as 'analytics' | 'stores')}
             options={[
               {
                 label: (
-                  <span
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      padding: '4px 12px',
-                      fontWeight: 700,
-                    }}
-                  >
+                  <span className="platform-tab-label">
                     <LineChartOutlined
                       style={{ color: activeTab === 'analytics' ? '#2563eb' : '#64748b' }}
                     />
-                    Báo cáo & Hiệu suất Toàn Hệ Thống
+                    <span className="platform-tab-text-full">
+                      Báo cáo & Hiệu suất Toàn Hệ Thống
+                    </span>
+                    <span className="platform-tab-text-short">Báo cáo & Hiệu suất</span>
                   </span>
                 ),
                 value: 'analytics',
               },
               {
                 label: (
-                  <span
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      padding: '4px 12px',
-                      fontWeight: 700,
-                    }}
-                  >
+                  <span className="platform-tab-label">
                     <ShopOutlined
                       style={{ color: activeTab === 'stores' ? '#10b981' : '#64748b' }}
                     />
-                    Quản lý Cửa hàng ({stats.total})
+                    <span className="platform-tab-text-full">Quản lý Cửa hàng ({stats.total})</span>
+                    <span className="platform-tab-text-short">Cửa hàng ({stats.total})</span>
                   </span>
                 ),
                 value: 'stores',
               },
             ]}
-            style={{
-              background: '#f8fafc',
-              border: '1px solid #e2e8f0',
-              padding: 4,
-              borderRadius: 12,
-            }}
+            className="platform-segmented-tabs"
           />
         </div>
 
@@ -1145,7 +1147,7 @@ export function SuperAdminPage() {
                     <RiseOutlined style={{ color: '#2563eb', fontSize: 18 }} />
                     <span>Biểu đồ Xu hướng Doanh thu & Giao dịch</span>
                   </div>
-                  <Space wrap>
+                  <div className="platform-chart-controls">
                     <Segmented
                       value={trendMetric}
                       onChange={(val) => setTrendMetric(val as 'revenue' | 'invoices')}
@@ -1165,7 +1167,7 @@ export function SuperAdminPage() {
                       ]}
                       size="small"
                     />
-                  </Space>
+                  </div>
                 </div>
 
                 <RevenueTrendChart data={analytics.data.revenueTrend} metric={trendMetric} />
@@ -1247,14 +1249,14 @@ export function SuperAdminPage() {
                   prefix={<SearchOutlined style={{ color: '#94a3b8' }} />}
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  style={{ width: 280, borderRadius: 8 }}
+                  className="platform-search-input"
                   allowClear
                 />
                 <Radio.Group
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
                   buttonStyle="solid"
-                  style={{ borderRadius: 8 }}
+                  className="platform-status-filter"
                 >
                   <Radio.Button value="ALL">Tất cả ({stats.total})</Radio.Button>
                   <Radio.Button value="ACTIVE">Hoạt động ({stats.active})</Radio.Button>
@@ -1264,6 +1266,7 @@ export function SuperAdminPage() {
               <Button
                 icon={<ReloadOutlined />}
                 onClick={() => queryClient.invalidateQueries({ queryKey: ['platform-stores'] })}
+                className="platform-store-refresh-btn"
               >
                 Làm mới
               </Button>
@@ -1274,6 +1277,7 @@ export function SuperAdminPage() {
               loading={stores.isLoading}
               dataSource={filteredStores}
               pagination={{ pageSize: 10, showSizeChanger: false }}
+              scroll={{ x: 720 }}
               columns={[
                 {
                   title: 'Tên cửa hàng',
@@ -1382,7 +1386,7 @@ export function SuperAdminPage() {
       {/* Drawer Xem & Quản lý Chi Tiết Cửa Hàng */}
       <Drawer
         title={
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <div
               style={{
                 width: 36,
@@ -1394,33 +1398,37 @@ export function SuperAdminPage() {
                 justifyContent: 'center',
                 color: '#2563eb',
                 fontSize: 18,
+                flexShrink: 0,
               }}
             >
               <ShopOutlined />
             </div>
-            <div>
-              <Typography.Text strong style={{ fontSize: 17 }}>
-                {detail?.store.name || 'Chi tiết cửa hàng'}
-              </Typography.Text>
-              {detail ? (
-                <Tag
-                  color={detail.store.status === 'ACTIVE' ? 'success' : 'error'}
-                  style={{ marginLeft: 8, borderRadius: 6 }}
-                >
-                  {detail.store.status === 'ACTIVE' ? 'Đang hoạt động' : 'Đã khóa'}
-                </Tag>
-              ) : null}
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <Typography.Text strong style={{ fontSize: 16 }}>
+                  {detail?.store.name || 'Chi tiết cửa hàng'}
+                </Typography.Text>
+                {detail ? (
+                  <Tag
+                    color={detail.store.status === 'ACTIVE' ? 'success' : 'error'}
+                    style={{ borderRadius: 6, margin: 0 }}
+                  >
+                    {detail.store.status === 'ACTIVE' ? 'Đang hoạt động' : 'Đã khóa'}
+                  </Tag>
+                ) : null}
+              </div>
             </div>
           </div>
         }
         placement="right"
-        width={820}
+        width={isMobile ? '100%' : 820}
         onClose={() => setSelectedStoreId(null)}
         open={Boolean(selectedStoreId)}
         extra={
           detail ? (
-            <Space>
+            <Space wrap size="small">
               <Button
+                size="small"
                 icon={<ReloadOutlined />}
                 onClick={() =>
                   queryClient.invalidateQueries({
@@ -1431,12 +1439,13 @@ export function SuperAdminPage() {
                 Tải lại
               </Button>
               <Button
+                size="small"
                 danger={detail.store.status === 'ACTIVE'}
                 icon={detail.store.status === 'ACTIVE' ? <LockOutlined /> : <UnlockOutlined />}
                 loading={submitting}
                 onClick={() => changeStatus(detail.store)}
               >
-                {detail.store.status === 'ACTIVE' ? 'Khóa cửa hàng' : 'Mở lại'}
+                {detail.store.status === 'ACTIVE' ? 'Khóa' : 'Mở lại'}
               </Button>
             </Space>
           ) : null
@@ -1594,6 +1603,7 @@ export function SuperAdminPage() {
                       size="middle"
                       dataSource={detail.members}
                       pagination={false}
+                      scroll={{ x: 520 }}
                       columns={[
                         {
                           title: 'Tài khoản',
@@ -1712,6 +1722,7 @@ export function SuperAdminPage() {
                       size="small"
                       dataSource={detail.devices}
                       pagination={false}
+                      scroll={{ x: 500 }}
                       columns={[
                         {
                           title: 'Tên máy POS',
@@ -1771,6 +1782,7 @@ export function SuperAdminPage() {
                       size="small"
                       dataSource={detail.sessions}
                       pagination={false}
+                      scroll={{ x: 500 }}
                       columns={[
                         {
                           title: 'Người dùng',
@@ -1903,6 +1915,7 @@ export function SuperAdminPage() {
         open={Boolean(editingMember)}
         okText="Lưu thay đổi"
         cancelText="Hủy"
+        width={isMobile ? 'calc(100vw - 24px)' : 520}
         confirmLoading={submitting}
         onOk={() => editMemberForm.submit()}
         onCancel={() => setEditingMember(null)}
@@ -1955,6 +1968,7 @@ export function SuperAdminPage() {
         open={Boolean(resetPasswordMember)}
         okText="Cập nhật mật khẩu"
         cancelText="Hủy"
+        width={isMobile ? 'calc(100vw - 24px)' : 520}
         confirmLoading={submitting}
         onOk={() => resetPasswordForm.submit()}
         onCancel={() => setResetPasswordMember(null)}
@@ -2007,6 +2021,7 @@ export function SuperAdminPage() {
         open={createOpen}
         okText="Tạo cửa hàng"
         cancelText="Hủy"
+        width={isMobile ? 'calc(100vw - 24px)' : 520}
         confirmLoading={submitting}
         onOk={() => form.submit()}
         onCancel={() => !submitting && setCreateOpen(false)}

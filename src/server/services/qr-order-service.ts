@@ -53,6 +53,31 @@ function mapDatabaseError(error: unknown): never {
   throw error;
 }
 
+type SubmitOrderResult =
+  | {
+      requestId: string;
+      replayed: true;
+      storeId: string;
+      tableName: string;
+    }
+  | {
+      requestId: string;
+      replayed: false;
+      storeId: string;
+      tableName: string;
+      areaName: string;
+      orderId: string;
+      createdAt: number;
+      note: string | null;
+      items: Array<{
+        productName: string;
+        variantName: string | null;
+        quantity: number;
+        lineTotalVnd: number;
+        note: string | null;
+      }>;
+    };
+
 export class QrOrderService {
   private readonly repository: QrOrderRepository;
   private readonly pepper: string;
@@ -82,6 +107,11 @@ export class QrOrderService {
       storeName: session.storeName,
       tableName: session.tableName,
       areaName: session.areaName,
+      table: {
+        id: session.tableId,
+        name: session.tableName,
+        areaName: session.areaName,
+      },
       sessionExpiresAt: session.expiresAt,
       menu: await this.repository.listMenu(session.storeId),
     };
@@ -144,7 +174,11 @@ export class QrOrderService {
     return new MediaService(this.env).get(session.storeId, mediaId);
   }
 
-  async submitOrder(rawGuest: string, input: SubmitGuestOrderInput, ip: string | null) {
+  async submitOrder(
+    rawGuest: string,
+    input: SubmitGuestOrderInput,
+    ip: string | null,
+  ): Promise<SubmitOrderResult> {
     const session = await this.contextFromSession(rawGuest);
     const replay = await this.repository.findRequestByClient(
       session.guestSessionId,
@@ -186,6 +220,7 @@ export class QrOrderService {
     );
 
     const requestId = crypto.randomUUID();
+    const createdAt = Date.now();
     try {
       await this.repository.createGuestOrder({
         commandId: crypto.randomUUID(),
@@ -194,7 +229,7 @@ export class QrOrderService {
         session,
         note: input.note?.trim() || null,
         ipHash: ip ? await hashOpaqueToken(`guest-ip:${ip}`, this.pepper) : null,
-        now: Date.now(),
+        now: createdAt,
         items,
       });
     } catch (error) {
@@ -212,7 +247,23 @@ export class QrOrderService {
       }
       mapDatabaseError(error);
     }
-    return { requestId, replayed: false, storeId: session.storeId, tableName: session.tableName };
+    return {
+      requestId,
+      replayed: false,
+      storeId: session.storeId,
+      tableName: session.tableName,
+      areaName: session.areaName,
+      orderId: session.orderId,
+      createdAt,
+      note: input.note?.trim() || null,
+      items: items.map((item) => ({
+        productName: item.productName,
+        variantName: item.variantName,
+        quantity: item.quantityMilli / 1000,
+        lineTotalVnd: item.lineTotalVnd,
+        note: item.note,
+      })),
+    };
   }
 
   async listGuestRequests(rawGuest: string) {
@@ -233,8 +284,9 @@ export class QrOrderService {
       });
     }
     const id = crypto.randomUUID();
+    const now = Date.now();
     try {
-      await this.repository.createServiceRequest({ id, session, type, now: Date.now() });
+      await this.repository.createServiceRequest({ id, session, type, now });
     } catch (error) {
       mapDatabaseError(error);
     }
@@ -243,6 +295,9 @@ export class QrOrderService {
       status: 'OPEN' as const,
       storeId: session.storeId,
       tableName: session.tableName,
+      areaName: session.areaName,
+      orderId: session.orderId,
+      createdAt: now,
     };
   }
 

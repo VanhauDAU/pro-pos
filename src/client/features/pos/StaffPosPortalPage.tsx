@@ -33,6 +33,7 @@ import {
   ShoppingCartOutlined,
   StopOutlined,
   SwapOutlined,
+  SyncOutlined,
   UnorderedListOutlined,
   UpOutlined,
   UserOutlined,
@@ -54,7 +55,6 @@ import {
   Segmented,
   Select,
   Skeleton,
-  Space,
   Spin,
   Switch,
   Tag,
@@ -63,7 +63,6 @@ import {
   message,
 } from 'antd';
 import type { MenuProps } from 'antd';
-import * as React from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router';
 
@@ -379,6 +378,39 @@ function formatElapsed(totalSeconds: number) {
   const minutes = Math.floor((seconds % 3600) / 60);
   const remainder = seconds % 60;
   return [hours, minutes, remainder].map((value) => String(value).padStart(2, '0')).join(':');
+}
+
+function formatRequestAge(createdAt: number, now: number) {
+  return formatElapsed(Math.max(0, Math.floor((now - createdAt) / 1000)));
+}
+
+function requestUrgency(createdAt: number, now: number) {
+  const seconds = Math.max(0, Math.floor((now - createdAt) / 1000));
+  if (seconds >= 300)
+    return { className: 'is-critical', color: 'error' as const, label: 'Quá 5 phút' };
+  if (seconds >= 120)
+    return { className: 'is-warning', color: 'warning' as const, label: 'Cần xử lý' };
+  return { className: 'is-fresh', color: 'processing' as const, label: 'Mới nhận' };
+}
+
+function formatPreciseTime(timestamp: number) {
+  return new Intl.DateTimeFormat('vi-VN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(timestamp);
+}
+
+function useServerNow(serverTimeOffsetMs: number) {
+  const [now, setNow] = useState(() => Date.now() + serverTimeOffsetMs);
+  useEffect(() => {
+    const update = () => setNow(Date.now() + serverTimeOffsetMs);
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [serverTimeOffsetMs]);
+  return now;
 }
 
 function formatDurationVietnamese(seconds: number | null | undefined) {
@@ -836,11 +868,18 @@ function AreasPage() {
 }
 
 function QrOrderPage() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [messageApi, holder] = message.useMessage();
   const [modal, modalHolder] = Modal.useModal();
-  const previousPendingCount = React.useRef<number | null>(null);
-  const previousCheckoutRequestCount = React.useRef<number | null>(null);
+  const realtime = useRealtime();
+  const pollingInterval = usePosPollingInterval(15_000);
+  const now = useServerNow(realtime.serverTimeOffsetMs);
+  const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [updatingServiceId, setUpdatingServiceId] = useState<string | null>(null);
+  const previousPendingCount = useRef<number | null>(null);
+  const previousCallStaffRequestCount = useRef<number | null>(null);
+  const previousCheckoutRequestCount = useRef<number | null>(null);
   const auth = useQuery({
     queryKey: ['auth-context'],
     queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
@@ -848,36 +887,70 @@ function QrOrderPage() {
   const requests = useQuery({
     queryKey: ['guest-order-requests'],
     queryFn: () => apiRequest<GuestOrderRequestDto[]>('/api/v1/pos/qr-orders?status=PENDING'),
-    refetchInterval: 15_000,
+    refetchInterval: pollingInterval,
   });
   const serviceRequests = useQuery({
     queryKey: ['service-requests'],
     queryFn: () => apiRequest<ServiceRequestDto[]>('/api/v1/pos/qr-orders/service-requests/list'),
-    refetchInterval: 15_000,
+    refetchInterval: pollingInterval,
   });
+
+  const pendingRequests = useMemo(
+    () => (requests.data ?? []).toSorted((a, b) => a.createdAt - b.createdAt),
+    [requests.data],
+  );
+  const activeServiceRequests = useMemo(
+    () =>
+      (serviceRequests.data ?? []).toSorted((a, b) => {
+        if (a.status !== b.status) return a.status === 'OPEN' ? -1 : 1;
+        return a.createdAt - b.createdAt;
+      }),
+    [serviceRequests.data],
+  );
+  const openServiceCount = activeServiceRequests.filter((item) => item.status === 'OPEN').length;
+  const totalPendingValue = pendingRequests.reduce(
+    (sum, request) => sum + request.items.reduce((itemSum, item) => itemSum + item.lineTotalVnd, 0),
+    0,
+  );
 
   useEffect(() => {
     const count = requests.data?.length;
     if (count === undefined) return;
-    if (previousPendingCount.current !== null && count > previousPendingCount.current) {
+    if (
+      realtime.status !== 'CONNECTED' &&
+      previousPendingCount.current !== null &&
+      count > previousPendingCount.current
+    ) {
       playPosSound('NEW_QR_ORDER');
     }
     previousPendingCount.current = count;
-  }, [requests.data?.length]);
+  }, [realtime.status, requests.data?.length]);
 
   useEffect(() => {
+    const callStaffCount = serviceRequests.data?.filter(
+      (sr) => sr.type === 'CALL_STAFF' && sr.status === 'OPEN',
+    ).length;
     const checkoutCount = serviceRequests.data?.filter(
       (sr) => sr.type === 'CHECKOUT_REQUEST' && sr.status === 'OPEN',
     ).length;
-    if (checkoutCount === undefined) return;
+    if (callStaffCount === undefined || checkoutCount === undefined) return;
     if (
+      realtime.status !== 'CONNECTED' &&
+      previousCallStaffRequestCount.current !== null &&
+      callStaffCount > previousCallStaffRequestCount.current
+    ) {
+      playPosSound('NEW_QR_ORDER');
+    }
+    if (
+      realtime.status !== 'CONNECTED' &&
       previousCheckoutRequestCount.current !== null &&
       checkoutCount > previousCheckoutRequestCount.current
     ) {
       playPosSound('CHECKOUT_REQUEST');
     }
+    previousCallStaffRequestCount.current = callStaffCount;
     previousCheckoutRequestCount.current = checkoutCount;
-  }, [serviceRequests.data]);
+  }, [realtime.status, serviceRequests.data]);
   const refresh = () =>
     Promise.all([
       queryClient.invalidateQueries({ queryKey: ['guest-order-requests'] }),
@@ -896,7 +969,10 @@ function QrOrderPage() {
       messageApi.success('Đã xác nhận món vào hóa đơn.');
       await refresh();
     },
-    onError: (error) => messageApi.error(errorText(error)),
+    onError: async (error) => {
+      messageApi.error(errorText(error));
+      await refresh();
+    },
   });
   const rejectRequest = (request: GuestOrderRequestDto) => {
     let reason = '';
@@ -917,17 +993,23 @@ function QrOrderPage() {
       cancelText: 'Quay lại',
       onOk: async () => {
         if (!reason.trim()) throw new Error('Vui lòng nhập lý do.');
-        await jsonRequest(
-          `/api/v1/pos/qr-orders/${request.id}/reject`,
-          { reason: reason.trim() },
-          { headers: mutationHeaders(auth.data?.csrfToken ?? '') },
-        );
-        messageApi.success('Đã từ chối yêu cầu.');
-        await refresh();
+        setRejectingId(request.id);
+        try {
+          await jsonRequest(
+            `/api/v1/pos/qr-orders/${request.id}/reject`,
+            { reason: reason.trim() },
+            { headers: mutationHeaders(auth.data?.csrfToken ?? '') },
+          );
+          messageApi.success('Đã từ chối yêu cầu.');
+          await refresh();
+        } finally {
+          setRejectingId(null);
+        }
       },
     });
   };
   const updateService = async (request: ServiceRequestDto, action: 'ACKNOWLEDGE' | 'COMPLETE') => {
+    setUpdatingServiceId(request.id);
     try {
       await jsonRequest(
         `/api/v1/pos/qr-orders/service-requests/${request.id}/status`,
@@ -937,106 +1019,284 @@ function QrOrderPage() {
       await refresh();
     } catch (error) {
       messageApi.error(errorText(error));
+    } finally {
+      setUpdatingServiceId(null);
     }
   };
 
+  const realtimeLabel =
+    realtime.status === 'CONNECTED'
+      ? 'Realtime đang hoạt động'
+      : realtime.status === 'CONNECTING'
+        ? 'Đang kết nối realtime'
+        : realtime.status === 'RECONNECTING'
+          ? 'Đang kết nối lại'
+          : 'Realtime đang tắt';
+  const realtimeColor = realtime.status === 'CONNECTED' ? 'success' : 'warning';
+  const isRefreshing = requests.isFetching || serviceRequests.isFetching;
+
   return (
-    <div style={{ padding: 16, maxWidth: 1100, margin: '0 auto' }}>
+    <main className="staff-qr-order-page">
       {holder}
       {modalHolder}
-      <div style={{ marginBottom: 18 }}>
-        <Typography.Title level={2} style={{ marginBottom: 2 }}>
-          QR Order
-        </Typography.Title>
-        <Typography.Text type="secondary">
-          Yêu cầu gọi món và hỗ trợ từ khách tại bàn
-        </Typography.Text>
-      </div>
 
-      {(serviceRequests.data ?? []).length > 0 ? (
-        <Card title="Yêu cầu hỗ trợ" style={{ marginBottom: 16 }}>
-          <Space orientation="vertical" style={{ width: '100%' }}>
-            {(serviceRequests.data ?? []).map((request) => (
-              <Card key={request.id} size="small">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <BellOutlined style={{ color: '#fa8c16', fontSize: 20 }} />
-                  <div style={{ flex: 1 }}>
-                    <strong>
-                      {request.tableName} · {request.areaName}
-                    </strong>
-                    <div>
-                      {request.type === 'CALL_STAFF' ? 'Gọi nhân viên' : 'Yêu cầu thanh toán'}
-                    </div>
-                  </div>
-                  {request.status === 'OPEN' ? (
-                    <Button
-                      type="primary"
-                      onClick={() => void updateService(request, 'ACKNOWLEDGE')}
-                    >
-                      Đã nhận
-                    </Button>
-                  ) : (
-                    <Button onClick={() => void updateService(request, 'COMPLETE')}>
-                      Hoàn tất
-                    </Button>
-                  )}
-                </div>
-              </Card>
-            ))}
-          </Space>
-        </Card>
+      <section className="staff-qr-order-hero">
+        <div>
+          <div className="staff-qr-order-hero__eyebrow">
+            <QrcodeOutlined /> Trung tâm yêu cầu tại bàn
+          </div>
+          <Typography.Title level={2}>QR Order</Typography.Title>
+          <Typography.Text>
+            Theo dõi gọi món, gọi nhân viên và thanh toán theo thời gian thực.
+          </Typography.Text>
+        </div>
+        <div className="staff-qr-order-hero__actions">
+          <Tag color={realtimeColor} className="staff-qr-realtime-tag">
+            <span className={`staff-qr-realtime-dot is-${realtime.status.toLowerCase()}`} />
+            {realtimeLabel}
+          </Tag>
+          <Button
+            icon={<SyncOutlined spin={isRefreshing} />}
+            disabled={isRefreshing}
+            onClick={() => void refresh()}
+          >
+            Làm mới
+          </Button>
+        </div>
+      </section>
+
+      <section className="staff-qr-order-summary" aria-label="Tổng quan QR Order">
+        <article>
+          <span>Đơn chờ xác nhận</span>
+          <strong>{pendingRequests.length}</strong>
+          <small>{formatMoney(totalPendingValue)}</small>
+        </article>
+        <article>
+          <span>Hỗ trợ chưa nhận</span>
+          <strong>{openServiceCount}</strong>
+          <small>{activeServiceRequests.length} yêu cầu đang mở</small>
+        </article>
+        <article>
+          <span>Đồng bộ dữ liệu</span>
+          <strong>{realtime.status === 'CONNECTED' ? 'Tức thì' : '15 giây'}</strong>
+          <small>Giờ máy chủ {formatPreciseTime(now)}</small>
+        </article>
+      </section>
+
+      {requests.isError || serviceRequests.isError ? (
+        <Alert
+          type="error"
+          showIcon
+          title="Không thể tải đầy đủ yêu cầu"
+          description="Hệ thống vẫn sẽ tự thử lại. Bạn có thể bấm Làm mới để kiểm tra ngay."
+          className="staff-qr-order-error"
+        />
       ) : null}
 
-      <Card title={`Đơn chờ xác nhận (${requests.data?.length ?? 0})`} loading={requests.isLoading}>
-        {(requests.data ?? []).length === 0 ? (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Chưa có yêu cầu gọi món mới" />
+      <section className="staff-qr-order-section">
+        <div className="staff-qr-order-section__heading">
+          <div>
+            <Typography.Title level={3}>Yêu cầu hỗ trợ</Typography.Title>
+            <Typography.Text type="secondary">
+              Ưu tiên yêu cầu chưa có nhân viên tiếp nhận.
+            </Typography.Text>
+          </div>
+          <Tag>{activeServiceRequests.length} đang mở</Tag>
+        </div>
+
+        {serviceRequests.isLoading ? (
+          <Skeleton active paragraph={{ rows: 2 }} />
+        ) : activeServiceRequests.length === 0 ? (
+          <div className="staff-qr-order-empty staff-qr-order-empty--compact">
+            <CheckCircleOutlined /> Không có yêu cầu hỗ trợ đang chờ
+          </div>
         ) : (
-          <Space orientation="vertical" style={{ width: '100%' }} size={12}>
-            {(requests.data ?? []).map((request) => (
-              <Card
-                key={request.id}
-                size="small"
-                title={
-                  <span>
-                    {request.tableName} · {request.areaName}
-                  </span>
-                }
-                extra={<Tag color="processing">Chờ xác nhận</Tag>}
-              >
-                {request.items.map((item) => (
-                  <div
-                    key={item.id}
-                    style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0' }}
-                  >
-                    <span>
-                      <strong>{item.quantity} ×</strong> {item.productName}
-                      {item.variantName ? ` (${item.variantName})` : ''}
-                    </span>
-                    <strong>{formatMoney(item.lineTotalVnd)}</strong>
+          <div className="staff-qr-service-grid">
+            {activeServiceRequests.map((request) => {
+              const urgency = requestUrgency(request.createdAt, now);
+              const isUpdating = updatingServiceId === request.id;
+              return (
+                <article key={request.id} className={`staff-qr-service-card ${urgency.className}`}>
+                  <div className="staff-qr-service-card__icon">
+                    {request.type === 'CALL_STAFF' ? <BellOutlined /> : <CreditCardOutlined />}
                   </div>
-                ))}
-                {request.note ? (
-                  <Alert type="info" title={`Ghi chú: ${request.note}`} style={{ marginTop: 8 }} />
-                ) : null}
-                <Space style={{ marginTop: 12 }}>
-                  <Button danger onClick={() => rejectRequest(request)}>
-                    Từ chối
-                  </Button>
-                  <Button
-                    type="primary"
-                    icon={<CheckCircleOutlined />}
-                    loading={accept.isPending}
-                    onClick={() => accept.mutate(request)}
-                  >
-                    Xác nhận vào hóa đơn
-                  </Button>
-                </Space>
-              </Card>
-            ))}
-          </Space>
+                  <div className="staff-qr-service-card__body">
+                    <div className="staff-qr-service-card__title">
+                      <strong>
+                        {request.type === 'CALL_STAFF' ? 'Gọi nhân viên' : 'Yêu cầu thanh toán'}
+                      </strong>
+                      <Tag color={request.status === 'OPEN' ? urgency.color : 'success'}>
+                        {request.status === 'OPEN' ? urgency.label : 'Đã tiếp nhận'}
+                      </Tag>
+                    </div>
+                    <b>
+                      {request.tableName} · {request.areaName}
+                    </b>
+                    <div className="staff-qr-request-timing">
+                      <ClockCircleOutlined /> Gửi lúc {formatPreciseTime(request.createdAt)} · chờ{' '}
+                      <strong>{formatRequestAge(request.createdAt, now)}</strong>
+                    </div>
+                    {request.acknowledgedAt ? (
+                      <small>Tiếp nhận lúc {formatPreciseTime(request.acknowledgedAt)}</small>
+                    ) : null}
+                  </div>
+                  <div className="staff-qr-service-card__actions">
+                    <Button size="small" onClick={() => navigate(`/pos/orders/${request.orderId}`)}>
+                      Mở đơn
+                    </Button>
+                    {request.status === 'OPEN' ? (
+                      <Button
+                        type="primary"
+                        loading={isUpdating}
+                        disabled={updatingServiceId !== null && !isUpdating}
+                        onClick={() => void updateService(request, 'ACKNOWLEDGE')}
+                      >
+                        Tiếp nhận
+                      </Button>
+                    ) : (
+                      <Button
+                        type="primary"
+                        loading={isUpdating}
+                        disabled={updatingServiceId !== null && !isUpdating}
+                        onClick={() => void updateService(request, 'COMPLETE')}
+                      >
+                        Hoàn tất
+                      </Button>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
         )}
-      </Card>
-    </div>
+      </section>
+
+      <section className="staff-qr-order-section staff-qr-order-section--orders">
+        <div className="staff-qr-order-section__heading">
+          <div>
+            <Typography.Title level={3}>Đơn chờ xác nhận</Typography.Title>
+            <Typography.Text type="secondary">
+              Xếp theo thời gian chờ lâu nhất để không bỏ sót yêu cầu.
+            </Typography.Text>
+          </div>
+          <Tag color={pendingRequests.length > 0 ? 'processing' : 'default'}>
+            {pendingRequests.length} yêu cầu
+          </Tag>
+        </div>
+
+        {requests.isLoading ? (
+          <Skeleton active paragraph={{ rows: 6 }} />
+        ) : pendingRequests.length === 0 ? (
+          <Empty
+            className="staff-qr-order-empty"
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description="Chưa có yêu cầu gọi món mới"
+          />
+        ) : (
+          <div className="staff-qr-request-list">
+            {pendingRequests.map((request) => {
+              const urgency = requestUrgency(request.createdAt, now);
+              const itemQuantity = request.items.reduce((sum, item) => sum + item.quantity, 0);
+              const requestTotal = request.items.reduce((sum, item) => sum + item.lineTotalVnd, 0);
+              const isAccepting = accept.isPending && accept.variables?.id === request.id;
+              const isRejecting = rejectingId === request.id;
+              const anotherActionPending =
+                (accept.isPending && !isAccepting) || (rejectingId !== null && !isRejecting);
+
+              return (
+                <article key={request.id} className={`staff-qr-request-card ${urgency.className}`}>
+                  <header className="staff-qr-request-card__header">
+                    <div className="staff-qr-request-card__table">
+                      <span className="staff-qr-request-card__table-icon">
+                        <ShopOutlined />
+                      </span>
+                      <div>
+                        <Typography.Title level={4}>{request.tableName}</Typography.Title>
+                        <span>{request.areaName}</span>
+                      </div>
+                    </div>
+                    <div className="staff-qr-request-card__status">
+                      <Tag color={urgency.color}>{urgency.label}</Tag>
+                      <div className="staff-qr-request-card__age">
+                        <ClockCircleOutlined />
+                        <strong>{formatRequestAge(request.createdAt, now)}</strong>
+                      </div>
+                      <small>Gửi lúc {formatPreciseTime(request.createdAt)}</small>
+                    </div>
+                  </header>
+
+                  <div className="staff-qr-request-card__meta">
+                    <span>{request.items.length} dòng món</span>
+                    <span>{formatDecimal(itemQuantity)} sản phẩm</span>
+                    <span>Mã #{request.id.slice(0, 8).toUpperCase()}</span>
+                  </div>
+
+                  <div className="staff-qr-request-items">
+                    {request.items.map((item) => (
+                      <div key={item.id} className="staff-qr-request-item">
+                        <strong className="staff-qr-request-item__quantity">
+                          {item.quantity}×
+                        </strong>
+                        <div className="staff-qr-request-item__name">
+                          <b>{item.productName}</b>
+                          {item.variantName && item.variantName !== 'Mặc định' ? (
+                            <span>{item.variantName}</span>
+                          ) : null}
+                          {item.note ? <small>Ghi chú món: {item.note}</small> : null}
+                        </div>
+                        <div className="staff-qr-request-item__price">
+                          <span>{formatMoney(item.unitPriceVnd)} / đơn vị</span>
+                          <strong>{formatMoney(item.lineTotalVnd)}</strong>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {request.note ? (
+                    <div className="staff-qr-request-note">
+                      <MessageOutlined />
+                      <div>
+                        <span>Ghi chú toàn đơn</span>
+                        <strong>{request.note}</strong>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <footer className="staff-qr-request-card__footer">
+                    <div className="staff-qr-request-total">
+                      <span>Tổng yêu cầu</span>
+                      <strong>{formatMoney(requestTotal)}</strong>
+                    </div>
+                    <div className="staff-qr-request-actions">
+                      <Button onClick={() => navigate(`/pos/orders/${request.orderId}`)}>
+                        Xem đơn hiện tại
+                      </Button>
+                      <Button
+                        danger
+                        loading={isRejecting}
+                        disabled={anotherActionPending || isAccepting}
+                        onClick={() => rejectRequest(request)}
+                      >
+                        Từ chối
+                      </Button>
+                      <Button
+                        type="primary"
+                        icon={<CheckCircleOutlined />}
+                        loading={isAccepting}
+                        disabled={anotherActionPending || isRejecting}
+                        onClick={() => accept.mutate(request)}
+                      >
+                        Xác nhận vào hóa đơn
+                      </Button>
+                    </div>
+                  </footer>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    </main>
   );
 }
 
@@ -1154,7 +1414,7 @@ function MorePage({ auth }: { auth: AuthContextResponse }) {
 
           {/* Push Notification Setup */}
           <div style={{ padding: '14px 18px' }}>
-            <PushNotificationControl csrfToken={auth.csrfToken} />
+            <PushNotificationControl csrfToken={auth.csrfToken} showGuide />
           </div>
         </Card>
       </div>
@@ -2279,7 +2539,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const [cartPreviewOpen, setCartPreviewOpen] = useState(false);
   const [editingNoteItemIndex, setEditingNoteItemIndex] = useState<number | null>(null);
   const [itemNoteDraft, setItemNoteDraft] = useState('');
-  const cartIconRef = React.useRef<HTMLButtonElement>(null);
+  const cartIconRef = useRef<HTMLButtonElement>(null);
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
   const [guestCount, setGuestCount] = useState<number>(1);
   const [guestModalOpen, setGuestModalOpen] = useState(false);

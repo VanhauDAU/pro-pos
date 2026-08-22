@@ -1796,6 +1796,48 @@ describe('online POS vertical slice', () => {
     expect(resolved.context.tableName).toBe('Bàn QR Order');
     expect(resolved.context.menu.some((item) => item.id === productId)).toBe(true);
 
+    const assistance = await qr.createServiceRequest(resolved.rawGuest, 'CALL_STAFF');
+    const [openAssistance] = await qr.listServiceRequests(storeId);
+    expect(openAssistance).toMatchObject({
+      id: assistance.id,
+      type: 'CALL_STAFF',
+      status: 'OPEN',
+      tableId: table.id,
+      tableName: 'Bàn QR Order',
+      orderId: opened.orderId,
+      acknowledgedAt: null,
+    });
+    const assistanceEvent = await env.DB.prepare(
+      `SELECT topics_json AS topicsJson, data_json AS dataJson
+       FROM realtime_events
+       WHERE store_id = ? AND json_extract(data_json, '$.serviceRequestId') = ?
+         AND json_extract(data_json, '$.reason') = 'SERVICE_REQUEST_CREATED'
+       LIMIT 1`,
+    )
+      .bind(storeId, assistance.id)
+      .first<{ topicsJson: string; dataJson: string }>();
+    expect(JSON.parse(assistanceEvent!.topicsJson)).toContain('guest.services');
+    expect(JSON.parse(assistanceEvent!.dataJson)).toMatchObject({
+      reason: 'SERVICE_REQUEST_CREATED',
+      serviceRequestId: assistance.id,
+      serviceRequestType: 'CALL_STAFF',
+    });
+    await qr.updateService({
+      storeId,
+      id: assistance.id,
+      action: 'ACKNOWLEDGE',
+      actorId: ownerUserId,
+      requestId: 'req-acknowledge-assistance',
+    });
+    const [acknowledgedAssistance] = await qr.listServiceRequests(storeId);
+    expect(acknowledgedAssistance).toMatchObject({
+      id: assistance.id,
+      status: 'ACKNOWLEDGED',
+      tableId: table.id,
+      orderId: opened.orderId,
+    });
+    expect(acknowledgedAssistance!.acknowledgedAt).toEqual(expect.any(Number));
+
     const clientRequestId = crypto.randomUUID();
     const submitted = await qr.submitOrder(
       resolved.rawGuest,
@@ -1805,6 +1847,19 @@ describe('online POS vertical slice', () => {
       },
       '127.0.0.1',
     );
+    expect(submitted).toMatchObject({
+      replayed: false,
+      tableName: 'Bàn QR Order',
+      areaName: 'Khu A',
+      orderId: opened.orderId,
+      items: [
+        {
+          productName: 'Nước suối',
+          quantity: 2,
+          lineTotalVnd: 40_000,
+        },
+      ],
+    });
     const replay = await qr.submitOrder(
       resolved.rawGuest,
       {

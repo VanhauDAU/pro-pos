@@ -487,8 +487,10 @@ export class QrOrderRepository {
     const result = await this.db
       .prepare(
         `SELECT sr.id, sr.type, sr.status,
+                sr.table_id AS tableId, sr.order_id AS orderId,
                 COALESCE(st.display_name, st.name) AS tableName,
-                a.name AS areaName, sr.created_at AS createdAt
+                a.name AS areaName, sr.created_at AS createdAt,
+                sr.acknowledged_at AS acknowledgedAt
          FROM service_requests sr
          JOIN service_tables st ON st.id = sr.table_id
          JOIN areas a ON a.id = st.area_id

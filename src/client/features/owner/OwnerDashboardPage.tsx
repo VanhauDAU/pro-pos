@@ -242,7 +242,10 @@ function SvgTimelineBarChart({ points }: { points: DashboardTimelinePoint[] }) {
           <div className="dashboard-barchart__gridline" style={{ top: '100%' }} />
 
           {/* Columns */}
-          <div className="dashboard-barchart__columns">
+          <div
+            className="dashboard-barchart__columns"
+            style={{ minWidth: points.length > 7 ? `${points.length * 28}px` : '100%' }}
+          >
             {points.map((p, idx) => {
               const heightPct = Math.min(
                 100,
@@ -343,7 +346,10 @@ function SvgPaymentTimeChart({ points }: { points: DashboardPaymentTimePoint[] }
           <div className="dashboard-barchart__gridline" style={{ top: '50%' }} />
           <div className="dashboard-barchart__gridline" style={{ top: '100%' }} />
 
-          <div className="dashboard-barchart__columns">
+          <div
+            className="dashboard-barchart__columns"
+            style={{ minWidth: points.length > 8 ? `${points.length * 24}px` : '100%' }}
+          >
             {points.map((p) => {
               const heightPct = Math.min(
                 100,
@@ -860,6 +866,7 @@ export function OwnerDashboardPage({ settings }: { settings: StoreSettings | und
                 rowKey="userId"
                 pagination={false}
                 size="small"
+                scroll={{ x: 'max-content' }}
                 className="owner-staff-table"
                 locale={{
                   emptyText: <Empty description="Chưa có dữ liệu nhân viên trong kỳ" />,

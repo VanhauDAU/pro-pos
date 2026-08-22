@@ -236,7 +236,7 @@ export class CatalogRepository {
           tp.name AS timeProductName
         FROM areas a
         LEFT JOIN service_tables st
-          ON st.area_id = a.id AND st.store_id = a.store_id AND st.status != 'DISABLED'
+          ON st.area_id = a.id AND st.store_id = a.store_id
         LEFT JOIN products tp
           ON tp.id = st.time_product_id AND tp.store_id = st.store_id
         WHERE a.store_id = ? AND a.status = 'ACTIVE'
@@ -338,6 +338,29 @@ export class CatalogRepository {
       .run();
   }
 
+  updateServiceTableStatus(
+    storeId: string,
+    tableId: string,
+    status: 'AVAILABLE' | 'DISABLED',
+    now: number,
+  ) {
+    return this.db
+      .prepare(
+        `UPDATE service_tables
+         SET status = ?, version = version + 1, updated_at = ?
+         WHERE id = ? AND store_id = ? AND status != 'OCCUPIED'`,
+      )
+      .bind(status, now, tableId, storeId)
+      .run();
+  }
+
+  deleteServiceTable(storeId: string, tableId: string) {
+    return this.db
+      .prepare('DELETE FROM service_tables WHERE id = ? AND store_id = ? AND status != \'OCCUPIED\'')
+      .bind(tableId, storeId)
+      .run();
+  }
+
   disableServiceTable(storeId: string, tableId: string, now: number) {
     return this.db
       .prepare(
@@ -353,7 +376,7 @@ export class CatalogRepository {
     return this.db
       .prepare(
         `SELECT id FROM service_tables
-         WHERE store_id = ? AND area_id = ? AND status != 'DISABLED'
+         WHERE store_id = ? AND area_id = ?
          ORDER BY sort_order, created_at, id`,
       )
       .bind(storeId, areaId)
@@ -372,7 +395,7 @@ export class CatalogRepository {
           .prepare(
             `UPDATE service_tables
              SET sort_order = ?, version = version + 1, updated_at = ?
-             WHERE id = ? AND store_id = ? AND area_id = ? AND status != 'DISABLED'`,
+             WHERE id = ? AND store_id = ? AND area_id = ?`,
           )
           .bind(sortOrder, input.now, tableId, input.storeId, input.areaId),
       ),

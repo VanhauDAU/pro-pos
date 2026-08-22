@@ -15,6 +15,14 @@
   --brand-primary-soft: #eaf4ff;
 }
 
+html,
+body,
+#root {
+  max-width: 100vw;
+  overflow-x: hidden;
+  box-sizing: border-box;
+}
+
 /* Staff POS */
 .staff-pos-shell {
   min-height: 100dvh;
@@ -937,8 +945,8 @@
 }
 
 .staff-product-grid button {
-  min-height: 240px;
-  padding: 0 0 14px;
+  min-height: auto;
+  padding: 0 0 12px;
   overflow: hidden;
   border: 1px solid #e8edf3;
   border-radius: 14px;
@@ -1021,23 +1029,24 @@
 }
 
 .staff-product-grid button strong {
-  margin: 12px 14px 0;
-  font-size: 15px;
+  margin: 8px 12px 0;
+  font-size: 14.5px;
   font-weight: 650;
   color: #0f172a;
-  line-height: 1.35;
+  line-height: 1.3;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  height: 42px;
+  max-height: 38px;
 }
 
 .staff-product-grid button small {
-  margin-inline: 14px;
-  margin-top: 3px;
-  min-height: 18px;
-  font-size: 13px;
+  margin-inline: 12px;
+  margin-top: 2px;
+  min-height: 0;
+  font-size: 12px;
+  line-height: 1.2;
   color: #64748b;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1045,9 +1054,9 @@
 }
 
 .staff-product-grid button b {
-  margin: 8px 14px 0;
+  margin: 3px 12px 0;
   color: #0975f7;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 750;
 }
 
@@ -5623,14 +5632,20 @@ body {
 
 .owner-shell {
   width: 100%;
+  max-width: 100%;
   min-height: 100vh;
   flex-direction: row !important;
   align-items: stretch;
   background: #f4f6fa;
+  box-sizing: border-box;
+  overflow-x: hidden;
 }
 
 .owner-shell > .ant-layout {
   min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: hidden;
 }
 
 .owner-sidebar {
@@ -6074,6 +6089,8 @@ body {
   gap: 20px;
   border-bottom: 1px solid #e5eaf1;
   background: #fff;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .owner-header__left,
@@ -6081,6 +6098,7 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
 }
 
 .owner-header__left .ant-btn {
@@ -6134,8 +6152,56 @@ body {
 .owner-content {
   min-height: calc(100vh - 64px);
   padding: clamp(22px, 3vw, 38px) clamp(18px, 3vw, 42px) 60px;
-  overflow: visible;
   background: #f5f7fb;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow-x: hidden;
+}
+
+@media (max-width: 768px) {
+  .owner-header {
+    height: 56px;
+    padding: 0 12px;
+    gap: 8px;
+  }
+
+  .owner-header__left,
+  .owner-header__actions {
+    gap: 6px;
+  }
+
+  .owner-header__store {
+    font-size: 14.5px;
+    max-width: 130px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .owner-header__utility {
+    padding: 4px 6px !important;
+    font-size: 0 !important;
+  }
+
+  .owner-header__utility .anticon {
+    font-size: 17px !important;
+    margin-right: 0 !important;
+  }
+
+  .owner-account-button {
+    height: 40px;
+    padding: 2px 4px;
+    gap: 6px;
+  }
+
+  .owner-account-button__copy {
+    display: none !important;
+  }
+
+  .owner-content {
+    padding: 14px 12px 48px;
+  }
 }
 
 .owner-content__alert {
@@ -9824,6 +9890,10 @@ body {
   display: flex;
   flex-direction: column;
   gap: 20px;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow-x: hidden;
 }
 
 .owner-dashboard-header {
@@ -9833,6 +9903,8 @@ body {
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 16px;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .owner-dashboard-controls {
@@ -9840,6 +9912,8 @@ body {
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .owner-dashboard-range-select {
@@ -9861,6 +9935,8 @@ body {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 14px;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .owner-stat-card {
@@ -9871,6 +9947,7 @@ body {
     transform 0.18s ease,
     box-shadow 0.18s ease;
   background: #ffffff;
+  min-width: 0;
 }
 
 .owner-stat-card:hover {
@@ -9896,12 +9973,16 @@ body {
   display: grid;
   place-items: center;
   font-size: 16px;
+  flex-shrink: 0;
 }
 
 .owner-stat-card__label {
   font-size: 13px;
   font-weight: 600;
   color: #64748b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .owner-stat-card__value {
@@ -9938,6 +10019,8 @@ body {
   border: 1px solid #e2e8f0;
   border-radius: 12px;
   box-shadow: 0 4px 16px rgba(15, 23, 42, 0.04);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .owner-uncompleted-card .ant-card-head {
@@ -9960,6 +10043,7 @@ body {
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 16px;
   padding: 4px 0;
+  min-width: 0;
 }
 
 .owner-uncompleted-item {
@@ -9970,6 +10054,7 @@ body {
   border: 1px solid #f1f5f9;
   border-radius: 10px;
   background: #f8fafc;
+  min-width: 0;
 }
 
 .owner-uncompleted-item--total {
@@ -9992,6 +10077,7 @@ body {
   flex-direction: column;
   gap: 4px;
   flex: 1;
+  min-width: 0;
 }
 
 .owner-uncompleted-item__label {
@@ -10005,6 +10091,7 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .owner-uncompleted-item__metrics strong {
@@ -10017,12 +10104,17 @@ body {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(460px, 1fr));
   gap: 18px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .owner-chart-card {
   border: 1px solid #e2e8f0;
   border-radius: 12px;
   box-shadow: 0 4px 16px rgba(15, 23, 42, 0.04);
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .owner-chart-card .ant-card-head {
@@ -10038,6 +10130,9 @@ body {
   flex-direction: column;
   gap: 12px;
   padding: 8px 0;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .dashboard-barchart-header {
@@ -10045,6 +10140,8 @@ body {
   align-items: center;
   justify-content: space-between;
   font-size: 13px;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .dashboard-barchart-total-label {
@@ -10063,6 +10160,8 @@ body {
   gap: 10px;
   height: 220px;
   position: relative;
+  width: 100%;
+  min-width: 0;
 }
 
 .dashboard-barchart__yaxis {
@@ -10074,6 +10173,7 @@ body {
   font-size: 11px;
   color: #94a3b8;
   padding-bottom: 22px;
+  flex-shrink: 0;
 }
 
 .dashboard-barchart__plot {
@@ -10083,6 +10183,10 @@ body {
   flex-direction: column;
   border-bottom: 1px solid #cbd5e1;
   padding-bottom: 22px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 
 .dashboard-barchart__gridline {
@@ -10145,12 +10249,17 @@ body {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
   gap: 18px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .owner-donut-card {
   border: 1px solid #e2e8f0;
   border-radius: 12px;
   box-shadow: 0 4px 16px rgba(15, 23, 42, 0.04);
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .owner-donut-card .ant-card-head {
@@ -10175,6 +10284,8 @@ body {
   gap: 20px;
   padding: 8px 4px;
   flex-wrap: wrap;
+  width: 100%;
+  min-width: 0;
 }
 
 .dashboard-donut-chart {
@@ -10296,12 +10407,17 @@ body {
 /* ── Doanh thu nhân viên ── */
 .owner-dashboard-bottom {
   margin-top: 4px;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .owner-staff-revenue-card {
   border: 1px solid #e2e8f0;
   border-radius: 12px;
   box-shadow: 0 4px 16px rgba(15, 23, 42, 0.04);
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .owner-staff-revenue-card .ant-card-head {
@@ -10322,6 +10438,202 @@ body {
   .owner-charts-2col,
   .owner-charts-4grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .owner-dashboard-page {
+    gap: 14px;
+  }
+
+  .owner-dashboard-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .owner-dashboard-controls {
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .owner-dashboard-range-select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .owner-dashboard-custom-picker {
+    width: 100%;
+  }
+
+  .owner-dashboard-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .owner-stat-card .ant-card-body {
+    padding: 10px 12px;
+  }
+
+  .owner-stat-card__head {
+    gap: 6px;
+    margin-bottom: 6px;
+  }
+
+  .owner-stat-card__icon {
+    width: 26px;
+    height: 26px;
+    font-size: 13px;
+    border-radius: 6px;
+  }
+
+  .owner-stat-card__label {
+    font-size: 11.5px;
+  }
+
+  .owner-stat-card__value {
+    font-size: 16px;
+  }
+
+  .owner-uncompleted-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .owner-uncompleted-card .ant-card-head {
+    padding: 0 12px;
+    min-height: 40px;
+    font-size: 13px;
+  }
+
+  .owner-uncompleted-card .ant-card-body {
+    padding: 12px;
+  }
+
+  .owner-uncompleted-item {
+    padding: 10px 12px;
+    gap: 10px;
+  }
+
+  .owner-uncompleted-item__icon {
+    width: 36px;
+    height: 36px;
+    font-size: 16px;
+  }
+
+  .owner-uncompleted-item__metrics strong {
+    font-size: 14.5px;
+  }
+
+  .owner-charts-2col,
+  .owner-charts-4grid {
+    grid-template-columns: 100%;
+    gap: 12px;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .owner-chart-card,
+  .owner-donut-card,
+  .owner-staff-revenue-card {
+    min-width: 0;
+    width: 100%;
+    overflow: hidden;
+  }
+
+  .owner-chart-card .ant-card-body,
+  .owner-donut-card .ant-card-body {
+    padding: 12px;
+  }
+
+  .owner-chart-card .ant-card-head,
+  .owner-donut-card .ant-card-head,
+  .owner-staff-revenue-card .ant-card-head {
+    padding: 0 12px;
+    min-height: 44px;
+    font-size: 13.5px;
+  }
+
+  .dashboard-barchart {
+    gap: 6px;
+    height: 200px;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .dashboard-barchart__yaxis {
+    min-width: 38px;
+    font-size: 10px;
+    padding-bottom: 20px;
+  }
+
+  .dashboard-barchart__plot {
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 20px;
+  }
+
+  .dashboard-barchart__columns {
+    gap: 2px;
+  }
+
+  .dashboard-barchart__label {
+    font-size: 9.5px;
+    bottom: -20px;
+  }
+}
+
+@media (max-width: 560px) {
+  .owner-donut-card .ant-card-head {
+    padding: 10px 12px;
+    min-height: auto;
+  }
+
+  .owner-donut-card .ant-card-head-wrapper {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .owner-donut-card .ant-card-extra {
+    padding: 0;
+    width: 100%;
+  }
+
+  .owner-donut-card .ant-tabs {
+    width: 100%;
+  }
+
+  .dashboard-donut-container {
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 4px 0;
+  }
+
+  .dashboard-donut-chart {
+    width: 150px;
+    height: 150px;
+  }
+
+  .dashboard-donut-legend {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    max-height: 180px;
+  }
+
+  .dashboard-donut-legend__row {
+    padding: 4px 6px;
+    font-size: 12px;
+  }
+
+  .dashboard-barchart-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
   }
 }
 
@@ -11027,7 +11339,7 @@ body {
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
-  min-height: 34px;
+  max-height: 34px;
 }
 
 .staff-product-mobile-card__variant {
@@ -11040,7 +11352,7 @@ body {
   font-size: 13.5px;
   font-weight: 750;
   color: #0f172a;
-  margin-top: auto;
+  margin-top: 2px;
 }
 
 /* Bottom Bar: [ 🛒 6 ] | 370,000đ | [ Tiếp tục ] */
@@ -13475,19 +13787,20 @@ body {
 }
 
 .qr-guest-card__content {
-  padding: 10px;
+  padding: 8px 10px;
   display: flex;
   flex-direction: column;
   flex: 1;
-  justify-content: space-between;
+  justify-content: flex-start;
+  gap: 3px;
 }
 
 .qr-guest-card__name {
   font-size: 14px;
   font-weight: 700;
   color: #0f172a;
-  line-height: 1.35;
-  margin-bottom: 4px;
+  line-height: 1.3;
+  margin-bottom: 2px;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -13498,9 +13811,9 @@ body {
   font-size: 11px;
   color: #0877ee;
   background: #eff6ff;
-  padding: 2px 6px;
+  padding: 1px 6px;
   border-radius: 4px;
-  margin-bottom: 6px;
+  margin-bottom: 2px;
   display: inline-block;
   font-weight: 600;
   width: fit-content;
@@ -13511,13 +13824,15 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 4px;
-  margin-top: 8px;
+  margin-top: auto;
+  padding-top: 4px;
 }
 
 .qr-guest-card__price {
   font-size: 14.5px;
   font-weight: 800;
   color: #e11d48;
+  line-height: 1.2;
 }
 
 .qr-guest-card__price-unit {

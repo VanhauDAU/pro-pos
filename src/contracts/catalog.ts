@@ -100,6 +100,10 @@ export const createAreaLayoutSchema = z.object({
 
 export const updateServiceTableSchema = areaTableNameSchema;
 
+export const updateServiceTableStatusSchema = z.object({
+  status: z.enum(['AVAILABLE', 'DISABLED']),
+});
+
 export const updateServiceTablePricingSchema = z.object({
   timeProductId: z.uuid(),
 });

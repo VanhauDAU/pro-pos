@@ -5022,11 +5022,9 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                           )}
                         </span>
                         <strong>{product.productName}</strong>
-                        <small>
-                          {product.variants.length > 1
-                            ? `${product.variants.length} phiên bản`
-                            : '\u00a0'}
-                        </small>
+                        {product.variants.length > 1 ? (
+                          <small>{product.variants.length} phiên bản</small>
+                        ) : null}
                         <b>
                           {minPrice === null
                             ? 'Nhập giá'
@@ -8395,6 +8393,8 @@ export function StaffPosPortalPage() {
                 <div className="staff-invoices-container">
                   <OwnerProductFormPage
                     baseRoute="/pos/catalog"
+                    userPermissions={posContext.data?.permissions}
+                    isOwner={false}
                     onBack={() => navigate('/pos/catalog/products')}
                   />
                 </div>
@@ -8405,6 +8405,8 @@ export function StaffPosPortalPage() {
                   <OwnerProductFormPage
                     productId={location.pathname.split('/').at(-1)!}
                     baseRoute="/pos/catalog"
+                    userPermissions={posContext.data?.permissions}
+                    isOwner={false}
                     onBack={() => navigate('/pos/catalog/products')}
                   />
                 </div>
@@ -8433,6 +8435,8 @@ export function StaffPosPortalPage() {
                 <div className="staff-invoices-container">
                   <OwnerProductListPage
                     baseRoute="/pos/catalog"
+                    userPermissions={posContext.data?.permissions}
+                    isOwner={false}
                     onBack={() => navigate('/pos/more')}
                   />
                 </div>

@@ -6,6 +6,8 @@ import {
   DeleteOutlined,
   EditOutlined,
   MenuOutlined,
+  PauseCircleOutlined,
+  PlayCircleOutlined,
   PlusCircleOutlined,
   QrcodeOutlined,
 } from '@ant-design/icons';
@@ -37,7 +39,7 @@ import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 interface AreaTable {
   id: string;
   name: string;
-  status: 'AVAILABLE' | 'OCCUPIED';
+  status: 'AVAILABLE' | 'OCCUPIED' | 'DISABLED';
   sortOrder: number;
   timeProductId: string | null;
   timeProductName: string | null;
@@ -118,6 +120,7 @@ export function OwnerAreaSettingsPage() {
   const [addingTable, setAddingTable] = useState(false);
   const [orderingAreaId, setOrderingAreaId] = useState<string | null>(null);
   const [pricingTableId, setPricingTableId] = useState<string | null>(null);
+  const [togglingStatusTableId, setTogglingStatusTableId] = useState<string | null>(null);
   const [qrGeneratingTableId, setQrGeneratingTableId] = useState<string | null>(null);
   const [qrPreview, setQrPreview] = useState<{
     tableName: string;
@@ -258,6 +261,35 @@ export function OwnerAreaSettingsPage() {
       messageApi.error(errorMessage(error, 'Không thể thêm bàn/phòng mới.'));
     } finally {
       setAddingTable(false);
+    }
+  };
+
+  const toggleTableStatus = async (table: AreaTable) => {
+    if (table.status === 'OCCUPIED') return;
+    const nextStatus = table.status === 'DISABLED' ? 'AVAILABLE' : 'DISABLED';
+    setTogglingStatusTableId(table.id);
+    try {
+      await jsonRequest(
+        `/api/v1/owner/catalog/tables/${table.id}/status`,
+        { status: nextStatus },
+        {
+          method: 'PATCH',
+          headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' },
+        },
+      );
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: AREA_LAYOUTS_QUERY }),
+        queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
+      ]);
+      messageApi.success(
+        nextStatus === 'DISABLED'
+          ? `Đã tạm ngưng bàn "${table.name}".`
+          : `Đã mở lại bàn "${table.name}".`,
+      );
+    } catch (error) {
+      messageApi.error(errorMessage(error, 'Không thể đổi trạng thái bàn.'));
+    } finally {
+      setTogglingStatusTableId(null);
     }
   };
 
@@ -622,6 +654,8 @@ export function OwnerAreaSettingsPage() {
                     <div className="owner-area-modal-table-col owner-area-modal-table-col--status">
                       {table.status === 'OCCUPIED' ? (
                         <Tag color="orange">Đang phục vụ</Tag>
+                      ) : table.status === 'DISABLED' ? (
+                        <Tag color="default">Tạm ngưng</Tag>
                       ) : (
                         <Tag color="green">Sẵn sàng</Tag>
                       )}
@@ -637,6 +671,51 @@ export function OwnerAreaSettingsPage() {
                         loading={qrGeneratingTableId === table.id}
                         onClick={() => void generateTableQr(table)}
                       />
+                      {table.status === 'DISABLED' ? (
+                        <Popconfirm
+                          title="Mở lại bàn này?"
+                          description="Bàn sẽ chuyển sang trạng thái sẵn sàng và nhân viên POS có thể mở đơn."
+                          okText="Mở lại bàn"
+                          cancelText="Hủy"
+                          onConfirm={() => void toggleTableStatus(table)}
+                        >
+                          <Button
+                            type="text"
+                            size="small"
+                            loading={togglingStatusTableId === table.id}
+                            aria-label={`Mở lại ${table.name}`}
+                            icon={<PlayCircleOutlined style={{ color: '#52c41a' }} />}
+                            title="Mở lại bàn (Sẵn sàng)"
+                          />
+                        </Popconfirm>
+                      ) : (
+                        <Popconfirm
+                          title="Tạm ngưng phục vụ bàn này?"
+                          description="Bàn sẽ chuyển sang trạng thái tạm ngưng, nhân viên POS sẽ không thể mở đơn trên bàn này."
+                          okText="Tạm ngưng"
+                          cancelText="Hủy"
+                          disabled={table.status === 'OCCUPIED'}
+                          onConfirm={() => void toggleTableStatus(table)}
+                        >
+                          <Button
+                            type="text"
+                            size="small"
+                            disabled={table.status === 'OCCUPIED'}
+                            loading={togglingStatusTableId === table.id}
+                            aria-label={`Tạm ngưng ${table.name}`}
+                            icon={
+                              <PauseCircleOutlined
+                                style={{ color: table.status === 'OCCUPIED' ? undefined : '#faad14' }}
+                              />
+                            }
+                            title={
+                              table.status === 'OCCUPIED'
+                                ? 'Bàn đang phục vụ, không thể tạm ngưng'
+                                : 'Tạm ngưng bàn'
+                            }
+                          />
+                        </Popconfirm>
+                      )}
                       <Button
                         type="text"
                         size="small"

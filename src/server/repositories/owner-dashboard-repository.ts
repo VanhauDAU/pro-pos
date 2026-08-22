@@ -27,18 +27,6 @@ export interface RawLineItemRow {
   categoryName: string;
 }
 
-export interface RawUncompletedOrderRow {
-  orderType: 'DINE_IN' | 'TAKEAWAY';
-  orderId: string;
-  itemsTotal: number;
-}
-
-export interface RawRunningSessionRow {
-  orderId: string;
-  startedAt: number;
-  pricingSnapshotJson: string;
-}
-
 export class OwnerDashboardRepository {
   constructor(private readonly db: D1Database) {}
 
@@ -148,55 +136,6 @@ export class OwnerDashboardRepository {
       .all<RawLineItemRow>();
 
     return res.results ?? [];
-  }
-
-  async getUncompletedOrders(storeId: string) {
-    // 1. Open Dine-In Orders & their item sums
-    const dineInQuery = `
-      SELECT
-        'DINE_IN' AS orderType,
-        o.id AS orderId,
-        COALESCE(SUM(oi.line_total), 0) AS itemsTotal
-      FROM orders o
-      LEFT JOIN order_items oi ON oi.order_id = o.id AND oi.store_id = o.store_id
-      WHERE o.store_id = ? AND o.status IN ('OPEN', 'PAYMENT_PENDING')
-      GROUP BY o.id
-    `;
-
-    // 2. Active running time sessions for open dine-in orders
-    const sessionsQuery = `
-      SELECT
-        ts.order_id AS orderId,
-        ts.started_at AS startedAt,
-        ts.pricing_snapshot_json AS pricingSnapshotJson
-      FROM time_sessions ts
-      JOIN orders o ON o.id = ts.order_id AND o.store_id = ts.store_id
-      WHERE ts.store_id = ? AND ts.status = 'RUNNING' AND o.status IN ('OPEN', 'PAYMENT_PENDING')
-    `;
-
-    // 3. Open Takeaway Orders & their item sums
-    const takeawayQuery = `
-      SELECT
-        'TAKEAWAY' AS orderType,
-        o.id AS orderId,
-        COALESCE(SUM(toi.net_line_total), 0) AS itemsTotal
-      FROM takeaway_orders o
-      LEFT JOIN takeaway_order_items toi ON toi.order_id = o.id AND toi.store_id = o.store_id
-      WHERE o.store_id = ? AND o.status IN ('OPEN', 'PAYMENT_PENDING')
-      GROUP BY o.id
-    `;
-
-    const [dineInOrders, runningSessions, takeawayOrders] = await Promise.all([
-      this.db.prepare(dineInQuery).bind(storeId).all<RawUncompletedOrderRow>(),
-      this.db.prepare(sessionsQuery).bind(storeId).all<RawRunningSessionRow>(),
-      this.db.prepare(takeawayQuery).bind(storeId).all<RawUncompletedOrderRow>(),
-    ]);
-
-    return {
-      dineInOrders: dineInOrders.results ?? [],
-      runningSessions: runningSessions.results ?? [],
-      takeawayOrders: takeawayOrders.results ?? [],
-    };
   }
 
   async getStaffUsers(storeId: string) {

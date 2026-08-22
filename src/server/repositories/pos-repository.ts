@@ -157,7 +157,6 @@ export class PosRepository {
           AND o.order_type = 'DINE_IN' AND o.status IN ('OPEN', 'PAYMENT_PENDING')
         WHERE st.store_id = ?
           AND a.status = 'ACTIVE'
-          AND st.status != 'DISABLED'
         ORDER BY a.sort_order, st.sort_order, COALESCE(st.display_name, st.name) COLLATE NOCASE`,
       )
       .bind(storeId)

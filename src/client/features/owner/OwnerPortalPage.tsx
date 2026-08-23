@@ -232,6 +232,8 @@ function OwnerSidebar({
           onOpenChange={handleMainMenuOpenChange}
           onClick={handleClick}
         />
+      </div>
+      <div className="owner-sidebar__pinned-bottom">
         <Menu
           className="owner-sidebar__menu owner-sidebar__menu--settings"
           mode="inline"

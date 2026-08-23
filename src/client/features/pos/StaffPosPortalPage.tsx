@@ -216,6 +216,10 @@ interface OrderQuote {
     grossLineTotalVnd: number;
     discountAmountVnd: number;
     netLineTotalVnd: number;
+    promotionGift?: {
+      promotionId: string;
+      promotionName: string;
+    };
   }>;
   time: null | {
     status: 'RUNNING' | 'PAUSED' | 'ENDED';
@@ -268,6 +272,96 @@ const promotionTypeCopy: Record<PosPromotionOption['type'], string> = {
   GIFT: 'Tặng món',
 };
 
+function promotionBenefitCopy(promotion: PosPromotionOption) {
+  if (promotion.type === 'GIFT') {
+    return promotion.giftProductNames.length > 0
+      ? `Tặng ${promotion.giftProductNames.join(', ')}`
+      : 'Tặng món';
+  }
+  if (promotion.type === 'FLAT_PRICE') {
+    const flatPrice = formatMoney(promotion.value ?? 0);
+    return promotion.discountAmountVnd > 0
+      ? `Đồng giá ${flatPrice} · -${formatMoney(promotion.discountAmountVnd)}`
+      : `Đồng giá ${flatPrice}`;
+  }
+  return promotion.discountAmountVnd > 0 ? `-${formatMoney(promotion.discountAmountVnd)}` : '0đ';
+}
+
+function promotionTargetName(target: PosPromotionOption['configuredProductTargets'][number]) {
+  return target.variantName ? `${target.productName} · ${target.variantName}` : target.productName;
+}
+
+function formatPromotionQuantity(quantityMilli: number) {
+  return new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 3 }).format(quantityMilli / 1000);
+}
+
+function PromotionOptionDetails({ option }: { option: PosPromotionOption }) {
+  const configuredTargets = option.configuredProductTargets;
+  return (
+    <div className="staff-promotion-option__details">
+      {option.type === 'GIFT' ? (
+        <>
+          {configuredTargets.length > 0 ? (
+            <div>
+              <span>Điều kiện mua {option.giftBuyAny ? 'một trong các món' : 'đủ các món'}:</span>
+              <ul>
+                {configuredTargets.map((target) => (
+                  <li key={`${target.productId}:${target.variantId ?? ''}`}>
+                    {promotionTargetName(target)} × {target.requiredQuantity}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <span>Điều kiện: Hóa đơn đủ điều kiện chương trình</span>
+          )}
+          <div>
+            <span>Quà tặng:</span>{' '}
+            <strong>{option.giftProductNames.join(', ') || 'Chưa xác định'}</strong>
+            {option.maximumGiftQuantity ? ` · tối đa ${option.maximumGiftQuantity}` : ''}
+          </div>
+        </>
+      ) : option.type === 'FLAT_PRICE' && option.flatPriceItems.length > 0 ? (
+        <div>
+          <span>Món được đồng giá trong đơn:</span>
+          <ul>
+            {option.flatPriceItems.map((item) => (
+              <li key={`${item.productId}:${item.variantId ?? ''}`}>
+                {item.productName}
+                {item.variantName ? ` · ${item.variantName}` : ''} · SL:{' '}
+                {formatPromotionQuantity(item.quantityMilli)} ·{' '}
+                {formatMoney(item.originalUnitPriceVnd)}/món → {formatMoney(item.flatUnitPriceVnd)}
+                /món
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : option.scope === 'INVOICE' ? (
+        <span>Phạm vi áp dụng: Toàn bộ hóa đơn</span>
+      ) : option.scope === 'CATEGORY' ? (
+        <div>
+          <span>Danh mục áp dụng:</span>{' '}
+          <strong>{option.categoryNames.join(', ') || 'Chưa xác định'}</strong>
+        </div>
+      ) : (
+        <div>
+          <span>Sản phẩm áp dụng:</span>
+          <ul>
+            {configuredTargets.map((target) => (
+              <li key={`${target.productId}:${target.variantId ?? ''}`}>
+                {promotionTargetName(target)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {option.type === 'PERCENT' && option.maximumDiscountVnd ? (
+        <span>Giảm tối đa: {formatMoney(option.maximumDiscountVnd)}</span>
+      ) : null}
+    </div>
+  );
+}
+
 function PosPromotionModal({
   open,
   options,
@@ -284,7 +378,11 @@ function PosPromotionModal({
   onApply: (ids: string[]) => void;
 }) {
   const [selected, setSelected] = useState<string[]>(appliedIds);
-  useEffect(() => setSelected(appliedIds), [appliedIds, open]);
+  const wasOpenRef = useRef(false);
+  useEffect(() => {
+    if (open && !wasOpenRef.current) setSelected(appliedIds);
+    wasOpenRef.current = open;
+  }, [appliedIds, open]);
   return (
     <Modal
       open={open}
@@ -340,6 +438,7 @@ function PosPromotionModal({
                 {option.type === 'GIFT' && option.giftProductNames.length > 0 ? (
                   <small>Tặng: {option.giftProductNames.join(', ')}</small>
                 ) : null}
+                <PromotionOptionDetails option={option} />
                 {!option.eligible ? (
                   <em>
                     <CloseCircleFilled /> ! Không đủ điều kiện
@@ -347,13 +446,7 @@ function PosPromotionModal({
                   </em>
                 ) : null}
               </span>
-              <b>
-                {option.discountAmountVnd > 0
-                  ? `-${formatMoney(option.discountAmountVnd)}`
-                  : option.type === 'GIFT'
-                    ? 'Tặng món'
-                    : ''}
-              </b>
+              <b>{promotionBenefitCopy(option)}</b>
             </button>
           ))
         )}
@@ -445,8 +538,24 @@ function formatMoney(value: number) {
   return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(value);
 }
 
-function ItemDiscountDetail({ amount, reason }: { amount: number; reason: string | null }) {
+function ItemDiscountDetail({
+  amount,
+  reason,
+  promotionGift,
+}: {
+  amount: number;
+  reason: string | null;
+  promotionGift?: { promotionName: string; promotionId?: string } | undefined | null;
+}) {
   if (amount <= 0) return null;
+  if (promotionGift) {
+    return (
+      <span className="staff-item-discount-detail staff-item-discount-detail--promotion">
+        <strong>Quà tặng khuyến mãi: -{formatMoney(amount)}</strong>
+        <small>Chương trình: {promotionGift.promotionName}</small>
+      </span>
+    );
+  }
   return (
     <span className="staff-item-discount-detail">
       <strong>Giảm thủ công: -{formatMoney(amount)}</strong>
@@ -2676,11 +2785,13 @@ function SwipeableOrderItemRow({
   children,
   onClick,
   onDelete,
+  locked = false,
   className = '',
 }: {
   children: React.ReactNode;
   onClick: () => void;
   onDelete: () => void;
+  locked?: boolean;
   className?: string;
 }) {
   const [offsetX, setOffsetX] = useState(0);
@@ -2689,6 +2800,7 @@ function SwipeableOrderItemRow({
   const isHorizontalSwipeRef = useRef<boolean | null>(null);
 
   const handleTouchStart = (e: React.TouchEvent) => {
+    if (locked) return;
     const touch = e.touches[0];
     if (!touch) return;
     touchStartRef.current = {
@@ -2735,6 +2847,7 @@ function SwipeableOrderItemRow({
   };
 
   const handleClick = () => {
+    if (locked) return;
     if (offsetX !== 0) {
       setOffsetX(0);
       return;
@@ -2749,18 +2862,20 @@ function SwipeableOrderItemRow({
   };
 
   return (
-    <div className="staff-swipeable-item-wrapper">
-      <div className="staff-swipeable-delete-action">
-        <button
-          type="button"
-          className="staff-swipeable-delete-btn"
-          onClick={handleDeleteClick}
-          aria-label="Xóa món"
-        >
-          <DeleteOutlined />
-          <span>Xóa</span>
-        </button>
-      </div>
+    <div className={`staff-swipeable-item-wrapper${locked ? ' is-locked' : ''}`}>
+      {!locked ? (
+        <div className="staff-swipeable-delete-action">
+          <button
+            type="button"
+            className="staff-swipeable-delete-btn"
+            onClick={handleDeleteClick}
+            aria-label="Xóa món"
+          >
+            <DeleteOutlined />
+            <span>Xóa</span>
+          </button>
+        </div>
+      ) : null}
       <button
         type="button"
         className={`staff-compact-order-row staff-compact-order-row--editable ${className}`}
@@ -3896,32 +4011,37 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     }
     setSaving(true);
     try {
-      const created = await jsonRequest<{ orderId: string }>(
-        '/api/v1/pos/orders',
-        { note: orderNote.trim() || null },
-        { headers: mutationHeaders(csrf) },
-      );
-      let version = await persistLines(created.orderId, 1);
-      if (guestCount > 1 || customerName.trim() || customerPhone.trim()) {
-        await jsonRequest(
-          `/api/v1/pos/orders/${created.orderId}/guest`,
-          {
-            expectedOrderVersion: version,
-            guestCount: Math.max(1, guestCount),
-            customerName: customerName.trim() || null,
-            customerPhone: customerPhone.trim() || null,
-            customerId,
-          },
-          { method: 'PATCH', headers: mutationHeaders(csrf) },
-        );
-        version += 1;
-      }
+      const created = await createTakeawayOrderFromDraft();
       await completeCreatedOrder(created.orderId, false);
     } catch (error) {
       messageApi.error(errorText(error));
     } finally {
       setSaving(false);
     }
+  };
+
+  const createTakeawayOrderFromDraft = async () => {
+    const created = await jsonRequest<{ orderId: string }>(
+      '/api/v1/pos/orders',
+      { note: orderNote.trim() || null },
+      { headers: mutationHeaders(csrf) },
+    );
+    let version = await persistLines(created.orderId, 1);
+    if (guestCount > 1 || customerName.trim() || customerPhone.trim()) {
+      await jsonRequest(
+        `/api/v1/pos/orders/${created.orderId}/guest`,
+        {
+          expectedOrderVersion: version,
+          guestCount: Math.max(1, guestCount),
+          customerName: customerName.trim() || null,
+          customerPhone: customerPhone.trim() || null,
+          customerId,
+        },
+        { method: 'PATCH', headers: mutationHeaders(csrf) },
+      );
+      version += 1;
+    }
+    return { orderId: created.orderId, version };
   };
 
   const saveAdditionalItems = async (openPaymentAfterSave = false) => {
@@ -3948,6 +4068,57 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       } else {
         navigate('/pos', { replace: true });
       }
+    } catch (error) {
+      messageApi.error(errorText(error));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openPromotionPicker = async () => {
+    if (saving || promotionSaving) return;
+    if (isNew) {
+      if (orderType !== 'TAKEAWAY') {
+        messageApi.info('Vui lòng lưu đơn tại bàn trước khi chọn khuyến mãi.');
+        return;
+      }
+      if (draftLines.length === 0) {
+        messageApi.warning('Vui lòng chọn ít nhất một mặt hàng trước khi chọn khuyến mãi.');
+        return;
+      }
+      setSaving(true);
+      try {
+        const created = await createTakeawayOrderFromDraft();
+        setDraftLines([]);
+        const savedQuote = await apiRequest<OrderQuote>(
+          `/api/v1/pos/orders/${created.orderId}/quote`,
+        );
+        queryClient.setQueryData(['pos-order-quote', created.orderId], savedQuote);
+        await queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
+        navigate(`/pos/orders/${created.orderId}`, { replace: true });
+        setPromotionModalOpen(true);
+      } catch (error) {
+        messageApi.error(errorText(error));
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+    if (!quote.data) return;
+    if (draftLines.length === 0) {
+      setPromotionModalOpen(true);
+      return;
+    }
+    setSaving(true);
+    try {
+      await persistLines(quote.data.order.id, quote.data.order.version);
+      setDraftLines([]);
+      const savedQuote = await apiRequest<OrderQuote>(
+        `/api/v1/pos/orders/${quote.data.order.id}/quote`,
+      );
+      queryClient.setQueryData(['pos-order-quote', quote.data.order.id], savedQuote);
+      await queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
+      setPromotionModalOpen(true);
     } catch (error) {
       messageApi.error(errorText(error));
     } finally {
@@ -4159,12 +4330,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     }
     setSaving(true);
     try {
-      const created = await jsonRequest<{ orderId: string }>(
-        '/api/v1/pos/orders',
-        { note: orderNote.trim() || null },
-        { headers: mutationHeaders(csrf) },
-      );
-      await persistLines(created.orderId, 1);
+      const created = await createTakeawayOrderFromDraft();
       await completeCreatedOrder(created.orderId, true);
     } catch (error) {
       messageApi.error(errorText(error));
@@ -4413,6 +4579,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       discountReason: line.discountReason,
       netLineTotalVnd: net,
       note: line.note,
+      promotionGift: undefined,
     };
   });
   const allCurrentItems = isNew
@@ -4442,6 +4609,10 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   // 3. Giảm giá và Tổng khách phải trả
   const totalDiscount = isNew ? 0 : (quote.data?.promotionDiscountVnd ?? 0);
   const appliedPromotions = isNew ? [] : (quote.data?.promotions ?? []);
+  const appliedPromotionIds = useMemo(
+    () => (quote.data?.promotions ?? []).map((promotion) => promotion.id),
+    [quote.data?.promotions],
+  );
   const pendingTotal = draftDisplayItems.reduce((sum, item) => sum + item.netLineTotalVnd, 0);
   const displayedTotal = isNew ? pendingTotal : (quote.data?.totalVnd ?? 0) + pendingTotal;
   const liveElapsedSeconds = quote.data?.time
@@ -4480,7 +4651,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       <PosPromotionModal
         open={promotionModalOpen}
         options={quote.data?.promotionOptions ?? []}
-        appliedIds={(quote.data?.promotions ?? []).map((promotion) => promotion.id)}
+        appliedIds={appliedPromotionIds}
         loading={promotionSaving}
         onClose={() => setPromotionModalOpen(false)}
         onApply={(ids) => void applyPromotion(ids)}
@@ -4990,8 +5161,9 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   {(quote.data?.items ?? []).map((item) => (
                     <div
                       key={item.id}
-                      className="staff-order-mobile-item"
-                      onClick={() =>
+                      className={`staff-order-mobile-item${item.promotionGift ? ' staff-order-mobile-item--gift' : ''}`}
+                      onClick={() => {
+                        if (item.promotionGift) return;
                         setEditingItem({
                           source: 'SAVED',
                           id: item.id,
@@ -5010,8 +5182,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                           discountInputValue: item.discountInputValue,
                           discountReason: item.discountReason,
                           netLineTotalVnd: item.netLineTotalVnd,
-                        })
-                      }
+                        });
+                      }}
                     >
                       <div className="staff-order-mobile-item__top">
                         <span className="staff-order-mobile-qty-badge">
@@ -5027,9 +5199,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                               Ghi chú: {item.note}
                             </div>
                           )}
+                          {item.promotionGift ? <Tag color="success">Quà tặng</Tag> : null}
                           <ItemDiscountDetail
                             amount={item.discountAmountVnd}
                             reason={item.discountReason}
+                            promotionGift={item.promotionGift}
                           />
                         </span>
                         <span className="staff-order-mobile-item__price">
@@ -5093,9 +5267,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
               )}
               <div
                 className="staff-order-mobile-summary__row staff-promotion-trigger"
-                onClick={() => !isNew && setPromotionModalOpen(true)}
+                onClick={() => void openPromotionPicker()}
               >
-                <span>Giảm giá {!isNew ? <EditOutlined /> : null}</span>
+                <span>
+                  Khuyến mãi <EditOutlined />
+                </span>
                 <span className="staff-cart-discount-amount">
                   {totalDiscount > 0 ? `-${formatMoney(totalDiscount)}` : '0đ'}
                 </span>
@@ -5103,17 +5279,13 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
               {appliedPromotions.length > 0 ? (
                 <div
                   className="staff-applied-promotions-box"
-                  onClick={() => !isNew && setPromotionModalOpen(true)}
+                  onClick={() => void openPromotionPicker()}
                 >
                   {appliedPromotions.map((promotion) => (
                     <div key={promotion.id} className="staff-applied-promotion-row-item">
                       <span className="staff-applied-promotion-name">{promotion.name}</span>
                       <span className="staff-applied-promotion-amount">
-                        {promotion.discountAmountVnd > 0
-                          ? `-${formatMoney(promotion.discountAmountVnd)}`
-                          : promotion.type === 'GIFT'
-                            ? 'Tặng món'
-                            : '-0đ'}
+                        {promotionBenefitCopy(promotion)}
                       </span>
                     </div>
                   ))}
@@ -5717,7 +5889,9 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                             {displayedItems.map((item) => (
                               <SwipeableOrderItemRow
                                 key={item.id}
-                                onClick={() =>
+                                locked={Boolean(item.promotionGift)}
+                                onClick={() => {
+                                  if (item.promotionGift) return;
                                   setEditingItem({
                                     source: 'SAVED',
                                     id: item.id,
@@ -5736,9 +5910,10 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                                     discountInputValue: item.discountInputValue,
                                     discountReason: item.discountReason,
                                     netLineTotalVnd: item.netLineTotalVnd,
-                                  })
-                                }
+                                  });
+                                }}
                                 onDelete={() => {
+                                  if (item.promotionGift) return;
                                   if (isNew) {
                                     setDraftLines((lines) =>
                                       lines.filter((line) => line.id !== item.id),
@@ -5765,9 +5940,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                                   <strong>{item.productName}</strong>
                                   <small>{item.variantName}</small>
                                   {item.note ? <small>Ghi chú: {item.note}</small> : null}
+                                  {item.promotionGift ? <Tag color="success">Quà tặng</Tag> : null}
                                   <ItemDiscountDetail
                                     amount={item.discountAmountVnd}
                                     reason={item.discountReason}
+                                    promotionGift={item.promotionGift}
                                   />
                                 </span>
                                 <b>{formatMoney(item.netLineTotalVnd)}</b>
@@ -5938,9 +6115,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   ) : null}
                   <div
                     className="staff-promotion-trigger"
-                    onClick={() => !isNew && setPromotionModalOpen(true)}
+                    onClick={() => void openPromotionPicker()}
                   >
-                    <span>Giảm giá {!isNew ? <EditOutlined /> : null}</span>
+                    <span>
+                      Khuyến mãi <EditOutlined />
+                    </span>
                     <span className="staff-cart-discount-amount">
                       {totalDiscount > 0 ? `-${formatMoney(totalDiscount)}` : '0đ'}
                     </span>
@@ -5948,17 +6127,13 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   {appliedPromotions.length > 0 ? (
                     <div
                       className="staff-applied-promotions-box"
-                      onClick={() => !isNew && setPromotionModalOpen(true)}
+                      onClick={() => void openPromotionPicker()}
                     >
                       {appliedPromotions.map((promotion) => (
                         <div key={promotion.id} className="staff-applied-promotion-row-item">
                           <span className="staff-applied-promotion-name">{promotion.name}</span>
                           <span className="staff-applied-promotion-amount">
-                            {promotion.discountAmountVnd > 0
-                              ? `-${formatMoney(promotion.discountAmountVnd)}`
-                              : promotion.type === 'GIFT'
-                                ? 'Tặng món'
-                                : '-0đ'}
+                            {promotionBenefitCopy(promotion)}
                           </span>
                         </div>
                       ))}

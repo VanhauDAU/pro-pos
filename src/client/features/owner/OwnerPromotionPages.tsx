@@ -206,6 +206,7 @@ function ProductPickerModal({
   products,
   value,
   excludeWeight,
+  excludeTime,
   onCancel,
   onChange,
 }: {
@@ -214,6 +215,7 @@ function ProductPickerModal({
   products: ProductOption[];
   value: ProductTarget[];
   excludeWeight?: boolean;
+  excludeTime?: boolean;
   onCancel: () => void;
   onChange: (value: ProductTarget[]) => void;
 }) {
@@ -236,6 +238,7 @@ function ProductPickerModal({
   ];
   const visible = products.filter((product) => {
     if (excludeWeight && product.productType === 'WEIGHT') return false;
+    if (excludeTime && product.productType === 'TIME') return false;
     if (category !== 'ALL' && product.categoryId !== category) return false;
     const term = search.trim().toLocaleLowerCase('vi');
     return (
@@ -1178,6 +1181,7 @@ export function OwnerPromotionFormPage({ promotionId }: { promotionId?: string }
           products={products.data ?? []}
           value={giftTargets}
           excludeWeight
+          excludeTime
           onCancel={() => setGiftPickerOpen(false)}
           onChange={(value) => {
             form.setFieldValue('giftTargets', value);

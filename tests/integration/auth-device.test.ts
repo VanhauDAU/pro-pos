@@ -124,6 +124,45 @@ describe('Owner and POS activation invariants', () => {
     expect(login.status).toBe(401);
   });
 
+  it('rate-limits Owner password failures per Cloudflare client instead of globally', async () => {
+    const wrongPasswordRequest = () =>
+      SELF.fetch(`${ORIGIN}/api/v1/auth/owner/login`, {
+        method: 'POST',
+        headers: {
+          Origin: ORIGIN,
+          'Content-Type': 'application/json',
+          'CF-Connecting-IP': '198.51.100.10',
+        },
+        body: JSON.stringify({
+          username: 'owner.test',
+          password: 'WrongPassword!',
+        }),
+      });
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      // eslint-disable-next-line no-await-in-loop -- Login attempts must finish sequentially.
+      expect((await wrongPasswordRequest()).status).toBe(401);
+    }
+
+    const locked = await wrongPasswordRequest();
+    expect(locked.status).toBe(429);
+    expect(Number(locked.headers.get('Retry-After'))).toBeGreaterThan(0);
+
+    const otherClient = await SELF.fetch(`${ORIGIN}/api/v1/auth/owner/login`, {
+      method: 'POST',
+      headers: {
+        Origin: ORIGIN,
+        'Content-Type': 'application/json',
+        'CF-Connecting-IP': '198.51.100.11',
+      },
+      body: JSON.stringify({
+        username: 'owner.test',
+        password: 'OwnerPassword123!',
+      }),
+    });
+    expect(otherClient.status).toBe(200);
+  });
+
   it('activates POS device directly using Owner username and password', async () => {
     const activate = await SELF.fetch(`${ORIGIN}/api/v1/device-activations/direct`, {
       method: 'POST',

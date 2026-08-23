@@ -145,6 +145,36 @@ export interface PromotionDetail extends PromotionSummary {
   updatedAt: number;
 }
 
+export interface PosPromotionGiftItem {
+  productId: string;
+  variantId: string;
+  productName: string;
+  variantName: string | null;
+  unitName: string | null;
+  unitPriceVnd: number;
+  quantityMilli: number;
+  grossAmountVnd: number;
+}
+
+export interface PosPromotionFlatPriceItem {
+  productId: string;
+  variantId: string | null;
+  productName: string;
+  variantName: string | null;
+  quantityMilli: number;
+  originalUnitPriceVnd: number;
+  flatUnitPriceVnd: number;
+  discountAmountVnd: number;
+}
+
+export interface PosPromotionConfiguredTarget {
+  productId: string;
+  variantId: string | null;
+  productName: string;
+  variantName: string | null;
+  requiredQuantity: number;
+}
+
 export interface PosPromotionOption {
   id: string;
   name: string;
@@ -159,4 +189,10 @@ export interface PosPromotionOption {
   selected: boolean;
   autoApply: boolean;
   giftProductNames: string[];
+  giftItems: PosPromotionGiftItem[];
+  flatPriceItems: PosPromotionFlatPriceItem[];
+  categoryNames: string[];
+  configuredProductTargets: PosPromotionConfiguredTarget[];
+  giftBuyAny: boolean;
+  maximumGiftQuantity: number | null;
 }

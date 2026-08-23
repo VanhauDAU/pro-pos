@@ -1,12 +1,14 @@
 import {
   AppstoreOutlined,
   BellOutlined,
+  MutedOutlined,
   QrcodeOutlined,
   ShoppingCartOutlined,
+  SoundOutlined,
 } from '@ant-design/icons';
-import { Button, Modal, Tour, Typography } from 'antd';
+import { Button, Modal, Switch, Tour, Typography } from 'antd';
 import type { TourProps } from 'antd';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
@@ -14,6 +16,7 @@ import { onboardingAudioPlayer } from '@client/lib/onboarding-audio';
 
 const ONBOARDING_VERSION = 1;
 const DEFER_MS = 24 * 60 * 60_000;
+const VOICE_MUTED_STORAGE_KEY = 'propos:staff-onboarding:voice-muted';
 
 interface OnboardingProgress {
   version: typeof ONBOARDING_VERSION;
@@ -32,6 +35,15 @@ function initialProgress(): OnboardingProgress {
     orderCompleted: false,
     basicStep: 0,
   };
+}
+
+function getInitialVoiceMuted(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return localStorage.getItem(VOICE_MUTED_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
 }
 
 function target(selector: string) {
@@ -69,11 +81,40 @@ export function StaffOnboarding({
   const [orderTourOpen, setOrderTourOpen] = useState(false);
   const [orderStep, setOrderStep] = useState(0);
   const [audioReady, setAudioReady] = useState(false);
+  const [voiceMuted, setVoiceMutedState] = useState(getInitialVoiceMuted);
   const [pushPromptFinished, setPushPromptFinished] = useState(
     () => typeof Notification === 'undefined' || Notification.permission !== 'default',
   );
   const previousRestartToken = useRef(restartToken);
+
+  const toggleVoiceMute = useCallback(() => {
+    onboardingAudioPlayer.unlock();
+    setVoiceMutedState((prev) => {
+      const next = !prev;
+      onboardingAudioPlayer.setMuted(next);
+      try {
+        localStorage.setItem(VOICE_MUTED_STORAGE_KEY, String(next));
+      } catch {
+        // The preference still applies in-memory when private browsing blocks localStorage.
+      }
+      return next;
+    });
+  }, []);
+
+  const setVoiceMuted = useCallback((muted: boolean) => {
+    onboardingAudioPlayer.unlock();
+    setVoiceMutedState(muted);
+    onboardingAudioPlayer.setMuted(muted);
+    try {
+      localStorage.setItem(VOICE_MUTED_STORAGE_KEY, String(muted));
+    } catch {
+      // The preference still applies in-memory when private browsing blocks localStorage.
+    }
+  }, []);
+
   useEffect(() => {
+    const initialMuted = getInitialVoiceMuted();
+    onboardingAudioPlayer.setMuted(initialMuted);
     void onboardingAudioPlayer.preload().then(() => setAudioReady(true));
     return () => onboardingAudioPlayer.stop();
   }, []);
@@ -170,26 +211,52 @@ export function StaffOnboarding({
     }
   }, [basicStep, basicTourOpen, location.pathname, navigate]);
 
-  useEffect(() => {
-    if (!basicTourOpen) return;
-    void onboardingAudioPlayer.play(basicStep);
-  }, [basicStep, basicTourOpen]);
+  const currentTourTrack = basicTourOpen
+    ? basicStep
+    : orderTourOpen
+      ? orderStep + 8
+      : null;
 
   useEffect(() => {
-    if (!orderTourOpen) return;
-    void onboardingAudioPlayer.play(orderStep + 8);
-  }, [orderStep, orderTourOpen]);
+    if (currentTourTrack === null) {
+      onboardingAudioPlayer.stop();
+      return;
+    }
+    if (voiceMuted) {
+      onboardingAudioPlayer.stop();
+      return;
+    }
+    onboardingAudioPlayer.play(currentTourTrack);
+  }, [currentTourTrack, voiceMuted]);
+
+  const renderStepTitle = (title: string) => (
+    <div className="staff-onboarding-step-header">
+      <span className="staff-onboarding-step-title">{title}</span>
+      <button
+        type="button"
+        className={`staff-onboarding-voice-btn ${voiceMuted ? 'is-muted' : 'is-active'}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          toggleVoiceMute();
+        }}
+        title={voiceMuted ? 'Bật giọng đọc hướng dẫn' : 'Tắt giọng đọc hướng dẫn'}
+        aria-label={voiceMuted ? 'Bật giọng đọc hướng dẫn' : 'Tắt giọng đọc hướng dẫn'}
+      >
+        {voiceMuted ? <MutedOutlined /> : <SoundOutlined />}
+      </button>
+    </div>
+  );
 
   const basicSteps: NonNullable<TourProps['steps']> = [
     {
-      title: 'Chào mừng đến Pro POS',
+      title: renderStepTitle('Chào mừng đến Pro POS'),
       description:
         'Hướng dẫn nhanh này không tạo dữ liệu. Bạn chỉ cần xem các khu vực chính, sau đó tự chọn một bàn để thực hành.',
       nextButtonProps: { children: 'Bắt đầu' },
     },
     {
       target: target('.staff-area-list'),
-      title: '1. Chọn khu vực',
+      title: renderStepTitle('1. Chọn khu vực'),
       description:
         'Mỗi khu vực chứa một nhóm bàn. Trên điện thoại, khu vực được hiển thị thành các tab ngang.',
       nextButtonProps: { children: 'Tiếp tục' },
@@ -197,7 +264,7 @@ export function StaffOnboarding({
     },
     {
       target: target('.staff-table-grid'),
-      title: '2. Chọn bàn',
+      title: renderStepTitle('2. Chọn bàn'),
       description:
         'Bàn trống có thể mở đơn mới; bàn đang sử dụng sẽ mở đơn hiện tại. Bàn tạm ngưng không thể chọn.',
       nextButtonProps: { children: 'Tiếp tục' },
@@ -205,14 +272,14 @@ export function StaffOnboarding({
     },
     {
       target: target('[data-nav-key="orders"]'),
-      title: '3. Danh sách đơn hàng',
+      title: renderStepTitle('3. Danh sách đơn hàng'),
       description: 'Chạm Đơn hàng để xem tất cả đơn tại chỗ và mang đi đang hoạt động.',
       nextButtonProps: { children: 'Xem danh sách đơn' },
       prevButtonProps: { children: 'Quay lại' },
     },
     {
       target: target('.staff-order-results'),
-      title: '4. Theo dõi đơn đang mở',
+      title: renderStepTitle('4. Theo dõi đơn đang mở'),
       description:
         'Tìm theo mã đơn, bàn hoặc khu vực. Chạm một thẻ đơn để thêm món, sửa chi tiết hoặc thanh toán.',
       nextButtonProps: { children: 'Tiếp tục' },
@@ -220,7 +287,7 @@ export function StaffOnboarding({
     },
     {
       target: target('[data-nav-key="qr"]'),
-      title: '5. QR Order',
+      title: renderStepTitle('5. QR Order'),
       description:
         'Badge đỏ báo số yêu cầu chưa xử lý. Tại đây bạn xác nhận mở bàn, món khách gọi, gọi nhân viên và yêu cầu thanh toán.',
       nextButtonProps: { children: 'Tiếp tục' },
@@ -228,7 +295,7 @@ export function StaffOnboarding({
     },
     {
       target: target('.staff-header-notification-btn'),
-      title: '6. Trung tâm thông báo',
+      title: renderStepTitle('6. Trung tâm thông báo'),
       description:
         'Nút chuông lưu hoạt động POS trong 3 ngày: tạo đơn, thêm/sửa món, chuyển bàn và thanh toán.',
       nextButtonProps: { children: 'Tiếp tục' },
@@ -236,7 +303,7 @@ export function StaffOnboarding({
     },
     {
       target: target('[data-nav-key="more"]'),
-      title: '7. Trợ giúp và thiết lập',
+      title: renderStepTitle('7. Trợ giúp và thiết lập'),
       description:
         'Mục Thêm có các chức năng bạn được cấp quyền thực hiện, thông tin cửa hàng và Đăng xuất.',
       nextButtonProps: { children: 'Hoàn tất phần cơ bản' },
@@ -247,13 +314,13 @@ export function StaffOnboarding({
   const orderSteps: NonNullable<TourProps['steps']> = [
     {
       target: target('.staff-order-editor__header, .staff-order-mobile-header'),
-      title: 'Đơn hàng của bàn',
+      title: renderStepTitle('Đơn hàng của bàn'),
       description: 'Kiểm tra đúng khu vực, bàn, loại đơn và mã đơn trước khi thao tác.',
       nextButtonProps: { children: 'Tiếp tục' },
     },
     {
       target: target('.staff-product-grid button, .staff-order-mobile-fab'),
-      title: 'Chọn và gọi món',
+      title: renderStepTitle('Chọn và gọi món'),
       description:
         'Chọn sản phẩm, phiên bản, số lượng và ghi chú. Trên điện thoại hãy dùng nút Thêm món.',
       nextButtonProps: { children: 'Tiếp tục' },
@@ -261,7 +328,7 @@ export function StaffOnboarding({
     },
     {
       target: target('.staff-cart-panel, .staff-order-mobile-content'),
-      title: 'Kiểm tra chi tiết đơn',
+      title: renderStepTitle('Kiểm tra chi tiết đơn'),
       description:
         'Món mới nằm trong phần gọi thêm trước khi lưu. Chạm món để sửa số lượng, biến thể, giảm giá hoặc ghi chú.',
       nextButtonProps: { children: 'Tiếp tục' },
@@ -269,14 +336,14 @@ export function StaffOnboarding({
     },
     {
       target: target('.staff-cart-note, .staff-order-mobile-note'),
-      title: 'Ghi chú đơn hàng',
+      title: renderStepTitle('Ghi chú đơn hàng'),
       description: 'Ghi thông tin chung cho cả đơn, khác với ghi chú riêng của từng món.',
       nextButtonProps: { children: 'Tiếp tục' },
       prevButtonProps: { children: 'Quay lại' },
     },
     {
       target: target('.staff-cart-actions, .staff-order-mobile-actions'),
-      title: 'Lưu đơn hoặc thanh toán',
+      title: renderStepTitle('Lưu đơn hoặc thanh toán'),
       description:
         'Bấm Lưu đơn để ghi món vào hệ thống. Chỉ chọn Thanh toán sau khi đã kiểm tra tổng tiền và phương thức thu tiền.',
       nextButtonProps: { children: 'Hoàn tất hướng dẫn' },
@@ -320,7 +387,20 @@ export function StaffOnboarding({
     <>
       <Modal
         open={welcomeOpen}
-        title="Hướng dẫn nhanh cho nhân viên"
+        title={
+          <div className="staff-onboarding-modal-header">
+            <span>Hướng dẫn nhanh cho nhân viên</span>
+            <button
+              type="button"
+              className={`staff-onboarding-voice-btn ${voiceMuted ? 'is-muted' : 'is-active'}`}
+              onClick={toggleVoiceMute}
+              title={voiceMuted ? 'Bật giọng đọc hướng dẫn' : 'Tắt giọng đọc hướng dẫn'}
+              aria-label={voiceMuted ? 'Bật giọng đọc hướng dẫn' : 'Tắt giọng đọc hướng dẫn'}
+            >
+              {voiceMuted ? <MutedOutlined /> : <SoundOutlined />}
+            </button>
+          </div>
+        }
         closable={false}
         footer={[
           <Button key="never" type="text" onClick={skipAll}>
@@ -349,6 +429,50 @@ export function StaffOnboarding({
           <Typography.Paragraph>
             Tour mất khoảng 2 phút và được lưu riêng cho nhân viên này trên thiết bị hiện tại.
           </Typography.Paragraph>
+
+          <div
+            className="staff-onboarding-voice-banner"
+            role="button"
+            tabIndex={0}
+            onClick={toggleVoiceMute}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                toggleVoiceMute();
+              }
+            }}
+          >
+            <div className="staff-onboarding-voice-banner__info">
+              <span
+                className={`staff-onboarding-voice-banner__icon ${voiceMuted ? 'is-muted' : 'is-active'}`}
+              >
+                {voiceMuted ? <MutedOutlined /> : <SoundOutlined />}
+              </span>
+              <div>
+                <div className="staff-onboarding-voice-banner__title">
+                  Giọng đọc hướng dẫn {voiceMuted ? '(Đang tắt)' : '(Đang bật)'}
+                </div>
+                <div className="staff-onboarding-voice-banner__desc">
+                  {voiceMuted
+                    ? 'Đang tắt âm thanh thuyết minh. Chạm để bật lại bất kỳ lúc nào.'
+                    : 'Tự động phát giọng đọc thuyết minh qua từng bước hướng dẫn.'}
+                </div>
+              </div>
+            </div>
+            <div
+              onClick={(e) => {
+                e.stopPropagation();
+              }}
+            >
+              <Switch
+                size="small"
+                checked={!voiceMuted}
+                onChange={(checked) => setVoiceMuted(!checked)}
+                aria-label="Bật hoặc tắt giọng đọc hướng dẫn"
+              />
+            </div>
+          </div>
+
           <Typography.Text type="secondary">
             Tour không tự mở bàn, không thêm món và không thay đổi dữ liệu bán hàng.
           </Typography.Text>
@@ -407,7 +531,9 @@ export function StaffOnboarding({
             completedAt: Date.now(),
           });
           setOrderTourOpen(false);
-          void onboardingAudioPlayer.play(13);
+          if (!voiceMuted) {
+            void onboardingAudioPlayer.play(13);
+          }
         }}
       />
     </>

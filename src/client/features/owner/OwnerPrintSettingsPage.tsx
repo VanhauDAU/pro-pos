@@ -52,7 +52,10 @@ import {
 } from '@client/lib/qz-tray-service';
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 import { ReceiptPreviewPaper } from '@client/features/pos/ReceiptPreviewModal';
-import { buildOwnerPrintPreviewSample } from './print-preview-sample';
+import {
+  OWNER_PRINT_PREVIEW_TOTAL_VND,
+  buildOwnerPrintPreviewSample,
+} from './print-preview-sample';
 
 function errorMessage(error: unknown, fallback: string) {
   if (error instanceof ApiError) return error.message;
@@ -579,7 +582,7 @@ export function OwnerPrintSettingsPage() {
       if (bottomBankName && bottomBankAccountNumber) {
         return `https://img.vietqr.io/image/${encodeURIComponent(bottomBankName.trim())}-${encodeURIComponent(
           bottomBankAccountNumber.trim(),
-        )}-qr_only.png?amount=179000&addInfo=Thanh+toan+bill&accountName=${encodeURIComponent(
+        )}-qr_only.png?amount=${OWNER_PRINT_PREVIEW_TOTAL_VND}&addInfo=Thanh+toan+bill&accountName=${encodeURIComponent(
           bottomBankAccountName?.trim() || '',
         )}`;
       }
@@ -1540,6 +1543,29 @@ export function OwnerPrintSettingsPage() {
               </Card>
             </Col>
           </Row>
+          <div className="owner-form-actions owner-sticky-form-bar" style={{ marginTop: 24 }}>
+            <div className="owner-sticky-form-bar__left">
+              {isDirty ? (
+                <div className="owner-print-unsaved-text">
+                  <span className="owner-print-unsaved-dot">●</span> Có thao tác chỉnh sửa chưa lưu
+                </div>
+              ) : null}
+            </div>
+            <div className="owner-sticky-form-bar__right">
+              <Button size="large" onClick={handleCancel}>
+                Hủy
+              </Button>
+              <Button
+                type="primary"
+                size="large"
+                htmlType="submit"
+                icon={<SaveOutlined />}
+                loading={saving}
+              >
+                Lưu thiết lập in
+              </Button>
+            </div>
+          </div>
         </Form>
       ) : (
         /* Tab 2: Cấu hình máy in & thiết bị */

@@ -134,6 +134,16 @@ export interface OrderItemRow {
   timeEndedAtMs: number | null;
 }
 
+interface PromotionGiftInvoiceLineInput {
+  id: string;
+  description: string;
+  quantityMilli: number;
+  unitPriceVnd: number;
+  discountAmountVnd: number;
+  grossLineTotalVnd: number;
+  snapshotJson: string;
+}
+
 export class PosRepository {
   constructor(private readonly db: D1Database) {}
 
@@ -1412,13 +1422,15 @@ export class PosRepository {
     timeAmount: number;
     timeSnapshotJson: string;
     invoiceSnapshotJson: string;
+    promotionGiftItems: PromotionGiftInvoiceLineInput[];
     actorId: string;
     requestId: string;
     issuedAt: number;
   }) {
-    await this.db
-      .prepare(
-        `INSERT INTO checkout_commands (
+    const statements: D1PreparedStatement[] = [
+      this.db
+        .prepare(
+          `INSERT INTO checkout_commands (
           id, store_id, order_id, table_id, expected_order_version,
           payment_id, invoice_id, invoice_display_code, method, subtotal,
           discount_total, total, cash_received, cash_change,
@@ -1426,32 +1438,56 @@ export class PosRepository {
           time_snapshot_json, invoice_snapshot_json, actor_user_id,
           request_id, issued_at, business_day
         ) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        input.idempotencyKey,
-        input.storeId,
-        input.orderId,
-        input.tableId,
-        input.expectedOrderVersion,
-        input.paymentId,
-        input.invoiceId,
-        input.method,
-        input.subtotal,
-        input.discountTotal,
-        input.total,
-        input.cashReceived,
-        input.cashChange,
-        input.timeDescription,
-        input.timeElapsedSeconds,
-        input.timeAmount,
-        input.timeSnapshotJson,
-        input.invoiceSnapshotJson,
-        input.actorId,
-        input.requestId,
-        input.issuedAt,
-        input.businessDay,
-      )
-      .run();
+        )
+        .bind(
+          input.idempotencyKey,
+          input.storeId,
+          input.orderId,
+          input.tableId,
+          input.expectedOrderVersion,
+          input.paymentId,
+          input.invoiceId,
+          input.method,
+          input.subtotal,
+          input.discountTotal,
+          input.total,
+          input.cashReceived,
+          input.cashChange,
+          input.timeDescription,
+          input.timeElapsedSeconds,
+          input.timeAmount,
+          input.timeSnapshotJson,
+          input.invoiceSnapshotJson,
+          input.actorId,
+          input.requestId,
+          input.issuedAt,
+          input.businessDay,
+        ),
+    ];
+    for (const gift of input.promotionGiftItems) {
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO invoice_lines (
+              id, store_id, invoice_id, line_type, description, quantity_milli,
+              unit_price, discount_type, discount_input_value, discount_amount,
+              gross_line_total, line_total, snapshot_json
+            ) VALUES (?, ?, ?, 'PRODUCT', ?, ?, ?, 'PERCENT', 100, ?, ?, 0, ?)`,
+          )
+          .bind(
+            gift.id,
+            input.storeId,
+            input.invoiceId,
+            gift.description,
+            gift.quantityMilli,
+            gift.unitPriceVnd,
+            gift.discountAmountVnd,
+            gift.grossLineTotalVnd,
+            gift.snapshotJson,
+          ),
+      );
+    }
+    await this.db.batch(statements);
   }
 
   findTakeawayCheckoutCommand(storeId: string, idempotencyKey: string) {
@@ -1487,39 +1523,65 @@ export class PosRepository {
     cashReceived: number | null;
     cashChange: number | null;
     invoiceSnapshotJson: string;
+    promotionGiftItems: PromotionGiftInvoiceLineInput[];
     actorId: string;
     requestId: string;
     issuedAt: number;
   }) {
-    return this.db
-      .prepare(
-        `INSERT INTO takeaway_checkout_commands (
+    const statements: D1PreparedStatement[] = [
+      this.db
+        .prepare(
+          `INSERT INTO takeaway_checkout_commands (
           id, store_id, order_id, expected_order_version, payment_id, invoice_id,
           invoice_display_code, method, subtotal, discount_total, total,
           cash_received, cash_change, invoice_snapshot_json, actor_user_id,
           request_id, issued_at, business_day
         ) VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        input.idempotencyKey,
-        input.storeId,
-        input.orderId,
-        input.expectedOrderVersion,
-        input.paymentId,
-        input.invoiceId,
-        input.method,
-        input.subtotal,
-        input.discountTotal,
-        input.total,
-        input.cashReceived,
-        input.cashChange,
-        input.invoiceSnapshotJson,
-        input.actorId,
-        input.requestId,
-        input.issuedAt,
-        input.businessDay,
-      )
-      .run();
+        )
+        .bind(
+          input.idempotencyKey,
+          input.storeId,
+          input.orderId,
+          input.expectedOrderVersion,
+          input.paymentId,
+          input.invoiceId,
+          input.method,
+          input.subtotal,
+          input.discountTotal,
+          input.total,
+          input.cashReceived,
+          input.cashChange,
+          input.invoiceSnapshotJson,
+          input.actorId,
+          input.requestId,
+          input.issuedAt,
+          input.businessDay,
+        ),
+    ];
+    for (const gift of input.promotionGiftItems) {
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO takeaway_invoice_lines (
+              id, store_id, invoice_id, line_type, description, quantity_milli,
+              unit_price, discount_type, discount_input_value, discount_amount,
+              gross_line_total, line_total, snapshot_json
+            ) VALUES (?, ?, ?, 'PRODUCT', ?, ?, ?, 'PERCENT', 100, ?, ?, 0, ?)`,
+          )
+          .bind(
+            gift.id,
+            input.storeId,
+            input.invoiceId,
+            gift.description,
+            gift.quantityMilli,
+            gift.unitPriceVnd,
+            gift.discountAmountVnd,
+            gift.grossLineTotalVnd,
+            gift.snapshotJson,
+          ),
+      );
+    }
+    return this.db.batch(statements);
   }
 
   findInvoiceNumberingSettings(storeId: string) {
@@ -1772,7 +1834,11 @@ export class PosRepository {
           o.cancelled_at,
           o.cancel_reason,
           u_cancel.display_name AS cancelled_by_name,
-          o.note
+          o.note,
+          o.guest_count,
+          o.customer_id,
+          o.customer_name,
+          o.customer_phone
         FROM orders o
         JOIN stores s ON s.id = o.store_id
         LEFT JOIN service_tables st ON st.id = o.table_id AND st.store_id = o.store_id
@@ -1805,6 +1871,10 @@ export class PosRepository {
         cancel_reason: string | null;
         cancelled_by_name: string | null;
         note: string | null;
+        guest_count: number;
+        customer_id: string | null;
+        customer_name: string | null;
+        customer_phone: string | null;
       }>();
 
     if (dineIn) return dineIn;
@@ -1830,7 +1900,11 @@ export class PosRepository {
           o.cancelled_at,
           o.cancel_reason,
           u_cancel.display_name AS cancelled_by_name,
-          o.note
+          o.note,
+          o.guest_count,
+          o.customer_id,
+          o.customer_name,
+          o.customer_phone
         FROM takeaway_orders o
         JOIN stores s ON s.id = o.store_id
         LEFT JOIN users u_open ON u_open.id = o.opened_by
@@ -1861,6 +1935,10 @@ export class PosRepository {
         cancel_reason: string | null;
         cancelled_by_name: string | null;
         note: string | null;
+        guest_count: number;
+        customer_id: string | null;
+        customer_name: string | null;
+        customer_phone: string | null;
       }>();
 
     return takeaway ?? null;

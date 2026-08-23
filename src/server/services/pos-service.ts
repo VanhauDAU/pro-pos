@@ -5,6 +5,7 @@ import type {
   OrderTableTransferDetail,
   OrderRateChangeDetail,
   OrderItemDetail,
+  OrderAppliedPromotionDetail,
   OrderAuditEventDetail,
 } from '@contracts/order-detail';
 import { calculateTimePrice } from '@domain/pricing/engine';
@@ -1065,15 +1066,45 @@ export class PosService {
         productId: item.productId,
         variantId: item.variantId,
         productType: item.productType,
+        productName: item.productName,
+        variantName: item.variantName,
         unitPriceVnd: Number(item.unitPriceVnd),
         quantityMilli: Number(item.quantityMilli),
         grossLineTotalVnd: Number(item.grossLineTotalVnd),
+        netLineTotalVnd: Number(item.netLineTotalVnd),
       })),
       now,
     });
     const promotionDiscount = promotions.applied.reduce(
       (sum, promotion) => sum + promotion.discountAmountVnd,
       0,
+    );
+    const promotionGiftItems = promotions.applied.flatMap((promotion) =>
+      promotion.giftItems.map((gift) => ({
+        id: `promotion-gift:${promotion.id}:${gift.productId}:${gift.variantId}`,
+        productId: gift.productId,
+        variantId: gift.variantId,
+        productType: 'QUANTITY' as const,
+        productName: gift.productName,
+        variantName: gift.variantName,
+        unitName: gift.unitName,
+        unitPriceVnd: gift.unitPriceVnd,
+        quantityMilli: gift.quantityMilli,
+        discountType: 'PERCENT' as const,
+        discountInputValue: 100,
+        discountAmountVnd: gift.grossAmountVnd,
+        discountReason: `Quà tặng · ${promotion.name}`,
+        grossLineTotalVnd: gift.grossAmountVnd,
+        netLineTotalVnd: 0,
+        lineTotalVnd: 0,
+        note: null,
+        timeStartedAtMs: null,
+        timeEndedAtMs: null,
+        promotionGift: {
+          promotionId: promotion.id,
+          promotionName: promotion.name,
+        },
+      })),
     );
     return {
       order: {
@@ -1094,7 +1125,7 @@ export class PosService {
         customerPhone: order.customer_phone ?? null,
         customerId: order.customer_id ?? null,
       },
-      items: processedItems,
+      items: [...processedItems, ...promotionGiftItems],
       time: pricing,
       subtotalVnd: subtotal,
       discountTotalVnd: discountTotal + promotionDiscount,
@@ -1121,14 +1152,19 @@ export class PosService {
       orderType: quote.order.orderType,
       subtotalVnd: Math.max(0, quote.subtotalVnd - quote.itemDiscountTotalVnd),
       customerId: quote.order.customerId,
-      items: quote.items.map((item) => ({
-        productId: item.productId,
-        variantId: item.variantId,
-        productType: item.productType,
-        unitPriceVnd: Number(item.unitPriceVnd),
-        quantityMilli: Number(item.quantityMilli),
-        grossLineTotalVnd: Number(item.grossLineTotalVnd),
-      })),
+      items: quote.items
+        .filter((item) => !('promotionGift' in item))
+        .map((item) => ({
+          productId: item.productId,
+          variantId: item.variantId,
+          productType: item.productType,
+          productName: item.productName,
+          variantName: item.variantName,
+          unitPriceVnd: Number(item.unitPriceVnd),
+          quantityMilli: Number(item.quantityMilli),
+          grossLineTotalVnd: Number(item.grossLineTotalVnd),
+          netLineTotalVnd: Number(item.netLineTotalVnd),
+        })),
     });
   }
 
@@ -1577,6 +1613,25 @@ export class PosService {
         : quote.time
           ? `Tiền giờ ${quote.order.tableName}`
           : '';
+    const promotionGiftItems = quote.items.flatMap((item) => {
+      const giftMarker =
+        'promotionGift' in item
+          ? (item.promotionGift as
+              { promotionId: string; promotionName: string } | null | undefined)
+          : null;
+      if (!giftMarker) return [];
+      return [
+        {
+          id: `promotion-gift:${invoiceId}:${giftMarker.promotionId}:${item.variantId}`,
+          description: `${item.productName} (Quà tặng)`,
+          quantityMilli: item.quantityMilli,
+          unitPriceVnd: item.unitPriceVnd,
+          discountAmountVnd: item.discountAmountVnd,
+          grossLineTotalVnd: item.grossLineTotalVnd,
+          snapshotJson: JSON.stringify(item),
+        },
+      ];
+    });
     try {
       if (quote.order.orderType === 'TAKEAWAY') {
         await this.repository.executeTakeawayCheckout({
@@ -1594,6 +1649,7 @@ export class PosService {
           cashReceived,
           cashChange: cashReceived === null ? null : cashReceived - quote.totalVnd,
           invoiceSnapshotJson: JSON.stringify(invoiceSnapshot),
+          promotionGiftItems,
           actorId: input.actorId,
           requestId: input.requestId,
           issuedAt: now,
@@ -1619,6 +1675,7 @@ export class PosService {
           timeAmount: quote.time?.amountAfterRoundingVnd ?? 0,
           timeSnapshotJson: finalizedTime ? JSON.stringify(finalizedTime) : '{}',
           invoiceSnapshotJson: JSON.stringify(invoiceSnapshot),
+          promotionGiftItems,
           actorId: input.actorId,
           requestId: input.requestId,
           issuedAt: now,
@@ -2333,15 +2390,67 @@ export class PosService {
       };
     });
 
-    // 9. Totals calculation
-    let timeAmountVnd = timeSummary?.totalAmountAfterRoundingVnd ?? 0;
-    let itemGrossAmountVnd = items.reduce((sum, it) => sum + it.grossLineTotalVnd, 0);
-    let itemDiscountAmountVnd = items.reduce((sum, it) => sum + it.discountAmountVnd, 0);
-    const orderDiscountAmountVnd = 0;
+    // 9. Base totals calculation
+    const timeAmountVnd = timeSummary?.totalAmountAfterRoundingVnd ?? 0;
+    const itemGrossAmountVnd = items.reduce((sum, it) => sum + it.grossLineTotalVnd, 0);
+    const itemDiscountAmountVnd = items.reduce((sum, it) => sum + it.discountAmountVnd, 0);
+
+    // 8.5. Promotions calculation
+    let appliedPromotions: OrderAppliedPromotionDetail[] = [];
+    if (invoice?.snapshotJson) {
+      try {
+        const snap = JSON.parse(invoice.snapshotJson) as {
+          promotions?: OrderAppliedPromotionDetail[];
+          promotion?: OrderAppliedPromotionDetail;
+        };
+        appliedPromotions = snap.promotions ?? (snap.promotion ? [snap.promotion] : []);
+      } catch {
+        appliedPromotions = [];
+      }
+    } else {
+      try {
+        const promoResult = await new PromotionService(this.env).optionsForOrder({
+          storeId,
+          orderId,
+          subtotalVnd: Math.max(0, timeAmountVnd + itemGrossAmountVnd - itemDiscountAmountVnd),
+          customerId: orderRaw.customer_id ?? null,
+          items: items.map((it) => ({
+            productId: it.productId,
+            variantId: it.variantId,
+            productType: it.productType,
+            productName: it.productNameSnapshot,
+            variantName: it.variantNameSnapshot,
+            unitPriceVnd: it.unitPriceSnapshot,
+            quantityMilli: it.quantityMilli,
+            grossLineTotalVnd: it.grossLineTotalVnd,
+            netLineTotalVnd: it.netLineTotalVnd,
+          })),
+          now,
+        });
+        appliedPromotions = promoResult.applied.map((p) => ({
+          id: p.id,
+          name: p.name,
+          type: p.type,
+          scope: p.scope,
+          value: p.value,
+          discountAmountVnd: p.discountAmountVnd,
+          giftItems: p.giftItems,
+          flatPriceItems: p.flatPriceItems,
+        }));
+      } catch {
+        appliedPromotions = [];
+      }
+    }
+
+    const promotionDiscountAmountVnd = appliedPromotions.reduce(
+      (sum, p) => sum + (p.discountAmountVnd || 0),
+      0,
+    );
+    const orderDiscountAmountVnd = promotionDiscountAmountVnd;
 
     let subtotalVnd = timeAmountVnd + itemGrossAmountVnd;
     let totalDiscountVnd = itemDiscountAmountVnd + orderDiscountAmountVnd;
-    let totalVnd = subtotalVnd - totalDiscountVnd;
+    let totalVnd = Math.max(0, subtotalVnd - totalDiscountVnd);
 
     // If order is PAID with snapshot, use authoritative invoice numbers
     if (invoice) {
@@ -2386,8 +2495,8 @@ export class PosService {
         note: orderRaw.note,
       },
       customer: {
-        name: 'Khách lẻ',
-        phone: null,
+        name: orderRaw.customer_name ?? 'Khách lẻ',
+        phone: orderRaw.customer_phone ?? null,
       },
       timeSummary,
       timeSegments,
@@ -2398,6 +2507,7 @@ export class PosService {
       payments,
       paymentAllocations,
       invoice,
+      promotions: appliedPromotions,
       auditEvents,
       totals: {
         timeAmountVnd,

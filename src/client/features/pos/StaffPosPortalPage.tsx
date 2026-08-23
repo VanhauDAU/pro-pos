@@ -37,7 +37,6 @@ import {
   SyncOutlined,
   TagsOutlined,
   TeamOutlined,
-  UnorderedListOutlined,
   UnlockOutlined,
   UpOutlined,
   UserOutlined,
@@ -138,22 +137,6 @@ interface StaffContext {
   bankAccountName?: string | null;
   permissions?: string[];
   capabilities?: { posRealtime: boolean };
-}
-
-interface PosOrder {
-  id: string;
-  displayCode: string | null;
-  orderType: 'DINE_IN' | 'TAKEAWAY';
-  status: 'OPEN' | 'PAYMENT_PENDING';
-  version: number;
-  openedAt: number;
-  tableId: string | null;
-  tableName: string | null;
-  areaId: string | null;
-  areaName: string | null;
-  itemCount: number;
-  totalVnd: number;
-  timeStatus?: 'RUNNING' | 'PAUSED' | 'ENDED' | null;
 }
 
 interface PosTable {
@@ -1006,7 +989,6 @@ function StaffHeader({
 }
 
 const navItems = [
-  { key: 'orders', label: 'Đơn hàng', icon: <UnorderedListOutlined />, path: '/pos' },
   { key: 'areas', label: 'Khu vực', icon: <AppstoreOutlined />, path: '/pos/areas' },
   { key: 'qr', label: 'QR Order', icon: <QrcodeOutlined />, path: '/pos/qr-order' },
   { key: 'more', label: 'Thêm', icon: <ShopOutlined />, path: '/pos/more' },
@@ -1062,135 +1044,6 @@ function StaffBottomNav({ active }: { active: (typeof navItems)[number]['key'] }
         </button>
       ))}
     </nav>
-  );
-}
-
-function OrdersPage({ search }: { search: string }) {
-  const navigate = useNavigate();
-  const [filter, setFilter] = useState<'ALL' | 'DINE_IN' | 'TAKEAWAY'>('ALL');
-  const pollingInterval = usePosPollingInterval(30_000);
-  const orders = useQuery({
-    queryKey: ['pos-orders'],
-    queryFn: () => apiRequest<PosOrder[]>('/api/v1/pos/orders'),
-    refetchInterval: pollingInterval,
-  });
-  const filtered = useMemo(() => {
-    const term = search.trim().toLocaleLowerCase('vi-VN');
-    return (orders.data ?? []).filter((order) => {
-      const matchesType = filter === 'ALL' || order.orderType === filter;
-      const label = `${order.displayCode ?? ''} ${order.areaName ?? ''} ${order.tableName ?? ''}`;
-      return matchesType && label.toLocaleLowerCase('vi-VN').includes(term);
-    });
-  }, [filter, orders.data, search]);
-  const counts = {
-    ALL: orders.data?.length ?? 0,
-    DINE_IN: orders.data?.filter((order) => order.orderType === 'DINE_IN').length ?? 0,
-    TAKEAWAY: orders.data?.filter((order) => order.orderType === 'TAKEAWAY').length ?? 0,
-  };
-
-  return (
-    <div className="staff-orders-page">
-      <div className="staff-orders-layout">
-        <aside className="staff-order-filters">
-          {(
-            [
-              ['ALL', 'Tất cả', <AppstoreOutlined key="all" />],
-              ['DINE_IN', 'Tại chỗ', <ShopOutlined key="dine" />],
-              ['TAKEAWAY', 'Mang đi', <ShoppingCartOutlined key="take" />],
-            ] as const
-          ).map(([key, label, icon]) => (
-            <button
-              key={key}
-              type="button"
-              className={filter === key ? 'is-active' : ''}
-              onClick={() => setFilter(key)}
-            >
-              {icon}
-              <span>{label}</span>
-              {counts[key] > 0 ? <b>{counts[key]}</b> : null}
-            </button>
-          ))}
-        </aside>
-        <main className="staff-order-results">
-          <div className="staff-mobile-segmented">
-            <Segmented
-              block
-              value={filter}
-              options={[
-                { value: 'ALL', label: counts.ALL > 0 ? `Tất cả (${counts.ALL})` : 'Tất cả' },
-                {
-                  value: 'DINE_IN',
-                  label: counts.DINE_IN > 0 ? `Tại chỗ (${counts.DINE_IN})` : 'Tại chỗ',
-                },
-                {
-                  value: 'TAKEAWAY',
-                  label: counts.TAKEAWAY > 0 ? `Mang đi (${counts.TAKEAWAY})` : 'Mang đi',
-                },
-              ]}
-              onChange={(value) => setFilter(value as typeof filter)}
-            />
-          </div>
-          {orders.isLoading ? (
-            <div className="staff-order-grid">
-              <Skeleton active />
-              <Skeleton active />
-            </div>
-          ) : orders.isError ? (
-            <Alert type="error" showIcon title="Chưa tải được danh sách đơn" />
-          ) : filtered.length === 0 ? (
-            <Empty description="Chưa có đơn hàng đang mở" />
-          ) : (
-            <div className="staff-order-grid">
-              {filtered.map((order) => (
-                <button
-                  type="button"
-                  className="staff-order-card"
-                  key={order.id}
-                  onClick={() => navigate(`/pos/orders/${order.id}`)}
-                >
-                  <div className="staff-order-card__title">
-                    {order.orderType === 'DINE_IN' ? <ShopOutlined /> : <ShoppingCartOutlined />}
-                    <strong>
-                      {order.orderType === 'DINE_IN'
-                        ? [order.areaName, order.tableName].filter(Boolean).join(' - ')
-                        : order.displayCode}
-                    </strong>
-                  </div>
-                  <div className="staff-order-card__meta">
-                    {order.timeStatus === 'PAUSED' ? (
-                      <Tag color="warning" icon={<PauseCircleOutlined />} style={{ margin: 0 }}>
-                        Tạm dừng
-                      </Tag>
-                    ) : (
-                      <span>
-                        <ClockCircleOutlined /> {formatDuration(order.openedAt)}
-                      </span>
-                    )}
-                    <span>SL: {order.itemCount}</span>
-                  </div>
-                  <b className="staff-order-card__total">{formatMoney(order.totalVnd)}</b>
-                </button>
-              ))}
-            </div>
-          )}
-        </main>
-      </div>
-      <Button
-        type="primary"
-        size="large"
-        icon={<PlusOutlined />}
-        className="staff-create-order-button"
-        onClick={() => {
-          if (filter === 'TAKEAWAY') {
-            navigate('/pos/orders/new?type=TAKEAWAY');
-          } else {
-            navigate('/pos/orders/new');
-          }
-        }}
-      >
-        Tạo đơn mới
-      </Button>
-    </div>
   );
 }
 
@@ -1519,7 +1372,6 @@ function QrOrderPage() {
       queryClient.invalidateQueries({ queryKey: ['guest-order-requests'] }),
       queryClient.invalidateQueries({ queryKey: ['service-requests'] }),
       queryClient.invalidateQueries({ queryKey: ['table-open-requests'] }),
-      queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
       queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
       queryClient.invalidateQueries({ queryKey: ['staff-notification-audit'] }),
     ]);
@@ -3644,7 +3496,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     if (draftLines.length > 0) {
       setDiscardModalOpen(true);
     } else {
-      navigate('/pos');
+      navigate('/pos/areas');
     }
   };
 
@@ -3722,7 +3574,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           { method: 'PATCH', headers: mutationHeaders(csrf) },
         );
         void queryClient.invalidateQueries({ queryKey: ['pos-order-quote', orderId] });
-        void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
       } catch (err) {
         messageApi.error(errorText(err));
       }
@@ -3749,7 +3600,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           { method: 'PATCH', headers: mutationHeaders(csrf) },
         );
         void queryClient.invalidateQueries({ queryKey: ['pos-order-quote', orderId] });
-        void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
         messageApi.success(customer ? 'Đã chọn khách hàng.' : 'Đã bỏ chọn khách hàng.');
       } catch (err) {
         messageApi.error(errorText(err));
@@ -3923,7 +3773,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const refreshOrder = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['pos-order-quote', orderId] }),
-      queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
       queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
     ]);
   };
@@ -4046,13 +3895,12 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
 
   const completeCreatedOrder = async (createdOrderId: string, checkoutAfterSave: boolean) => {
     await refreshOrder();
-    await queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
     await queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
     if (checkoutAfterSave) {
       navigate(`/pos/orders/${createdOrderId}?checkout=1`, { replace: true });
     } else {
       messageApi.success('Lưu đơn hàng thành công.');
-      navigate('/pos', { replace: true });
+      navigate('/pos/areas', { replace: true });
     }
   };
 
@@ -4168,7 +4016,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         navigateToPayment(quote.data.order.id);
       } else {
         messageApi.success('Lưu đơn hàng thành công.');
-        navigate('/pos', { replace: true });
+        navigate('/pos/areas', { replace: true });
       }
       return;
     }
@@ -4189,13 +4037,12 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       }
       setManualPromotionIds(null);
       await refreshOrder();
-      await queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
       await queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
       messageApi.success('Lưu đơn hàng thành công.');
       if (openPaymentAfterSave) {
         navigateToPayment(quote.data.order.id);
       } else {
-        navigate('/pos', { replace: true });
+        navigate('/pos/areas', { replace: true });
       }
     } catch (error) {
       messageApi.error(errorText(error));
@@ -4238,7 +4085,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
             !cached || refreshed.order.version >= cached.order.version ? refreshed : cached,
           );
           clearPaymentPageActive(frozenQuote.order.id);
-          void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
           void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
           setResumeModalOpen(false);
           return true;
@@ -4263,7 +4109,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       );
       clearPaymentPageActive(frozenQuote.order.id);
       void queryClient.invalidateQueries({ queryKey: ['pos-order-quote', orderId] });
-      void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
       void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
       messageApi.success(`Đã tiếp tục tính giờ cho ${frozenQuote.order.tableName}`);
       setResumeModalOpen(false);
@@ -4388,7 +4233,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
             (cached) =>
               !cached || pendingQuote.order.version >= cached.order.version ? pendingQuote : cached,
           );
-          void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
           void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
           navigateToPayment(quote.data.order.id);
         } catch (error) {
@@ -4550,7 +4394,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       setTimeDetailOpen(false);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['pos-order-quote', currentOrderId] }),
-        queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
         queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
       ]);
     } catch (error) {
@@ -4574,7 +4417,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       setTimeDetailOpen(false);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['pos-order-quote', currentOrderId] }),
-        queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
         queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
       ]);
     } catch (error) {
@@ -4602,7 +4444,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       setTimeDetailOpen(false);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['pos-order-quote', currentOrderId] }),
-        queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
         queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
       ]);
     } catch (error) {
@@ -4668,7 +4509,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       );
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['pos-order-quote', currentOrderId] }),
-        queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
         queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
       ]);
       setTimeDetailOpen(false);
@@ -4701,7 +4541,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       await Promise.all([
         refreshOrder(),
         queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
-        queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
       ]);
     } catch (error) {
       messageApi.error(errorText(error));
@@ -4718,7 +4557,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         { headers: mutationHeaders(csrf) },
       );
       await refreshOrder();
-      navigate('/pos', { replace: true });
+      navigate('/pos/areas', { replace: true });
     } catch (error) {
       messageApi.error(errorText(error));
     }
@@ -7323,7 +7162,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
               className="staff-confirm-discard-btn staff-confirm-discard-btn--confirm"
               onClick={() => {
                 setDiscardModalOpen(false);
-                navigate('/pos');
+                navigate('/pos/areas');
               }}
             >
               Xác nhận
@@ -7815,7 +7654,7 @@ function InvoicePage() {
       <Result
         status="error"
         title="Không tải được hóa đơn"
-        extra={<Button onClick={() => navigate('/pos')}>Về danh sách đơn</Button>}
+        extra={<Button onClick={() => navigate('/pos/areas')}>Về khu vực</Button>}
       />
     );
   }
@@ -8053,8 +7892,8 @@ function InvoicePage() {
         </footer>
       </section>
       <div className="staff-invoice-actions">
-        <Button size="large" onClick={() => navigate('/pos')}>
-          Về danh sách đơn
+        <Button size="large" onClick={() => navigate('/pos/areas')}>
+          Về khu vực
         </Button>
         <Button size="large" icon={<FileTextOutlined />} onClick={() => setPrintPreviewOpen(true)}>
           Xem trước hóa đơn
@@ -8231,7 +8070,6 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
     clearPaymentPageActive(frozenQuote.order.id);
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['pos-order-quote', orderId] }),
-      queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
       queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
     ]);
     if (notify) {
@@ -8295,10 +8133,7 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
           clearPaymentPageActive(result.quote.order.id);
           navigate(`/pos/orders/${result.quote.order.id}`, { replace: true });
         }
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
-          queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
-        ]);
+        await queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
       })
       .catch(async (error) => {
         // A concurrent order update can make the version stale. Refetching lets
@@ -8470,7 +8305,6 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
         { headers: mutationHeaders(csrf) },
       );
       playPosSound('PAYMENT_SUCCESS');
-      void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
       void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
 
       if (andPrint) {
@@ -8506,7 +8340,7 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
 
       // Return directly to POS home
       clearPaymentPageActive(quote.data.order.id);
-      navigate('/pos', { replace: true });
+      navigate('/pos/areas', { replace: true });
     } catch (error) {
       messageApi.error(errorText(error));
     } finally {
@@ -8557,8 +8391,8 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
             title="Không thể tải thông tin đơn hàng"
             description="Đơn hàng không tồn tại hoặc đã kết thúc."
             action={
-              <Button type="primary" onClick={() => navigate('/pos')}>
-                Về danh sách đơn
+              <Button type="primary" onClick={() => navigate('/pos/areas')}>
+                Về khu vực
               </Button>
             }
           />
@@ -9159,7 +8993,6 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
 export function StaffPosPortalPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [ordersSearch, setOrdersSearch] = useState('');
   const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
   const [onboardingRestartToken, setOnboardingRestartToken] = useState(0);
   const auth = useQuery({
@@ -9251,18 +9084,16 @@ export function StaffPosPortalPage() {
     isPrinterSettings ||
     isCustomer ||
     isStaff;
-  const active = location.pathname.startsWith('/pos/areas')
-    ? 'areas'
-    : location.pathname.startsWith('/pos/qr-order')
-      ? 'qr'
-      : location.pathname.startsWith('/pos/more') ||
-          isInvoicesList ||
-          isCatalog ||
-          isPrinterSettings ||
-          isCustomer ||
-          isStaff
-        ? 'more'
-        : 'orders';
+  const active = location.pathname.startsWith('/pos/qr-order')
+    ? 'qr'
+    : location.pathname.startsWith('/pos/more') ||
+        isInvoicesList ||
+        isCatalog ||
+        isPrinterSettings ||
+        isCustomer ||
+        isStaff
+      ? 'more'
+      : 'areas';
 
   const detailOrderId = isDetail ? location.pathname.split('/')[3] : undefined;
   const paymentOrderId = isPayment ? location.pathname.split('/')[3] : undefined;
@@ -9277,18 +9108,6 @@ export function StaffPosPortalPage() {
             <StaffHeader
               context={auth.data}
               onOpenNotifications={() => setNotificationCenterOpen(true)}
-              searchSlot={
-                active === 'orders' ? (
-                  <Input
-                    size="large"
-                    allowClear
-                    prefix={<SearchOutlined style={{ color: '#8c8c8c' }} />}
-                    placeholder="Tìm kiếm đơn hàng..."
-                    value={ordersSearch}
-                    onChange={(event) => setOrdersSearch(event.target.value)}
-                  />
-                ) : null
-              }
             />
           ) : null}
           <div className="staff-pos-main">
@@ -9494,8 +9313,6 @@ export function StaffPosPortalPage() {
               <PaymentPage orderId={paymentOrderId} auth={auth.data} />
             ) : isEditor ? (
               <OrderEditor auth={auth.data} />
-            ) : active === 'areas' ? (
-              <AreasPage />
             ) : active === 'qr' ? (
               <QrOrderPage />
             ) : active === 'more' ? (
@@ -9504,7 +9321,7 @@ export function StaffPosPortalPage() {
                 onStartOnboarding={() => setOnboardingRestartToken((value) => value + 1)}
               />
             ) : (
-              <OrdersPage search={ordersSearch} />
+              <AreasPage />
             )}
           </div>
           {!isFullScreen ? <StaffBottomNav active={active} /> : null}

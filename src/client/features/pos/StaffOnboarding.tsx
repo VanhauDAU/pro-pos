@@ -204,10 +204,8 @@ export function StaffOnboarding({
 
   useEffect(() => {
     if (!basicTourOpen) return;
-    if (basicStep === 1 || basicStep === 2 || basicStep === 3) {
+    if (basicStep === 1 || basicStep === 2) {
       if (!location.pathname.startsWith('/pos/areas')) navigate('/pos/areas');
-    } else if (basicStep >= 4 && location.pathname !== '/pos') {
-      navigate('/pos');
     }
   }, [basicStep, basicTourOpen, location.pathname, navigate]);
 
@@ -267,23 +265,8 @@ export function StaffOnboarding({
       prevButtonProps: { children: 'Quay lại' },
     },
     {
-      target: target('[data-nav-key="orders"]'),
-      title: renderStepTitle('3. Danh sách đơn hàng'),
-      description: 'Chạm Đơn hàng để xem tất cả đơn tại chỗ và mang đi đang hoạt động.',
-      nextButtonProps: { children: 'Xem danh sách đơn' },
-      prevButtonProps: { children: 'Quay lại' },
-    },
-    {
-      target: target('.staff-order-results'),
-      title: renderStepTitle('4. Theo dõi đơn đang mở'),
-      description:
-        'Tìm theo mã đơn, bàn hoặc khu vực. Chạm một thẻ đơn để thêm món, sửa chi tiết hoặc thanh toán.',
-      nextButtonProps: { children: 'Tiếp tục' },
-      prevButtonProps: { children: 'Quay lại' },
-    },
-    {
       target: target('[data-nav-key="qr"]'),
-      title: renderStepTitle('5. QR Order'),
+      title: renderStepTitle('3. QR Order'),
       description:
         'Badge đỏ báo số yêu cầu chưa xử lý. Tại đây bạn xác nhận mở bàn, món khách gọi, gọi nhân viên và yêu cầu thanh toán.',
       nextButtonProps: { children: 'Tiếp tục' },
@@ -291,7 +274,7 @@ export function StaffOnboarding({
     },
     {
       target: target('.staff-header-notification-btn'),
-      title: renderStepTitle('6. Trung tâm thông báo'),
+      title: renderStepTitle('4. Trung tâm thông báo'),
       description:
         'Nút chuông lưu hoạt động POS trong 3 ngày: tạo đơn, thêm/sửa món, chuyển bàn và thanh toán.',
       nextButtonProps: { children: 'Tiếp tục' },
@@ -299,7 +282,7 @@ export function StaffOnboarding({
     },
     {
       target: target('[data-nav-key="more"]'),
-      title: renderStepTitle('7. Trợ giúp và thiết lập'),
+      title: renderStepTitle('5. Trợ giúp và thiết lập'),
       description:
         'Mục Thêm có các chức năng bạn được cấp quyền thực hiện, thông tin cửa hàng và Đăng xuất.',
       nextButtonProps: { children: 'Hoàn tất phần cơ bản' },

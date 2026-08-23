@@ -312,7 +312,6 @@ export function OrderDetailPage({
       setDeleteConfirmVisible(false);
       void queryClient.invalidateQueries({ queryKey: ['owner-invoices'] });
       void queryClient.invalidateQueries({ queryKey: ['owner-dashboard'] });
-      void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
       void queryClient.invalidateQueries({ queryKey: ['pos-order-detail', targetOrderId] });
       onClose?.();
     },
@@ -627,10 +626,10 @@ export function OrderDetailPage({
           extra={
             <Button
               type="primary"
-              onClick={() => (onClose ? onClose() : navigate('/pos'))}
+              onClick={() => (onClose ? onClose() : navigate('/pos/areas'))}
               icon={<ArrowLeftOutlined />}
             >
-              Quay lại danh sách
+              Quay lại khu vực
             </Button>
           }
         />

@@ -517,10 +517,6 @@ posRoutes.get('/catalog', requirePermission('order.manage'), async (c) =>
   success(c, await new PosService(c.env).listCatalog(c.get('actor').storeId!)),
 );
 
-posRoutes.get('/orders', requirePermission('order.manage'), async (c) =>
-  success(c, await new PosService(c.env).listOrders(c.get('actor').storeId!)),
-);
-
 posRoutes.post('/orders', requirePermission('order.manage'), async (c) => {
   const body = await parseJson(c.req.raw, createTakeawayOrderSchema);
   const actor = c.get('actor');

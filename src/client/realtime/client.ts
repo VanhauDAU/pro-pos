@@ -231,9 +231,6 @@ export class PosRealtimeClient {
     }
 
     const invalidations: Array<Promise<unknown>> = [];
-    if (event.topics.includes('pos.orders')) {
-      invalidations.push(this.queryClient.invalidateQueries({ queryKey: ['pos-orders'] }));
-    }
     if (event.topics.includes('pos.tables')) {
       invalidations.push(this.queryClient.invalidateQueries({ queryKey: ['pos-tables'] }));
     }
@@ -272,7 +269,6 @@ export class PosRealtimeClient {
       predicate: (query) => {
         const root = query.queryKey[0];
         return (
-          root === 'pos-orders' ||
           root === 'pos-tables' ||
           root === 'pos-order-quote' ||
           root === 'pos-order-detail' ||

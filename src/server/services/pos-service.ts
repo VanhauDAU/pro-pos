@@ -117,6 +117,7 @@ export class PosService {
             ...table,
             totalVnd: quote.totalVnd,
             itemCount,
+            guestCount: quote.order?.guestCount ?? table.guestCount ?? 1,
             timeSessionStatus: quote.time?.status ?? table.timeSessionStatus ?? null,
           };
         } catch {

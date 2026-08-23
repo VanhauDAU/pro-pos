@@ -96,6 +96,7 @@ export interface PosTableRecord {
   timeSessionStatus?: 'RUNNING' | 'PAUSED' | 'ENDED' | null;
   totalVnd?: number;
   itemCount?: number;
+  guestCount?: number | null;
 }
 
 export interface TableTimeSegmentRow {
@@ -162,7 +163,7 @@ export class PosRepository {
           p.name AS timeProductName,
           tpc.base_price AS defaultPriceVnd,
           tpc.base_duration_seconds AS defaultDurationSeconds,
-          o.id AS activeOrderId, o.opened_at AS occupiedSince,
+          o.id AS activeOrderId, o.opened_at AS occupiedSince, o.guest_count AS guestCount,
           ts.status AS timeSessionStatus
         FROM service_tables st
         JOIN areas a ON a.id = st.area_id AND a.store_id = st.store_id

@@ -249,7 +249,7 @@ export function StaffOnboarding({
       nextButtonProps: { children: 'Bắt đầu' },
     },
     {
-      target: target('.staff-area-list'),
+      target: target('.staff-area-pill-list, .staff-area-sidebar, .staff-area-list'),
       title: renderStepTitle('1. Chọn khu vực'),
       description:
         'Mỗi khu vực chứa một nhóm bàn. Trên điện thoại, khu vực được hiển thị thành các tab ngang.',

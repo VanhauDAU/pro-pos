@@ -32,6 +32,7 @@ import {
   SearchOutlined,
   ShopOutlined,
   ShoppingCartOutlined,
+  ShoppingOutlined,
   StopOutlined,
   SwapOutlined,
   SyncOutlined,
@@ -58,7 +59,6 @@ import {
   Modal,
   Radio,
   Result,
-  Segmented,
   Select,
   Skeleton,
   Spin,
@@ -157,6 +157,7 @@ interface PosTable {
   timeSessionStatus?: 'RUNNING' | 'PAUSED' | 'ENDED' | null;
   totalVnd?: number;
   itemCount?: number;
+  guestCount?: number | null;
 }
 
 interface CatalogVariant {
@@ -1040,6 +1041,23 @@ function StaffBottomNav({ active }: { active: (typeof navItems)[number]['key'] }
   );
 }
 
+const STATUS_OPTIONS: Array<{ key: 'ALL' | 'OCCUPIED' | 'AVAILABLE'; label: string }> = [
+  { key: 'ALL', label: 'Tất cả' },
+  { key: 'OCCUPIED', label: 'Sử dụng' },
+  { key: 'AVAILABLE', label: 'Còn trống' },
+];
+
+function formatTableShortDuration(occupiedSince: number | null, now: number) {
+  if (!occupiedSince) return '0p';
+  const totalSecs = Math.max(0, Math.floor((now - occupiedSince) / 1000));
+  const hours = Math.floor(totalSecs / 3600);
+  const minutes = Math.floor((totalSecs % 3600) / 60);
+  if (hours > 0) {
+    return `${hours}g ${minutes}p`;
+  }
+  return `${minutes}p`;
+}
+
 function AreasPage() {
   const navigate = useNavigate();
   const [now, setNow] = useState(() => Date.now());
@@ -1066,45 +1084,121 @@ function AreasPage() {
     }
     return [...map.values()];
   }, [tables.data]);
+
   const [selectedArea, setSelectedArea] = useState<string | null>(null);
   const [status, setStatus] = useState<'ALL' | 'OCCUPIED' | 'AVAILABLE'>('ALL');
-  const area = areas.find((item) => item.id === selectedArea) ?? areas[0];
+
+  const isTakeaway = selectedArea === '__TAKEAWAY__';
+  const effectiveAreaId = isTakeaway ? '__TAKEAWAY__' : (selectedArea ?? areas[0]?.id ?? null);
+  const currentArea = areas.find((item) => item.id === effectiveAreaId) ?? areas[0];
+
   const visibleTables =
-    area?.tables.filter((table) => status === 'ALL' || table.status === status) ?? [];
-  const available = area?.tables.filter((table) => table.status === 'AVAILABLE').length ?? 0;
+    currentArea?.tables.filter((table) => status === 'ALL' || table.status === status) ?? [];
 
   return (
     <div className="staff-areas-page">
       {tables.isLoading ? <Spin fullscreen description="Đang tải khu vực" /> : null}
       {tables.isError ? <Alert type="error" showIcon title="Chưa tải được khu vực và bàn" /> : null}
-      <aside className="staff-area-list">
+
+      {/* Mobile/iPad Top Bar: Status tabs on top, Area pills + Takeaway below */}
+      <div className="staff-areas-mobile-header">
+        <div className="staff-status-bar">
+          {STATUS_OPTIONS.map((opt) => (
+            <button
+              key={opt.key}
+              type="button"
+              className={`staff-status-tab ${status === opt.key ? 'is-active' : ''}`}
+              onClick={() => setStatus(opt.key)}
+            >
+              <span className="staff-status-tab__label">{opt.label}</span>
+            </button>
+          ))}
+        </div>
+        <div className="staff-area-pill-bar">
+          <div className="staff-area-pill-list">
+            <button
+              type="button"
+              className={`staff-area-pill staff-area-pill--takeaway ${isTakeaway ? 'is-active' : ''}`}
+              onClick={() => setSelectedArea('__TAKEAWAY__')}
+            >
+              <ShoppingOutlined /> Mang về
+            </button>
+            {areas.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`staff-area-pill ${!isTakeaway && item.id === currentArea?.id ? 'is-active' : ''}`}
+                onClick={() => setSelectedArea(item.id)}
+              >
+                {item.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Desktop Sidebar with Mang về card at the top */}
+      <aside className="staff-area-sidebar staff-area-list">
+        <button
+          type="button"
+          className={`staff-area-sidebar__item staff-area-sidebar__item--takeaway ${isTakeaway ? 'is-active' : ''}`}
+          onClick={() => setSelectedArea('__TAKEAWAY__')}
+        >
+          <ShoppingOutlined /> <span>Mang về</span>
+        </button>
+        <div className="staff-area-sidebar__divider" />
         {areas.map((item) => (
           <button
             key={item.id}
             type="button"
-            className={item.id === area?.id ? 'is-active' : ''}
+            className={`staff-area-sidebar__item ${!isTakeaway && item.id === currentArea?.id ? 'is-active' : ''}`}
             onClick={() => setSelectedArea(item.id)}
           >
             {item.name}
           </button>
         ))}
       </aside>
+
+      {/* Main Content Area */}
       <main className="staff-area-content">
-        <Segmented
-          size="large"
-          value={status}
-          options={[
-            { value: 'ALL', label: 'Tất cả' },
-            { value: 'OCCUPIED', label: 'Có khách' },
-            { value: 'AVAILABLE', label: 'Trống' },
-          ]}
-          onChange={(value) => setStatus(value as typeof status)}
-        />
-        <Typography.Title level={4} className="staff-area-summary">
-          Bàn trống: {available}/{area?.tables.length ?? 0}
-        </Typography.Title>
-        {visibleTables.length === 0 ? (
-          <Empty description="Khu vực chưa có bàn phù hợp" />
+        {/* Desktop Status Bar */}
+        <div className="staff-desktop-status-bar">
+          <div className="staff-status-bar">
+            {STATUS_OPTIONS.map((opt) => (
+              <button
+                key={opt.key}
+                type="button"
+                className={`staff-status-tab ${status === opt.key ? 'is-active' : ''}`}
+                onClick={() => setStatus(opt.key)}
+              >
+                <span className="staff-status-tab__label">{opt.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {isTakeaway ? (
+          <div className="staff-takeaway-placeholder">
+            <div className="staff-takeaway-placeholder__icon">
+              <ShoppingOutlined />
+            </div>
+            <Typography.Title level={4} style={{ margin: '14px 0 6px' }}>
+              Đơn mang về
+            </Typography.Title>
+            <Typography.Paragraph type="secondary" style={{ maxWidth: 360, margin: '0 auto 20px' }}>
+              Khu vực quản lý và tạo đơn hàng mang về cho khách.
+            </Typography.Paragraph>
+            <Button
+              type="primary"
+              size="large"
+              icon={<PlusOutlined />}
+              onClick={() => navigate('/pos/orders/new')}
+            >
+              Tạo đơn mang về mới
+            </Button>
+          </div>
+        ) : visibleTables.length === 0 ? (
+          <Empty description="Khu vực chưa có bàn phù hợp" style={{ padding: '60px 0' }} />
         ) : (
           <div className="staff-table-grid">
             {visibleTables.map((table) => {
@@ -1128,59 +1222,35 @@ function AreasPage() {
                     else navigate(`/pos/orders/new?tableId=${table.id}`);
                   }}
                 >
+                  <div className="staff-table-card__header">
+                    <strong className="staff-table-card__name">{table.name}</strong>
+                    {isOccupied && isPaused && (
+                      <span className="staff-table-card__paused-badge">
+                        <PauseCircleOutlined /> Tạm dừng
+                      </span>
+                    )}
+                  </div>
                   {isOccupied ? (
-                    <>
-                      <div className="staff-table-card__header">
-                        <strong className="staff-table-card__name">{table.name}</strong>
-                        <span className="staff-table-card__time">
-                          {isPaused ? <PauseCircleOutlined /> : <ClockCircleOutlined />}{' '}
-                          {formatTableElapsed(table.occupiedSince, now)}
+                    <div className="staff-table-card__body">
+                      <div className="staff-table-card__meta">
+                        <span>{formatTableShortDuration(table.occupiedSince, now)}</span>
+                        <span className="staff-table-card__dot">•</span>
+                        <span>
+                          {table.guestCount && table.guestCount > 0
+                            ? `${table.guestCount} khách`
+                            : `${table.itemCount ?? 0} món`}
                         </span>
                       </div>
-                      <div className="staff-table-card__body">
-                        <div className="staff-table-card__total">
-                          {formatMoney(table.totalVnd ?? 0)}
-                        </div>
-                        <div className="staff-table-card__items">
-                          <ShoppingCartOutlined /> {table.itemCount ?? 0} món
-                        </div>
+                      <div className="staff-table-card__total">
+                        {formatMoney(table.totalVnd ?? 0)}
                       </div>
-                    </>
-                  ) : table.status === 'DISABLED' ? (
-                    <>
-                      <div className="staff-table-card__header">
-                        <strong className="staff-table-card__name">{table.name}</strong>
-                      </div>
-                      <div className="staff-table-card__body">
-                        <span className="staff-table-card__hint">Tạm ngưng phục vụ</span>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="staff-table-card__header">
-                        <strong className="staff-table-card__name">{table.name}</strong>
-                      </div>
-                      <div className="staff-table-card__body">
-                        <span className="staff-table-card__hint">Trống · Chạm để tạo đơn</span>
-                      </div>
-                    </>
-                  )}
+                    </div>
+                  ) : null}
                 </button>
               );
             })}
           </div>
         )}
-        <div className="staff-table-legend">
-          <span>
-            <i className="is-available" /> Trống
-          </span>
-          <span>
-            <i className="is-occupied" /> Bàn có khách
-          </span>
-          <span>
-            <i className="is-disabled" /> Tạm ngưng
-          </span>
-        </div>
       </main>
     </div>
   );

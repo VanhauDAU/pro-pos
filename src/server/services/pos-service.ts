@@ -95,9 +95,39 @@ export class PosService {
       .replaceAll('-', '');
   }
 
-  async listTables(storeId: string) {
+  async listTables(storeId: string, now = Date.now()) {
     const result = await this.repository.listTables(storeId);
-    return result.results;
+    return Promise.all(
+      result.results.map(async (table) => {
+        if (!table.activeOrderId || table.status !== 'OCCUPIED') {
+          return {
+            ...table,
+            totalVnd: 0,
+            itemCount: 0,
+          };
+        }
+        try {
+          const quote = await this.quote(storeId, table.activeOrderId, now);
+          const itemCount = quote.items.reduce(
+            (sum, item) =>
+              sum + (item.productType === 'TIME' ? 0 : Number(item.quantityMilli) / 1000),
+            0,
+          );
+          return {
+            ...table,
+            totalVnd: quote.totalVnd,
+            itemCount,
+            timeSessionStatus: quote.time?.status ?? table.timeSessionStatus ?? null,
+          };
+        } catch {
+          return {
+            ...table,
+            totalVnd: 0,
+            itemCount: 0,
+          };
+        }
+      }),
+    );
   }
 
   async listOrders(storeId: string, now = Date.now()) {

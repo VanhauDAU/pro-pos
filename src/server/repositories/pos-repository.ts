@@ -94,6 +94,8 @@ export interface PosTableRecord {
   activeOrderId: string | null;
   occupiedSince: number | null;
   timeSessionStatus?: 'RUNNING' | 'PAUSED' | 'ENDED' | null;
+  totalVnd?: number;
+  itemCount?: number;
 }
 
 export interface TableTimeSegmentRow {

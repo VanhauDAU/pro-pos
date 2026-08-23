@@ -155,6 +155,8 @@ interface PosTable {
   activeOrderId: string | null;
   occupiedSince: number | null;
   timeSessionStatus?: 'RUNNING' | 'PAUSED' | 'ENDED' | null;
+  totalVnd?: number;
+  itemCount?: number;
 }
 
 interface CatalogVariant {
@@ -622,15 +624,6 @@ function formatPriceRate(priceVnd: number, durationSeconds: number) {
   return `${formatMoney(priceVnd)}/${duration}`;
 }
 
-function formatDuration(openedAt: number) {
-  const seconds = Math.max(0, Math.floor((Date.now() - openedAt) / 1000));
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  return hours > 0
-    ? `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
-    : `${minutes} phút`;
-}
-
 function formatElapsed(totalSeconds: number) {
   const seconds = Math.max(0, Math.floor(totalSeconds));
   const hours = Math.floor(seconds / 3600);
@@ -1049,12 +1042,21 @@ function StaffBottomNav({ active }: { active: (typeof navItems)[number]['key'] }
 
 function AreasPage() {
   const navigate = useNavigate();
+  const [now, setNow] = useState(() => Date.now());
   const pollingInterval = usePosPollingInterval(20_000);
   const tables = useQuery({
     queryKey: ['pos-tables'],
     queryFn: () => apiRequest<PosTable[]>('/api/v1/pos/tables'),
     refetchInterval: pollingInterval,
   });
+
+  useEffect(() => {
+    const hasOccupied = tables.data?.some((t) => t.status === 'OCCUPIED');
+    if (!hasOccupied) return undefined;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [tables.data]);
+
   const areas = useMemo(() => {
     const map = new Map<string, { id: string; name: string; tables: PosTable[] }>();
     for (const table of tables.data ?? []) {
@@ -1106,26 +1108,62 @@ function AreasPage() {
         ) : (
           <div className="staff-table-grid">
             {visibleTables.map((table) => {
+              const isOccupied = table.status === 'OCCUPIED';
+              const isPaused = table.timeSessionStatus === 'PAUSED';
+
               return (
                 <button
                   type="button"
                   key={table.id}
                   disabled={table.status === 'DISABLED'}
-                  className={`staff-table-card staff-table-card--${table.status.toLocaleLowerCase()}`}
+                  className={[
+                    'staff-table-card',
+                    `staff-table-card--${table.status.toLowerCase()}`,
+                    isPaused && 'staff-table-card--paused',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
                   onClick={() => {
                     if (table.activeOrderId) navigate(`/pos/orders/${table.activeOrderId}`);
                     else navigate(`/pos/orders/new?tableId=${table.id}`);
                   }}
                 >
-                  <strong>{table.name}</strong>
-                  {table.status === 'DISABLED' ? (
-                    <span>Tạm ngưng phục vụ</span>
-                  ) : table.occupiedSince ? (
-                    <span>
-                      <ClockCircleOutlined /> {formatDuration(table.occupiedSince)}
-                    </span>
+                  {isOccupied ? (
+                    <>
+                      <div className="staff-table-card__header">
+                        <strong className="staff-table-card__name">{table.name}</strong>
+                        <span className="staff-table-card__time">
+                          {isPaused ? <PauseCircleOutlined /> : <ClockCircleOutlined />}{' '}
+                          {formatTableElapsed(table.occupiedSince, now)}
+                        </span>
+                      </div>
+                      <div className="staff-table-card__body">
+                        <div className="staff-table-card__total">
+                          {formatMoney(table.totalVnd ?? 0)}
+                        </div>
+                        <div className="staff-table-card__items">
+                          <ShoppingCartOutlined /> {table.itemCount ?? 0} món
+                        </div>
+                      </div>
+                    </>
+                  ) : table.status === 'DISABLED' ? (
+                    <>
+                      <div className="staff-table-card__header">
+                        <strong className="staff-table-card__name">{table.name}</strong>
+                      </div>
+                      <div className="staff-table-card__body">
+                        <span className="staff-table-card__hint">Tạm ngưng phục vụ</span>
+                      </div>
+                    </>
                   ) : (
-                    <span>Trống · Chạm để tạo đơn</span>
+                    <>
+                      <div className="staff-table-card__header">
+                        <strong className="staff-table-card__name">{table.name}</strong>
+                      </div>
+                      <div className="staff-table-card__body">
+                        <span className="staff-table-card__hint">Trống · Chạm để tạo đơn</span>
+                      </div>
+                    </>
                   )}
                 </button>
               );

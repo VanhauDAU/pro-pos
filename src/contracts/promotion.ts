@@ -196,3 +196,43 @@ export interface PosPromotionOption {
   giftBuyAny: boolean;
   maximumGiftQuantity: number | null;
 }
+
+export const promotionPreviewItemSchema = z.object({
+  productId: z.string(),
+  variantId: z.string().nullable().optional(),
+  productType: z.enum(['QUANTITY', 'WEIGHT', 'TIME', 'SERVICE']).optional(),
+  productName: z.string().optional(),
+  variantName: z.string().nullable().optional(),
+  unitPriceVnd: z.number().nonnegative(),
+  quantityMilli: z.number().positive(),
+  grossLineTotalVnd: z.number().nonnegative(),
+  netLineTotalVnd: z.number().nonnegative(),
+});
+
+export const promotionPreviewSchema = z.object({
+  orderId: z.string().nullable().optional(),
+  customerId: z.string().nullable().optional(),
+  subtotalVnd: z.number().nonnegative(),
+  promotionIds: z.array(z.string()).optional(),
+  items: z.array(promotionPreviewItemSchema).default([]),
+});
+
+export type PromotionPreviewInput = z.infer<typeof promotionPreviewSchema>;
+
+export interface PromotionPreviewResult {
+  options: PosPromotionOption[];
+  applied: PosPromotionOption[];
+  promotionDiscountVnd: number;
+  giftItems: Array<{
+    productId: string;
+    variantId: string;
+    productName: string;
+    variantName: string | null;
+    unitName: string | null;
+    unitPriceVnd: number;
+    quantityMilli: number;
+    grossAmountVnd: number;
+    promotionId: string;
+    promotionName: string;
+  }>;
+}

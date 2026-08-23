@@ -16,9 +16,12 @@ export class ApiError extends Error {
   }
 }
 
-export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+export async function apiRequest<T>(
+  path: string,
+  init?: RequestInit & { skipMutationTracking?: boolean },
+): Promise<T> {
   const method = (init?.method ?? 'GET').toUpperCase();
-  const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method);
+  const isMutation = !init?.skipMutationTracking && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method);
   if (isMutation) beginMutation();
   try {
     const requestInit: RequestInit = {
@@ -51,7 +54,11 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
   }
 }
 
-export function jsonRequest<T>(path: string, body: unknown, init?: RequestInit) {
+export function jsonRequest<T>(
+  path: string,
+  body: unknown,
+  init?: RequestInit & { skipMutationTracking?: boolean },
+) {
   return apiRequest<T>(path, {
     ...init,
     method: init?.method ?? 'POST',

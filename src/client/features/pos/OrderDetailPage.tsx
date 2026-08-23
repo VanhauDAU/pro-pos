@@ -419,7 +419,7 @@ export function OrderDetailPage({
   // Realtime active segment duration calculation
   const liveTimeSegments = useMemo(() => {
     if (!data?.timeSegments) return [];
-    if (data.order.status !== 'OPEN') return data.timeSegments;
+    if (data.order.status !== 'OPEN' || data.timeSummary?.status === 'PAUSED') return data.timeSegments;
 
     return data.timeSegments.map((seg) => {
       if (seg.isCurrentActive) {
@@ -435,7 +435,7 @@ export function OrderDetailPage({
       }
       return seg;
     });
-  }, [data?.timeSegments, data?.order.status, now]);
+  }, [data?.timeSegments, data?.order.status, data?.timeSummary?.status, now]);
 
   const liveTotalElapsed = useMemo(() => {
     return liveTimeSegments.reduce((sum, s) => sum + s.elapsedSeconds, 0);
@@ -1024,8 +1024,19 @@ export function OrderDetailPage({
                       Chi tiết tiền giờ theo phân đoạn
                     </span>
                     <Space size={8}>
+                      {data?.timeSummary?.status === 'PAUSED' ? (
+                        <Tag color="warning" icon={<PauseCircleOutlined />}>
+                          Tạm dừng tính giờ
+                        </Tag>
+                      ) : null}
                       <Badge
-                        status={order.status === 'OPEN' ? 'processing' : 'default'}
+                        status={
+                          order.status === 'OPEN'
+                            ? data?.timeSummary?.status === 'PAUSED'
+                              ? 'warning'
+                              : 'processing'
+                            : 'default'
+                        }
                         text={<strong>Tổng giờ: {formatDuration(liveTotalElapsed)}</strong>}
                       />
                       <Tag color="gold" style={{ fontSize: '13px', fontWeight: 600 }}>

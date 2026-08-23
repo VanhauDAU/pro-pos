@@ -19,7 +19,7 @@ import {
   updateOrderNoteSchema,
   updateOrderGuestSchema,
 } from '@contracts/pos';
-import { applyPromotionSchema } from '@contracts/promotion';
+import { applyPromotionSchema, promotionPreviewSchema } from '@contracts/promotion';
 import { AppError } from '@server/lib/app-error';
 import { success } from '@server/lib/response';
 import { parseJson } from '@server/lib/validation';
@@ -31,7 +31,22 @@ import {
 import { PosService } from '@server/services/pos-service';
 import { StoreService } from '@server/services/store-service';
 import { CustomerService } from '@server/services/customer-service';
-import { customerInputSchema, debtPaymentSchema } from '@contracts/customer';
+import { PromotionService } from '@server/services/promotion-service';
+import {
+  customerGroupInputSchema,
+  customerImportSchema,
+  customerInputSchema,
+  debtAdjustmentSchema,
+  debtPaymentSchema,
+  loyaltySettingsSchema,
+} from '@contracts/customer';
+import { z } from 'zod';
+import { StaffService } from '@server/services/staff-service';
+import {
+  createEmployeeSchema,
+  updateEmployeeSchema,
+  employeeBulkActionSchema,
+} from '@contracts/staff';
 import { OwnerInvoiceService } from '@server/services/owner-invoice-service';
 import { RealtimeRepository } from '@server/repositories/realtime-repository';
 import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
@@ -46,6 +61,7 @@ posRoutes.use('*', async (c, next) => {
   await next();
   if (
     ['POST', 'PUT', 'PATCH', 'DELETE'].includes(c.req.method) &&
+    !c.req.path.endsWith('/promotions/preview') &&
     c.res.status >= 200 &&
     c.res.status < 300
   ) {
@@ -173,29 +189,165 @@ posRoutes.get('/print-settings', requirePermission('order.manage'), async (c) =>
   success(c, await new StoreService(c.env).getPrintSettings(c.get('actor').storeId!)),
 );
 
-posRoutes.get('/customers', requirePermission('order.add_customer'), async (c) => {
-  const search = c.req.query('search')?.trim();
-  return success(
-    c,
-    await new CustomerService(c.env).list(c.get('actor').storeId!, {
-      ...(search ? { search } : {}),
-      status: 'ACTIVE',
-      page: 1,
-      limit: 50,
-    }),
-  );
-});
-posRoutes.get('/customers/:id', requirePermission('order.add_customer'), async (c) =>
-  success(c, await new CustomerService(c.env).detail(c.get('actor').storeId!, c.req.param('id'))),
+posRoutes.get(
+  '/customers',
+  requirePermission('customer.list.view', 'order.add_customer'),
+  async (c) => {
+    const page = Math.max(1, Number(c.req.query('page') ?? 1));
+    const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') ?? 20)));
+    const search = c.req.query('search')?.trim();
+    const status = c.req.query('status');
+    return success(
+      c,
+      await new CustomerService(c.env).list(c.get('actor').storeId!, {
+        ...(search ? { search } : {}),
+        ...(status ? { status } : {}),
+        page,
+        limit,
+      }),
+    );
+  },
 );
-posRoutes.post('/customers', requirePermission('order.add_customer'), async (c) => {
-  const body = await parseJson(c.req.raw, customerInputSchema);
-  const actor = c.get('actor');
-  return success(c, await new CustomerService(c.env).create(actor.storeId!, actor.id, body), 201);
-});
+
+posRoutes.get(
+  '/customers/loyalty-settings',
+  requirePermission('customer.list.view', 'customer.list.create'),
+  async (c) => success(c, await new CustomerService(c.env).loyaltySettings(c.get('actor').storeId!)),
+);
+
+posRoutes.put(
+  '/customers/loyalty-settings',
+  requirePermission('customer.list.edit_debt'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, loyaltySettingsSchema);
+    const actor = c.get('actor');
+    return success(
+      c,
+      await new CustomerService(c.env).saveLoyaltySettings(
+        actor.storeId!,
+        actor.id,
+        body.enabled,
+        body.vndPerPoint,
+      ),
+    );
+  },
+);
+
+posRoutes.get(
+  '/customers/groups',
+  requirePermission('customer.groups.view', 'customer.list.view'),
+  async (c) => success(c, await new CustomerService(c.env).listGroups(c.get('actor').storeId!)),
+);
+
+posRoutes.post(
+  '/customers/import/validate',
+  requirePermission('customer.list.import_export'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, customerImportSchema);
+    return success(
+      c,
+      await new CustomerService(c.env).validateImport(c.get('actor').storeId!, body.rows),
+    );
+  },
+);
+
+posRoutes.post(
+  '/customers/import',
+  requirePermission('customer.list.import_export'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, customerImportSchema);
+    const actor = c.get('actor');
+    return success(c, await new CustomerService(c.env).import(actor.storeId!, actor.id, body.rows));
+  },
+);
+
+posRoutes.post(
+  '/customers/groups',
+  requirePermission('customer.groups.create'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, customerGroupInputSchema);
+    const actor = c.get('actor');
+    return success(
+      c,
+      await new CustomerService(c.env).saveGroup(actor.storeId!, actor.id, body),
+      201,
+    );
+  },
+);
+
+posRoutes.get(
+  '/customers/groups/:id',
+  requirePermission('customer.groups.view'),
+  async (c) =>
+    success(
+      c,
+      await new CustomerService(c.env).groupDetail(c.get('actor').storeId!, c.req.param('id')),
+    ),
+);
+
+posRoutes.put(
+  '/customers/groups/:id',
+  requirePermission('customer.groups.edit'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, customerGroupInputSchema);
+    const actor = c.get('actor');
+    return success(
+      c,
+      await new CustomerService(c.env).saveGroup(actor.storeId!, actor.id, body, c.req.param('id')),
+    );
+  },
+);
+
+posRoutes.delete(
+  '/customers/groups/:id',
+  requirePermission('customer.groups.delete'),
+  async (c) =>
+    success(
+      c,
+      await new CustomerService(c.env).deleteGroup(c.get('actor').storeId!, c.req.param('id')),
+    ),
+);
+
+posRoutes.post(
+  '/customers',
+  requirePermission('customer.list.create', 'order.add_customer'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, customerInputSchema);
+    const actor = c.get('actor');
+    return success(c, await new CustomerService(c.env).create(actor.storeId!, actor.id, body), 201);
+  },
+);
+
+posRoutes.get(
+  '/customers/:id',
+  requirePermission('customer.list.view', 'order.add_customer'),
+  async (c) =>
+    success(c, await new CustomerService(c.env).detail(c.get('actor').storeId!, c.req.param('id'))),
+);
+
+posRoutes.put(
+  '/customers/:id',
+  requirePermission('customer.list.edit_debt'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, customerInputSchema);
+    const actor = c.get('actor');
+    return success(
+      c,
+      await new CustomerService(c.env).update(actor.storeId!, c.req.param('id'), body),
+    );
+  },
+);
+
+posRoutes.delete(
+  '/customers/:id',
+  requirePermission('customer.list.delete'),
+  async (c) =>
+    success(c, await new CustomerService(c.env).archive(c.get('actor').storeId!, c.req.param('id'))),
+);
+
 posRoutes.post(
   '/customers/:id/debt-payments',
-  requirePermission('checkout.complete'),
+  requirePermission('customer.list.edit_debt', 'checkout.complete'),
   async (c) => {
     const body = await parseJson(c.req.raw, debtPaymentSchema);
     const actor = c.get('actor');
@@ -205,6 +357,175 @@ posRoutes.post(
     );
   },
 );
+
+posRoutes.post(
+  '/customers/:id/debt-adjustments',
+  requirePermission('customer.list.edit_debt'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, debtAdjustmentSchema);
+    const actor = c.get('actor');
+    return success(
+      c,
+      await new CustomerService(c.env).adjustDebt(
+        actor.storeId!,
+        c.req.param('id'),
+        actor.id,
+        body,
+      ),
+    );
+  },
+);
+
+// ── Staff & Employee Management ──────────────────────────────────────────────
+posRoutes.get('/staff', requirePermission('staff.employees.view'), async (c) => {
+  const actor = c.get('actor');
+  return success(c, await new StaffService(c.env).listEmployees(actor.storeId!));
+});
+
+posRoutes.get(
+  '/staff/roles',
+  requirePermission('staff.employees.view', 'staff.employees.create', 'staff.employees.edit'),
+  async (c) => success(c, await new StaffService(c.env).listRoles(c.get('actor').storeId!)),
+);
+
+posRoutes.post('/staff', requirePermission('staff.employees.create'), async (c) => {
+  const actor = c.get('actor');
+  const body = await parseJson(c.req.raw, createEmployeeSchema);
+  return success(
+    c,
+    await new StaffService(c.env).createEmployee({
+      storeId: actor.storeId!,
+      displayName: body.displayName,
+      username: body.username,
+      pin: body.pin,
+      email: body.email ?? null,
+      permissionKeys: body.permissionKeys,
+      ...(body.roleId ? { roleId: body.roleId } : {}),
+      auditContext: {
+        actorUserId: actor.id,
+        actorSessionId: c.get('sessionId'),
+        deviceId: c.get('device')?.id ?? null,
+        requestId: c.get('requestId'),
+      },
+    }),
+    201,
+  );
+});
+
+posRoutes.post(
+  '/staff/bulk-action',
+  requirePermission('staff.employees.edit', 'staff.employees.delete'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, employeeBulkActionSchema);
+    const actor = c.get('actor');
+    return success(
+      c,
+      await new StaffService(c.env).bulkAction(actor.storeId!, body.userIds, body.action, {
+        actorUserId: actor.id,
+        actorSessionId: c.get('sessionId'),
+        deviceId: c.get('device')?.id ?? null,
+        requestId: c.get('requestId'),
+      }),
+    );
+  },
+);
+
+posRoutes.get('/staff/:userId', requirePermission('staff.employees.view'), async (c) =>
+  success(
+    c,
+    await new StaffService(c.env).getEmployee(c.get('actor').storeId!, c.req.param('userId')),
+  ),
+);
+
+posRoutes.put('/staff/:userId', requirePermission('staff.employees.edit'), async (c) => {
+  const actor = c.get('actor');
+  const body = await parseJson(c.req.raw, updateEmployeeSchema);
+  return success(
+    c,
+    await new StaffService(c.env).updateEmployee(
+      actor.storeId!,
+      c.req.param('userId'),
+      body,
+      {
+        actorUserId: actor.id,
+        actorSessionId: c.get('sessionId'),
+        deviceId: c.get('device')?.id ?? null,
+        requestId: c.get('requestId'),
+      },
+    ),
+  );
+});
+
+posRoutes.delete('/staff/:userId', requirePermission('staff.employees.delete'), async (c) => {
+  const actor = c.get('actor');
+  return success(
+    c,
+    await new StaffService(c.env).deleteEmployee(
+      actor.storeId!,
+      c.req.param('userId'),
+      {
+        actorUserId: actor.id,
+        actorSessionId: c.get('sessionId'),
+        deviceId: c.get('device')?.id ?? null,
+        requestId: c.get('requestId'),
+      },
+    ),
+  );
+});
+
+posRoutes.post(
+  '/staff/:userId/sessions/revoke',
+  requirePermission('staff.employees.edit'),
+  async (c) => {
+    const actor = c.get('actor');
+    return success(
+      c,
+      await new StaffService(c.env).terminateSessions(
+        actor.storeId!,
+        c.req.param('userId'),
+        {
+          actorUserId: actor.id,
+          actorSessionId: c.get('sessionId'),
+          deviceId: c.get('device')?.id ?? null,
+          requestId: c.get('requestId'),
+        },
+      ),
+    );
+  },
+);
+
+posRoutes.patch('/staff/:userId/status', requirePermission('staff.employees.edit'), async (c) => {
+  const actor = c.get('actor');
+  const body = await parseJson(c.req.raw, z.object({ status: z.enum(['ACTIVE', 'DISABLED']) }));
+  return success(
+    c,
+    await new StaffService(c.env).setEmployeeStatus(
+      actor.storeId!,
+      c.req.param('userId'),
+      body.status,
+      {
+        actorUserId: actor.id,
+        actorSessionId: c.get('sessionId'),
+        deviceId: c.get('device')?.id ?? null,
+        requestId: c.get('requestId'),
+      },
+    ),
+  );
+});
+
+posRoutes.put('/staff/:userId/pin', requirePermission('staff.employees.edit'), async (c) => {
+  const actor = c.get('actor');
+  const body = await parseJson(c.req.raw, z.object({ pin: z.string().regex(/^\d{4}$/) }));
+  return success(
+    c,
+    await new StaffService(c.env).resetPin(actor.storeId!, c.req.param('userId'), body.pin, {
+      actorUserId: actor.id,
+      actorSessionId: c.get('sessionId'),
+      deviceId: c.get('device')?.id ?? null,
+      requestId: c.get('requestId'),
+    }),
+  );
+});
 
 posRoutes.put('/printer-settings', requirePermission('order.manage'), async (c) => {
   const printer = await parseJson(c.req.raw, updatePrinterDeviceSettingsSchema);
@@ -294,6 +615,32 @@ posRoutes.get('/orders/:orderId/detail', requirePermission('table.view'), async 
     await new PosService(c.env).getOrderDetail(c.get('actor').storeId!, c.req.param('orderId')),
   ),
 );
+
+posRoutes.post('/promotions/preview', requirePermission('table.view'), async (c) => {
+  const body = await parseJson(c.req.raw, promotionPreviewSchema);
+  const actor = c.get('actor');
+  return success(
+    c,
+    await new PromotionService(c.env).previewForOrder({
+      storeId: actor.storeId!,
+      orderId: body.orderId ?? null,
+      customerId: body.customerId ?? null,
+      subtotalVnd: body.subtotalVnd,
+      promotionIds: body.promotionIds,
+      items: body.items.map((item) => ({
+        productId: item.productId,
+        variantId: item.variantId ?? null,
+        productType: item.productType ?? 'QUANTITY',
+        productName: item.productName ?? '',
+        variantName: item.variantName ?? null,
+        unitPriceVnd: item.unitPriceVnd,
+        quantityMilli: item.quantityMilli,
+        grossLineTotalVnd: item.grossLineTotalVnd,
+        netLineTotalVnd: item.netLineTotalVnd,
+      })),
+    }),
+  );
+});
 
 posRoutes.get('/orders/:orderId/promotions', requirePermission('promotion.apply'), async (c) => {
   const quote = await new PosService(c.env).quote(c.get('actor').storeId!, c.req.param('orderId'));

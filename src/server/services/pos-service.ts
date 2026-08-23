@@ -118,6 +118,7 @@ export class PosService {
           areaName: order.area_name,
           itemCount: quote.items.reduce((sum, item) => sum + Number(item.quantityMilli) / 1000, 0),
           totalVnd: quote.totalVnd,
+          timeStatus: quote.time?.status ?? null,
         };
       }),
     );
@@ -892,6 +893,8 @@ export class PosService {
       ? (await this.repository.listTableTimeSegments(storeId, session.id)).results
       : [];
     const pauses = session ? await this.repository.listPauses(storeId, session.id) : null;
+    const currentPause = pauses?.results.find((p) => p.resumedAtMs === null);
+    const pausedAtMs = currentPause ? currentPause.pausedAtMs : null;
     const sessionPauses = pauses
       ? pauses.results.map((pause) => ({
           pausedAtMs: pause.pausedAtMs,
@@ -904,6 +907,7 @@ export class PosService {
           status: 'RUNNING' | 'PAUSED' | 'ENDED';
           startedAtMs: number;
           endedAtMs: number | null;
+          pausedAtMs: number | null;
           pricingConfig: PricingConfigSnapshot;
           tableSegments?: Array<{
             tableId: string;
@@ -985,6 +989,7 @@ export class PosService {
           status: session.status,
           startedAtMs: session.started_at,
           endedAtMs: session.ended_at,
+          pausedAtMs,
           pricingConfig: latestConfig,
           tableSegments: processedTableSegments,
         };
@@ -1001,6 +1006,7 @@ export class PosService {
           status: session.status,
           startedAtMs: session.started_at,
           endedAtMs: session.ended_at,
+          pausedAtMs,
           pricingConfig,
         };
       }
@@ -1242,9 +1248,12 @@ export class PosService {
     const order = await this.repository.findOrder(input.storeId, input.orderId);
     if (!order) throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn tại chỗ.', 404);
     const session = await this.repository.findTimeSession(input.storeId, input.orderId);
+    // Cho phép buffer 5 giây để bù clock skew client/server
+    const nowWithBuffer = now + 5_000;
     if (
-      input.startedAtMs > now ||
-      (input.endedAtMs !== null && (input.endedAtMs <= input.startedAtMs || input.endedAtMs > now))
+      input.startedAtMs > nowWithBuffer ||
+      (input.endedAtMs !== null &&
+        (input.endedAtMs <= input.startedAtMs || input.endedAtMs > nowWithBuffer))
     ) {
       throw new AppError(
         'TIME_RANGE_INVALID',
@@ -1419,25 +1428,11 @@ export class PosService {
     );
     if (replay) {
       const quote = await this.quote(input.storeId, input.orderId, now);
-      const consistentQuote = {
-        ...quote,
-        order: {
-          ...quote.order,
-          status: 'OPEN' as const,
-        },
-        time: quote.time
-          ? {
-              ...quote.time,
-              status: 'RUNNING' as const,
-              endedAtMs: null,
-            }
-          : null,
-      };
       return {
         orderId: input.orderId,
         status: 'OPEN' as const,
         resumedAt: replay.resumedAt,
-        quote: consistentQuote,
+        quote,
       };
     }
 
@@ -1465,6 +1460,12 @@ export class PosService {
       throw new AppError('ORDER_VERSION_CONFLICT', 'Đơn hàng đã thay đổi. Vui lòng tải lại.', 409);
     }
 
+    // Kiểm tra trước xem session có được set giờ ra thủ công không
+    const sessionBeforeResume = await this.repository.findTimeSession(input.storeId, input.orderId);
+    const wasManuallyEnded =
+      sessionBeforeResume?.status === 'ENDED' &&
+      sessionBeforeResume.ended_at !== null;
+
     try {
       await this.repository.resumeCheckout({
         commandId: input.idempotencyKey,
@@ -1481,26 +1482,13 @@ export class PosService {
       mapDatabaseError(error);
     }
 
+    // Lấy quote thực từ DB sau khi trigger đã chạy - tôn trọng giờ ra thủ công
     const quote = await this.quote(input.storeId, input.orderId, now);
-    const consistentQuote = {
-      ...quote,
-      order: {
-        ...quote.order,
-        status: 'OPEN' as const,
-      },
-      time: quote.time
-        ? {
-            ...quote.time,
-            status: 'RUNNING' as const,
-            endedAtMs: null,
-          }
-        : null,
-    };
     return {
       orderId: input.orderId,
       status: 'OPEN' as const,
-      resumedAt: now,
-      quote: consistentQuote,
+      resumedAt: wasManuallyEnded ? (sessionBeforeResume!.ended_at ?? now) : now,
+      quote,
     };
   }
 

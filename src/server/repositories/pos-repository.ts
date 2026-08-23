@@ -93,6 +93,7 @@ export interface PosTableRecord {
   defaultDurationSeconds?: number | null;
   activeOrderId: string | null;
   occupiedSince: number | null;
+  timeSessionStatus?: 'RUNNING' | 'PAUSED' | 'ENDED' | null;
 }
 
 export interface TableTimeSegmentRow {
@@ -159,13 +160,16 @@ export class PosRepository {
           p.name AS timeProductName,
           tpc.base_price AS defaultPriceVnd,
           tpc.base_duration_seconds AS defaultDurationSeconds,
-          o.id AS activeOrderId, o.opened_at AS occupiedSince
+          o.id AS activeOrderId, o.opened_at AS occupiedSince,
+          ts.status AS timeSessionStatus
         FROM service_tables st
         JOIN areas a ON a.id = st.area_id AND a.store_id = st.store_id
         LEFT JOIN products p ON p.id = st.time_product_id AND p.store_id = st.store_id
         LEFT JOIN time_price_configs tpc ON tpc.product_id = p.id AND tpc.store_id = p.store_id
         LEFT JOIN orders o ON o.table_id = st.id AND o.store_id = st.store_id
           AND o.order_type = 'DINE_IN' AND o.status IN ('OPEN', 'PAYMENT_PENDING')
+        LEFT JOIN time_sessions ts ON ts.order_id = o.id AND ts.store_id = st.store_id
+          AND ts.status IN ('RUNNING', 'PAUSED')
         WHERE st.store_id = ?
           AND a.status = 'ACTIVE'
         ORDER BY a.sort_order, st.sort_order, COALESCE(st.display_name, st.name) COLLATE NOCASE`,
@@ -548,10 +552,10 @@ export class PosRepository {
                 ss.phone AS storePhone, ss.address AS storeAddress,
                 ss.bank_name AS bankName, ss.bank_account_number AS bankAccountNumber,
                 ss.bank_account_name AS bankAccountName,
-                EXISTS (
-                  SELECT 1 FROM store_capabilities sc
-                  WHERE sc.store_id = s.id AND sc.capability = 'POS_REALTIME' AND sc.enabled = 1
-                ) AS posRealtimeEnabled
+                COALESCE((
+                  SELECT sc.enabled FROM store_capabilities sc
+                  WHERE sc.store_id = s.id AND sc.capability = 'POS_REALTIME' LIMIT 1
+                ), 1) AS posRealtimeEnabled
          FROM stores s
          JOIN store_memberships sm ON sm.store_id = s.id AND sm.user_id = ?
            AND sm.status = 'ACTIVE' AND sm.deleted_at IS NULL
@@ -1272,6 +1276,13 @@ export class PosRepository {
     requestId: string;
     now: number;
   }) {
+    // DB CHECK: ended_at <= issued_at và started_at <= issued_at.
+    // Đảm bảo issued_at >= max(endedAtMs, startedAtMs) để bù clock skew.
+    const issuedAt = Math.max(
+      input.now,
+      input.endedAtMs ?? 0,
+      input.startedAtMs,
+    );
     return this.db
       .prepare(
         `INSERT INTO update_time_range_commands (
@@ -1295,7 +1306,7 @@ export class PosRepository {
         input.actorSessionId,
         input.deviceId,
         input.requestId,
-        input.now,
+        issuedAt,
       )
       .run();
   }

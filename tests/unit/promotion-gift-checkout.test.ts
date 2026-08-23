@@ -27,11 +27,13 @@ describe('Promotion Gift Checkout Accounting Invariants', () => {
     // 2. Gross line total must be >= 0
     expect(promotionGiftItem.grossLineTotalVnd).toBeGreaterThanOrEqual(0);
     // 3. Discount amount cannot exceed gross line total
-    expect(promotionGiftItem.discountAmountVnd).toBeLessThanOrEqual(promotionGiftItem.grossLineTotalVnd);
+    expect(promotionGiftItem.discountAmountVnd).toBeLessThanOrEqual(
+      promotionGiftItem.grossLineTotalVnd,
+    );
     // 4. Invariant: gross_line_total - discount_amount == line_total
-    expect(
-      promotionGiftItem.grossLineTotalVnd - promotionGiftItem.discountAmountVnd,
-    ).toBe(promotionGiftItem.lineTotalVnd);
+    expect(promotionGiftItem.grossLineTotalVnd - promotionGiftItem.discountAmountVnd).toBe(
+      promotionGiftItem.lineTotalVnd,
+    );
     // 5. Line total for a 100% gift item is exactly 0
     expect(promotionGiftItem.lineTotalVnd).toBe(0);
   });

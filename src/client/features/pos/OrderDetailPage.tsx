@@ -419,7 +419,8 @@ export function OrderDetailPage({
   // Realtime active segment duration calculation
   const liveTimeSegments = useMemo(() => {
     if (!data?.timeSegments) return [];
-    if (data.order.status !== 'OPEN' || data.timeSummary?.status === 'PAUSED') return data.timeSegments;
+    if (data.order.status !== 'OPEN' || data.timeSummary?.status === 'PAUSED')
+      return data.timeSegments;
 
     return data.timeSegments.map((seg) => {
       if (seg.isCurrentActive) {
@@ -498,7 +499,9 @@ export function OrderDetailPage({
       issuedAtMs: data.invoice?.issuedAt || Date.now(),
       subtotal: isPayment ? data.invoice!.subtotalVnd : liveGrandTotal,
       discountTotal: isPayment ? data.invoice!.discountTotalVnd : data.totals.totalDiscountVnd,
-      promotionDiscount: isPayment ? invoicePromotionDiscount : (data.totals.orderDiscountAmountVnd || 0),
+      promotionDiscount: isPayment
+        ? invoicePromotionDiscount
+        : data.totals.orderDiscountAmountVnd || 0,
       promotion: invoicePromotions[0] ?? null,
       promotions: invoicePromotions,
       total: isPayment ? data.invoice!.totalVnd : liveGrandTotal,
@@ -516,7 +519,8 @@ export function OrderDetailPage({
                 totalPrice: liveTotalTimeAmount,
                 isTime: true,
                 timeStartedAtMs: data.order.openedAt,
-                timeEndedAtMs: data.order.status === 'OPEN' ? null : (data.order.closedAt ?? Date.now()),
+                timeEndedAtMs:
+                  data.order.status === 'OPEN' ? null : (data.order.closedAt ?? Date.now()),
                 timeElapsedSeconds: liveTotalElapsed,
                 tableSegments: liveTimeSegments.map((s) => ({
                   tableName: s.tableName,
@@ -1508,16 +1512,16 @@ export function OrderDetailPage({
                   <Col xs={24} sm={8}>
                     <div style={{ fontSize: 13, color: '#166534' }}>Tổng tiền giảm trừ:</div>
                     <div style={{ fontSize: 20, fontWeight: 700, color: '#dc2626' }}>
-                      -{formatMoney(appliedPromotions.reduce((sum, p) => sum + p.discountAmountVnd, 0))}
+                      -
+                      {formatMoney(
+                        appliedPromotions.reduce((sum, p) => sum + p.discountAmountVnd, 0),
+                      )}
                     </div>
                   </Col>
                   <Col xs={24} sm={8}>
                     <div style={{ fontSize: 13, color: '#166534' }}>Quà tặng kèm theo:</div>
                     <div style={{ fontSize: 20, fontWeight: 700, color: '#0975F7' }}>
-                      {appliedPromotions.reduce(
-                        (sum, p) => sum + (p.giftItems?.length ?? 0),
-                        0,
-                      )}{' '}
+                      {appliedPromotions.reduce((sum, p) => sum + (p.giftItems?.length ?? 0), 0)}{' '}
                       món quà
                     </div>
                   </Col>

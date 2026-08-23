@@ -120,8 +120,7 @@ export function OwnerStaffListPage({
   const allSelected = rows.length > 0 && selectedIds.length === rows.length;
   const someSelected = selectedIds.length > 0 && !allSelected;
 
-  const toggleAll = (checked: boolean) =>
-    setSelectedIds(checked ? rows.map((row) => row.id) : []);
+  const toggleAll = (checked: boolean) => setSelectedIds(checked ? rows.map((row) => row.id) : []);
   const toggleOne = (id: string, checked: boolean) =>
     setSelectedIds((current) =>
       checked ? [...current, id] : current.filter((currentId) => currentId !== id),
@@ -316,7 +315,12 @@ export function OwnerStaffListPage({
                     <div className="customer-mobile-card__user">
                       <Avatar
                         size={40}
-                        style={{ background: '#0975f7', color: '#fff', fontWeight: 700, flexShrink: 0 }}
+                        style={{
+                          background: '#0975f7',
+                          color: '#fff',
+                          fontWeight: 700,
+                          flexShrink: 0,
+                        }}
                         icon={<UserOutlined />}
                       />
                       <div style={{ minWidth: 0 }}>
@@ -324,11 +328,21 @@ export function OwnerStaffListPage({
                         <div className="customer-mobile-card__phone">@{employee.username}</div>
                       </div>
                     </div>
-                    <Tag color={employee.status === 'ACTIVE' ? 'success' : 'default'} style={{ margin: 0 }}>
+                    <Tag
+                      color={employee.status === 'ACTIVE' ? 'success' : 'default'}
+                      style={{ margin: 0 }}
+                    >
                       {employee.status === 'ACTIVE' ? 'Kích hoạt' : 'Tạm khóa'}
                     </Tag>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      marginTop: 8,
+                    }}
+                  >
                     <Tag color="blue" style={{ fontSize: 12, margin: 0 }}>
                       {employee.roleName}
                     </Tag>
@@ -492,7 +506,9 @@ export function OwnerEmployeeFormPage({
         { status },
         { method: 'PATCH', headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' } },
       );
-      await queryClient.invalidateQueries({ queryKey: ['staff-employee-detail', apiPrefix, userId] });
+      await queryClient.invalidateQueries({
+        queryKey: ['staff-employee-detail', apiPrefix, userId],
+      });
       await queryClient.invalidateQueries({ queryKey: ['staff-employees-list', apiPrefix] });
       messageApi.success(
         status === 'ACTIVE' ? 'Đã kích hoạt nhân viên.' : 'Đã ngừng kích hoạt nhân viên.',
@@ -589,7 +605,10 @@ export function OwnerEmployeeFormPage({
           ) : null}
         </div>
         {!isCreate ? (
-          <Tag color={status === 'ACTIVE' ? 'success' : 'default'} style={{ fontSize: 13, padding: '4px 10px' }}>
+          <Tag
+            color={status === 'ACTIVE' ? 'success' : 'default'}
+            style={{ fontSize: 13, padding: '4px 10px' }}
+          >
             {status === 'ACTIVE' ? 'Đang kích hoạt' : 'Ngừng kích hoạt'}
           </Tag>
         ) : null}
@@ -619,7 +638,12 @@ export function OwnerEmployeeFormPage({
                     name="displayName"
                     rules={[{ required: true, message: 'Vui lòng nhập họ tên.' }]}
                   >
-                    <Input size="middle" maxLength={128} placeholder="Nhập họ tên" disabled={!isCreate && !canEdit} />
+                    <Input
+                      size="middle"
+                      maxLength={128}
+                      placeholder="Nhập họ tên"
+                      disabled={!isCreate && !canEdit}
+                    />
                   </Form.Item>
                 </Col>
                 <Col xs={12} sm={12} md={12}>
@@ -628,12 +652,23 @@ export function OwnerEmployeeFormPage({
                     name="username"
                     rules={[{ required: true, message: 'Vui lòng nhập tên đăng nhập.' }]}
                   >
-                    <Input disabled={!isCreate} size="middle" maxLength={128} placeholder="Tên đăng nhập" />
+                    <Input
+                      disabled={!isCreate}
+                      size="middle"
+                      maxLength={128}
+                      placeholder="Tên đăng nhập"
+                    />
                   </Form.Item>
                 </Col>
                 <Col xs={12} sm={12} md={12}>
                   <Form.Item label="Email" name="email">
-                    <Input size="middle" type="email" maxLength={254} placeholder="nhanvien@example.com" disabled={!isCreate && !canEdit} />
+                    <Input
+                      size="middle"
+                      type="email"
+                      maxLength={254}
+                      placeholder="nhanvien@example.com"
+                      disabled={!isCreate && !canEdit}
+                    />
                   </Form.Item>
                 </Col>
                 <Col xs={12} sm={12} md={12}>
@@ -642,7 +677,12 @@ export function OwnerEmployeeFormPage({
                     name="roleId"
                     rules={[{ required: true, message: 'Vui lòng chọn vai trò.' }]}
                   >
-                    <Select size="middle" options={roleOptions} placeholder="Chọn vai trò" disabled={!isCreate && !canEdit} />
+                    <Select
+                      size="middle"
+                      options={roleOptions}
+                      placeholder="Chọn vai trò"
+                      disabled={!isCreate && !canEdit}
+                    />
                   </Form.Item>
                 </Col>
               </Row>

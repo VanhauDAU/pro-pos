@@ -49,11 +49,8 @@ import {
   Button,
   Card,
   Checkbox,
-  Collapse,
   ConfigProvider,
   DatePicker,
-  Descriptions,
-  Divider,
   Drawer,
   Dropdown,
   Empty,
@@ -117,10 +114,7 @@ import {
   OwnerCustomerGroupListPage,
   OwnerCustomerListPage,
 } from '@client/features/owner/OwnerCustomerPages';
-import {
-  OwnerEmployeeFormPage,
-  OwnerStaffListPage,
-} from '@client/features/owner/OwnerStaffPages';
+import { OwnerEmployeeFormPage, OwnerStaffListPage } from '@client/features/owner/OwnerStaffPages';
 
 import { apiRequest, jsonRequest } from '@client/lib/api';
 import { playPosSound } from '@client/lib/sound';
@@ -759,21 +753,6 @@ function formatDateTime(timestamp: number) {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const year = date.getFullYear();
   return `${hours}:${minutes} ${day}/${month}/${year}`;
-}
-
-function formatDateTimeInput(timestamp: number) {
-  const date = new Date(timestamp);
-  const parts = [
-    date.getFullYear(),
-    String(date.getMonth() + 1).padStart(2, '0'),
-    String(date.getDate()).padStart(2, '0'),
-  ];
-  const time = [
-    String(date.getHours()).padStart(2, '0'),
-    String(date.getMinutes()).padStart(2, '0'),
-    String(date.getSeconds()).padStart(2, '0'),
-  ];
-  return `${parts.join('-')}T${time.join(':')}`;
 }
 
 function errorText(error: unknown) {
@@ -4635,12 +4614,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
 
   const openTimeDetails = () => {
     if (quote.data?.time) {
-      const endedAtDefault =
-        quote.data.time.endedAtMs
-          ? dayjs(quote.data.time.endedAtMs)
-          : quote.data.time.status === 'PAUSED' && quote.data.time.pausedAtMs
-            ? dayjs(quote.data.time.pausedAtMs)
-            : null;
+      const endedAtDefault = quote.data.time.endedAtMs
+        ? dayjs(quote.data.time.endedAtMs)
+        : quote.data.time.status === 'PAUSED' && quote.data.time.pausedAtMs
+          ? dayjs(quote.data.time.pausedAtMs)
+          : null;
       setTimeRangeDraft({
         startedAt: dayjs(quote.data.time.startedAtMs),
         endedAt: endedAtDefault,
@@ -4874,8 +4852,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const totalDiscount =
     promotionPreview.data?.promotionDiscountVnd ??
     (!isNew ? (quote.data?.promotionDiscountVnd ?? 0) : 0);
-  const promotionOptions =
-    promotionPreview.data?.options ?? quote.data?.promotionOptions ?? [];
+  const promotionOptions = promotionPreview.data?.options ?? quote.data?.promotionOptions ?? [];
   const appliedPromotionIds = useMemo(
     () => appliedPromotions.map((promotion) => promotion.id),
     [appliedPromotions],
@@ -5512,7 +5489,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       >
                         <div className="staff-order-mobile-item__top">
                           <span className="staff-order-mobile-qty-badge">
-                            {formatItemQuantity(item.productType, item.quantityMilli, item.unitName)}
+                            {formatItemQuantity(
+                              item.productType,
+                              item.quantityMilli,
+                              item.unitName,
+                            )}
                           </span>
                           <span className="staff-order-mobile-item__name">
                             <strong>{item.productName}</strong>
@@ -6133,7 +6114,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                                     >
                                       Tạm dừng
                                     </Tag>
-                                  ) : quote.data.time.status === 'ENDED' || quote.data.time.endedAtMs ? (
+                                  ) : quote.data.time.status === 'ENDED' ||
+                                    quote.data.time.endedAtMs ? (
                                     <Tag
                                       color="default"
                                       icon={<ClockCircleOutlined />}
@@ -6155,7 +6137,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                                   {formatClock(quote.data.time.startedAtMs)}–
                                   {quote.data.time.endedAtMs
                                     ? formatClock(quote.data.time.endedAtMs)
-                                    : quote.data.time.status === 'PAUSED' && quote.data.time.pausedAtMs
+                                    : quote.data.time.status === 'PAUSED' &&
+                                        quote.data.time.pausedAtMs
                                       ? formatClock(quote.data.time.pausedAtMs)
                                       : 'Hiện tại'}{' '}
                                   · Tổng: <strong>{formatElapsed(liveElapsedSeconds)}</strong>
@@ -9247,8 +9230,7 @@ export function StaffPosPortalPage() {
 
   // Staff routes
   const isStaffNew = location.pathname === '/pos/staff/new';
-  const isStaffEdit =
-    location.pathname.startsWith('/pos/staff/') && !isStaffNew;
+  const isStaffEdit = location.pathname.startsWith('/pos/staff/') && !isStaffNew;
   const isStaffList =
     location.pathname === '/pos/staff' ||
     location.pathname === '/pos/staff/' ||

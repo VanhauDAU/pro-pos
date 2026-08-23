@@ -211,11 +211,7 @@ export function StaffOnboarding({
     }
   }, [basicStep, basicTourOpen, location.pathname, navigate]);
 
-  const currentTourTrack = basicTourOpen
-    ? basicStep
-    : orderTourOpen
-      ? orderStep + 8
-      : null;
+  const currentTourTrack = basicTourOpen ? basicStep : orderTourOpen ? orderStep + 8 : null;
 
   useEffect(() => {
     if (currentTourTrack === null) {

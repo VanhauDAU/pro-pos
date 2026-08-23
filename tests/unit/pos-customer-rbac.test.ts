@@ -8,6 +8,22 @@ import {
 } from '@contracts/customer';
 import { rolePermissionCatalog, rolePermissionKeys } from '@contracts/staff';
 
+const checkCustomerAccess = (userPermissions: string[], isOwner: boolean) => {
+  const perms = userPermissions;
+  return {
+    canViewList: isOwner || perms.includes('customer.list.view'),
+    canCreateCustomer: isOwner || perms.includes('customer.list.create'),
+    canEditCustomer: isOwner || perms.includes('customer.list.edit_debt'),
+    canDeleteCustomer: isOwner || perms.includes('customer.list.delete'),
+    canCollectOrAdjustDebt: isOwner || perms.includes('customer.list.edit_debt'),
+    canImportExport: isOwner || perms.includes('customer.list.import_export'),
+    canViewGroups: isOwner || perms.includes('customer.groups.view'),
+    canCreateGroup: isOwner || perms.includes('customer.groups.create'),
+    canEditGroup: isOwner || perms.includes('customer.groups.edit'),
+    canDeleteGroup: isOwner || perms.includes('customer.groups.delete'),
+  };
+};
+
 describe('POS Customer RBAC Permission Matrix & Schemas', () => {
   it('contains all 9 required customer permissions in rolePermissionCatalog', () => {
     const customerGroup = rolePermissionCatalog
@@ -32,25 +48,8 @@ describe('POS Customer RBAC Permission Matrix & Schemas', () => {
   });
 
   it('correctly evaluates staff permissions for customer actions', () => {
-    // Helper function mirroring UI and middleware logic
-    const checkAccess = (userPermissions: string[], isOwner: boolean) => {
-      const perms = userPermissions;
-      return {
-        canViewList: isOwner || perms.includes('customer.list.view'),
-        canCreateCustomer: isOwner || perms.includes('customer.list.create'),
-        canEditCustomer: isOwner || perms.includes('customer.list.edit_debt'),
-        canDeleteCustomer: isOwner || perms.includes('customer.list.delete'),
-        canCollectOrAdjustDebt: isOwner || perms.includes('customer.list.edit_debt'),
-        canImportExport: isOwner || perms.includes('customer.list.import_export'),
-        canViewGroups: isOwner || perms.includes('customer.groups.view'),
-        canCreateGroup: isOwner || perms.includes('customer.groups.create'),
-        canEditGroup: isOwner || perms.includes('customer.groups.edit'),
-        canDeleteGroup: isOwner || perms.includes('customer.groups.delete'),
-      };
-    };
-
     // 1. Owner has full permissions unconditionally
-    const ownerAccess = checkAccess([], true);
+    const ownerAccess = checkCustomerAccess([], true);
     expect(ownerAccess.canViewList).toBe(true);
     expect(ownerAccess.canCreateCustomer).toBe(true);
     expect(ownerAccess.canEditCustomer).toBe(true);
@@ -63,7 +62,7 @@ describe('POS Customer RBAC Permission Matrix & Schemas', () => {
     expect(ownerAccess.canDeleteGroup).toBe(true);
 
     // 2. Staff with only cashier order picking permission (order.add_customer) cannot access customer management module
-    const cashierAccess = checkAccess(['order.add_customer'], false);
+    const cashierAccess = checkCustomerAccess(['order.add_customer'], false);
     expect(cashierAccess.canViewList).toBe(false);
     expect(cashierAccess.canCreateCustomer).toBe(false);
     expect(cashierAccess.canDeleteCustomer).toBe(false);
@@ -72,7 +71,7 @@ describe('POS Customer RBAC Permission Matrix & Schemas', () => {
     expect(cashierAccess.canViewGroups).toBe(false);
 
     // 3. Staff with view & debt management permissions
-    const accountantAccess = checkAccess(
+    const accountantAccess = checkCustomerAccess(
       ['customer.list.view', 'customer.list.edit_debt', 'customer.list.import_export'],
       false,
     );
@@ -84,8 +83,13 @@ describe('POS Customer RBAC Permission Matrix & Schemas', () => {
     expect(accountantAccess.canCreateGroup).toBe(false); // cannot create groups
 
     // 4. Staff with customer group manager permissions
-    const marketingAccess = checkAccess(
-      ['customer.list.view', 'customer.groups.view', 'customer.groups.create', 'customer.groups.edit'],
+    const marketingAccess = checkCustomerAccess(
+      [
+        'customer.list.view',
+        'customer.groups.view',
+        'customer.groups.create',
+        'customer.groups.edit',
+      ],
       false,
     );
     expect(marketingAccess.canViewList).toBe(true);

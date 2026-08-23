@@ -5,7 +5,6 @@ import {
   EditOutlined,
   FileTextOutlined,
   PlusOutlined,
-  ReloadOutlined,
   SettingOutlined,
   TeamOutlined,
   UploadOutlined,
@@ -232,7 +231,8 @@ export function OwnerCustomerListPage({
     );
   }
 
-  const groupsRoute = baseRoute === '/owner/customers' ? '/owner/customer-groups' : `${baseRoute}/groups`;
+  const groupsRoute =
+    baseRoute === '/owner/customers' ? '/owner/customer-groups' : `${baseRoute}/groups`;
 
   return (
     <div className="owner-customer-page">
@@ -258,10 +258,7 @@ export function OwnerCustomerListPage({
         </div>
         <Space wrap size={[8, 8]}>
           {canViewGroups ? (
-            <Button
-              icon={<TeamOutlined />}
-              onClick={() => navigate(groupsRoute)}
-            >
+            <Button icon={<TeamOutlined />} onClick={() => navigate(groupsRoute)}>
               Nhóm khách hàng
             </Button>
           ) : null}
@@ -433,7 +430,12 @@ export function OwnerCustomerListPage({
                     <div className="customer-mobile-card__user">
                       <Avatar
                         size={40}
-                        style={{ background: '#0975f7', color: '#fff', fontWeight: 700, flexShrink: 0 }}
+                        style={{
+                          background: '#0975f7',
+                          color: '#fff',
+                          fontWeight: 700,
+                          flexShrink: 0,
+                        }}
                         icon={<UserOutlined />}
                       />
                       <div style={{ minWidth: 0 }}>
@@ -461,7 +463,9 @@ export function OwnerCustomerListPage({
                   <div className="customer-mobile-card__metrics">
                     <div className="customer-mobile-card__metric-item">
                       <span className="customer-mobile-card__metric-label">Tổng chi tiêu</span>
-                      <span className="customer-mobile-card__metric-val">{money(r.totalSpentVnd)}</span>
+                      <span className="customer-mobile-card__metric-val">
+                        {money(r.totalSpentVnd)}
+                      </span>
                     </div>
                     <div className="customer-mobile-card__metric-item">
                       <span className="customer-mobile-card__metric-label">Công nợ</span>
@@ -478,7 +482,10 @@ export function OwnerCustomerListPage({
                     </div>
                     <div className="customer-mobile-card__metric-item">
                       <span className="customer-mobile-card__metric-label">Điểm tích lũy</span>
-                      <span className="customer-mobile-card__metric-val" style={{ color: '#d97706' }}>
+                      <span
+                        className="customer-mobile-card__metric-val"
+                        style={{ color: '#d97706' }}
+                      >
                         {r.loyaltyPoints} đ
                       </span>
                     </div>
@@ -603,14 +610,10 @@ export function OwnerCustomerFormPage({
         wardName: ward?.name ?? null,
       };
 
-      await jsonRequest(
-        customerId ? `${apiPrefix}/${customerId}` : apiPrefix,
-        payload,
-        {
-          method: customerId ? 'PUT' : 'POST',
-          headers: mutationHeaders(auth.data?.csrfToken),
-        },
-      );
+      await jsonRequest(customerId ? `${apiPrefix}/${customerId}` : apiPrefix, payload, {
+        method: customerId ? 'PUT' : 'POST',
+        headers: mutationHeaders(auth.data?.csrfToken),
+      });
       message.success(customerId ? 'Đã cập nhật khách hàng.' : 'Đã thêm khách hàng mới.');
       handleBack();
     } catch (err: any) {
@@ -935,7 +938,11 @@ export function OwnerCustomerDetailPage({
               <Statistic
                 title={<span style={{ fontSize: 12, color: '#64748b' }}>{cTitle}</span>}
                 value={value}
-                valueStyle={color ? { color, fontWeight: 700, fontSize: 18 } : { fontWeight: 700, fontSize: 18 }}
+                valueStyle={
+                  color
+                    ? { color, fontWeight: 700, fontSize: 18 }
+                    : { fontWeight: 700, fontSize: 18 }
+                }
               />
             </Card>
           </Col>
@@ -1002,8 +1009,16 @@ export function OwnerCustomerDetailPage({
                           title: 'Loại',
                           dataIndex: 'entryType',
                           render: (type) => (
-                            <Tag color={type === 'EARN' ? 'green' : type === 'REVERSAL' ? 'red' : 'blue'}>
-                              {type === 'EARN' ? 'Tích điểm' : type === 'REVERSAL' ? 'Đảo điểm' : 'Điều chỉnh'}
+                            <Tag
+                              color={
+                                type === 'EARN' ? 'green' : type === 'REVERSAL' ? 'red' : 'blue'
+                              }
+                            >
+                              {type === 'EARN'
+                                ? 'Tích điểm'
+                                : type === 'REVERSAL'
+                                  ? 'Đảo điểm'
+                                  : 'Điều chỉnh'}
                             </Tag>
                           ),
                         },
@@ -1077,9 +1092,7 @@ export function OwnerCustomerDetailPage({
                             >
                               Thu nợ
                             </Button>
-                            <Button onClick={() => setDebtAdjustOpen(true)}>
-                              Điều chỉnh nợ
-                            </Button>
+                            <Button onClick={() => setDebtAdjustOpen(true)}>Điều chỉnh nợ</Button>
                           </Space>
                         ) : null}
                       </div>
@@ -1119,7 +1132,11 @@ export function OwnerCustomerDetailPage({
                             title: 'Hình thức',
                             dataIndex: 'paymentMethod',
                             render: (m) =>
-                              m === 'CASH' ? 'Tiền mặt' : m === 'BANK_TRANSFER' ? 'Chuyển khoản' : '—',
+                              m === 'CASH'
+                                ? 'Tiền mặt'
+                                : m === 'BANK_TRANSFER'
+                                  ? 'Chuyển khoản'
+                                  : '—',
                           },
                           {
                             title: 'Số tiền',
@@ -1161,7 +1178,13 @@ export function OwnerCustomerDetailPage({
                   key: 'gender',
                   label: 'Giới tính',
                   children:
-                    c.gender === 'MALE' ? 'Nam' : c.gender === 'FEMALE' ? 'Nữ' : c.gender === 'OTHER' ? 'Khác' : '—',
+                    c.gender === 'MALE'
+                      ? 'Nam'
+                      : c.gender === 'FEMALE'
+                        ? 'Nữ'
+                        : c.gender === 'OTHER'
+                          ? 'Khác'
+                          : '—',
                 },
                 { key: 'birthDate', label: 'Ngày sinh', children: c.birthDate || '—' },
                 {
@@ -1205,11 +1228,7 @@ export function OwnerCustomerDetailPage({
         width="min(460px, 95vw)"
       >
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
-          <Alert
-            type="info"
-            message={`Dư nợ hiện tại: ${money(c.debtBalanceVnd)}`}
-            showIcon
-          />
+          <Alert type="info" message={`Dư nợ hiện tại: ${money(c.debtBalanceVnd)}`} showIcon />
           <div>
             <label style={{ display: 'block', marginBottom: 6, fontWeight: 600 }}>
               Số tiền thu nợ:
@@ -1230,10 +1249,7 @@ export function OwnerCustomerDetailPage({
             <label style={{ display: 'block', marginBottom: 6, fontWeight: 600 }}>
               Hình thức thanh toán:
             </label>
-            <Radio.Group
-              value={debtPayMethod}
-              onChange={(e) => setDebtPayMethod(e.target.value)}
-            >
+            <Radio.Group value={debtPayMethod} onChange={(e) => setDebtPayMethod(e.target.value)}>
               <Radio value="CASH">Tiền mặt</Radio>
               <Radio value="BANK_TRANSFER">Chuyển khoản</Radio>
             </Radio.Group>
@@ -1412,9 +1428,7 @@ export function OwnerCustomerGroupListPage({
               render: (name, r) => (
                 <div>
                   <strong style={{ color: '#0f172a' }}>{name}</strong>
-                  {r.note ? (
-                    <div style={{ color: '#64748b', fontSize: 13 }}>{r.note}</div>
-                  ) : null}
+                  {r.note ? <div style={{ color: '#64748b', fontSize: 13 }}>{r.note}</div> : null}
                 </div>
               ),
             },
@@ -1422,7 +1436,9 @@ export function OwnerCustomerGroupListPage({
               title: 'Loại phân nhóm',
               render: (_, r) => (
                 <Tag color={r.membershipType === 'AUTOMATIC' ? 'blue' : 'default'}>
-                  {r.membershipType === 'AUTOMATIC' ? 'Tự động (Theo điều kiện)' : 'Thủ công (Chọn danh sách)'}
+                  {r.membershipType === 'AUTOMATIC'
+                    ? 'Tự động (Theo điều kiện)'
+                    : 'Thủ công (Chọn danh sách)'}
                 </Tag>
               ),
             },

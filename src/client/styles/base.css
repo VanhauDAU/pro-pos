@@ -561,7 +561,9 @@ body,
   border: 2px solid #f59e0b;
   color: #92400e;
   background: #fffbeb;
-  box-shadow: 0 0 0 1px #fde68a, 0 4px 12px rgba(245, 158, 11, 0.15);
+  box-shadow:
+    0 0 0 1px #fde68a,
+    0 4px 12px rgba(245, 158, 11, 0.15);
 }
 
 .staff-table-card--occupied.staff-table-card--paused strong {
@@ -10777,7 +10779,6 @@ body {
   padding-top: 8px;
 }
 
-
 .order-detail-totals-card {
   position: sticky;
   top: 80px;
@@ -14192,7 +14193,9 @@ body {
   margin-bottom: 10px;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
   cursor: pointer;
-  transition: transform 0.12s ease, background 0.15s ease;
+  transition:
+    transform 0.12s ease,
+    background 0.15s ease;
 }
 
 .customer-mobile-card:active {

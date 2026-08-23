@@ -21,7 +21,8 @@ export async function apiRequest<T>(
   init?: RequestInit & { skipMutationTracking?: boolean },
 ): Promise<T> {
   const method = (init?.method ?? 'GET').toUpperCase();
-  const isMutation = !init?.skipMutationTracking && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method);
+  const isMutation =
+    !init?.skipMutationTracking && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method);
   if (isMutation) beginMutation();
   try {
     const requestInit: RequestInit = {

@@ -7,6 +7,16 @@ import {
   updateEmployeeSchema,
 } from '@contracts/staff';
 
+const checkStaffAccess = (userPermissions: string[], isOwner: boolean) => {
+  const perms = userPermissions;
+  return {
+    canView: isOwner || perms.includes('staff.employees.view'),
+    canCreate: isOwner || perms.includes('staff.employees.create'),
+    canEdit: isOwner || perms.includes('staff.employees.edit'),
+    canDelete: isOwner || perms.includes('staff.employees.delete'),
+  };
+};
+
 describe('POS Staff RBAC Permission Matrix & Schemas', () => {
   it('contains all 4 required staff permissions in rolePermissionCatalog', () => {
     const staffGroup = rolePermissionCatalog
@@ -23,39 +33,29 @@ describe('POS Staff RBAC Permission Matrix & Schemas', () => {
   });
 
   it('correctly evaluates staff permissions for employee management actions', () => {
-    const checkAccess = (userPermissions: string[], isOwner: boolean) => {
-      const perms = userPermissions;
-      return {
-        canView: isOwner || perms.includes('staff.employees.view'),
-        canCreate: isOwner || perms.includes('staff.employees.create'),
-        canEdit: isOwner || perms.includes('staff.employees.edit'),
-        canDelete: isOwner || perms.includes('staff.employees.delete'),
-      };
-    };
-
     // 1. Owner has full permissions unconditionally
-    const ownerAccess = checkAccess([], true);
+    const ownerAccess = checkStaffAccess([], true);
     expect(ownerAccess.canView).toBe(true);
     expect(ownerAccess.canCreate).toBe(true);
     expect(ownerAccess.canEdit).toBe(true);
     expect(ownerAccess.canDelete).toBe(true);
 
     // 2. Staff with no staff permissions
-    const cashierAccess = checkAccess(['order.manage', 'checkout.complete'], false);
+    const cashierAccess = checkStaffAccess(['order.manage', 'checkout.complete'], false);
     expect(cashierAccess.canView).toBe(false);
     expect(cashierAccess.canCreate).toBe(false);
     expect(cashierAccess.canEdit).toBe(false);
     expect(cashierAccess.canDelete).toBe(false);
 
     // 3. Staff with only view permission
-    const viewerAccess = checkAccess(['staff.employees.view'], false);
+    const viewerAccess = checkStaffAccess(['staff.employees.view'], false);
     expect(viewerAccess.canView).toBe(true);
     expect(viewerAccess.canCreate).toBe(false);
     expect(viewerAccess.canEdit).toBe(false);
     expect(viewerAccess.canDelete).toBe(false);
 
     // 4. Staff with create & edit permissions (e.g., Shift Leader / Manager)
-    const managerAccess = checkAccess(
+    const managerAccess = checkStaffAccess(
       ['staff.employees.view', 'staff.employees.create', 'staff.employees.edit'],
       false,
     );
@@ -65,8 +65,13 @@ describe('POS Staff RBAC Permission Matrix & Schemas', () => {
     expect(managerAccess.canDelete).toBe(false); // Cannot delete employees
 
     // 5. Staff with full staff permissions
-    const adminStaffAccess = checkAccess(
-      ['staff.employees.view', 'staff.employees.create', 'staff.employees.edit', 'staff.employees.delete'],
+    const adminStaffAccess = checkStaffAccess(
+      [
+        'staff.employees.view',
+        'staff.employees.create',
+        'staff.employees.edit',
+        'staff.employees.delete',
+      ],
       false,
     );
     expect(adminStaffAccess.canView).toBe(true);
@@ -149,14 +154,14 @@ describe('POS Staff RBAC Permission Matrix & Schemas', () => {
     expect(employeeBulkActionSchema.safeParse({ userIds, action: 'ACTIVATE' }).success).toBe(true);
     expect(employeeBulkActionSchema.safeParse({ userIds, action: 'DISABLE' }).success).toBe(true);
     expect(employeeBulkActionSchema.safeParse({ userIds, action: 'DELETE' }).success).toBe(true);
-    expect(
-      employeeBulkActionSchema.safeParse({ userIds, action: 'REVOKE_SESSIONS' }).success,
-    ).toBe(true);
+    expect(employeeBulkActionSchema.safeParse({ userIds, action: 'REVOKE_SESSIONS' }).success).toBe(
+      true,
+    );
 
     // Invalid action
-    expect(
-      employeeBulkActionSchema.safeParse({ userIds, action: 'INVALID_ACTION' }).success,
-    ).toBe(false);
+    expect(employeeBulkActionSchema.safeParse({ userIds, action: 'INVALID_ACTION' }).success).toBe(
+      false,
+    );
 
     // Empty userIds
     expect(employeeBulkActionSchema.safeParse({ userIds: [], action: 'ACTIVATE' }).success).toBe(

@@ -1278,11 +1278,7 @@ export class PosRepository {
   }) {
     // DB CHECK: ended_at <= issued_at và started_at <= issued_at.
     // Đảm bảo issued_at >= max(endedAtMs, startedAtMs) để bù clock skew.
-    const issuedAt = Math.max(
-      input.now,
-      input.endedAtMs ?? 0,
-      input.startedAtMs,
-    );
+    const issuedAt = Math.max(input.now, input.endedAtMs ?? 0, input.startedAtMs);
     return this.db
       .prepare(
         `INSERT INTO update_time_range_commands (

@@ -450,9 +450,7 @@ export class PromotionService {
         : selectedRows.results.map((row) => row.promotionId),
     );
     const suppressed = new Set(
-      input.promotionIds !== undefined
-        ? []
-        : suppressedRows.results.map((row) => row.promotionId),
+      input.promotionIds !== undefined ? [] : suppressedRows.results.map((row) => row.promotionId),
     );
     const options = await Promise.all(
       programs.results.map(async (program) => {

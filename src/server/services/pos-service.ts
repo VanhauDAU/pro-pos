@@ -1248,12 +1248,9 @@ export class PosService {
     const order = await this.repository.findOrder(input.storeId, input.orderId);
     if (!order) throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn tại chỗ.', 404);
     const session = await this.repository.findTimeSession(input.storeId, input.orderId);
-    // Cho phép buffer 5 giây để bù clock skew client/server
-    const nowWithBuffer = now + 5_000;
     if (
-      input.startedAtMs > nowWithBuffer ||
-      (input.endedAtMs !== null &&
-        (input.endedAtMs <= input.startedAtMs || input.endedAtMs > nowWithBuffer))
+      input.startedAtMs > now ||
+      (input.endedAtMs !== null && (input.endedAtMs <= input.startedAtMs || input.endedAtMs > now))
     ) {
       throw new AppError(
         'TIME_RANGE_INVALID',
@@ -1460,12 +1457,6 @@ export class PosService {
       throw new AppError('ORDER_VERSION_CONFLICT', 'Đơn hàng đã thay đổi. Vui lòng tải lại.', 409);
     }
 
-    // Kiểm tra trước xem session có được set giờ ra thủ công không
-    const sessionBeforeResume = await this.repository.findTimeSession(input.storeId, input.orderId);
-    const wasManuallyEnded =
-      sessionBeforeResume?.status === 'ENDED' &&
-      sessionBeforeResume.ended_at !== null;
-
     try {
       await this.repository.resumeCheckout({
         commandId: input.idempotencyKey,
@@ -1482,12 +1473,11 @@ export class PosService {
       mapDatabaseError(error);
     }
 
-    // Lấy quote thực từ DB sau khi trigger đã chạy - tôn trọng giờ ra thủ công
     const quote = await this.quote(input.storeId, input.orderId, now);
     return {
       orderId: input.orderId,
       status: 'OPEN' as const,
-      resumedAt: wasManuallyEnded ? (sessionBeforeResume!.ended_at ?? now) : now,
+      resumedAt: now,
       quote,
     };
   }

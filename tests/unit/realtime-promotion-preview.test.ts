@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  promotionPreviewSchema,
-  type PosPromotionOption,
-  type PromotionPreviewResult,
-} from '@contracts/promotion';
+import { promotionPreviewSchema, type PromotionPreviewResult } from '@contracts/promotion';
 
 describe('Real-time Promotion Preview & Draft Discount Calculations', () => {
   it('validates promotionPreviewSchema with draft items and subtotal', () => {

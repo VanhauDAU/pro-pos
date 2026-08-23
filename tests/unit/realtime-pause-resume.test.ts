@@ -5,7 +5,9 @@ import { canTransitionTimeSession } from '@domain/state-machines';
 import { timeSessionStatusSchema } from '@contracts/domain';
 import type { PricingConfigSnapshot } from '@domain/pricing/types';
 
-function createPricingConfig(overrides: Partial<PricingConfigSnapshot> = {}): PricingConfigSnapshot {
+function createPricingConfig(
+  overrides: Partial<PricingConfigSnapshot> = {},
+): PricingConfigSnapshot {
   return {
     version: 1,
     timezone: 'Asia/Ho_Chi_Minh',

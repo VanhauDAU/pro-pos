@@ -18,6 +18,7 @@
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "paths": {
+      "@client/*": ["./src/client/*"],
       "@server/*": ["./src/server/*"],
       "@contracts/*": ["./src/contracts/*"],
       "@domain/*": ["./src/domain/*"]
@@ -29,8 +30,10 @@
     "src/contracts",
     "src/domain",
     "src/client/features/guest/guest-assistant.ts",
+    "src/client/features/owner/print-preview-sample.ts",
     "src/client/lib/qz-tray-service.ts",
     "src/client/lib/pos-receipt-printer.ts",
+    "src/client/lib/onboarding-audio.ts",
     "worker-configuration.d.ts"
   ]
 }

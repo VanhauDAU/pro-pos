@@ -206,6 +206,7 @@ function ProductPickerModal({
   products,
   value,
   excludeWeight,
+  excludeTime,
   onCancel,
   onChange,
 }: {
@@ -214,6 +215,7 @@ function ProductPickerModal({
   products: ProductOption[];
   value: ProductTarget[];
   excludeWeight?: boolean;
+  excludeTime?: boolean;
   onCancel: () => void;
   onChange: (value: ProductTarget[]) => void;
 }) {
@@ -236,6 +238,7 @@ function ProductPickerModal({
   ];
   const visible = products.filter((product) => {
     if (excludeWeight && product.productType === 'WEIGHT') return false;
+    if (excludeTime && product.productType === 'TIME') return false;
     if (category !== 'ALL' && product.categoryId !== category) return false;
     const term = search.trim().toLocaleLowerCase('vi');
     return (
@@ -640,6 +643,34 @@ export function OwnerPromotionFormPage({ promotionId }: { promotionId?: string }
   }, [type, scope, form]);
 
   const save = async (values: PromotionFormValues) => {
+    if (values.hasEnd) {
+      if (!values.endDate || !values.endTime) {
+        message.warning('Vui lòng chọn đầy đủ ngày và giờ kết thúc.');
+        return;
+      }
+      const startsAt = toTimestamp(values.startDate, values.startTime);
+      const endsAt = toTimestamp(values.endDate, values.endTime);
+      if (endsAt <= startsAt) {
+        message.warning('Thời gian kết thúc phải sau thời gian bắt đầu.');
+        return;
+      }
+    }
+    if (values.scope === 'CATEGORY' && (!values.categoryIds || values.categoryIds.length === 0)) {
+      message.warning('Vui lòng chọn ít nhất một danh mục áp dụng.');
+      return;
+    }
+    if (
+      values.scope === 'PRODUCT' &&
+      (!values.productTargets || values.productTargets.length === 0)
+    ) {
+      message.warning('Vui lòng chọn ít nhất một mặt hàng áp dụng.');
+      return;
+    }
+    if (values.type === 'GIFT' && (!values.giftTargets || values.giftTargets.length === 0)) {
+      message.warning('Vui lòng chọn ít nhất một mặt hàng được tặng.');
+      return;
+    }
+
     const body: PromotionInput = {
       name: values.name,
       type: values.type,
@@ -676,6 +707,10 @@ export function OwnerPromotionFormPage({ promotionId }: { promotionId?: string }
       await queryClient.invalidateQueries({ queryKey: ['owner-promotions'] });
       message.success(promotionId ? 'Đã cập nhật khuyến mại.' : 'Đã tạo chương trình khuyến mại.');
       navigate('/owner/promotions');
+    } catch (error) {
+      message.error(
+        error instanceof Error ? error.message : 'Không thể lưu chương trình khuyến mại.',
+      );
     } finally {
       setSaving(false);
     }
@@ -684,16 +719,20 @@ export function OwnerPromotionFormPage({ promotionId }: { promotionId?: string }
   const toggle = async () => {
     if (!promotionId || !detail.data) return;
     const active = detail.data.status !== 'ACTIVE';
-    await jsonRequest(
-      `/api/v1/owner/promotions/${promotionId}/status`,
-      { active },
-      { method: 'PATCH', headers: mutationHeaders(auth.data?.csrfToken) },
-    );
-    await Promise.all([
-      detail.refetch(),
-      queryClient.invalidateQueries({ queryKey: ['owner-promotions'] }),
-    ]);
-    message.success(active ? 'Đã tiếp tục khuyến mại.' : 'Đã ngừng khuyến mại.');
+    try {
+      await jsonRequest(
+        `/api/v1/owner/promotions/${promotionId}/status`,
+        { active },
+        { method: 'PATCH', headers: mutationHeaders(auth.data?.csrfToken) },
+      );
+      await Promise.all([
+        detail.refetch(),
+        queryClient.invalidateQueries({ queryKey: ['owner-promotions'] }),
+      ]);
+      message.success(active ? 'Đã tiếp tục khuyến mại.' : 'Đã ngừng khuyến mại.');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'Thao tác không thành công.');
+    }
   };
 
   if (detail.isLoading) return <Card loading />;
@@ -750,6 +789,10 @@ export function OwnerPromotionFormPage({ promotionId }: { promotionId?: string }
           maximumGiftQuantity: 1,
         }}
         onFinish={(values) => void save(values)}
+        onFinishFailed={({ errorFields }) => {
+          const firstError = errorFields[0]?.errors[0];
+          message.warning(firstError || 'Vui lòng kiểm tra lại các trường thông tin bắt buộc.');
+        }}
       >
         <div className="owner-promotion-form-layout">
           <div className="owner-promotion-form-main">
@@ -1178,6 +1221,7 @@ export function OwnerPromotionFormPage({ promotionId }: { promotionId?: string }
           products={products.data ?? []}
           value={giftTargets}
           excludeWeight
+          excludeTime
           onCancel={() => setGiftPickerOpen(false)}
           onChange={(value) => {
             form.setFieldValue('giftTargets', value);

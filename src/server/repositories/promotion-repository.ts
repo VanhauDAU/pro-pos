@@ -89,6 +89,42 @@ export class PromotionRepository {
       .all<{ productId: string; variantId: string | null; quantity: number }>();
   }
 
+  targetItemDetails(storeId: string, promotionId: string, targetType: 'PRODUCT') {
+    return this.db
+      .prepare(
+        `SELECT p.id AS productId,
+          CASE WHEN pt.variant_id = '' THEN NULL ELSE pt.variant_id END AS variantId,
+          p.name AS productName, pv.name AS variantName,
+          pt.required_quantity AS requiredQuantity
+         FROM promotion_targets pt
+         JOIN products p ON p.store_id = pt.store_id AND p.id = pt.target_id
+         LEFT JOIN product_variants pv
+           ON pv.store_id = pt.store_id AND pv.id = NULLIF(pt.variant_id, '')
+         WHERE pt.store_id = ? AND pt.promotion_id = ? AND pt.target_type = ?
+         ORDER BY p.name COLLATE NOCASE, pv.name COLLATE NOCASE`,
+      )
+      .bind(storeId, promotionId, targetType)
+      .all<{
+        productId: string;
+        variantId: string | null;
+        productName: string;
+        variantName: string | null;
+        requiredQuantity: number;
+      }>();
+  }
+
+  targetCategoryNames(storeId: string, promotionId: string) {
+    return this.db
+      .prepare(
+        `SELECT c.name FROM promotion_targets pt
+         JOIN categories c ON c.store_id = pt.store_id AND c.id = pt.target_id
+         WHERE pt.store_id = ? AND pt.promotion_id = ? AND pt.target_type = 'CATEGORY'
+         ORDER BY c.name COLLATE NOCASE`,
+      )
+      .bind(storeId, promotionId)
+      .all<{ name: string }>();
+  }
+
   async customerGroupIds(storeId: string, promotionId: string) {
     return this.db
       .prepare(
@@ -114,6 +150,19 @@ export class PromotionRepository {
   }
 
   async countGiftEligibleProducts(storeId: string, ids: string[]) {
+    if (ids.length === 0) return 0;
+    const marks = ids.map(() => '?').join(',');
+    const row = await this.db
+      .prepare(
+        `SELECT COUNT(*) AS total FROM products
+         WHERE store_id = ? AND id IN (${marks}) AND product_type = 'QUANTITY'`,
+      )
+      .bind(storeId, ...ids)
+      .first<{ total: number }>();
+    return row?.total ?? 0;
+  }
+
+  async countGiftPurchaseEligibleProducts(storeId: string, ids: string[]) {
     if (ids.length === 0) return 0;
     const marks = ids.map(() => '?').join(',');
     const row = await this.db
@@ -309,6 +358,43 @@ export class PromotionRepository {
       .bind(storeId, ...productIds)
       .all<{ name: string }>();
     return result.results.map((row) => row.name);
+  }
+
+  giftItemDetails(storeId: string, promotionId: string) {
+    return this.db
+      .prepare(
+        `SELECT p.id AS productId, pv.id AS variantId,
+          p.name AS productName, pv.name AS variantName, u.name AS unitName,
+          COALESCE(pv.sale_price, 0) AS unitPriceVnd
+         FROM promotion_targets pt
+         JOIN products p
+           ON p.store_id = pt.store_id AND p.id = pt.target_id
+          AND p.status = 'ACTIVE' AND p.product_type = 'QUANTITY'
+         JOIN product_variants pv
+           ON pv.store_id = p.store_id AND pv.product_id = p.id
+          AND pv.id = CASE
+            WHEN pt.variant_id <> '' THEN pt.variant_id
+            ELSE (
+              SELECT fallback.id FROM product_variants fallback
+              WHERE fallback.store_id = p.store_id AND fallback.product_id = p.id
+                AND fallback.status = 'ACTIVE'
+              ORDER BY fallback.created_at, fallback.id LIMIT 1
+            )
+          END
+          AND pv.status = 'ACTIVE'
+         LEFT JOIN units u ON u.store_id = p.store_id AND u.id = p.unit_id
+         WHERE pt.store_id = ? AND pt.promotion_id = ? AND pt.target_type = 'GIFT_PRODUCT'
+         ORDER BY p.name COLLATE NOCASE, pv.name COLLATE NOCASE`,
+      )
+      .bind(storeId, promotionId)
+      .all<{
+        productId: string;
+        variantId: string;
+        productName: string;
+        variantName: string | null;
+        unitName: string | null;
+        unitPriceVnd: number;
+      }>();
   }
 
   async productCategories(storeId: string, productIds: string[]) {

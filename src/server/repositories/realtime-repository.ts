@@ -70,7 +70,7 @@ export class RealtimeRepository {
       )
       .bind(storeId)
       .first<{ enabled: 0 | 1 }>();
-    return row?.enabled === 1;
+    return row ? row.enabled === 1 : true;
   }
 
   async sync(storeId: string, after: number | null): Promise<RealtimeSyncResponse> {

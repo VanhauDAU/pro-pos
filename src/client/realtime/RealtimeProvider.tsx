@@ -29,7 +29,8 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
     queryFn: () => apiRequest<RealtimeStaffContext>('/api/v1/pos/context'),
     refetchInterval: 60_000,
   });
-  const enabled = Boolean(context.data?.capabilities?.posRealtime);
+  const enabled =
+    context.data?.capabilities?.posRealtime !== false && Boolean(context.data?.storeId);
   const storeId = context.data?.storeId;
 
   useEffect(() => {

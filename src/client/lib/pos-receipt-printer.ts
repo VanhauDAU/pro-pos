@@ -409,8 +409,11 @@ export function generateThermalReceiptHtml(
           }
           ${
             template.showItemDiscounts && (line.discountAmount ?? 0) > 0
-              ? `<div class="thermal-receipt-item-sub" style="color: #d4380d;">* Giảm thủ công: -${formatVnd(line.discountAmount ?? 0)}đ</div>
-                 <div class="thermal-receipt-item-sub">* Lý do: ${escapeHtml(line.discountReason || 'Chưa có lý do')}</div>`
+              ? line.adjustmentSource === 'PROMOTION_GIFT'
+                ? `<div class="thermal-receipt-item-sub" style="color: #389e0d;">* Quà tặng khuyến mãi: -${formatVnd(line.discountAmount ?? 0)}đ</div>
+                   <div class="thermal-receipt-item-sub">* Chương trình: ${escapeHtml(line.promotionName || 'Khuyến mãi tặng món')}</div>`
+                : `<div class="thermal-receipt-item-sub" style="color: #d4380d;">* Giảm thủ công: -${formatVnd(line.discountAmount ?? 0)}đ</div>
+                   <div class="thermal-receipt-item-sub">* Lý do: ${escapeHtml(line.discountReason || 'Chưa có lý do')}</div>`
               : ''
           }
         </div>
@@ -453,6 +456,29 @@ export function generateThermalReceiptHtml(
           ? [data.promotion]
           : [{ name: 'Khuyến mại', type: '', value: null, discountAmountVnd: promotionDiscount }];
     for (const promotion of promotionLines) {
+      if (promotion.type === 'FLAT_PRICE' && (promotion.flatPriceItems?.length ?? 0) > 0) {
+        html += `
+          <div class="thermal-receipt-row" style="color: #e11d48; font-weight: 600;">
+            <span>${escapeHtml(`KM: ${promotion.name}`)}</span>
+            <span>Đồng giá ${formatVnd(promotion.value ?? 0)}đ</span>
+          </div>
+        `;
+        for (const item of promotion.flatPriceItems ?? []) {
+          const variant = item.variantName ? ` · ${item.variantName}` : '';
+          html += `
+            <div class="thermal-receipt-item-sub">
+              - ${escapeHtml(`${item.productName}${variant}`)} · SL: ${item.quantityMilli / 1000}
+            </div>
+          `;
+        }
+        html += `
+          <div class="thermal-receipt-row" style="color: #e11d48;">
+            <span>Giảm khuyến mãi</span>
+            <span>-${formatVnd(promotion.discountAmountVnd)}đ</span>
+          </div>
+        `;
+        continue;
+      }
       html += `
         <div class="thermal-receipt-row" style="color: #e11d48;">
           <span>${escapeHtml(`KM: ${promotion.name}`)}</span>

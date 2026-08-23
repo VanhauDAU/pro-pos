@@ -11,6 +11,7 @@ import {
   EnvironmentOutlined,
   EyeOutlined,
   FieldTimeOutlined,
+  GiftOutlined,
   HistoryOutlined,
   InfoCircleOutlined,
   PauseCircleOutlined,
@@ -56,8 +57,13 @@ import type { AuthContextResponse } from '@contracts/auth';
 import type { OrderDetailDto, OrderItemDetail } from '@contracts/order-detail';
 import type { StorePrintSettings } from '@contracts/store';
 import { apiRequest } from '@client/lib/api';
-import { printReceipt, type PosReceiptPrintData } from '@client/lib/pos-receipt-printer';
+import {
+  printReceipt,
+  type PosReceiptPrintData,
+  type PosReceiptPrintOptions,
+} from '@client/lib/pos-receipt-printer';
 import { usePosPollingInterval, useRealtime } from '@client/realtime/RealtimeProvider';
+import { ReceiptPreviewModal, ReceiptPreviewPaper } from './ReceiptPreviewModal';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -156,6 +162,114 @@ function allocationMethodTag(method: 'CASH' | 'BANK_TRANSFER' | 'DEBT') {
   return paymentMethodTag(method);
 }
 
+function OrderDetailMobileItemsList({ items }: { items: OrderItemDetail[] }) {
+  if (items.length === 0) {
+    return <Empty description="Chưa gọi mặt hàng nào" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+  }
+
+  return (
+    <div className="order-detail-mobile-items-list">
+      {items.map((it, idx) => {
+        const isGift =
+          (it.discountAmountVnd > 0 && it.netLineTotalVnd === 0) ||
+          it.discountReason?.toLowerCase().includes('quà tặng');
+        const qty = it.quantityMilli / 1000;
+
+        return (
+          <div key={it.id || idx} className="order-detail-mobile-item-card">
+            {/* Header: Avatar, Name & Net Total */}
+            <div className="order-detail-mobile-item-head">
+              <div className="order-detail-mobile-item-thumb">
+                {it.mediaId ? (
+                  <img
+                    src={`/api/v1/media/${it.mediaId}`}
+                    alt=""
+                    className="order-detail-mobile-item-img"
+                  />
+                ) : it.avatarColor ? (
+                  <span
+                    className="order-detail-mobile-item-color"
+                    style={{ backgroundColor: it.avatarColor }}
+                  />
+                ) : (
+                  <span className="order-detail-mobile-item-fallback">
+                    <ShoppingCartOutlined />
+                  </span>
+                )}
+              </div>
+
+              <div className="order-detail-mobile-item-info">
+                <div className="order-detail-mobile-item-title-row">
+                  <strong className="order-detail-mobile-item-name">
+                    {it.productNameSnapshot}
+                  </strong>
+                  {isGift && (
+                    <Tag color="green" style={{ marginLeft: 4 }}>
+                      Quà tặng
+                    </Tag>
+                  )}
+                </div>
+                {it.variantNameSnapshot && (
+                  <div className="order-detail-mobile-item-variant">
+                    Phân loại: <strong>{it.variantNameSnapshot}</strong>
+                  </div>
+                )}
+              </div>
+
+              <div className="order-detail-mobile-item-prices">
+                <strong className="order-detail-mobile-item-net">
+                  {formatMoney(it.netLineTotalVnd)}
+                </strong>
+                {it.discountAmountVnd > 0 && (
+                  <span className="order-detail-mobile-item-gross">
+                    {formatMoney(it.grossLineTotalVnd)}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Meta & Price Breakdown */}
+            <div className="order-detail-mobile-item-meta">
+              <Tag color="blue" className="order-detail-mobile-qty-tag">
+                x{qty} {it.unitNameSnapshot ?? ''}
+              </Tag>
+              <span className="order-detail-mobile-unit-price">
+                Đơn giá: {formatMoney(it.unitPriceSnapshot)}
+              </span>
+              {it.discountAmountVnd > 0 && (
+                <Tag color="error" className="order-detail-mobile-disc-tag">
+                  Giảm -{formatMoney(it.discountAmountVnd)}
+                  {it.discountType === 'PERCENT' && it.discountInputValue
+                    ? ` (${it.discountInputValue}%)`
+                    : ''}
+                </Tag>
+              )}
+            </div>
+
+            {/* Note & Reason */}
+            {it.discountReason && it.discountAmountVnd > 0 && (
+              <div className="order-detail-mobile-item-reason">
+                Lý do giảm: <span>{it.discountReason}</span>
+              </div>
+            )}
+            {it.note && (
+              <div className="order-detail-mobile-item-note">
+                Ghi chú: <span>{it.note}</span>
+              </div>
+            )}
+
+            {/* Footer: Staff & Timestamp */}
+            <div className="order-detail-mobile-item-foot">
+              <span>Thêm bởi: {it.addedByName ?? 'Nhân viên'}</span>
+              <span>{formatDateTime(it.addedAt)}</span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function OrderDetailPage({
@@ -173,7 +287,8 @@ export function OrderDetailPage({
 
   const [activeTab, setActiveTab] = useState('overview');
   const [now, setNow] = useState(Date.now());
-  const [invoiceModalVisible, setInvoiceModalVisible] = useState(false);
+  const [receiptModalType, setReceiptModalType] = useState<'PROVISIONAL' | 'PAYMENT'>('PAYMENT');
+  const [receiptModalVisible, setReceiptModalVisible] = useState(false);
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
   const detailPollingInterval = usePosPollingInterval(5_000);
   const { serverTimeOffsetMs } = useRealtime();
@@ -229,16 +344,60 @@ export function OrderDetailPage({
     try {
       const snapshot = JSON.parse(data.invoice.snapshotJson) as {
         promotion?: {
+          id?: string;
           name: string;
           type: string;
+          scope?: string;
           value: number | null;
           discountAmountVnd: number;
+          giftItems?: Array<{
+            productId: string;
+            variantId: string | null;
+            productName: string;
+            variantName: string | null;
+            unitName: string | null;
+            unitPriceVnd: number;
+            quantityMilli: number;
+            grossAmountVnd: number;
+          }>;
+          flatPriceItems?: Array<{
+            productId: string;
+            variantId: string | null;
+            productName: string;
+            variantName: string | null;
+            quantityMilli: number;
+            originalUnitPriceVnd: number;
+            flatUnitPriceVnd: number;
+            discountAmountVnd: number;
+          }>;
         } | null;
         promotions?: Array<{
+          id?: string;
           name: string;
           type: string;
+          scope?: string;
           value: number | null;
           discountAmountVnd: number;
+          giftItems?: Array<{
+            productId: string;
+            variantId: string | null;
+            productName: string;
+            variantName: string | null;
+            unitName: string | null;
+            unitPriceVnd: number;
+            quantityMilli: number;
+            grossAmountVnd: number;
+          }>;
+          flatPriceItems?: Array<{
+            productId: string;
+            variantId: string | null;
+            productName: string;
+            variantName: string | null;
+            quantityMilli: number;
+            originalUnitPriceVnd: number;
+            flatUnitPriceVnd: number;
+            discountAmountVnd: number;
+          }>;
         }>;
       };
       return snapshot.promotions ?? (snapshot.promotion ? [snapshot.promotion] : []);
@@ -246,7 +405,13 @@ export function OrderDetailPage({
       return [];
     }
   }, [data?.invoice?.snapshotJson]);
-  const invoicePromotionDiscount = invoicePromotions.reduce(
+
+  const appliedPromotions = useMemo(() => {
+    if (data?.promotions && data.promotions.length > 0) return data.promotions;
+    return invoicePromotions;
+  }, [data?.promotions, invoicePromotions]);
+
+  const invoicePromotionDiscount = appliedPromotions.reduce(
     (sum, promotion) => sum + promotion.discountAmountVnd,
     0,
   );
@@ -254,7 +419,8 @@ export function OrderDetailPage({
   // Realtime active segment duration calculation
   const liveTimeSegments = useMemo(() => {
     if (!data?.timeSegments) return [];
-    if (data.order.status !== 'OPEN') return data.timeSegments;
+    if (data.order.status !== 'OPEN' || data.timeSummary?.status === 'PAUSED')
+      return data.timeSegments;
 
     return data.timeSegments.map((seg) => {
       if (seg.isCurrentActive) {
@@ -270,7 +436,7 @@ export function OrderDetailPage({
       }
       return seg;
     });
-  }, [data?.timeSegments, data?.order.status, now]);
+  }, [data?.timeSegments, data?.order.status, data?.timeSummary?.status, now]);
 
   const liveTotalElapsed = useMemo(() => {
     return liveTimeSegments.reduce((sum, s) => sum + s.elapsedSeconds, 0);
@@ -307,8 +473,10 @@ export function OrderDetailPage({
       }>('/api/v1/pos/context'),
   });
 
-  const handlePrintReceipt = async (receiptType: 'PROVISIONAL' | 'PAYMENT') => {
-    if (!data) return;
+  const buildReceiptPrintData = (receiptType: 'PROVISIONAL' | 'PAYMENT'): PosReceiptPrintData => {
+    if (!data) {
+      throw new Error('Chưa tải được dữ liệu đơn hàng');
+    }
     const isPayment = receiptType === 'PAYMENT' && Boolean(data.invoice);
     const successfulPayment = data.payments.find((payment) => payment.status === 'SUCCEEDED');
 
@@ -322,7 +490,7 @@ export function OrderDetailPage({
       orderType: data.order.orderType,
       tableName: data.order.tableName,
       areaName: data.order.areaName,
-      cashierName: data.invoice?.issuedByName ?? null,
+      cashierName: data.invoice?.issuedByName ?? authQuery.data?.actor?.displayName ?? null,
       customerName: data.customer?.name ?? null,
       guestPhone: data.customer?.phone ?? null,
       guestAddress: null,
@@ -331,7 +499,9 @@ export function OrderDetailPage({
       issuedAtMs: data.invoice?.issuedAt || Date.now(),
       subtotal: isPayment ? data.invoice!.subtotalVnd : liveGrandTotal,
       discountTotal: isPayment ? data.invoice!.discountTotalVnd : data.totals.totalDiscountVnd,
-      promotionDiscount: isPayment ? invoicePromotionDiscount : 0,
+      promotionDiscount: isPayment
+        ? invoicePromotionDiscount
+        : data.totals.orderDiscountAmountVnd || 0,
       promotion: invoicePromotions[0] ?? null,
       promotions: invoicePromotions,
       total: isPayment ? data.invoice!.totalVnd : liveGrandTotal,
@@ -349,7 +519,8 @@ export function OrderDetailPage({
                 totalPrice: liveTotalTimeAmount,
                 isTime: true,
                 timeStartedAtMs: data.order.openedAt,
-                timeEndedAtMs: data.order.status === 'OPEN' ? null : Date.now(),
+                timeEndedAtMs:
+                  data.order.status === 'OPEN' ? null : (data.order.closedAt ?? Date.now()),
                 timeElapsedSeconds: liveTotalElapsed,
                 tableSegments: liveTimeSegments.map((s) => ({
                   tableName: s.tableName,
@@ -386,6 +557,41 @@ export function OrderDetailPage({
       printData.paidAmountVnd = data.totals.paidAmountVnd;
       printData.debtAmountVnd = data.totals.debtAmountVnd;
     }
+    return printData;
+  };
+
+  const currentReceiptPrintOptions = useMemo<PosReceiptPrintOptions | null>(() => {
+    if (!data) return null;
+    const printData = buildReceiptPrintData(receiptModalType);
+    return {
+      data: printData,
+      printSettings: printSettings.data,
+      storeInfo: {
+        storeName: staffContext.data?.storeName ?? data.order.storeName,
+        phone: staffContext.data?.storePhone ?? null,
+        address: staffContext.data?.storeAddress ?? null,
+        bankName: staffContext.data?.bankName ?? null,
+        bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
+        bankAccountName: staffContext.data?.bankAccountName ?? null,
+      },
+    };
+  }, [
+    data,
+    receiptModalType,
+    printSettings.data,
+    staffContext.data,
+    liveGrandTotal,
+    liveTotalElapsed,
+    liveTotalTimeAmount,
+    liveTimeSegments,
+    invoicePromotions,
+    invoicePromotionDiscount,
+    authQuery.data?.actor?.displayName,
+  ]);
+
+  const handlePrintReceipt = async (receiptType: 'PROVISIONAL' | 'PAYMENT') => {
+    if (!data) return;
+    const printData = buildReceiptPrintData(receiptType);
 
     const result = await printReceipt({
       data: printData,
@@ -453,15 +659,46 @@ export function OrderDetailPage({
       key: 'productName',
       title: 'Mặt hàng',
       dataIndex: 'productNameSnapshot',
-      render: (name: string, row: OrderItemDetail) => (
-        <div className="order-detail-item-cell">
-          <strong className="order-detail-item-title">{name}</strong>
-          {row.variantNameSnapshot && (
-            <small className="order-detail-item-variant"> · {row.variantNameSnapshot}</small>
-          )}
-          {row.note && <div className="order-detail-item-note">Ghi chú: {row.note}</div>}
-        </div>
-      ),
+      render: (name: string, row: OrderItemDetail) => {
+        const isGift =
+          (row.discountAmountVnd > 0 && row.netLineTotalVnd === 0) ||
+          row.discountReason?.toLowerCase().includes('quà tặng');
+        return (
+          <div className="order-detail-item-cell">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              {row.mediaId ? (
+                <img
+                  src={`/api/v1/media/${row.mediaId}`}
+                  alt=""
+                  style={{ width: 28, height: 28, borderRadius: 4, objectFit: 'cover' }}
+                />
+              ) : row.avatarColor ? (
+                <span
+                  style={{
+                    width: 20,
+                    height: 20,
+                    borderRadius: 4,
+                    backgroundColor: row.avatarColor,
+                    display: 'inline-block',
+                    flexShrink: 0,
+                  }}
+                />
+              ) : null}
+              <strong className="order-detail-item-title">{name}</strong>
+              {isGift && <Tag color="green">Quà tặng</Tag>}
+            </div>
+            {row.variantNameSnapshot && (
+              <small className="order-detail-item-variant"> · {row.variantNameSnapshot}</small>
+            )}
+            {row.note && <div className="order-detail-item-note">Ghi chú: {row.note}</div>}
+            {row.discountReason && row.discountAmountVnd > 0 && (
+              <div style={{ fontSize: 11, color: '#e11d48', marginTop: 2 }}>
+                Lý do giảm: {row.discountReason}
+              </div>
+            )}
+          </div>
+        );
+      },
     },
     {
       key: 'quantity',
@@ -593,17 +830,41 @@ export function OrderDetailPage({
             )}
 
             {!invoice && order.status !== 'CANCELLED' && (
-              <Button icon={<PrinterOutlined />} onClick={() => handlePrintReceipt('PROVISIONAL')}>
-                In tạm tính
-              </Button>
+              <>
+                <Button
+                  icon={<EyeOutlined />}
+                  onClick={() => {
+                    setReceiptModalType('PROVISIONAL');
+                    setReceiptModalVisible(true);
+                  }}
+                >
+                  Xem tạm tính
+                </Button>
+                <Button
+                  icon={<PrinterOutlined />}
+                  onClick={() => handlePrintReceipt('PROVISIONAL')}
+                >
+                  In tạm tính
+                </Button>
+              </>
             )}
 
             {invoice && (
               <>
-                <Button icon={<EyeOutlined />} onClick={() => setInvoiceModalVisible(true)}>
+                <Button
+                  icon={<EyeOutlined />}
+                  onClick={() => {
+                    setReceiptModalType('PAYMENT');
+                    setReceiptModalVisible(true);
+                  }}
+                >
                   Xem hóa đơn
                 </Button>
-                <Button icon={<PrinterOutlined />} onClick={() => handlePrintReceipt('PAYMENT')}>
+                <Button
+                  type="primary"
+                  icon={<PrinterOutlined />}
+                  onClick={() => handlePrintReceipt('PAYMENT')}
+                >
                   In hóa đơn
                 </Button>
               </>
@@ -674,6 +935,14 @@ export function OrderDetailPage({
             label: (
               <span>
                 <ShoppingCartOutlined /> Mặt hàng ({items.length})
+              </span>
+            ),
+          },
+          {
+            key: 'promotions',
+            label: (
+              <span>
+                <GiftOutlined /> Khuyến mãi áp dụng ({appliedPromotions.length})
               </span>
             ),
           },
@@ -759,8 +1028,19 @@ export function OrderDetailPage({
                       Chi tiết tiền giờ theo phân đoạn
                     </span>
                     <Space size={8}>
+                      {data?.timeSummary?.status === 'PAUSED' ? (
+                        <Tag color="warning" icon={<PauseCircleOutlined />}>
+                          Tạm dừng tính giờ
+                        </Tag>
+                      ) : null}
                       <Badge
-                        status={order.status === 'OPEN' ? 'processing' : 'default'}
+                        status={
+                          order.status === 'OPEN'
+                            ? data?.timeSummary?.status === 'PAUSED'
+                              ? 'warning'
+                              : 'processing'
+                            : 'default'
+                        }
                         text={<strong>Tổng giờ: {formatDuration(liveTotalElapsed)}</strong>}
                       />
                       <Tag color="gold" style={{ fontSize: '13px', fontWeight: 600 }}>
@@ -835,14 +1115,19 @@ export function OrderDetailPage({
               size="small"
               style={{ marginTop: 16 }}
             >
-              <Table<OrderItemDetail>
-                rowKey="id"
-                dataSource={items}
-                columns={itemColumns}
-                pagination={false}
-                size="small"
-                locale={{ emptyText: <Empty description="Chưa gọi mặt hàng nào" /> }}
-              />
+              <div className="order-detail-items-desktop">
+                <Table<OrderItemDetail>
+                  rowKey="id"
+                  dataSource={items}
+                  columns={itemColumns}
+                  pagination={false}
+                  size="small"
+                  locale={{ emptyText: <Empty description="Chưa gọi mặt hàng nào" /> }}
+                />
+              </div>
+              <div className="order-detail-items-mobile">
+                <OrderDetailMobileItemsList items={items} />
+              </div>
             </Card>
           </Col>
 
@@ -1184,14 +1469,244 @@ export function OrderDetailPage({
       {/* ── Tab Content 3: Items / Services ── */}
       {activeTab === 'items' && (
         <Card size="small" className="order-detail-card">
-          <Table<OrderItemDetail>
-            rowKey="id"
-            dataSource={items}
-            columns={itemColumns}
-            pagination={false}
-            locale={{ emptyText: <Empty description="Chưa có mặt hàng nào" /> }}
-          />
+          <div className="order-detail-items-desktop">
+            <Table<OrderItemDetail>
+              rowKey="id"
+              dataSource={items}
+              columns={itemColumns}
+              pagination={false}
+              locale={{ emptyText: <Empty description="Chưa có mặt hàng nào" /> }}
+            />
+          </div>
+          <div className="order-detail-items-mobile">
+            <OrderDetailMobileItemsList items={items} />
+          </div>
         </Card>
+      )}
+
+      {/* ── Tab Content: Applied Promotions ── */}
+      {activeTab === 'promotions' && (
+        <div className="order-detail-tab-pane">
+          {appliedPromotions.length === 0 ? (
+            <Card size="small" className="order-detail-card">
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="Đơn hàng không áp dụng chương trình khuyến mãi nào"
+              />
+            </Card>
+          ) : (
+            <Space direction="vertical" size={16} style={{ width: '100%' }}>
+              {/* Summary Stats Banner */}
+              <Card
+                size="small"
+                className="order-detail-card"
+                style={{ background: '#f0fdf4', borderColor: '#bbf7d0' }}
+              >
+                <Row gutter={[16, 16]} align="middle">
+                  <Col xs={24} sm={8}>
+                    <div style={{ fontSize: 13, color: '#166534' }}>Số chương trình áp dụng:</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: '#15803d' }}>
+                      {appliedPromotions.length} chương trình
+                    </div>
+                  </Col>
+                  <Col xs={24} sm={8}>
+                    <div style={{ fontSize: 13, color: '#166534' }}>Tổng tiền giảm trừ:</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: '#dc2626' }}>
+                      -
+                      {formatMoney(
+                        appliedPromotions.reduce((sum, p) => sum + p.discountAmountVnd, 0),
+                      )}
+                    </div>
+                  </Col>
+                  <Col xs={24} sm={8}>
+                    <div style={{ fontSize: 13, color: '#166534' }}>Quà tặng kèm theo:</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: '#0975F7' }}>
+                      {appliedPromotions.reduce((sum, p) => sum + (p.giftItems?.length ?? 0), 0)}{' '}
+                      món quà
+                    </div>
+                  </Col>
+                </Row>
+              </Card>
+
+              {/* List of Applied Promotions */}
+              {appliedPromotions.map((promo, idx) => {
+                const isGift = promo.type === 'GIFT';
+                const isFlat = promo.type === 'FLAT_PRICE';
+                const isPercent = promo.type === 'PERCENT';
+                const isFixed = promo.type === 'FIXED_AMOUNT';
+
+                return (
+                  <Card
+                    key={promo.id || idx}
+                    size="small"
+                    className="order-detail-card"
+                    title={
+                      <div className="order-detail-card-title-row">
+                        <Space wrap>
+                          <Tag color="magenta">#{idx + 1}</Tag>
+                          <strong style={{ fontSize: 15 }}>{promo.name}</strong>
+                          {isGift && <Tag color="green">Tặng quà</Tag>}
+                          {isFlat && <Tag color="orange">Đồng giá</Tag>}
+                          {isPercent && <Tag color="purple">Giảm {promo.value}%</Tag>}
+                          {isFixed && <Tag color="blue">Giảm tiền mặt</Tag>}
+                          {promo.scope && (
+                            <Tag color="default">
+                              {promo.scope === 'INVOICE'
+                                ? 'Toàn hóa đơn'
+                                : promo.scope === 'CATEGORY'
+                                  ? 'Theo danh mục'
+                                  : 'Theo món'}
+                            </Tag>
+                          )}
+                        </Space>
+                        <strong style={{ fontSize: 16, color: '#dc2626' }}>
+                          -{formatMoney(promo.discountAmountVnd)}
+                        </strong>
+                      </div>
+                    }
+                  >
+                    {/* Gift items detail if any */}
+                    {promo.giftItems && promo.giftItems.length > 0 && (
+                      <div style={{ marginTop: 8 }}>
+                        <div style={{ fontWeight: 600, marginBottom: 8, color: '#166534' }}>
+                          Danh sách món được tặng (Miễn phí 100%):
+                        </div>
+                        <Table
+                          size="small"
+                          pagination={false}
+                          rowKey={(r, i) => `${r.productId}-${i}`}
+                          dataSource={promo.giftItems}
+                          columns={[
+                            {
+                              title: 'Mặt hàng tặng',
+                              dataIndex: 'productName',
+                              render: (name: string, row) => (
+                                <div>
+                                  <strong>{name}</strong>
+                                  {row.variantName && (
+                                    <small className="text-secondary"> · {row.variantName}</small>
+                                  )}
+                                  <Tag color="green" style={{ marginLeft: 6 }}>
+                                    Quà tặng
+                                  </Tag>
+                                </div>
+                              ),
+                            },
+                            {
+                              title: 'Số lượng',
+                              dataIndex: 'quantityMilli',
+                              align: 'right',
+                              render: (milli: number, row) => (
+                                <span>
+                                  {milli / 1000} {row.unitName ?? ''}
+                                </span>
+                              ),
+                            },
+                            {
+                              title: 'Giá trị gốc',
+                              dataIndex: 'unitPriceVnd',
+                              align: 'right',
+                              render: (price: number) => formatMoney(price),
+                            },
+                            {
+                              title: 'Khuyến mãi giảm',
+                              dataIndex: 'grossAmountVnd',
+                              align: 'right',
+                              render: (gross: number) => (
+                                <span className="text-danger">-{formatMoney(gross)}</span>
+                              ),
+                            },
+                            {
+                              title: 'Thành tiền',
+                              key: 'total',
+                              align: 'right',
+                              render: () => <strong className="text-success">0đ</strong>,
+                            },
+                          ]}
+                        />
+                      </div>
+                    )}
+
+                    {/* Flat price items detail if any */}
+                    {promo.flatPriceItems && promo.flatPriceItems.length > 0 && (
+                      <div style={{ marginTop: 8 }}>
+                        <div style={{ fontWeight: 600, marginBottom: 8, color: '#d97706' }}>
+                          Mặt hàng áp dụng mức đồng giá:
+                        </div>
+                        <Table
+                          size="small"
+                          pagination={false}
+                          rowKey={(r, i) => `${r.productId}-${i}`}
+                          dataSource={promo.flatPriceItems}
+                          columns={[
+                            {
+                              title: 'Mặt hàng',
+                              dataIndex: 'productName',
+                              render: (name: string, row) => (
+                                <div>
+                                  <strong>{name}</strong>
+                                  {row.variantName && (
+                                    <small className="text-secondary"> · {row.variantName}</small>
+                                  )}
+                                </div>
+                              ),
+                            },
+                            {
+                              title: 'Số lượng',
+                              dataIndex: 'quantityMilli',
+                              align: 'right',
+                              render: (milli: number) => <span>{milli / 1000}</span>,
+                            },
+                            {
+                              title: 'Giá gốc',
+                              dataIndex: 'originalUnitPriceVnd',
+                              align: 'right',
+                              render: (price: number) => formatMoney(price),
+                            },
+                            {
+                              title: 'Giá sau khuyến mãi',
+                              dataIndex: 'flatUnitPriceVnd',
+                              align: 'right',
+                              render: (price: number) => (
+                                <strong className="text-primary">{formatMoney(price)}</strong>
+                              ),
+                            },
+                            {
+                              title: 'Tiết kiệm',
+                              dataIndex: 'discountAmountVnd',
+                              align: 'right',
+                              render: (discount: number) => (
+                                <span className="text-danger">-{formatMoney(discount)}</span>
+                              ),
+                            },
+                          ]}
+                        />
+                      </div>
+                    )}
+
+                    {/* Simple summary for fixed amount or percent */}
+                    {!promo.giftItems?.length && !promo.flatPriceItems?.length && (
+                      <Descriptions size="small" column={{ xs: 1, sm: 2 }} bordered>
+                        <Descriptions.Item label="Hình thức khuyến mãi">
+                          {isPercent
+                            ? `Giảm ${promo.value}% trên giá trị áp dụng`
+                            : isFixed
+                              ? `Giảm trực tiếp ${formatMoney(promo.value)}`
+                              : 'Giảm giá theo chương trình'}
+                        </Descriptions.Item>
+                        <Descriptions.Item label="Tổng số tiền giảm vào đơn">
+                          <strong className="text-danger">
+                            -{formatMoney(promo.discountAmountVnd)}
+                          </strong>
+                        </Descriptions.Item>
+                      </Descriptions>
+                    )}
+                  </Card>
+                );
+              })}
+            </Space>
+          )}
+        </div>
       )}
 
       {/* ── Tab Content 4: Payment & Invoice ── */}
@@ -1279,68 +1794,51 @@ export function OrderDetailPage({
 
           <Col xs={24} md={12}>
             <Card
-              title="Hóa đơn chính thức (Snapshot)"
+              title="Hóa đơn thanh toán (Bản in chuẩn)"
               size="small"
               className="order-detail-card order-detail-invoice-card"
               extra={
                 invoice && (
-                  <Button
-                    size="small"
-                    icon={<PrinterOutlined />}
-                    onClick={() => handlePrintReceipt('PAYMENT')}
-                  >
-                    In hóa đơn
-                  </Button>
+                  <Space>
+                    <Button
+                      size="small"
+                      icon={<EyeOutlined />}
+                      onClick={() => {
+                        setReceiptModalType('PAYMENT');
+                        setReceiptModalVisible(true);
+                      }}
+                    >
+                      Xem phóng to
+                    </Button>
+                    <Button
+                      size="small"
+                      type="primary"
+                      icon={<PrinterOutlined />}
+                      onClick={() => handlePrintReceipt('PAYMENT')}
+                    >
+                      In hóa đơn
+                    </Button>
+                  </Space>
                 )
               }
             >
               {!invoice ? (
                 <Empty description="Chưa tạo hóa đơn chính thức cho đơn này" />
-              ) : (
-                <div className="order-detail-inline-receipt">
-                  <header>
-                    <strong>{order.storeName}</strong>
-                    <span>HÓA ĐƠN THANH TOÁN</span>
-                    <small>
-                      {invoice.displayCode} · {formatDateTime(invoice.issuedAt)}
-                    </small>
-                  </header>
-                  <div className="order-detail-inline-receipt__divider" />
-                  <div className="order-detail-inline-receipt__row">
-                    <span>Thu ngân</span>
-                    <b>{invoice.issuedByName}</b>
-                  </div>
-                  <div className="order-detail-inline-receipt__row">
-                    <span>Tiền hàng / giờ</span>
-                    <b>{formatMoney(invoice.totalVnd + invoicePromotionDiscount)}</b>
-                  </div>
-                  {invoicePromotions.map((promotion) => (
-                    <div key={promotion.name} className="order-detail-inline-receipt__row">
-                      <span>Khuyến mại · {promotion.name}</span>
-                      <b>-{formatMoney(promotion.discountAmountVnd)}</b>
-                    </div>
-                  ))}
-                  <div className="order-detail-inline-receipt__divider" />
-                  <div className="order-detail-inline-receipt__row order-detail-inline-receipt__total">
-                    <span>TỔNG CỘNG</span>
-                    <b>{formatMoney(invoice.totalVnd)}</b>
-                  </div>
-                  {paymentAllocations.map((allocation) => (
-                    <div className="order-detail-inline-receipt__row" key={allocation.id}>
-                      <span>
-                        {allocation.method === 'CASH'
-                          ? 'Tiền mặt'
-                          : allocation.method === 'DEBT'
-                            ? 'Ghi nợ'
-                            : 'Chuyển khoản'}
-                      </span>
-                      <b className={allocation.method === 'DEBT' ? 'text-danger' : ''}>
-                        {formatMoney(allocation.amountVnd)}
-                      </b>
-                    </div>
-                  ))}
+              ) : currentReceiptPrintOptions ? (
+                <div
+                  style={{
+                    maxHeight: 560,
+                    overflowY: 'auto',
+                    display: 'flex',
+                    justifyContent: 'center',
+                    background: '#f8fafc',
+                    padding: '8px 0',
+                    borderRadius: 8,
+                  }}
+                >
+                  <ReceiptPreviewPaper options={currentReceiptPrintOptions} />
                 </div>
-              )}
+              ) : null}
             </Card>
           </Col>
         </Row>
@@ -1390,101 +1888,21 @@ export function OrderDetailPage({
         </Card>
       )}
 
-      {/* ── Invoice Printable Modal ── */}
-      <Modal
-        open={invoiceModalVisible}
-        onCancel={() => setInvoiceModalVisible(false)}
-        footer={[
-          <Button key="close" onClick={() => setInvoiceModalVisible(false)}>
-            Đóng
-          </Button>,
-          <Button
-            key="print"
-            type="primary"
-            icon={<PrinterOutlined />}
-            onClick={() => handlePrintReceipt('PAYMENT')}
-          >
-            In hóa đơn
-          </Button>,
-        ]}
-        width={420}
-        title="Hóa đơn thanh toán"
-      >
-        {invoice && (
-          <div className="order-detail-invoice-preview">
-            <div className="order-detail-invoice-preview__header">
-              <h2>PRO POS BILLIARDS</h2>
-              <div>{order.storeName}</div>
-              <div>
-                Hóa đơn: <strong>{invoice.displayCode}</strong>
-              </div>
-              <div>Ngày: {formatDateTime(invoice.issuedAt)}</div>
-              <div>
-                Bàn: {order.tableName ?? 'Mang đi'} · Thu ngân: {invoice.issuedByName}
-              </div>
-            </div>
-
-            <Divider style={{ margin: '12px 0' }} />
-
-            <div className="order-detail-invoice-preview__lines">
-              {liveTimeSegments.length > 0 && (
-                <div className="order-detail-invoice-preview__line">
-                  <div>
-                    <div>Tiền giờ ({formatDuration(liveTotalElapsed)})</div>
-                    <small className="text-secondary">{order.tableUsageChain.join(' → ')}</small>
-                  </div>
-                  <strong>{formatMoney(liveTotalTimeAmount)}</strong>
-                </div>
-              )}
-
-              {items.map((it) => (
-                <div key={it.id} className="order-detail-invoice-preview__line">
-                  <div>
-                    <div>
-                      {it.productNameSnapshot} (x{it.quantityMilli / 1000})
-                    </div>
-                    {it.discountAmountVnd > 0 && (
-                      <>
-                        <small className="text-danger">
-                          Giảm thủ công: -{formatMoney(it.discountAmountVnd)}
-                        </small>
-                        <small>Lý do: {it.discountReason || 'Chưa có lý do'}</small>
-                      </>
-                    )}
-                  </div>
-                  <strong>{formatMoney(it.netLineTotalVnd)}</strong>
-                </div>
-              ))}
-            </div>
-
-            <Divider style={{ margin: '12px 0' }} />
-
-            <div className="order-detail-invoice-preview__totals">
-              <div className="order-detail-invoice-preview__total-row">
-                <span>Tổng tiền hàng & giờ:</span>
-                <span>{formatMoney(invoice.totalVnd + invoicePromotionDiscount)}</span>
-              </div>
-              {invoicePromotions.map((promotion) => (
-                <div
-                  key={promotion.name}
-                  className="order-detail-invoice-preview__total-row text-danger"
-                >
-                  <span>Khuyến mại · {promotion.name}:</span>
-                  <span>-{formatMoney(promotion.discountAmountVnd)}</span>
-                </div>
-              ))}
-              <div className="order-detail-invoice-preview__total-row order-detail-invoice-preview__total-row--grand">
-                <span>THANH TOÁN:</span>
-                <strong>{formatMoney(invoice.totalVnd)}</strong>
-              </div>
-            </div>
-
-            <div className="order-detail-invoice-preview__footer">
-              <p>Cảm ơn quý khách và hẹn gặp lại!</p>
-            </div>
-          </div>
-        )}
-      </Modal>
+      {/* ── Authentic Thermal Receipt Modal ── */}
+      <ReceiptPreviewModal
+        open={receiptModalVisible}
+        title={
+          receiptModalType === 'PAYMENT'
+            ? `Xem hóa đơn thanh toán · ${data.invoice?.displayCode || orderCode}`
+            : `Xem hóa đơn tạm tính · ${orderCode}`
+        }
+        options={currentReceiptPrintOptions}
+        onCancel={() => setReceiptModalVisible(false)}
+        onPrint={async () => {
+          await handlePrintReceipt(receiptModalType);
+          setReceiptModalVisible(false);
+        }}
+      />
 
       {/* ── Delete Confirmation Modal ── */}
       <Modal

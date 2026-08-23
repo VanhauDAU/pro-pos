@@ -27,7 +27,10 @@ import {
 } from '@contracts/store';
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 import { ReceiptPreviewPaper } from '@client/features/pos/ReceiptPreviewModal';
-import { buildOwnerPrintPreviewSample } from './print-preview-sample';
+import {
+  OWNER_PRINT_PREVIEW_TOTAL_VND,
+  buildOwnerPrintPreviewSample,
+} from './print-preview-sample';
 
 function errorMessage(error: unknown, fallback: string) {
   if (error instanceof ApiError) return error.message;
@@ -260,7 +263,7 @@ export function OwnerPrintTemplateEditPage() {
       if (settings.bottomBankName && settings.bottomBankAccountNumber) {
         return `https://img.vietqr.io/image/${encodeURIComponent(settings.bottomBankName.trim())}-${encodeURIComponent(
           settings.bottomBankAccountNumber.trim(),
-        )}-qr_only.png?amount=173000&addInfo=Thanh+toan+bill&accountName=${encodeURIComponent(
+        )}-qr_only.png?amount=${OWNER_PRINT_PREVIEW_TOTAL_VND}&addInfo=Thanh+toan+bill&accountName=${encodeURIComponent(
           settings.bottomBankAccountName?.trim() || '',
         )}`;
       }
@@ -1012,6 +1015,29 @@ export function OwnerPrintTemplateEditPage() {
             </Card>
           </Col>
         </Row>
+        <div className="owner-form-actions owner-sticky-form-bar" style={{ marginTop: 24 }}>
+          <div className="owner-sticky-form-bar__left">
+            {isDirty ? (
+              <div className="owner-print-unsaved-text">
+                <span className="owner-print-unsaved-dot">●</span> Có thao tác chỉnh sửa chưa lưu
+              </div>
+            ) : null}
+          </div>
+          <div className="owner-sticky-form-bar__right">
+            <Button size="large" onClick={handleCancel}>
+              Hủy
+            </Button>
+            <Button
+              type="primary"
+              size="large"
+              htmlType="submit"
+              icon={<SaveOutlined />}
+              loading={saving}
+            >
+              Lưu {previewInvoiceType === 'PROVISIONAL' ? 'mẫu tạm tính' : 'mẫu thanh toán'}
+            </Button>
+          </div>
+        </div>
       </Form>
     </div>
   );

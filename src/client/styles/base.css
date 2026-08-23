@@ -4515,26 +4515,29 @@ body {
 }
 
 .auth-card {
-  min-height: 590px;
-  padding: 46px 54px 32px;
+  min-height: 520px;
+  width: 100%;
+  max-width: 390px;
+  padding: 36px 32px 24px;
   display: flex;
   flex-direction: column;
   border: 1px solid rgba(13, 124, 255, 0.08);
   border-radius: 28px;
   background: #fff;
   box-shadow: 0 28px 75px rgba(29, 77, 124, 0.14);
+  box-sizing: border-box;
 }
 
 .auth-card__logo {
-  width: 185px;
-  height: 62px;
-  margin: 0 auto 18px;
+  width: 155px;
+  height: 50px;
+  margin: 0 auto 14px;
   object-fit: contain;
 }
 
 .auth-card__footer {
   margin-top: auto;
-  padding-top: 30px;
+  padding-top: 24px;
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -4548,57 +4551,110 @@ body {
 
 .login-heading,
 .activation-heading {
-  margin-bottom: 20px;
+  width: 100%;
+  max-width: 320px;
+  margin: 0 auto 14px;
   text-align: center;
 }
 
 .login-heading .ant-typography,
 .activation-heading .ant-typography {
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 
-.login-tabs {
+.login-error {
   width: 100%;
+  max-width: 320px;
+  margin: 0 auto 12px;
 }
 
-.login-tabs .ant-tabs-nav {
+.auth-tab-bar {
   width: 100%;
-  margin-bottom: 24px;
+  max-width: 320px;
+  margin: 0 auto 18px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1.5px solid #e2e8f0;
 }
 
-.login-tabs .ant-tabs-nav-list {
+.auth-tab-btn {
   width: 100%;
-  display: flex;
-}
-
-.login-tabs .ant-tabs-tab {
-  flex: 1;
-  min-width: 0;
-  justify-content: center;
+  padding: 10px 0;
+  border: none;
+  background: transparent;
+  color: #64748b;
   font-size: 15px;
   font-weight: 600;
-  padding: 12px 0;
+  cursor: pointer;
+  position: relative;
+  transition: color 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
 }
 
-.login-tabs .ant-tabs-ink-bar {
-  height: 3px;
-  border-radius: 99px;
+.auth-tab-btn:hover {
+  color: #0f172a;
+}
+
+.auth-tab-btn.is-active {
+  color: var(--brand-primary);
+  font-weight: 700;
+}
+
+.auth-tab-btn.is-active::after {
+  content: '';
+  position: absolute;
+  bottom: -1.5px;
+  left: 0;
+  right: 0;
+  height: 2.5px;
   background: var(--brand-primary);
+  border-radius: 99px;
+}
+
+.auth-tab-content {
+  width: 100%;
+  max-width: 320px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .auth-card .ant-input-affix-wrapper,
 .auth-card .ant-input {
-  width: 100%;
-  min-height: 52px;
-  border-radius: 12px;
-  font-size: 15px;
+  width: 100% !important;
+  min-height: 48px !important;
+  border-radius: 12px !important;
+  font-size: 14.5px !important;
+  box-sizing: border-box !important;
 }
 
-.employee-quick-login {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
+.owner-login-clean,
+.owner-password-form,
+.employee-quick-login,
+.employee-full-login-form,
+.activation-clean-box {
+  width: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 12px !important;
+  box-sizing: border-box !important;
+}
+
+.owner-login-btn,
+.employee-login-submit-btn,
+.activation-primary-btn {
+  width: 100% !important;
+  min-height: 48px !important;
+  border-radius: 12px !important;
+  font-size: 15px !important;
+  font-weight: 600 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-sizing: border-box !important;
 }
 
 .remembered-employee-card,
@@ -4706,18 +4762,18 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
+  margin: 4px 0;
 }
 
 .quick-pin-hidden-input {
   position: absolute;
-  top: 0;
-  left: 0;
+  inset: 0;
   width: 100%;
-  height: 56px;
+  height: 100%;
   opacity: 0;
   pointer-events: auto;
-  z-index: 1;
+  z-index: 2;
   cursor: pointer;
   border: none;
   background: transparent;
@@ -4731,8 +4787,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  width: 100%;
+  gap: 7px;
   cursor: pointer;
   user-select: none;
 }
@@ -4741,19 +4796,19 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: 7px;
 }
 
 .quick-pin-slot {
-  width: 56px;
-  height: 56px;
-  border-radius: 14px;
+  width: 44px;
+  height: 48px;
+  border-radius: 10px;
   background: #f8fafc;
   border: 1.5px solid #cbd5e1;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 24px;
+  font-size: 20px;
   font-weight: 700;
   color: #0f172a;
   transition: all 0.16s cubic-bezier(0.4, 0, 0.2, 1);
@@ -4762,15 +4817,39 @@ body {
 }
 
 .quick-pin-slot.is-active {
-  border-color: var(--brand-primary);
+  border-color: #0975f7;
   background: #ffffff;
-  box-shadow: 0 0 0 3.5px rgba(9, 117, 247, 0.16);
+  box-shadow: 0 0 0 3px rgba(9, 117, 247, 0.16);
 }
 
 .quick-pin-slot.is-filled {
-  border-color: var(--brand-primary);
+  border-color: #0975f7;
   background: #ffffff;
-  box-shadow: 0 2px 8px rgba(9, 117, 247, 0.12);
+  box-shadow: 0 2px 6px rgba(9, 117, 247, 0.1);
+}
+
+.quick-pin-toggle-btn {
+  position: relative;
+  z-index: 3;
+  height: 48px;
+  width: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  font-size: 16px;
+  border-radius: 10px;
+  border: 1.5px solid #cbd5e1;
+  background: #f8fafc;
+  flex-shrink: 0;
+  margin-left: 2px;
+  transition: all 0.2s ease;
+}
+
+.quick-pin-toggle-btn:hover {
+  color: #0975f7;
+  border-color: #0975f7;
+  background: #eff6ff;
 }
 
 .quick-pin-bullet {
@@ -4829,85 +4908,6 @@ body {
   box-shadow: 0 0 0 3px rgba(255, 77, 79, 0.15);
 }
 
-.quick-pin-toggle-btn {
-  position: relative;
-  z-index: 2;
-  height: 56px;
-  width: 46px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: #64748b;
-  font-size: 18px;
-  border-radius: 14px;
-  border: 1.5px solid #cbd5e1;
-  background: #f8fafc;
-  flex-shrink: 0;
-  transition: all 0.2s ease;
-}
-
-.quick-pin-toggle-btn:hover {
-  color: var(--brand-primary);
-  border-color: var(--brand-primary);
-  background: #eff6ff;
-}
-
-.quick-pin-numpad {
-  width: 100%;
-  max-width: 320px;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  margin: 4px auto 0;
-}
-
-.quick-pin-key {
-  height: 52px;
-  border-radius: 14px;
-  border: 1px solid #e2e8f0;
-  background: #ffffff;
-  font-size: 22px;
-  font-weight: 600;
-  color: #0f172a;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.12s ease;
-  user-select: none;
-  -webkit-user-select: none;
-  -webkit-tap-highlight-color: transparent;
-  touch-action: manipulation;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-}
-
-.quick-pin-key:hover {
-  background: #f1f5f9;
-  border-color: #cbd5e1;
-}
-
-.quick-pin-key:active {
-  transform: scale(0.94);
-  background: #e2e8f0;
-}
-
-.quick-pin-key:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-  transform: none;
-}
-
-.quick-pin-key--action {
-  background: #f8fafc;
-  font-size: 16px;
-  color: #475569;
-  font-weight: 700;
-}
-
-.quick-pin-key--action:active {
-  background: #e2e8f0;
-}
-
 .employee-login-submit-btn {
   margin-top: 4px;
 }
@@ -4927,12 +4927,6 @@ body {
   .quick-pin-toggle-btn {
     width: 40px;
     height: 48px;
-    border-radius: 12px;
-  }
-
-  .quick-pin-key {
-    height: 48px;
-    font-size: 20px;
     border-radius: 12px;
   }
 }
@@ -4958,28 +4952,6 @@ body {
   text-align: center;
   font-size: 12px;
   line-height: 1.55;
-}
-
-/* Clean Minimal Owner Login */
-.owner-login-clean {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  padding: 4px 0 0;
-}
-
-.owner-password-form {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-.owner-password-form .ant-input-affix-wrapper,
-.owner-password-form .ant-input {
-  width: 100% !important;
-  min-height: 50px !important;
-  border-radius: 12px !important;
-  font-size: 15px !important;
 }
 
 .owner-password-form .ant-checkbox-wrapper {
@@ -5678,14 +5650,15 @@ body {
   }
 }
 
-@media (max-width: 560px) {
+@media (max-width: 640px) {
   .auth-page {
     display: flex;
     flex-direction: column;
     padding: 0;
-    background: #fff;
-    height: 100dvh;
-    overflow: hidden;
+    background: #ffffff;
+    min-height: 100dvh;
+    height: auto;
+    overflow-y: auto;
   }
 
   .auth-grid {
@@ -5693,71 +5666,90 @@ body {
     flex: 1;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    overflow: visible;
+    min-height: 100dvh;
   }
 
   .brand-panel {
-    padding: 14px 20px 16px;
-    border-radius: 0 0 20px 20px;
-    box-shadow: none;
-    flex-shrink: 0;
-  }
-
-  .brand-panel__logo {
-    width: 110px;
-    height: 36px;
-  }
-
-  .brand-panel__copy h1 {
-    margin-top: 6px;
-    font-size: 18px;
-    line-height: 1.3;
-  }
-
-  .brand-panel__copy p {
     display: none;
   }
 
   .auth-card {
-    min-height: 0;
+    min-height: 100dvh;
+    max-width: 100%;
     flex: 1;
     display: flex;
     flex-direction: column;
-    justify-content: center;
-    padding: 14px 20px;
+    justify-content: flex-start;
+    padding: 24px 32px calc(24px + env(safe-area-inset-bottom, 16px));
     border: 0;
     border-radius: 0;
     box-shadow: none;
+    background: #ffffff;
     overflow-y: auto;
   }
 
   .auth-card__logo {
-    display: none;
+    display: block;
+    width: 135px;
+    height: auto;
+    margin: 8px auto 18px;
   }
 
-  .login-heading {
-    margin-bottom: 12px;
+  .auth-tab-bar {
+    width: 100%;
+    max-width: 320px;
+    margin: 0 auto 16px;
   }
 
-  .login-tabs .ant-tabs-nav {
-    margin-bottom: 16px;
+  .auth-tab-btn {
+    padding: 9px 0;
+    font-size: 14.5px;
+  }
+
+  .auth-tab-content {
+    width: 100%;
+    max-width: 320px;
+    margin: 0 auto;
+  }
+
+  .auth-card .ant-input-affix-wrapper,
+  .auth-card .ant-input {
+    min-height: 48px;
+    font-size: 14.5px;
+    border-radius: 12px;
   }
 
   .employee-quick-login {
-    gap: 10px;
+    gap: 12px;
   }
 
   .quick-pin-container {
     gap: 10px;
+    margin: 4px 0;
+  }
+
+  .quick-pin-slots {
+    gap: 7px;
+  }
+
+  .quick-pin-slot {
+    width: 44px;
+    height: 48px;
+    font-size: 20px;
+    border-radius: 10px;
+  }
+
+  .quick-pin-toggle-btn {
+    width: 40px;
+    height: 48px;
+    border-radius: 10px;
+    font-size: 15px;
   }
 
   .auth-card__footer {
-    padding-top: 16px;
-  }
-
-  .login-tabs .ant-tabs-tab {
-    min-width: 120px;
-    padding: 8px 0;
+    margin-top: auto;
+    padding-top: 20px;
   }
 }
 

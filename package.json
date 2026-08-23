@@ -55,6 +55,7 @@
     "@hono/zod-openapi": "^1.6.0",
     "@tanstack/react-query": "^5.101.4",
     "antd": "^6.6.1",
+    "dayjs": "^1.11.23",
     "hono": "^4.13.3",
     "qrcode": "^1.5.4",
     "qz-tray": "^2.2.6",

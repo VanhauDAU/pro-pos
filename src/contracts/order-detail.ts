@@ -182,6 +182,35 @@ export interface OrderTotalsDetail {
   debtAmountVnd: number;
 }
 
+export interface OrderAppliedPromotionDetail {
+  id: string;
+  name: string;
+  type: 'FIXED_AMOUNT' | 'PERCENT' | 'FLAT_PRICE' | 'GIFT';
+  scope?: 'INVOICE' | 'CATEGORY' | 'PRODUCT';
+  value: number | null;
+  discountAmountVnd: number;
+  giftItems?: Array<{
+    productId: string;
+    variantId: string | null;
+    productName: string;
+    variantName: string | null;
+    unitName: string | null;
+    unitPriceVnd: number;
+    quantityMilli: number;
+    grossAmountVnd: number;
+  }>;
+  flatPriceItems?: Array<{
+    productId: string;
+    variantId: string | null;
+    productName: string;
+    variantName: string | null;
+    quantityMilli: number;
+    originalUnitPriceVnd: number;
+    flatUnitPriceVnd: number;
+    discountAmountVnd: number;
+  }>;
+}
+
 export interface OrderDetailDto {
   order: OrderDetailInfo;
   customer: OrderCustomerInfo | null;
@@ -194,6 +223,7 @@ export interface OrderDetailDto {
   payments: OrderPaymentDetail[];
   paymentAllocations: OrderPaymentAllocationDetail[];
   invoice: OrderInvoiceDetail | null;
+  promotions: OrderAppliedPromotionDetail[];
   auditEvents: OrderAuditEventDetail[];
   totals: OrderTotalsDetail;
 }

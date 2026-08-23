@@ -146,7 +146,7 @@ function QuickPinInput({
       <input
         ref={inputRef}
         type={showPin ? 'text' : 'password'}
-        inputMode="none"
+        inputMode="numeric"
         pattern="[0-9]*"
         maxLength={4}
         value={value}
@@ -249,6 +249,23 @@ function errorMessage(error: unknown) {
   return 'Không thể đăng nhập. Vui lòng thử lại.';
 }
 
+function retryAfterSeconds(error: unknown) {
+  if (!(error instanceof ApiError) || error.code !== 'AUTH_RATE_LIMITED') return 0;
+  if (!error.details || typeof error.details !== 'object') return 0;
+  const seconds = (error.details as { retryAfterSeconds?: unknown }).retryAfterSeconds;
+  return typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0
+    ? Math.ceil(seconds)
+    : 0;
+}
+
+function formatRetryDelay(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return minutes > 0
+    ? `${minutes}:${String(remainingSeconds).padStart(2, '0')}`
+    : `${remainingSeconds} giây`;
+}
+
 function accessErrorMessage(code: string | null) {
   if (!code) return null;
   if (code === 'SESSION_EXPIRED') return 'Phiên Owner đã hết hạn. Vui lòng đăng nhập lại.';
@@ -267,6 +284,8 @@ export function LoginPage() {
     searchParams.get('tab') === 'owner' ? 'owner' : 'employee',
   );
   const [submitting, setSubmitting] = useState(false);
+  const loginInFlightRef = useRef(false);
+  const [ownerRetryAfterSeconds, setOwnerRetryAfterSeconds] = useState(0);
   const [showPin, setShowPin] = useState(false);
   const [pinValue, setPinValue] = useState('');
   const [pinError, setPinError] = useState(false);
@@ -296,6 +315,14 @@ export function LoginPage() {
 
   const deviceIsActive = context.data?.device?.status === 'ACTIVE';
 
+  useEffect(() => {
+    if (ownerRetryAfterSeconds <= 0) return;
+    const timer = window.setTimeout(() => {
+      setOwnerRetryAfterSeconds((seconds) => Math.max(0, seconds - 1));
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [ownerRetryAfterSeconds]);
+
   const switchTab = (key: string) => {
     setActiveTab(key);
     setSearchParams({ tab: key });
@@ -306,10 +333,12 @@ export function LoginPage() {
 
   const executeOwnerLogin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    if (loginInFlightRef.current || ownerRetryAfterSeconds > 0) return;
     if (!ownerUsername.trim() || !ownerPassword) {
       setError('Vui lòng nhập tên đăng nhập và mật khẩu.');
       return;
     }
+    loginInFlightRef.current = true;
     setSubmitting(true);
     setError(null);
     try {
@@ -330,14 +359,18 @@ export function LoginPage() {
       await queryClient.invalidateQueries({ queryKey: ['auth-context'] });
       navigate('/owner', { replace: true });
     } catch (loginError) {
-      setError(errorMessage(loginError));
+      const retryAfter = retryAfterSeconds(loginError);
+      setOwnerRetryAfterSeconds(retryAfter);
+      setError(retryAfter > 0 ? null : errorMessage(loginError));
     } finally {
+      loginInFlightRef.current = false;
       setSubmitting(false);
     }
   };
 
   const executeEmployeeLogin = async (username: string, pin: string) => {
-    if (!username.trim() || pin.length !== 4) return;
+    if (loginInFlightRef.current || !username.trim() || pin.length !== 4) return;
+    loginInFlightRef.current = true;
     setSubmitting(true);
     setError(null);
     setPinError(false);
@@ -359,6 +392,7 @@ export function LoginPage() {
       setPinError(true);
       setPinValue('');
     } finally {
+      loginInFlightRef.current = false;
       setSubmitting(false);
     }
   };
@@ -511,10 +545,12 @@ export function LoginPage() {
               block
               icon={<LoginOutlined />}
               loading={submitting}
-              disabled={!ownerUsername.trim() || !ownerPassword}
+              disabled={!ownerUsername.trim() || !ownerPassword || ownerRetryAfterSeconds > 0}
               className="owner-login-btn"
             >
-              Đăng nhập Chủ cửa hàng
+              {ownerRetryAfterSeconds > 0
+                ? `Thử lại sau ${formatRetryDelay(ownerRetryAfterSeconds)}`
+                : 'Đăng nhập Chủ cửa hàng'}
             </Button>
           </form>
         </div>
@@ -689,13 +725,20 @@ export function LoginPage() {
     },
   ];
 
+  const displayedError =
+    ownerRetryAfterSeconds > 0
+      ? `Đăng nhập tạm khóa. Vui lòng thử lại sau ${formatRetryDelay(ownerRetryAfterSeconds)}.`
+      : error;
+
   return (
     <AuthLayout>
       <div className="login-heading">
         <Typography.Title level={2}>Đăng nhập Pro POS</Typography.Title>
         <Typography.Text type="secondary">Chọn đúng loại tài khoản để tiếp tục</Typography.Text>
       </div>
-      {error ? <Alert className="login-error" type="error" showIcon title={error} /> : null}
+      {displayedError ? (
+        <Alert className="login-error" type="error" showIcon title={displayedError} />
+      ) : null}
       <Tabs
         className="login-tabs"
         activeKey={activeTab}

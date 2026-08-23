@@ -1,5 +1,7 @@
 import type { PosReceiptPrintData } from '@domain/receipt/receipt-generator';
 
+export const OWNER_PRINT_PREVIEW_TOTAL_VND = 111_000;
+
 export function buildOwnerPrintPreviewSample(
   receiptType: 'PROVISIONAL' | 'PAYMENT',
   now = Date.now(),
@@ -19,10 +21,10 @@ export function buildOwnerPrintPreviewSample(
     note: 'Ít đá, không lấy ống hút',
     checkInTimeMs: now - 90 * 60_000,
     issuedAtMs: now,
-    // Gross 173,000 - manual item discount 10,000 - two promotions 15,000 = 148,000.
-    subtotal: 173_000,
-    discountTotal: 25_000,
-    promotionDiscount: 15_000,
+    // Gross 143,000 - manual item discount 10,000 - two promotions 22,000 = 111,000.
+    subtotal: 143_000,
+    discountTotal: 32_000,
+    promotionDiscount: 22_000,
     promotion: {
       name: 'Giảm giá khai trương',
       type: 'FIXED_AMOUNT',
@@ -37,21 +39,31 @@ export function buildOwnerPrintPreviewSample(
         discountAmountVnd: 10_000,
       },
       {
-        name: 'Ưu đãi khách thân thiết',
-        type: 'FIXED_AMOUNT',
-        value: 5_000,
-        discountAmountVnd: 5_000,
+        name: 'Đồng giá trà đào',
+        type: 'FLAT_PRICE',
+        value: 9_000,
+        discountAmountVnd: 12_000,
+        flatPriceItems: [
+          {
+            productName: 'Trà đào',
+            variantName: 'Giá mặc định',
+            quantityMilli: 2_000,
+            originalUnitPriceVnd: 15_000,
+            flatUnitPriceVnd: 9_000,
+            discountAmountVnd: 12_000,
+          },
+        ],
       },
     ],
-    total: 148_000,
+    total: OWNER_PRINT_PREVIEW_TOTAL_VND,
     ...(payment
       ? {
           paymentMethod: 'CASH' as const,
           cashReceived: 200_000,
-          cashChange: 52_000,
-          paidAmountVnd: 148_000,
+          cashChange: 89_000,
+          paidAmountVnd: 111_000,
           debtAmountVnd: 0,
-          paymentAllocations: [{ method: 'CASH' as const, amountVnd: 148_000 }],
+          paymentAllocations: [{ method: 'CASH' as const, amountVnd: 111_000 }],
         }
       : {}),
     lines: [
@@ -79,11 +91,11 @@ export function buildOwnerPrintPreviewSample(
       },
       {
         id: 'preview-food',
-        name: 'Cơm gà chua ngọt',
-        quantity: 1,
-        unitPrice: 60_000,
-        totalPrice: 60_000,
-        unitName: 'Phần',
+        name: 'Trà đào',
+        quantity: 2,
+        unitPrice: 15_000,
+        totalPrice: 30_000,
+        unitName: 'Ly',
       },
     ],
   };

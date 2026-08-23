@@ -93,6 +93,7 @@ export interface PosTableRecord {
   defaultDurationSeconds?: number | null;
   activeOrderId: string | null;
   occupiedSince: number | null;
+  timeSessionStatus?: 'RUNNING' | 'PAUSED' | 'ENDED' | null;
 }
 
 export interface TableTimeSegmentRow {
@@ -134,6 +135,16 @@ export interface OrderItemRow {
   timeEndedAtMs: number | null;
 }
 
+interface PromotionGiftInvoiceLineInput {
+  id: string;
+  description: string;
+  quantityMilli: number;
+  unitPriceVnd: number;
+  discountAmountVnd: number;
+  grossLineTotalVnd: number;
+  snapshotJson: string;
+}
+
 export class PosRepository {
   constructor(private readonly db: D1Database) {}
 
@@ -149,13 +160,16 @@ export class PosRepository {
           p.name AS timeProductName,
           tpc.base_price AS defaultPriceVnd,
           tpc.base_duration_seconds AS defaultDurationSeconds,
-          o.id AS activeOrderId, o.opened_at AS occupiedSince
+          o.id AS activeOrderId, o.opened_at AS occupiedSince,
+          ts.status AS timeSessionStatus
         FROM service_tables st
         JOIN areas a ON a.id = st.area_id AND a.store_id = st.store_id
         LEFT JOIN products p ON p.id = st.time_product_id AND p.store_id = st.store_id
         LEFT JOIN time_price_configs tpc ON tpc.product_id = p.id AND tpc.store_id = p.store_id
         LEFT JOIN orders o ON o.table_id = st.id AND o.store_id = st.store_id
           AND o.order_type = 'DINE_IN' AND o.status IN ('OPEN', 'PAYMENT_PENDING')
+        LEFT JOIN time_sessions ts ON ts.order_id = o.id AND ts.store_id = st.store_id
+          AND ts.status IN ('RUNNING', 'PAUSED')
         WHERE st.store_id = ?
           AND a.status = 'ACTIVE'
         ORDER BY a.sort_order, st.sort_order, COALESCE(st.display_name, st.name) COLLATE NOCASE`,
@@ -538,10 +552,10 @@ export class PosRepository {
                 ss.phone AS storePhone, ss.address AS storeAddress,
                 ss.bank_name AS bankName, ss.bank_account_number AS bankAccountNumber,
                 ss.bank_account_name AS bankAccountName,
-                EXISTS (
-                  SELECT 1 FROM store_capabilities sc
-                  WHERE sc.store_id = s.id AND sc.capability = 'POS_REALTIME' AND sc.enabled = 1
-                ) AS posRealtimeEnabled
+                COALESCE((
+                  SELECT sc.enabled FROM store_capabilities sc
+                  WHERE sc.store_id = s.id AND sc.capability = 'POS_REALTIME' LIMIT 1
+                ), 1) AS posRealtimeEnabled
          FROM stores s
          JOIN store_memberships sm ON sm.store_id = s.id AND sm.user_id = ?
            AND sm.status = 'ACTIVE' AND sm.deleted_at IS NULL
@@ -1262,6 +1276,9 @@ export class PosRepository {
     requestId: string;
     now: number;
   }) {
+    // DB CHECK: ended_at <= issued_at và started_at <= issued_at.
+    // Đảm bảo issued_at >= max(endedAtMs, startedAtMs) để bù clock skew.
+    const issuedAt = Math.max(input.now, input.endedAtMs ?? 0, input.startedAtMs);
     return this.db
       .prepare(
         `INSERT INTO update_time_range_commands (
@@ -1285,7 +1302,7 @@ export class PosRepository {
         input.actorSessionId,
         input.deviceId,
         input.requestId,
-        input.now,
+        issuedAt,
       )
       .run();
   }
@@ -1412,13 +1429,15 @@ export class PosRepository {
     timeAmount: number;
     timeSnapshotJson: string;
     invoiceSnapshotJson: string;
+    promotionGiftItems: PromotionGiftInvoiceLineInput[];
     actorId: string;
     requestId: string;
     issuedAt: number;
   }) {
-    await this.db
-      .prepare(
-        `INSERT INTO checkout_commands (
+    const statements: D1PreparedStatement[] = [
+      this.db
+        .prepare(
+          `INSERT INTO checkout_commands (
           id, store_id, order_id, table_id, expected_order_version,
           payment_id, invoice_id, invoice_display_code, method, subtotal,
           discount_total, total, cash_received, cash_change,
@@ -1426,32 +1445,56 @@ export class PosRepository {
           time_snapshot_json, invoice_snapshot_json, actor_user_id,
           request_id, issued_at, business_day
         ) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        input.idempotencyKey,
-        input.storeId,
-        input.orderId,
-        input.tableId,
-        input.expectedOrderVersion,
-        input.paymentId,
-        input.invoiceId,
-        input.method,
-        input.subtotal,
-        input.discountTotal,
-        input.total,
-        input.cashReceived,
-        input.cashChange,
-        input.timeDescription,
-        input.timeElapsedSeconds,
-        input.timeAmount,
-        input.timeSnapshotJson,
-        input.invoiceSnapshotJson,
-        input.actorId,
-        input.requestId,
-        input.issuedAt,
-        input.businessDay,
-      )
-      .run();
+        )
+        .bind(
+          input.idempotencyKey,
+          input.storeId,
+          input.orderId,
+          input.tableId,
+          input.expectedOrderVersion,
+          input.paymentId,
+          input.invoiceId,
+          input.method,
+          input.subtotal,
+          input.discountTotal,
+          input.total,
+          input.cashReceived,
+          input.cashChange,
+          input.timeDescription,
+          input.timeElapsedSeconds,
+          input.timeAmount,
+          input.timeSnapshotJson,
+          input.invoiceSnapshotJson,
+          input.actorId,
+          input.requestId,
+          input.issuedAt,
+          input.businessDay,
+        ),
+    ];
+    for (const gift of input.promotionGiftItems) {
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO invoice_lines (
+              id, store_id, invoice_id, line_type, description, quantity_milli,
+              unit_price, discount_type, discount_input_value, discount_amount,
+              gross_line_total, line_total, snapshot_json
+            ) VALUES (?, ?, ?, 'PRODUCT', ?, ?, ?, 'PERCENT', 100, ?, ?, 0, ?)`,
+          )
+          .bind(
+            gift.id,
+            input.storeId,
+            input.invoiceId,
+            gift.description,
+            gift.quantityMilli,
+            gift.unitPriceVnd,
+            gift.discountAmountVnd,
+            gift.grossLineTotalVnd,
+            gift.snapshotJson,
+          ),
+      );
+    }
+    await this.db.batch(statements);
   }
 
   findTakeawayCheckoutCommand(storeId: string, idempotencyKey: string) {
@@ -1487,39 +1530,65 @@ export class PosRepository {
     cashReceived: number | null;
     cashChange: number | null;
     invoiceSnapshotJson: string;
+    promotionGiftItems: PromotionGiftInvoiceLineInput[];
     actorId: string;
     requestId: string;
     issuedAt: number;
   }) {
-    return this.db
-      .prepare(
-        `INSERT INTO takeaway_checkout_commands (
+    const statements: D1PreparedStatement[] = [
+      this.db
+        .prepare(
+          `INSERT INTO takeaway_checkout_commands (
           id, store_id, order_id, expected_order_version, payment_id, invoice_id,
           invoice_display_code, method, subtotal, discount_total, total,
           cash_received, cash_change, invoice_snapshot_json, actor_user_id,
           request_id, issued_at, business_day
         ) VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        input.idempotencyKey,
-        input.storeId,
-        input.orderId,
-        input.expectedOrderVersion,
-        input.paymentId,
-        input.invoiceId,
-        input.method,
-        input.subtotal,
-        input.discountTotal,
-        input.total,
-        input.cashReceived,
-        input.cashChange,
-        input.invoiceSnapshotJson,
-        input.actorId,
-        input.requestId,
-        input.issuedAt,
-        input.businessDay,
-      )
-      .run();
+        )
+        .bind(
+          input.idempotencyKey,
+          input.storeId,
+          input.orderId,
+          input.expectedOrderVersion,
+          input.paymentId,
+          input.invoiceId,
+          input.method,
+          input.subtotal,
+          input.discountTotal,
+          input.total,
+          input.cashReceived,
+          input.cashChange,
+          input.invoiceSnapshotJson,
+          input.actorId,
+          input.requestId,
+          input.issuedAt,
+          input.businessDay,
+        ),
+    ];
+    for (const gift of input.promotionGiftItems) {
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO takeaway_invoice_lines (
+              id, store_id, invoice_id, line_type, description, quantity_milli,
+              unit_price, discount_type, discount_input_value, discount_amount,
+              gross_line_total, line_total, snapshot_json
+            ) VALUES (?, ?, ?, 'PRODUCT', ?, ?, ?, 'PERCENT', 100, ?, ?, 0, ?)`,
+          )
+          .bind(
+            gift.id,
+            input.storeId,
+            input.invoiceId,
+            gift.description,
+            gift.quantityMilli,
+            gift.unitPriceVnd,
+            gift.discountAmountVnd,
+            gift.grossLineTotalVnd,
+            gift.snapshotJson,
+          ),
+      );
+    }
+    return this.db.batch(statements);
   }
 
   findInvoiceNumberingSettings(storeId: string) {
@@ -1772,7 +1841,11 @@ export class PosRepository {
           o.cancelled_at,
           o.cancel_reason,
           u_cancel.display_name AS cancelled_by_name,
-          o.note
+          o.note,
+          o.guest_count,
+          o.customer_id,
+          o.customer_name,
+          o.customer_phone
         FROM orders o
         JOIN stores s ON s.id = o.store_id
         LEFT JOIN service_tables st ON st.id = o.table_id AND st.store_id = o.store_id
@@ -1805,6 +1878,10 @@ export class PosRepository {
         cancel_reason: string | null;
         cancelled_by_name: string | null;
         note: string | null;
+        guest_count: number;
+        customer_id: string | null;
+        customer_name: string | null;
+        customer_phone: string | null;
       }>();
 
     if (dineIn) return dineIn;
@@ -1830,7 +1907,11 @@ export class PosRepository {
           o.cancelled_at,
           o.cancel_reason,
           u_cancel.display_name AS cancelled_by_name,
-          o.note
+          o.note,
+          o.guest_count,
+          o.customer_id,
+          o.customer_name,
+          o.customer_phone
         FROM takeaway_orders o
         JOIN stores s ON s.id = o.store_id
         LEFT JOIN users u_open ON u_open.id = o.opened_by
@@ -1861,6 +1942,10 @@ export class PosRepository {
         cancel_reason: string | null;
         cancelled_by_name: string | null;
         note: string | null;
+        guest_count: number;
+        customer_id: string | null;
+        customer_name: string | null;
+        customer_phone: string | null;
       }>();
 
     return takeaway ?? null;

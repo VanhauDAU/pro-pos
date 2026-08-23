@@ -14,6 +14,8 @@ export interface PosReceiptLineItem {
   totalPrice: number;
   discountAmount?: number | undefined;
   discountReason?: string | null | undefined;
+  adjustmentSource?: 'MANUAL' | 'PROMOTION_GIFT' | undefined;
+  promotionName?: string | null | undefined;
   note?: string | null | undefined;
   unitName?: string | null | undefined;
   isTime?: boolean | undefined;
@@ -39,6 +41,21 @@ export interface PosReceiptLineItem {
     | undefined;
 }
 
+export interface PosReceiptPromotion {
+  name: string;
+  type: string;
+  value: number | null;
+  discountAmountVnd: number;
+  flatPriceItems?: Array<{
+    productName: string;
+    variantName: string | null;
+    quantityMilli: number;
+    originalUnitPriceVnd: number;
+    flatUnitPriceVnd: number;
+    discountAmountVnd: number;
+  }>;
+}
+
 export interface PosReceiptPrintData {
   receiptType: 'PROVISIONAL' | 'PAYMENT' | 'DEBT_PAYMENT';
   orderCode: string;
@@ -56,13 +73,8 @@ export interface PosReceiptPrintData {
   subtotal: number;
   discountTotal: number;
   promotionDiscount?: number | undefined;
-  promotion?:
-    | { name: string; type: string; value: number | null; discountAmountVnd: number }
-    | null
-    | undefined;
-  promotions?:
-    | Array<{ name: string; type: string; value: number | null; discountAmountVnd: number }>
-    | undefined;
+  promotion?: PosReceiptPromotion | null | undefined;
+  promotions?: PosReceiptPromotion[] | undefined;
   total: number;
   paymentMethod?: 'CASH' | 'BANK_TRANSFER' | null | undefined;
   cashReceived?: number | null | undefined;
@@ -338,8 +350,13 @@ export function buildEscPosReceipt(
         raw += `   * G/chú: ${line.note}\n`;
       }
       if (template.showItemDiscounts && (line.discountAmount ?? 0) > 0) {
-        raw += `   * Giảm thủ công: -${formatVnd(line.discountAmount ?? 0)}đ\n`;
-        raw += `   * Lý do: ${line.discountReason || 'Chưa có lý do'}\n`;
+        if (line.adjustmentSource === 'PROMOTION_GIFT') {
+          raw += `   * Quà tặng khuyến mãi: -${formatVnd(line.discountAmount ?? 0)}đ\n`;
+          raw += `   * Chương trình: ${line.promotionName || 'Khuyến mãi tặng món'}\n`;
+        } else {
+          raw += `   * Giảm thủ công: -${formatVnd(line.discountAmount ?? 0)}đ\n`;
+          raw += `   * Lý do: ${line.discountReason || 'Chưa có lý do'}\n`;
+        }
       }
     }
     raw += divider + '\n';
@@ -389,6 +406,16 @@ export function buildEscPosReceipt(
         discountAmountVnd: promotionDiscount,
       });
     for (const promotion of promotionLines) {
+      if (promotion.type === 'FLAT_PRICE' && (promotion.flatPriceItems?.length ?? 0) > 0) {
+        raw += `KM: ${promotion.name} · Đồng giá ${formatVnd(promotion.value ?? 0)}đ\n`;
+        for (const item of promotion.flatPriceItems ?? []) {
+          const variant = item.variantName ? ` · ${item.variantName}` : '';
+          const quantity = item.quantityMilli / 1000;
+          raw += `   - ${item.productName}${variant} · SL: ${quantity}\n`;
+        }
+        raw += `   Giảm KM: -${formatVnd(promotion.discountAmountVnd)}đ\n`;
+        continue;
+      }
       const discLabel = `KM: ${promotion.name}:`;
       const discVal = '-' + formatVnd(promotion.discountAmountVnd) + 'đ';
       const padLen = chars - discLabel.length - discVal.length;
@@ -523,6 +550,7 @@ export function buildPrintDataFromQuote(
       netLineTotalVnd: number;
       discountAmountVnd?: number | undefined;
       discountReason?: string | null | undefined;
+      promotionGift?: { promotionName: string } | undefined;
       unitName?: string | null | undefined;
       note?: string | null | undefined;
     }>;
@@ -558,13 +586,8 @@ export function buildPrintDataFromQuote(
     subtotalVnd?: number | undefined;
     discountTotalVnd?: number | undefined;
     promotionDiscountVnd?: number | undefined;
-    promotion?:
-      | { name: string; type: string; value: number | null; discountAmountVnd: number }
-      | null
-      | undefined;
-    promotions?:
-      | Array<{ name: string; type: string; value: number | null; discountAmountVnd: number }>
-      | undefined;
+    promotion?: PosReceiptPromotion | null | undefined;
+    promotions?: PosReceiptPromotion[] | undefined;
     totalVnd?: number | undefined;
     totals?:
       | {
@@ -620,6 +643,8 @@ export function buildPrintDataFromQuote(
       note: item.note ?? null,
       discountAmount: item.discountAmountVnd ?? 0,
       discountReason: item.discountReason ?? null,
+      adjustmentSource: item.promotionGift ? 'PROMOTION_GIFT' : 'MANUAL',
+      promotionName: item.promotionGift?.promotionName ?? null,
     });
   }
 
@@ -708,19 +733,10 @@ export function buildPrintDataFromInvoice(invoice: {
       variantId?: string | null;
       discountAmountVnd?: number;
       discountReason?: string | null;
+      promotionGift?: { promotionName: string };
     }>;
-    promotion?: {
-      name: string;
-      type: string;
-      value: number | null;
-      discountAmountVnd: number;
-    } | null;
-    promotions?: Array<{
-      name: string;
-      type: string;
-      value: number | null;
-      discountAmountVnd: number;
-    }>;
+    promotion?: PosReceiptPromotion | null;
+    promotions?: PosReceiptPromotion[];
   } = {};
   try {
     invoiceSnapshot = invoice.invoice.snapshotJson
@@ -754,6 +770,7 @@ export function buildPrintDataFromInvoice(invoice: {
         amountAfterRoundingVnd: number;
         pricingConfig?: { basePriceVnd: number };
       }>;
+      promotionGift?: { promotionName: string };
     } = {};
 
     try {
@@ -766,8 +783,10 @@ export function buildPrintDataFromInvoice(invoice: {
     const orderItemSnapshot = invoiceSnapshot.items?.find(
       (item) =>
         item.productId === snapshot.productId &&
-        (item.variantId ?? null) === (snapshot.variantId ?? null),
+        (item.variantId ?? null) === (snapshot.variantId ?? null) &&
+        Boolean(item.promotionGift) === Boolean(snapshot.promotionGift),
     );
+    const promotionGift = snapshot.promotionGift ?? orderItemSnapshot?.promotionGift;
 
     lines.push({
       id: line.id,
@@ -779,6 +798,8 @@ export function buildPrintDataFromInvoice(invoice: {
       note: snapshot.note ?? null,
       discountAmount: orderItemSnapshot?.discountAmountVnd ?? 0,
       discountReason: orderItemSnapshot?.discountReason ?? null,
+      adjustmentSource: promotionGift ? 'PROMOTION_GIFT' : 'MANUAL',
+      promotionName: promotionGift?.promotionName ?? null,
       isTime,
       timeStartedAtMs: snapshot.startedAtMs,
       timeEndedAtMs: snapshot.endedAtMs ?? null,

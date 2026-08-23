@@ -57,14 +57,26 @@ export class AuthService {
     }
   }
 
+  private async ownerPasswordSubject(identifier: string, rateLimitClientKey?: string) {
+    const clientPartition = await hashOpaqueToken(
+      `owner-password:${rateLimitClientKey?.trim() || 'unknown-client'}`,
+      this.authPepper,
+    );
+    return `owner:${identifier}:${clientPartition}`;
+  }
+
   async ownerLogin(input: {
     username: string;
     password: string;
     rememberMe?: boolean | undefined;
+    rateLimitClientKey?: string | undefined;
   }): Promise<{ rawToken: string; maxAgeSeconds: number; response: LoginResponse }> {
     const now = Date.now();
     const normalizedIdentifier = input.username.trim().toLocaleLowerCase('en-US');
-    const subjectKey = `owner:${normalizedIdentifier}`;
+    const subjectKey = await this.ownerPasswordSubject(
+      normalizedIdentifier,
+      input.rateLimitClientKey,
+    );
     await this.assertNotLocked('OWNER_PASSWORD', subjectKey, now);
 
     const identity = await this.repository.findOwnerByUsernameOrEmail(normalizedIdentifier);
@@ -194,10 +206,14 @@ export class AuthService {
     username: string;
     password: string;
     deviceName: string;
+    rateLimitClientKey?: string | undefined;
   }): Promise<{ rawDeviceSecret: string; response: ActivationConfirmationResponse }> {
     const now = Date.now();
     const normalizedIdentifier = input.username.trim().toLocaleLowerCase('en-US');
-    const subjectKey = `owner:${normalizedIdentifier}`;
+    const subjectKey = await this.ownerPasswordSubject(
+      normalizedIdentifier,
+      input.rateLimitClientKey,
+    );
     await this.assertNotLocked('OWNER_PASSWORD', subjectKey, now);
 
     const identity = await this.repository.findOwnerByUsernameOrEmail(normalizedIdentifier);

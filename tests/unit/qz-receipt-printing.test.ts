@@ -30,6 +30,7 @@ import { generateThermalReceiptHtml } from '../../src/client/lib/pos-receipt-pri
 import { buildEscPosReceipt } from '../../src/domain/receipt/receipt-generator';
 import { defaultPrintTemplateConfig } from '../../src/contracts/store';
 import type { StorePrintSettings } from '../../src/contracts/store';
+import { buildOwnerPrintPreviewSample } from '../../src/client/features/owner/print-preview-sample';
 
 const baseOptions = {
   paperSize: 'K80' as const,
@@ -267,6 +268,116 @@ describe('QZ receipt dispatch', () => {
       expect(output).toContain('Khách thân thiết');
       expect(output).toContain('Khai trương');
       expect(output).toContain('Khách VIP');
+    }
+  });
+
+  it('labels promotion gifts separately from manual item discounts', () => {
+    const options = {
+      data: {
+        receiptType: 'PAYMENT' as const,
+        orderCode: 'HD-GIFT-001',
+        orderType: 'TAKEAWAY' as const,
+        issuedAtMs: Date.now(),
+        subtotal: 20_000,
+        discountTotal: 0,
+        total: 20_000,
+        lines: [
+          {
+            id: 'promotion-gift',
+            name: 'Trà đá tặng',
+            quantity: 1,
+            unitPrice: 8_000,
+            totalPrice: 0,
+            discountAmount: 8_000,
+            discountReason: 'Quà tặng · Mua nước tặng trà đá',
+            adjustmentSource: 'PROMOTION_GIFT' as const,
+            promotionName: 'Mua nước tặng trà đá',
+          },
+        ],
+      },
+    };
+    const html = generateThermalReceiptHtml(options);
+    const escPos = buildEscPosReceipt(options).escPosData;
+    for (const output of [html, escPos]) {
+      expect(output).toContain('Quà tặng khuyến mãi');
+      expect(output).toContain('Mua nước tặng trà đá');
+      expect(output).not.toContain('Giảm thủ công');
+    }
+  });
+
+  it('prints a compact flat-price summary with the applied item list', () => {
+    const options = {
+      data: {
+        receiptType: 'PAYMENT' as const,
+        orderCode: 'HD-FLAT-001',
+        orderType: 'TAKEAWAY' as const,
+        issuedAtMs: Date.now(),
+        subtotal: 20_000,
+        discountTotal: 8_000,
+        promotionDiscount: 8_000,
+        total: 12_000,
+        promotions: [
+          {
+            name: 'Đồng giá nước suối',
+            type: 'FLAT_PRICE',
+            value: 12_000,
+            discountAmountVnd: 8_000,
+            flatPriceItems: [
+              {
+                productName: 'Nước suối',
+                variantName: 'Giá mặc định',
+                quantityMilli: 1000,
+                originalUnitPriceVnd: 20_000,
+                flatUnitPriceVnd: 12_000,
+                discountAmountVnd: 8_000,
+              },
+            ],
+          },
+        ],
+        lines: [
+          {
+            id: 'water',
+            name: 'Nước suối',
+            quantity: 1,
+            unitPrice: 20_000,
+            totalPrice: 20_000,
+          },
+        ],
+      },
+    };
+    const html = generateThermalReceiptHtml(options);
+    const escPos = buildEscPosReceipt(options).escPosData;
+    for (const output of [html, escPos]) {
+      expect(output).toContain('Đồng giá nước suối');
+      expect(output).toContain('12.000');
+      expect(output).toContain('Nước suối');
+      expect(output).toContain('Giá mặc định');
+      expect(output).toContain('SL: 1');
+      expect(output).toContain('8.000');
+      expect(output).not.toContain('Điều chỉnh');
+      expect(output).not.toContain('→');
+      expect(output).not.toContain('->');
+      expect(output).not.toContain('× 1');
+    }
+  });
+
+  it('keeps both Owner print previews synchronized with the flat-price sample', () => {
+    const data = buildOwnerPrintPreviewSample('PAYMENT', Date.now());
+    const options = { data };
+    const html = generateThermalReceiptHtml(options);
+    const escPos = buildEscPosReceipt(options).escPosData;
+    expect(data).toMatchObject({
+      subtotal: 143_000,
+      discountTotal: 32_000,
+      promotionDiscount: 22_000,
+      total: 111_000,
+    });
+    for (const output of [html, escPos]) {
+      expect(output).toContain('Đồng giá trà đào');
+      expect(output).toContain('Trà đào');
+      expect(output).toContain('SL: 2');
+      expect(output).toContain('9.000');
+      expect(output).toContain('12.000');
     }
   });
 

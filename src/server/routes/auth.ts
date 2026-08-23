@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 
 import {
   accessStartRequestSchema,
@@ -24,6 +24,10 @@ import type { AppEnv } from '@server/types';
 
 const authRoutes = new Hono<AppEnv>();
 
+function loginRateLimitClientKey(c: Context<AppEnv>) {
+  return (c.req.header('CF-Connecting-IP')?.trim() || 'unknown-client').slice(0, 128);
+}
+
 authRoutes.get('/context', async (c) => {
   const service = new AuthService(c.env);
   const rawSession = readCredentialCookie(c, 'session');
@@ -43,7 +47,10 @@ authRoutes.get('/context', async (c) => {
 authRoutes.post('/owner/login', async (c) => {
   assertSameOrigin(c);
   const body = await parseJson(c.req.raw, ownerLoginRequestSchema);
-  const result = await new AuthService(c.env).ownerLogin(body);
+  const result = await new AuthService(c.env).ownerLogin({
+    ...body,
+    rateLimitClientKey: loginRateLimitClientKey(c),
+  });
   setCredentialCookie(c, 'session', result.rawToken, result.maxAgeSeconds);
   return success(c, result.response);
 });
@@ -246,7 +253,10 @@ const activationRoutes = new Hono<AppEnv>();
 activationRoutes.post('/direct', async (c) => {
   assertSameOrigin(c);
   const body = await parseJson(c.req.raw, directDeviceActivationRequestSchema);
-  const result = await new AuthService(c.env).directDeviceActivation(body);
+  const result = await new AuthService(c.env).directDeviceActivation({
+    ...body,
+    rateLimitClientKey: loginRateLimitClientKey(c),
+  });
   setCredentialCookie(c, 'device', result.rawDeviceSecret, 365 * 24 * 60 * 60);
   clearCredentialCookie(c, 'activation');
   clearCredentialCookie(c, 'session');

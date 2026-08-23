@@ -16,6 +16,8 @@ describe('online POS vertical slice', () => {
   let timeProductId: string;
   let productId: string;
   let variantId: string;
+  let giftProductId: string;
+  let giftVariantId: string;
   let promptProductId: string;
   let promptVariantId: string;
   let weightProductId: string;
@@ -82,6 +84,27 @@ describe('online POS vertical slice', () => {
       .bind(productId)
       .first<{ id: string }>();
     variantId = variant!.id;
+
+    const giftProduct = await catalog.createProduct(storeId, {
+      name: 'Trà đá tặng',
+      productType: 'QUANTITY',
+      unitId: unit.id,
+      variants: [
+        {
+          name: 'Ly',
+          salePriceVnd: 8_000,
+          costPriceVnd: 2_000,
+          promptPrice: false,
+        },
+      ],
+    });
+    giftProductId = giftProduct.id;
+    const giftVariant = await env.DB.prepare(
+      'SELECT id FROM product_variants WHERE product_id = ? LIMIT 1',
+    )
+      .bind(giftProductId)
+      .first<{ id: string }>();
+    giftVariantId = giftVariant!.id;
 
     const promptProduct = await catalog.createProduct(storeId, {
       name: 'Hàng nhập giá khi bán',
@@ -294,7 +317,7 @@ describe('online POS vertical slice', () => {
       ],
       customerGroupIds: [],
       giftProductIds: [],
-      giftTargets: [{ productId, variantId, quantity: 1 }],
+      giftTargets: [{ productId: giftProductId, variantId: giftVariantId, quantity: 1 }],
       giftBuyAny: false,
       maximumGiftQuantity: 1,
     };
@@ -308,7 +331,211 @@ describe('online POS vertical slice', () => {
     const requiresAny = await pos.quote(storeId, order.orderId);
     expect(requiresAny.promotionOptions.find((item) => item.id === promotion.id)).toMatchObject({
       eligible: true,
-      discountAmountVnd: 20_000,
+      discountAmountVnd: 0,
+      giftItems: [
+        {
+          productId: giftProductId,
+          variantId: giftVariantId,
+          quantityMilli: 1000,
+          grossAmountVnd: 8_000,
+        },
+      ],
+      configuredProductTargets: [
+        {
+          productId: promptProductId,
+          variantId: promptVariantId,
+          productName: 'Hàng nhập giá khi bán',
+          requiredQuantity: 1,
+        },
+        {
+          productId,
+          variantId,
+          productName: 'Nước suối',
+          requiredQuantity: 1,
+        },
+      ],
+      giftBuyAny: true,
+      maximumGiftQuantity: 1,
+    });
+
+    await pos.applyPromotion({
+      storeId,
+      orderId: order.orderId,
+      promotionIds: [promotion.id],
+      expectedOrderVersion: 2,
+      actorId: ownerUserId,
+    });
+    const applied = await pos.quote(storeId, order.orderId);
+    expect(applied).toMatchObject({
+      order: { version: 3 },
+      subtotalVnd: 20_000,
+      promotionDiscountVnd: 0,
+      totalVnd: 20_000,
+      promotions: [{ id: promotion.id, selected: true }],
+    });
+    expect(applied.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: expect.stringContaining(`promotion-gift:${promotion.id}`),
+          productId: giftProductId,
+          quantityMilli: 1000,
+          grossLineTotalVnd: 8_000,
+          discountAmountVnd: 8_000,
+          netLineTotalVnd: 0,
+          promotionGift: { promotionId: promotion.id, promotionName: promotion.name },
+        }),
+      ]),
+    );
+
+    await pos.applyPromotion({
+      storeId,
+      orderId: order.orderId,
+      promotionIds: [],
+      expectedOrderVersion: 3,
+      actorId: ownerUserId,
+    });
+    const removed = await pos.quote(storeId, order.orderId);
+    expect(removed.order.version).toBe(4);
+    expect(removed.items.some((item) => 'promotionGift' in item)).toBe(false);
+
+    await pos.applyPromotion({
+      storeId,
+      orderId: order.orderId,
+      promotionIds: [promotion.id],
+      expectedOrderVersion: 4,
+      actorId: ownerUserId,
+    });
+    const checkout = await pos.checkout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-gift-promotion-checkout',
+      idempotencyKey: 'gift-promotion-checkout-001',
+      orderId: order.orderId,
+      expectedOrderVersion: 5,
+      method: 'CASH',
+      cashReceivedVnd: 20_000,
+    });
+    const giftInvoiceLine = await env.DB.prepare(
+      `SELECT description, quantity_milli AS quantityMilli, unit_price AS unitPriceVnd,
+        discount_amount AS discountAmountVnd, line_total AS lineTotalVnd, snapshot_json AS snapshotJson
+       FROM takeaway_invoice_lines WHERE store_id = ? AND invoice_id = ? AND line_total = 0
+       ORDER BY id LIMIT 1`,
+    )
+      .bind(storeId, checkout.invoiceId)
+      .first<{
+        description: string;
+        quantityMilli: number;
+        unitPriceVnd: number;
+        discountAmountVnd: number;
+        lineTotalVnd: number;
+        snapshotJson: string;
+      }>();
+    expect(giftInvoiceLine).toMatchObject({
+      description: 'Trà đá tặng (Quà tặng)',
+      quantityMilli: 1000,
+      unitPriceVnd: 8_000,
+      discountAmountVnd: 8_000,
+      lineTotalVnd: 0,
+    });
+    expect(JSON.parse(giftInvoiceLine!.snapshotJson)).toMatchObject({
+      promotionGift: { promotionId: promotion.id, promotionName: promotion.name },
+    });
+  });
+
+  it('applies flat-price promotions to eligible item totals', async () => {
+    const pos = new PosService(env);
+    const order = await pos.createTakeaway({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-flat-price-order',
+      idempotencyKey: 'flat-price-order-001',
+      note: null,
+    });
+    await pos.addItem({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-flat-price-item',
+      idempotencyKey: 'flat-price-item-001',
+      orderId: order.orderId,
+      productId,
+      variantId,
+      quantityMilli: 1000,
+      expectedOrderVersion: 1,
+      discount: null,
+    });
+    const promotion = await new PromotionService(env).save(storeId, ownerUserId, {
+      name: 'Đồng giá nước suối 12.000đ',
+      type: 'FLAT_PRICE',
+      value: 12_000,
+      minimumOrderVnd: 0,
+      maximumDiscountVnd: null,
+      autoApply: false,
+      startsAt: Date.now() - 10_000,
+      endsAt: null,
+      weekdaysMask: null,
+      timeRanges: [],
+      scope: 'PRODUCT',
+      categoryIds: [],
+      productIds: [],
+      productTargets: [{ productId, variantId, quantity: 1 }],
+      customerGroupIds: [],
+      giftProductIds: [],
+      giftTargets: [],
+      giftBuyAny: false,
+      maximumGiftQuantity: null,
+    });
+    const before = await pos.quote(storeId, order.orderId);
+    expect(before.promotionOptions.find((option) => option.id === promotion.id)).toMatchObject({
+      eligible: true,
+      discountAmountVnd: 8_000,
+      flatPriceItems: [
+        {
+          productId,
+          variantId,
+          productName: 'Nước suối',
+          originalUnitPriceVnd: 20_000,
+          flatUnitPriceVnd: 12_000,
+          discountAmountVnd: 8_000,
+        },
+      ],
+      configuredProductTargets: [
+        {
+          productId,
+          variantId,
+          productName: 'Nước suối',
+          requiredQuantity: 1,
+        },
+      ],
+    });
+    await pos.applyPromotion({
+      storeId,
+      orderId: order.orderId,
+      promotionIds: [promotion.id],
+      expectedOrderVersion: 2,
+      actorId: ownerUserId,
+    });
+    const applied = await pos.quote(storeId, order.orderId);
+    expect(applied).toMatchObject({
+      order: { version: 3 },
+      subtotalVnd: 20_000,
+      promotionDiscountVnd: 8_000,
+      totalVnd: 12_000,
+      promotions: [
+        {
+          id: promotion.id,
+          type: 'FLAT_PRICE',
+          value: 12_000,
+          discountAmountVnd: 8_000,
+          flatPriceItems: [
+            {
+              productName: 'Nước suối',
+              originalUnitPriceVnd: 20_000,
+              flatUnitPriceVnd: 12_000,
+              discountAmountVnd: 8_000,
+            },
+          ],
+        },
+      ],
     });
   });
 

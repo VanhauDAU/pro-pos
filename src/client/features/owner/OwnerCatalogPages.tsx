@@ -6,6 +6,7 @@ import {
   CopyOutlined,
   DeleteOutlined,
   EditOutlined,
+  FilterOutlined,
   PictureOutlined,
   PlusOutlined,
   SaveOutlined,
@@ -307,6 +308,7 @@ export function OwnerProductListPage({
   const [statusFilters, setStatusFilters] = useState<Array<'ACTIVE' | 'DISABLED'>>(['ACTIVE']);
   const [categoryFilters, setCategoryFilters] = useState<string[]>([]);
   const [unitFilters, setUnitFilters] = useState<string[]>([]);
+  const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
   const products = useQuery({
     queryKey: PRODUCT_QUERY,
     queryFn: () => apiRequest<ProductSummary[]>('/api/v1/owner/catalog/products'),
@@ -546,7 +548,8 @@ export function OwnerProductListPage({
         </Button>
       </div>
       <Card className="owner-catalog-card">
-        <div className="owner-catalog-toolbar">
+        {/* Desktop Filter Toolbar */}
+        <div className="owner-catalog-toolbar owner-catalog-toolbar--desktop">
           <Input
             prefix={<SearchOutlined />}
             placeholder="Tìm kiếm mặt hàng"
@@ -600,6 +603,94 @@ export function OwnerProductListPage({
             options={(units.data ?? []).map((item) => ({ value: item.id, label: item.name }))}
           />
         </div>
+
+        {/* Mobile Compact Filter Toolbar */}
+        <div className="owner-catalog-toolbar--mobile">
+          <div className="owner-catalog-mobile-search-row">
+            <Input
+              prefix={<SearchOutlined />}
+              placeholder="Tìm kiếm mặt hàng..."
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              allowClear
+              className="owner-catalog-mobile-search-input"
+            />
+            <Button
+              icon={<FilterOutlined />}
+              type={activeFilters.length > 0 ? 'primary' : 'default'}
+              onClick={() => setMobileFilterOpen((v) => !v)}
+              className="owner-catalog-mobile-filter-btn"
+            >
+              Lọc {activeFilters.length > 0 ? `(${activeFilters.length})` : ''}
+            </Button>
+          </div>
+
+          {mobileFilterOpen && (
+            <div className="owner-catalog-mobile-filter-panel">
+              <div className="owner-catalog-mobile-filter-grid">
+                <Select
+                  mode="multiple"
+                  maxTagCount={0}
+                  maxTagPlaceholder={(values) => `${values.length} loại`}
+                  value={typeFilters}
+                  onChange={setTypeFilters}
+                  placeholder="Loại mặt hàng"
+                  options={Object.entries(productTypeLabels).map(([value, label]) => ({
+                    value,
+                    label,
+                  }))}
+                />
+                <Select
+                  mode="multiple"
+                  maxTagCount={0}
+                  maxTagPlaceholder={(values) => `${values.length} trạng thái`}
+                  value={statusFilters}
+                  onChange={setStatusFilters}
+                  placeholder="Trạng thái"
+                  options={[
+                    { value: 'ACTIVE', label: 'Đang bán' },
+                    { value: 'DISABLED', label: 'Ngừng bán' },
+                  ]}
+                />
+                <Select
+                  mode="multiple"
+                  maxTagCount={0}
+                  maxTagPlaceholder={(values) => `${values.length} danh mục`}
+                  value={categoryFilters}
+                  onChange={setCategoryFilters}
+                  placeholder="Danh mục"
+                  showSearch
+                  optionFilterProp="label"
+                  options={(categories.data ?? [])
+                    .filter((item) => item.status !== 'DISABLED')
+                    .map((item) => ({ value: item.id, label: item.name }))}
+                />
+                <Select
+                  mode="multiple"
+                  maxTagCount={0}
+                  maxTagPlaceholder={(values) => `${values.length} đơn vị`}
+                  value={unitFilters}
+                  onChange={setUnitFilters}
+                  placeholder="Đơn vị"
+                  showSearch
+                  optionFilterProp="label"
+                  options={(units.data ?? []).map((item) => ({
+                    value: item.id,
+                    label: item.name,
+                  }))}
+                />
+              </div>
+              <div className="owner-catalog-mobile-filter-footer">
+                <Button size="small" onClick={clearFilters} disabled={!activeFilters.length}>
+                  Đặt lại
+                </Button>
+                <Button size="small" type="primary" onClick={() => setMobileFilterOpen(false)}>
+                  Xong ({rows.length} món)
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
         {activeFilters.length ? (
           <div className="owner-catalog-active-filters">
             <Typography.Text type="secondary">Đang lọc:</Typography.Text>
@@ -620,15 +711,137 @@ export function OwnerProductListPage({
         ) : rows.length === 0 ? (
           <Empty description="Chưa có mặt hàng phù hợp" />
         ) : (
-          <Table
-            rowKey="id"
-            columns={columns}
-            dataSource={rows}
-            pagination={{ pageSize: 10, showSizeChanger: false }}
-            scroll={{ x: 920 }}
-          />
+          <>
+            <div className="owner-products-desktop-table">
+              <Table
+                rowKey="id"
+                columns={columns}
+                dataSource={rows}
+                pagination={{ pageSize: 10, showSizeChanger: false }}
+                scroll={{ x: 920 }}
+              />
+            </div>
+            <div className="owner-products-mobile-list">
+              <OwnerProductsMobileList
+                products={rows}
+                baseRoute={baseRoute}
+                canEditProduct={canEditProduct}
+                canDeleteProduct={canDeleteProduct}
+                onRemoveProduct={removeProduct}
+                onRestoreProduct={restoreProduct}
+              />
+            </div>
+          </>
         )}
       </Card>
+    </div>
+  );
+}
+
+function OwnerProductsMobileList({
+  products,
+  baseRoute,
+  canEditProduct,
+  canDeleteProduct,
+  onRemoveProduct,
+  onRestoreProduct,
+}: {
+  products: ProductSummary[];
+  baseRoute: string;
+  canEditProduct?: boolean;
+  canDeleteProduct?: boolean;
+  onRemoveProduct: (product: ProductSummary) => void;
+  onRestoreProduct: (product: ProductSummary) => void;
+}) {
+  const navigate = useNavigate();
+
+  return (
+    <div className="owner-mobile-products-grid">
+      {products.map((product) => {
+        const priceText =
+          product.productType === 'TIME'
+            ? 'Theo thời gian'
+            : product.minSalePriceVnd === product.maxSalePriceVnd
+              ? formatMoney(product.minSalePriceVnd)
+              : `${product.variantCount} mức giá`;
+
+        return (
+          <div key={product.id} className="owner-mobile-product-card">
+            <div className="owner-mobile-product-top">
+              <ProductAvatar product={product} />
+              <div className="owner-mobile-product-info">
+                <Button
+                  type="link"
+                  className="owner-mobile-product-name"
+                  onClick={() => navigate(`${baseRoute}/products/${product.id}`)}
+                >
+                  {product.name}
+                </Button>
+                <div className="owner-mobile-product-category">
+                  {product.categoryName || 'Chưa phân loại'} · {product.unitName || '—'}
+                </div>
+              </div>
+              <div className="owner-mobile-product-price-box">
+                <strong className="owner-mobile-product-price">{priceText}</strong>
+                <Tag
+                  color={product.status === 'ACTIVE' ? 'success' : 'default'}
+                  style={{ margin: 0, marginTop: 4 }}
+                >
+                  {product.status === 'ACTIVE' ? 'Đang bán' : 'Ngừng bán'}
+                </Tag>
+              </div>
+            </div>
+
+            <div className="owner-mobile-product-actions">
+              <Button
+                size="small"
+                icon={<CopyOutlined />}
+                onClick={() => navigate(`${baseRoute}/products/new?copyFrom=${product.id}`)}
+              >
+                Sao chép
+              </Button>
+              {canEditProduct && (
+                <Button
+                  size="small"
+                  type="primary"
+                  ghost
+                  icon={<EditOutlined />}
+                  onClick={() => navigate(`${baseRoute}/products/${product.id}`)}
+                >
+                  Chỉnh sửa
+                </Button>
+              )}
+              {canDeleteProduct &&
+                (product.status === 'ACTIVE' ? (
+                  <Popconfirm
+                    title="Xóa mặt hàng này?"
+                    description="Mặt hàng sẽ bị ngừng kinh doanh."
+                    onConfirm={() => onRemoveProduct(product)}
+                    okText="Xóa"
+                    cancelText="Hủy"
+                    okButtonProps={{ danger: true }}
+                  >
+                    <Button size="small" danger icon={<DeleteOutlined />}>
+                      Xóa
+                    </Button>
+                  </Popconfirm>
+                ) : (
+                  <Popconfirm
+                    title="Khôi phục mặt hàng này?"
+                    description="Mặt hàng sẽ được kích hoạt lại."
+                    onConfirm={() => onRestoreProduct(product)}
+                    okText="Khôi phục"
+                    cancelText="Hủy"
+                  >
+                    <Button size="small" icon={<SaveOutlined />}>
+                      Khôi phục
+                    </Button>
+                  </Popconfirm>
+                ))}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1163,7 +1376,7 @@ export function OwnerProductFormPage({
             Thông tin cốt lõi để mặt hàng xuất hiện trên POS.
           </Typography.Text>
         </div>
-        <Space>
+        <Space wrap>
           {isEdit && canDeleteProduct && (
             <Popconfirm
               title="Xóa mặt hàng này?"
@@ -1193,6 +1406,14 @@ export function OwnerProductFormPage({
             }}
           >
             Hủy
+          </Button>
+          <Button
+            type="primary"
+            loading={saving}
+            icon={<SaveOutlined />}
+            onClick={() => form.submit()}
+          >
+            Lưu mặt hàng
           </Button>
         </Space>
       </div>
@@ -1918,32 +2139,51 @@ export function OwnerProductFormPage({
             </Card>
           </Col>
         </Row>
-        <div className="owner-form-actions">
-          {isEdit && canDeleteProduct && (
-            <Popconfirm
-              title="Xóa mặt hàng này?"
-              description="Mặt hàng sẽ bị ngừng kinh doanh và không còn xuất hiện trên thực đơn bán hàng."
-              onConfirm={removeProduct}
-              okText="Xóa mặt hàng"
-              cancelText="Hủy"
-              okButtonProps={{ danger: true }}
-            >
-              <Button danger loading={deleting} icon={<DeleteOutlined />}>
-                Xóa mặt hàng
+        <div className="owner-form-actions owner-sticky-form-bar">
+          <div className="owner-sticky-form-bar__left">
+            {isEdit && canDeleteProduct && (
+              <Popconfirm
+                title="Xóa mặt hàng này?"
+                description="Mặt hàng sẽ bị ngừng kinh doanh và không còn xuất hiện trên thực đơn bán hàng."
+                onConfirm={removeProduct}
+                okText="Xóa mặt hàng"
+                cancelText="Hủy"
+                okButtonProps={{ danger: true }}
+              >
+                <Button danger loading={deleting} icon={<DeleteOutlined />}>
+                  Xóa mặt hàng
+                </Button>
+              </Popconfirm>
+            )}
+            {isEdit && (
+              <Button
+                icon={<CopyOutlined />}
+                onClick={() => navigate(`${baseRoute}/products/new?copyFrom=${productId}`)}
+              >
+                Sao chép
               </Button>
-            </Popconfirm>
-          )}
-          <Button
-            onClick={() => {
-              if (onBack) onBack();
-              else navigate(`${baseRoute}/products`);
-            }}
-          >
-            Hủy
-          </Button>
-          <Button type="primary" htmlType="submit" loading={saving} icon={<SaveOutlined />}>
-            Lưu mặt hàng
-          </Button>
+            )}
+          </div>
+          <div className="owner-sticky-form-bar__right">
+            <Button
+              size="large"
+              onClick={() => {
+                if (onBack) onBack();
+                else navigate(`${baseRoute}/products`);
+              }}
+            >
+              Hủy
+            </Button>
+            <Button
+              type="primary"
+              size="large"
+              htmlType="submit"
+              loading={saving}
+              icon={<SaveOutlined />}
+            >
+              Lưu mặt hàng
+            </Button>
+          </div>
         </div>
       </Form>
     </div>

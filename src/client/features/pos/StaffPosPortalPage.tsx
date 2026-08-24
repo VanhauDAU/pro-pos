@@ -75,6 +75,7 @@ import { createContext, lazy, useContext, useEffect, useMemo, useRef, useState }
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
+import type { OrderCallBatchDto, OrderCallBatchPageDto } from '@contracts/pos';
 import type {
   GuestOrderRequestDto,
   ServiceRequestDto,
@@ -120,7 +121,7 @@ const StaffPrinterSettingsPage = lazy(async () => {
   return { default: module.StaffPrinterSettingsPage };
 });
 
-import { apiRequest, jsonRequest } from '@client/lib/api';
+import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 import {
   RealtimeProvider,
   usePosPollingInterval,
@@ -206,6 +207,7 @@ interface OrderQuote {
     customerName?: string | null;
     customerPhone?: string | null;
     customerId?: string | null;
+    hasCallHistory: boolean;
   };
   items: Array<{
     id: string;
@@ -287,6 +289,8 @@ interface OrderMutationSnapshot {
   tableSummaries: PosTable[];
   orderVersion: number;
   serverNowMs: number;
+  callBatch?: OrderCallBatchDto;
+  paymentSnapshot?: PaymentSnapshotResult;
 }
 
 interface PaymentSnapshotResult {
@@ -298,6 +302,18 @@ interface PaymentSnapshotResult {
   stoppedAt: number;
   quote: OrderQuote;
   tableSummary: PosTable | null;
+}
+
+interface PendingSavedItemEdit {
+  variantId?: string | null;
+  enteredUnitPriceVnd?: number;
+  note?: string | null;
+  discount?: null | {
+    type: 'FIXED' | 'PERCENT';
+    value: number;
+    reason: string;
+  };
+  removalReason?: string;
 }
 
 const promotionTypeCopy: Record<PosPromotionOption['type'], string> = {
@@ -3665,6 +3681,12 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   });
   const [draftLines, setDraftLines] = useState<DraftLine[]>([]);
   const [modifiedItemQuantities, setModifiedItemQuantities] = useState<Record<string, number>>({});
+  const [modifiedItemDetails, setModifiedItemDetails] = useState<
+    Record<string, PendingSavedItemEdit>
+  >({});
+  const [conflictingSavedItemIds, setConflictingSavedItemIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [tableModalOpen, setTableModalOpen] = useState(false);
   const [tableAction, setTableAction] = useState<'SELECT' | 'SAVE' | 'CHECKOUT'>('SELECT');
   const [saving, setSaving] = useState(false);
@@ -3694,7 +3716,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     source: 'DRAFT' | 'SAVED';
   } | null>(null);
   const [deleteItemReason, setDeleteItemReason] = useState('');
-  const [deletingItem, setDeletingItem] = useState(false);
+  const deletingItem = false;
   const [deleteTimeModalOpen, setDeleteTimeModalOpen] = useState(false);
   const [deleteTimeReason, setDeleteTimeReason] = useState('');
   const [deletingTime, setDeletingTime] = useState(false);
@@ -3713,18 +3735,19 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     typeof window !== 'undefined' ? window.innerWidth <= 900 : false,
   );
   const [mobileView, setMobileView] = useState<'CART' | 'PRODUCTS'>('CART');
-  const [pickingCart, setPickingCart] = useState<DraftLine[]>([]);
-  const [cartPreviewOpen, setCartPreviewOpen] = useState(false);
-  const [editingNoteItemIndex, setEditingNoteItemIndex] = useState<number | null>(null);
-  const [itemNoteDraft, setItemNoteDraft] = useState('');
   const cartIconRef = useRef<HTMLButtonElement>(null);
   const autoResumePaymentInFlightRef = useRef(false);
+  const restoredDraftOrderRef = useRef<string | null>(null);
+  const draftBaseVersionRef = useRef<number | null>(null);
+  const committedQuantitiesRef = useRef<Record<string, number>>({});
+  const committedOrderVersionRef = useRef<number | null>(null);
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
   const [guestCount, setGuestCount] = useState<number>(1);
   const [guestModalOpen, setGuestModalOpen] = useState(false);
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
   const [promotionModalOpen, setPromotionModalOpen] = useState(false);
   const [promotionSaving, setPromotionSaving] = useState(false);
+  const [callHistoryOpen, setCallHistoryOpen] = useState(false);
   const [manualPromotionIds, setManualPromotionIds] = useState<string[] | null>(null);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
@@ -3766,6 +3789,39 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           : null,
     }));
 
+  const updatedItemsPayload = () => {
+    if (!quote.data) return [];
+    const ids = new Set([
+      ...Object.keys(modifiedItemQuantities),
+      ...Object.keys(modifiedItemDetails),
+    ]);
+    return [...ids].flatMap((itemId) => {
+      const item = quote.data?.items.find((candidate) => candidate.id === itemId);
+      if (!item || item.promotionGift) return [];
+      const quantityMilli = modifiedItemQuantities[itemId] ?? item.quantityMilli;
+      const details = modifiedItemDetails[itemId];
+      if (quantityMilli === item.quantityMilli && !details) return [];
+      return [{ itemId, quantityMilli, ...details }];
+    });
+  };
+
+  const hasPendingSavedItemChanges = () => updatedItemsPayload().length > 0;
+
+  const clearOrderDraft = () => {
+    setDraftLines([]);
+    setModifiedItemQuantities({});
+    setModifiedItemDetails({});
+    setConflictingSavedItemIds(new Set());
+    draftBaseVersionRef.current = null;
+    if (!isNew && orderId) {
+      try {
+        localStorage.removeItem(`propos:order-draft:${orderId}`);
+      } catch {
+        // Local recovery is best-effort only.
+      }
+    }
+  };
+
   const applyOrderMutationSnapshot = (snapshot: OrderMutationSnapshot) => {
     queryClient.setQueryData<OrderQuote>(['pos-order-quote', snapshot.order.id], snapshot.quote);
     queryClient.setQueryData<PosTable[]>(['pos-tables'], (cached) => {
@@ -3773,6 +3829,18 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       const changed = new Map(snapshot.tableSummaries.map((table) => [table.id, table]));
       return cached.map((table) => changed.get(table.id) ?? table);
     });
+    if (snapshot.callBatch) {
+      queryClient.setQueryData<OrderCallBatchPageDto>(
+        ['pos-order-call-batches', snapshot.order.id],
+        (cached) => ({
+          items: [
+            snapshot.callBatch!,
+            ...(cached?.items ?? []).filter((batch) => batch.id !== snapshot.callBatch!.id),
+          ],
+          nextBeforeSequence: cached?.nextBeforeSequence ?? null,
+        }),
+      );
+    }
   };
 
   const navigateToPayment = (targetOrderId: string, replace = false) => {
@@ -3816,11 +3884,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   };
 
   const handleExit = () => {
-    const hasModifiedQty = Object.entries(modifiedItemQuantities).some(([id, qty]) => {
-      const it = quote.data?.items.find((x) => x.id === id);
-      return it && it.quantityMilli !== qty;
-    });
-    if (draftLines.length > 0 || hasModifiedQty) {
+    if (draftLines.length > 0 || hasPendingSavedItemChanges()) {
       setDiscardModalOpen(true);
     } else {
       navigate('/pos/areas');
@@ -3829,7 +3893,13 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
 
   useEffect(() => {
     setModifiedItemQuantities({});
+    setModifiedItemDetails({});
+    setConflictingSavedItemIds(new Set());
     setDraftLines([]);
+    restoredDraftOrderRef.current = null;
+    draftBaseVersionRef.current = null;
+    committedQuantitiesRef.current = {};
+    committedOrderVersionRef.current = null;
   }, [orderId]);
 
   const catalog = useQuery({
@@ -3849,6 +3919,15 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     refetchInterval: (query) =>
       query.state.data?.order.status === 'PAYMENT_PENDING' ? false : quotePollingInterval,
   });
+  const callHistory = useQuery({
+    queryKey: ['pos-order-call-batches', orderId],
+    queryFn: ({ signal }) =>
+      apiRequest<OrderCallBatchPageDto>(`/api/v1/pos/orders/${orderId}/call-batches?limit=20`, {
+        signal,
+      }),
+    enabled: !isNew && Boolean(quote.data?.order.hasCallHistory) && callHistoryOpen,
+    staleTime: 30_000,
+  });
   const printSettings = useQuery({
     queryKey: ['pos-print-settings'],
     queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
@@ -3859,6 +3938,108 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     queryFn: () => apiRequest<StaffContext>('/api/v1/pos/context'),
     staleTime: Infinity,
   });
+
+  useEffect(() => {
+    if (!quote.data) return;
+    const nextCommitted = Object.fromEntries(
+      quote.data.items.map((item) => [item.id, item.quantityMilli]),
+    );
+    const previousVersion = committedOrderVersionRef.current;
+    if (previousVersion !== null && previousVersion !== quote.data.order.version) {
+      const changedIds = new Set(
+        Object.keys(modifiedItemQuantities).filter((itemId) => {
+          const previousBase = committedQuantitiesRef.current[itemId];
+          const nextBase = nextCommitted[itemId];
+          return previousBase !== undefined && nextBase !== undefined && previousBase !== nextBase;
+        }),
+      );
+      if (changedIds.size > 0) {
+        setModifiedItemQuantities((pending) => {
+          const rebased = { ...pending };
+          for (const itemId of changedIds) {
+            const previousBase = committedQuantitiesRef.current[itemId]!;
+            const nextBase = nextCommitted[itemId]!;
+            rebased[itemId] = Math.max(
+              0,
+              nextBase + ((pending[itemId] ?? previousBase) - previousBase),
+            );
+          }
+          return rebased;
+        });
+        setConflictingSavedItemIds((current) => new Set([...current, ...changedIds]));
+      }
+    }
+    committedQuantitiesRef.current = nextCommitted;
+    committedOrderVersionRef.current = quote.data.order.version;
+  }, [modifiedItemQuantities, quote.data]);
+
+  useEffect(() => {
+    if (isNew || !orderId || !quote.data || restoredDraftOrderRef.current === orderId) return;
+    restoredDraftOrderRef.current = orderId;
+    try {
+      const raw = localStorage.getItem(`propos:order-draft:${orderId}`);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as {
+        baseVersion?: number;
+        draftLines?: DraftLine[];
+        modifiedItemQuantities?: Record<string, number>;
+        modifiedItemDetails?: Record<string, PendingSavedItemEdit>;
+      };
+      const hasDraft =
+        (saved.draftLines?.length ?? 0) > 0 ||
+        Object.keys(saved.modifiedItemQuantities ?? {}).length > 0 ||
+        Object.keys(saved.modifiedItemDetails ?? {}).length > 0;
+      if (!hasDraft) return;
+      Modal.confirm({
+        title: 'Khôi phục thay đổi chưa lưu?',
+        content:
+          saved.baseVersion === quote.data.order.version
+            ? 'Thiết bị này còn một đợt gọi món chưa lưu.'
+            : 'Đơn đã thay đổi từ thiết bị khác. Nháp sẽ được giữ để bạn đối chiếu lại trước khi lưu.',
+        okText: 'Tiếp tục nháp',
+        cancelText: 'Bỏ nháp',
+        onOk: () => {
+          setDraftLines(saved.draftLines ?? []);
+          setModifiedItemQuantities(saved.modifiedItemQuantities ?? {});
+          setModifiedItemDetails(saved.modifiedItemDetails ?? {});
+          draftBaseVersionRef.current = saved.baseVersion ?? quote.data!.order.version;
+        },
+        onCancel: () => localStorage.removeItem(`propos:order-draft:${orderId}`),
+      });
+    } catch {
+      localStorage.removeItem(`propos:order-draft:${orderId}`);
+    }
+  }, [isNew, orderId, quote.data]);
+
+  useEffect(() => {
+    if (isNew || !orderId || !quote.data || restoredDraftOrderRef.current !== orderId) {
+      return;
+    }
+    const hasItemDraft =
+      draftLines.length > 0 ||
+      Object.keys(modifiedItemQuantities).length > 0 ||
+      Object.keys(modifiedItemDetails).length > 0;
+    try {
+      if (!hasItemDraft) {
+        localStorage.removeItem(`propos:order-draft:${orderId}`);
+        draftBaseVersionRef.current = null;
+        return;
+      }
+      draftBaseVersionRef.current ??= quote.data.order.version;
+      localStorage.setItem(
+        `propos:order-draft:${orderId}`,
+        JSON.stringify({
+          baseVersion: draftBaseVersionRef.current,
+          draftLines,
+          modifiedItemQuantities,
+          modifiedItemDetails,
+          savedAt: Date.now(),
+        }),
+      );
+    } catch {
+      // Local recovery is best-effort only.
+    }
+  }, [draftLines, isNew, modifiedItemDetails, modifiedItemQuantities, orderId, quote.data]);
   const paymentSnapshotV2Enabled = staffContext.data?.capabilities?.posPaymentSnapshotV2 !== false;
 
   const selectedTable = useMemo(
@@ -4039,6 +4220,12 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           !it.promotionGift,
       );
       if (existingSaved) {
+        setModifiedItemDetails((current) => {
+          const existing = current[existingSaved.id];
+          if (!existing?.removalReason) return current;
+          const { removalReason: _removalReason, ...rest } = existing;
+          return { ...current, [existingSaved.id]: rest };
+        });
         setModifiedItemQuantities((prev) => {
           const current = prev[existingSaved.id] ?? existingSaved.quantityMilli;
           return { ...prev, [existingSaved.id]: current + 1000 };
@@ -4073,54 +4260,69 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     });
   };
 
-  const addPickingVariant = (
-    product: CatalogProduct,
-    variant: CatalogVariant,
-    enteredPrice?: number,
-  ) => {
-    const effectiveVariant =
-      variant.promptPrice === 1 ? { ...variant, salePriceVnd: enteredPrice ?? null } : variant;
-    if (effectiveVariant.salePriceVnd === null) return;
-    if (product.productType === 'WEIGHT') {
-      const id = crypto.randomUUID();
-      const line: DraftLine = {
-        id,
-        product,
-        variant: effectiveVariant,
-        quantityMilli: 1000,
-        note: null,
-        discountType: null,
-        discountInputValue: null,
-        discountReason: null,
-      };
-      setPickingCart((lines) => [...lines, line]);
+  const effectiveVariantQuantityMilli = (productId: string, variantId: string) => {
+    const savedQuantity = (quote.data?.items ?? [])
+      .filter(
+        (item) =>
+          !item.promotionGift && item.productId === productId && item.variantId === variantId,
+      )
+      .reduce((sum, item) => sum + (modifiedItemQuantities[item.id] ?? item.quantityMilli), 0);
+    const draftQuantity = draftLines
+      .filter((line) => line.product.productId === productId && line.variant.id === variantId)
+      .reduce((sum, line) => sum + line.quantityMilli, 0);
+    return savedQuantity + draftQuantity;
+  };
+
+  const decrementVariant = (product: CatalogProduct, variant: CatalogVariant) => {
+    const draft = draftLines.findLast(
+      (line) => line.product.productId === product.productId && line.variant.id === variant.id,
+    );
+    if (draft) {
+      setDraftLines((lines) =>
+        lines.flatMap((line) => {
+          if (line.id !== draft.id) return [line];
+          return line.quantityMilli > 1000
+            ? [{ ...line, quantityMilli: line.quantityMilli - 1000 }]
+            : [];
+        }),
+      );
       return;
     }
-    setPickingCart((lines) => {
-      const found = lines.find(
-        (line) =>
-          line.variant.id === effectiveVariant.id &&
-          line.variant.salePriceVnd === effectiveVariant.salePriceVnd,
-      );
-      if (found) {
-        return lines.map((line) =>
-          line === found ? { ...line, quantityMilli: line.quantityMilli + 1000 } : line,
-        );
-      }
-      return [
-        ...lines,
-        {
-          id: crypto.randomUUID(),
-          product,
-          variant: effectiveVariant,
-          quantityMilli: 1000,
-          note: null,
-          discountType: null,
-          discountInputValue: null,
-          discountReason: null,
-        },
-      ];
-    });
+    const saved = quote.data?.items.find(
+      (item) =>
+        !item.promotionGift &&
+        item.productId === product.productId &&
+        item.variantId === variant.id,
+    );
+    if (!saved) return;
+    const current = modifiedItemQuantities[saved.id] ?? saved.quantityMilli;
+    if (current <= 1000) {
+      setDeleteItemTarget({ id: saved.id, name: saved.productName, source: 'SAVED' });
+      setDeleteItemReason('');
+      setDeleteItemModalOpen(true);
+      return;
+    }
+    setModifiedItemQuantities((quantities) => ({
+      ...quantities,
+      [saved.id]: current - 1000,
+    }));
+  };
+
+  const incrementVariantFromPicker = (
+    product: CatalogProduct,
+    variant: CatalogVariant,
+    event?: React.MouseEvent,
+  ) => {
+    if (
+      variant.promptPrice === 1 ||
+      variant.salePriceVnd === null ||
+      product.productType === 'WEIGHT'
+    ) {
+      chooseVariant(product, variant, event);
+      return;
+    }
+    if (event && isMobile && mobileView === 'PRODUCTS') triggerFlyAnimation(event, product);
+    addDraftVariant(product, variant);
   };
 
   const refreshOrder = async () => {
@@ -4200,8 +4402,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     if (variant.promptPrice === 1 || variant.salePriceVnd === null) {
       setPromptTarget({ product, variant });
       setPromptPrice(null);
-    } else if (isMobile && mobileView === 'PRODUCTS') {
-      addPickingVariant(product, variant);
     } else {
       addDraftVariant(product, variant);
     }
@@ -4209,11 +4409,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
 
   const confirmPromptPrice = () => {
     if (!promptTarget || promptPrice === null || promptPrice < 0) return;
-    if (isMobile && mobileView === 'PRODUCTS') {
-      addPickingVariant(promptTarget.product, promptTarget.variant, promptPrice);
-    } else {
-      addDraftVariant(promptTarget.product, promptTarget.variant, promptPrice);
-    }
+    addDraftVariant(promptTarget.product, promptTarget.variant, promptPrice);
     setPromptTarget(null);
     setPromptPrice(null);
   };
@@ -4253,26 +4449,42 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
 
   const persistModifiedItemsV1 = async (targetOrderId: string, startingVersion: number) => {
     let version = startingVersion;
-    for (const [itemId, quantityMilli] of Object.entries(modifiedItemQuantities)) {
-      const item = quote.data?.items.find((candidate) => candidate.id === itemId);
-      if (!item || item.quantityMilli === quantityMilli) continue;
+    for (const update of updatedItemsPayload()) {
+      const item = quote.data?.items.find((candidate) => candidate.id === update.itemId);
+      if (!item) continue;
+      if (update.quantityMilli === 0) {
+        // V1 advances the aggregate version after every item and must stay sequential.
+        // eslint-disable-next-line no-await-in-loop
+        await jsonRequest(
+          `/api/v1/pos/orders/${targetOrderId}/items/${update.itemId}`,
+          {
+            expectedOrderVersion: version,
+            reason: update.removalReason ?? 'Khách đổi ý',
+          },
+          { method: 'DELETE', headers: mutationHeaders(csrf) },
+        );
+        version += 1;
+        continue;
+      }
       // V1 advances the aggregate version after every item and must stay sequential.
       // eslint-disable-next-line no-await-in-loop
       await jsonRequest(
-        `/api/v1/pos/orders/${targetOrderId}/items/${itemId}`,
+        `/api/v1/pos/orders/${targetOrderId}/items/${update.itemId}`,
         {
           expectedOrderVersion: version,
-          quantityMilli,
-          variantId: item.variantId,
+          quantityMilli: update.quantityMilli,
+          variantId: update.variantId === undefined ? item.variantId : update.variantId,
           discount:
-            item.discountType && typeof item.discountInputValue === 'number'
-              ? {
-                  type: item.discountType,
-                  value: item.discountInputValue,
-                  reason: item.discountReason || '',
-                }
-              : undefined,
-          note: item.note ?? null,
+            update.discount === undefined
+              ? item.discountType && typeof item.discountInputValue === 'number'
+                ? {
+                    type: item.discountType,
+                    value: item.discountInputValue,
+                    reason: item.discountReason || '',
+                  }
+                : undefined
+              : update.discount,
+          note: update.note === undefined ? (item.note ?? null) : update.note,
         },
         { method: 'PATCH', headers: mutationHeaders(csrf) },
       );
@@ -4301,18 +4513,16 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       );
       version += 1;
     }
-    setDraftLines([]);
-    setModifiedItemQuantities({});
+    clearOrderDraft();
     setManualPromotionIds(null);
     return version;
   };
 
   const completeCreatedOrderV1 = async (createdOrderId: string, checkoutAfterSave: boolean) => {
-    await refreshOrder();
     if (checkoutAfterSave) navigateToPayment(createdOrderId, true);
     else {
       messageApi.success('Lưu đơn hàng thành công.');
-      navigate('/pos/areas', { replace: true });
+      navigate(`/pos/orders/${createdOrderId}`, { replace: true });
     }
   };
 
@@ -4390,14 +4600,17 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
 
   const completeCreatedOrder = (snapshot: OrderMutationSnapshot, checkoutAfterSave: boolean) => {
     applyOrderMutationSnapshot(snapshot);
-    setDraftLines([]);
-    setModifiedItemQuantities({});
+    clearOrderDraft();
     setManualPromotionIds(null);
     if (checkoutAfterSave) {
       navigateToPayment(snapshot.order.id, true);
     } else {
-      messageApi.success('Lưu đơn hàng thành công.');
-      navigate('/pos/areas', { replace: true });
+      messageApi.success(
+        snapshot.callBatch
+          ? `Đã lưu Đợt ${snapshot.callBatch.sequenceNo}.`
+          : 'Lưu đơn hàng thành công.',
+      );
+      navigate(`/pos/orders/${snapshot.order.id}`, { replace: true });
     }
   };
 
@@ -4482,18 +4695,25 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     );
   };
 
-  const saveAdditionalItems = async (openPaymentAfterSave = false) => {
+  const saveAdditionalItems = async (openPaymentAfterSave = false, confirmedConflicts = false) => {
     if (!quote.data) return;
-    const hasModifiedQty = Object.entries(modifiedItemQuantities).some(([id, qty]) => {
-      const it = quote.data?.items.find((x) => x.id === id);
-      return it && it.quantityMilli !== qty;
-    });
-    if (draftLines.length === 0 && !hasModifiedQty && manualPromotionIds === null) {
+    if (conflictingSavedItemIds.size > 0 && !confirmedConflicts) {
+      Modal.confirm({
+        title: 'Xác nhận lưu sau khi đối chiếu',
+        content:
+          'Một số món đã được thiết bị khác cập nhật. Hệ thống đã giữ phần tăng/giảm của nháp hiện tại trên tổng mới nhất.',
+        okText: 'Đã đối chiếu, tiếp tục lưu',
+        cancelText: 'Kiểm tra lại',
+        onOk: () => void saveAdditionalItems(openPaymentAfterSave, true),
+      });
+      return;
+    }
+    const hasSavedItemChanges = hasPendingSavedItemChanges();
+    if (draftLines.length === 0 && !hasSavedItemChanges && manualPromotionIds === null) {
       if (openPaymentAfterSave) {
         navigateToPayment(quote.data.order.id);
       } else {
         messageApi.success('Lưu đơn hàng thành công.');
-        navigate('/pos/areas', { replace: true });
       }
       return;
     }
@@ -4504,7 +4724,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         await refreshOrder();
         messageApi.success('Lưu đơn hàng thành công.');
         if (openPaymentAfterSave) navigateToPayment(quote.data.order.id);
-        else navigate('/pos/areas', { replace: true });
         return;
       }
       const snapshot = await jsonRequest<OrderMutationSnapshot>(
@@ -4512,13 +4731,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         {
           expectedOrderVersion: quote.data.order.version,
           addedItems: draftItemsPayload(),
-          updatedItems: Object.entries(modifiedItemQuantities)
-            .filter(([id, quantityMilli]) =>
-              quote.data?.items.some(
-                (item) => item.id === id && item.quantityMilli !== quantityMilli,
-              ),
-            )
-            .map(([itemId, quantityMilli]) => ({ itemId, quantityMilli })),
+          updatedItems: updatedItemsPayload(),
           ...(orderNote !== (quote.data.order.note ?? '')
             ? { note: orderNote.trim() || null }
             : {}),
@@ -4527,17 +4740,26 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         { headers: mutationHeaders(csrf) },
       );
       applyOrderMutationSnapshot(snapshot);
-      setDraftLines([]);
-      setModifiedItemQuantities({});
+      clearOrderDraft();
       setManualPromotionIds(null);
-      messageApi.success('Lưu đơn hàng thành công.');
+      messageApi.success(
+        snapshot.callBatch
+          ? `Đã lưu Đợt ${snapshot.callBatch.sequenceNo}.`
+          : 'Lưu đơn hàng thành công.',
+      );
       if (openPaymentAfterSave) {
         navigateToPayment(snapshot.order.id);
-      } else {
-        navigate('/pos/areas', { replace: true });
       }
     } catch (error) {
-      messageApi.error(errorText(error));
+      if (error instanceof ApiError && error.code === 'ORDER_VERSION_CONFLICT') {
+        const latestQuote = (error.details as { quote?: OrderQuote } | null)?.quote;
+        if (latestQuote) {
+          queryClient.setQueryData(['pos-order-quote', quote.data.order.id], latestQuote);
+        }
+        messageApi.warning('Đơn vừa thay đổi trên thiết bị khác. Nháp đã được giữ để đối chiếu.');
+      } else {
+        messageApi.error(errorText(error));
+      }
     } finally {
       setSaving(false);
     }
@@ -4686,12 +4908,24 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     }
   };
 
-  const beginCheckout = async () => {
+  const beginCheckout = async (confirmedPending = false) => {
     if (isNew && orderType === 'TAKEAWAY' && draftLines.length === 0) {
       messageApi.warning('Vui lòng chọn ít nhất một mặt hàng cho đơn mang đi.');
       return;
     }
     if (!isNew) {
+      const hasPendingChanges =
+        draftLines.length > 0 || hasPendingSavedItemChanges() || manualPromotionIds !== null;
+      if (hasPendingChanges && !confirmedPending) {
+        Modal.confirm({
+          title: 'Lưu thay đổi và thanh toán?',
+          content: `Đơn còn ${draftLines.length + updatedItemsPayload().length} dòng thay đổi chưa lưu. Hệ thống sẽ chốt đợt này trước khi chuyển sang thanh toán.`,
+          okText: 'Lưu và thanh toán',
+          cancelText: 'Kiểm tra lại',
+          onOk: () => void beginCheckout(true),
+        });
+        return;
+      }
       if (isPaymentPending) {
         navigateToPayment(quote.data!.order.id);
         return;
@@ -4700,33 +4934,31 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         setStoppingTime(true);
         try {
           let currentQuote = quote.data;
-          const hasModifiedQty = Object.entries(modifiedItemQuantities).some(([id, qty]) => {
-            const it = quote.data?.items.find((x) => x.id === id);
-            return it && it.quantityMilli !== qty;
-          });
-          if (hasModifiedQty || draftLines.length > 0 || manualPromotionIds !== null) {
+          if (hasPendingChanges) {
             if (commandsV2Enabled) {
               const saved = await jsonRequest<OrderMutationSnapshot>(
                 `/api/v1/pos/orders/${quote.data.order.id}/save`,
                 {
                   expectedOrderVersion: quote.data.order.version,
+                  nextAction: 'BEGIN_CHECKOUT',
                   addedItems: draftItemsPayload(),
-                  updatedItems: Object.entries(modifiedItemQuantities)
-                    .filter(([id, quantityMilli]) =>
-                      quote.data?.items.some(
-                        (item) => item.id === id && item.quantityMilli !== quantityMilli,
-                      ),
-                    )
-                    .map(([itemId, quantityMilli]) => ({ itemId, quantityMilli })),
+                  updatedItems: updatedItemsPayload(),
                   ...(manualPromotionIds === null ? {} : { promotionIds: manualPromotionIds }),
                 },
                 { headers: mutationHeaders(csrf) },
               );
               applyOrderMutationSnapshot(saved);
               currentQuote = saved.quote;
-              setDraftLines([]);
-              setModifiedItemQuantities({});
+              clearOrderDraft();
               setManualPromotionIds(null);
+              if (saved.paymentSnapshot) {
+                queryClient.setQueryData(
+                  ['pos-payment-snapshot', saved.order.id],
+                  saved.paymentSnapshot,
+                );
+                navigateToPayment(saved.order.id);
+                return;
+              }
             } else {
               await persistExistingOrderV1(quote.data.order.version);
               currentQuote = await apiRequest<OrderQuote>(
@@ -4787,81 +5019,53 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     }
   };
 
-  const updateExistingItem = async (input: {
+  const updateExistingItem = (input: {
     id: string;
     quantityMilli: number;
     variantId?: string | null | undefined;
     discount?: null | { type: 'FIXED' | 'PERCENT'; value: number; reason: string } | undefined;
     note: string | null;
   }) => {
-    if (!quote.data) return;
-    try {
-      const snapshot = await jsonRequest<OrderMutationSnapshot>(
-        `/api/v1/pos/orders/${quote.data.order.id}/items/${input.id}`,
-        {
-          expectedOrderVersion: quote.data.order.version,
-          quantityMilli: input.quantityMilli,
-          variantId: input.variantId,
-          discount: input.discount,
-          note: input.note,
-        },
-        { method: 'PATCH', headers: mutationHeaders(csrf) },
-      );
-      applyOrderMutationSnapshot(snapshot);
-      setEditingItem(null);
-      setModifiedItemQuantities((prev) => {
-        const next = { ...prev };
-        delete next[input.id];
-        return next;
-      });
-    } catch (error) {
-      messageApi.error(errorText(error));
-    }
+    setModifiedItemQuantities((current) => ({
+      ...current,
+      [input.id]: input.quantityMilli,
+    }));
+    setModifiedItemDetails((current) => ({
+      ...current,
+      [input.id]: {
+        variantId: input.variantId ?? null,
+        note: input.note,
+        discount: input.discount ?? null,
+      },
+    }));
+    setEditingItem(null);
   };
 
-  const handleDeleteItemConfirm = async () => {
+  const handleDeleteItemConfirm = () => {
     if (!deleteItemTarget || !deleteItemReason.trim()) return;
-    try {
-      setDeletingItem(true);
-      const isDraftItem =
-        deleteItemTarget.source === 'DRAFT' ||
-        isNew ||
-        draftLines.some((line) => line.id === deleteItemTarget.id);
+    const targetId = deleteItemTarget.id;
+    const isDraftItem =
+      deleteItemTarget.source === 'DRAFT' ||
+      isNew ||
+      draftLines.some((line) => line.id === targetId);
 
-      if (isDraftItem) {
-        setDraftLines((lines) => lines.filter((line) => line.id !== deleteItemTarget.id));
-        setDeleteItemModalOpen(false);
-        setDeleteItemTarget(null);
-        setDeleteItemReason('');
-        messageApi.success('Đã xóa mặt hàng khỏi đơn.');
-      } else {
-        if (!quote.data) {
-          setDeleteItemModalOpen(false);
-          setDeleteItemTarget(null);
-          setDeleteItemReason('');
-          return;
-        }
-        const snapshot = await jsonRequest<OrderMutationSnapshot>(
-          `/api/v1/pos/orders/${quote.data.order.id}/items/${deleteItemTarget.id}`,
-          { expectedOrderVersion: quote.data.order.version, reason: deleteItemReason.trim() },
-          { method: 'DELETE', headers: mutationHeaders(csrf) },
-        );
-        applyOrderMutationSnapshot(snapshot);
-        setModifiedItemQuantities((prev) => {
-          const next = { ...prev };
-          delete next[deleteItemTarget.id];
-          return next;
-        });
-        setDeleteItemModalOpen(false);
-        setDeleteItemTarget(null);
-        setDeleteItemReason('');
-        messageApi.success('Đã xóa mặt hàng khỏi đơn.');
-      }
-    } catch (error) {
-      messageApi.error(errorText(error));
-    } finally {
-      setDeletingItem(false);
+    if (isDraftItem) {
+      setDraftLines((lines) => lines.filter((line) => line.id !== targetId));
+      messageApi.success('Đã bỏ món khỏi phần đang thay đổi.');
+    } else {
+      setModifiedItemQuantities((current) => ({ ...current, [targetId]: 0 }));
+      setModifiedItemDetails((current) => ({
+        ...current,
+        [targetId]: {
+          ...current[targetId],
+          removalReason: deleteItemReason.trim(),
+        },
+      }));
+      messageApi.success('Đã đưa thao tác xóa vào phần đang thay đổi.');
     }
+    setDeleteItemModalOpen(false);
+    setDeleteItemTarget(null);
+    setDeleteItemReason('');
   };
 
   const handleDeleteTimeConfirm = async () => {
@@ -5105,6 +5309,52 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       promotionGift: undefined,
     };
   });
+  const projectedSavedItems = useMemo(
+    () =>
+      (quote.data?.items ?? [])
+        .filter((item) => !item.promotionGift)
+        .map((item) => {
+          const details = modifiedItemDetails[item.id];
+          const variant = details?.variantId
+            ? catalog.data
+                ?.find((product) => product.productId === item.productId)
+                ?.variants.find((candidate) => candidate.id === details.variantId)
+            : undefined;
+          const quantityMilli = modifiedItemQuantities[item.id] ?? item.quantityMilli;
+          const unitPriceVnd =
+            details?.enteredUnitPriceVnd ?? variant?.salePriceVnd ?? item.unitPriceVnd;
+          const discountType =
+            details?.discount === undefined ? item.discountType : (details.discount?.type ?? null);
+          const discountInputValue =
+            details?.discount === undefined
+              ? item.discountInputValue
+              : (details.discount?.value ?? null);
+          const discountReason =
+            details?.discount === undefined
+              ? item.discountReason
+              : (details.discount?.reason ?? null);
+          const grossLineTotalVnd = calculateLineTotal(unitPriceVnd, quantityMilli);
+          const discountAmountVnd = calculateDiscountAmount(
+            grossLineTotalVnd,
+            discountType,
+            discountInputValue,
+          );
+          return Object.assign({}, item, {
+            variantId: details?.variantId === undefined ? item.variantId : details.variantId,
+            variantName: variant?.name ?? item.variantName,
+            unitPriceVnd,
+            quantityMilli,
+            note: details?.note === undefined ? item.note : details.note,
+            discountType,
+            discountInputValue,
+            discountReason,
+            grossLineTotalVnd,
+            discountAmountVnd,
+            netLineTotalVnd: grossLineTotalVnd - discountAmountVnd,
+          });
+        }),
+    [catalog.data, modifiedItemDetails, modifiedItemQuantities, quote.data?.items],
+  );
   // Realtime promotion items combining saved items and draft items
   const combinedItemsForPromotion = useMemo(() => {
     const list: Array<{
@@ -5119,13 +5369,9 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       netLineTotalVnd: number;
     }> = [];
 
-    if (!isNew && quote.data?.items) {
-      for (const item of quote.data.items) {
-        if (item.promotionGift) continue;
-        const qtyMilli = modifiedItemQuantities[item.id] ?? item.quantityMilli;
-        const gross = calculateLineTotal(item.unitPriceVnd, qtyMilli);
-        const discount = calculateDiscountAmount(gross, item.discountType, item.discountInputValue);
-        const net = gross - discount;
+    if (!isNew) {
+      for (const item of projectedSavedItems) {
+        if (item.quantityMilli === 0) continue;
         list.push({
           productId: item.productId,
           variantId: item.variantId ?? null,
@@ -5133,9 +5379,9 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           productName: item.productName,
           variantName: item.variantName ?? null,
           unitPriceVnd: item.unitPriceVnd,
-          quantityMilli: qtyMilli,
-          grossLineTotalVnd: gross,
-          netLineTotalVnd: net,
+          quantityMilli: item.quantityMilli,
+          grossLineTotalVnd: item.grossLineTotalVnd,
+          netLineTotalVnd: item.netLineTotalVnd,
         });
       }
     }
@@ -5155,7 +5401,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     }
 
     return list;
-  }, [isNew, quote.data?.items, modifiedItemQuantities, draftDisplayItems]);
+  }, [draftDisplayItems, isNew, projectedSavedItems]);
 
   // 2. Tiền giờ (phiên tính giờ của bàn)
   const totalTimeGross = quote.data?.time ? quote.data.time.amountAfterRoundingVnd : 0;
@@ -5166,9 +5412,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
 
   const combinedItemManualDiscountTotal = useMemo(() => {
     const draftDisc = draftDisplayItems.reduce((sum, it) => sum + (it.discountAmountVnd ?? 0), 0);
-    const savedDisc = !isNew && quote.data ? (quote.data.itemDiscountTotalVnd ?? 0) : 0;
+    const savedDisc = !isNew
+      ? projectedSavedItems.reduce((sum, item) => sum + item.discountAmountVnd, 0)
+      : 0;
     return draftDisc + savedDisc;
-  }, [isNew, quote.data, draftDisplayItems]);
+  }, [draftDisplayItems, isNew, projectedSavedItems]);
 
   const combinedSubtotal = Math.max(
     0,
@@ -5267,29 +5515,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     if (isNew) {
       return [...draftDisplayItems, ...previewGiftDisplayItems];
     }
-    const savedNonGift = (quote.data?.items ?? [])
-      .filter((it) => !it.promotionGift)
-      .map((it) => {
-        const qtyMilli = modifiedItemQuantities[it.id] ?? it.quantityMilli;
-        const gross = calculateLineTotal(it.unitPriceVnd, qtyMilli);
-        const discount = calculateDiscountAmount(gross, it.discountType, it.discountInputValue);
-        const net = gross - discount;
-        return {
-          ...it,
-          quantityMilli: qtyMilli,
-          grossLineTotalVnd: gross,
-          discountAmountVnd: discount,
-          netLineTotalVnd: net,
-        };
-      });
-    return [...savedNonGift, ...draftDisplayItems, ...previewGiftDisplayItems];
-  }, [
-    isNew,
-    quote.data?.items,
-    modifiedItemQuantities,
-    draftDisplayItems,
-    previewGiftDisplayItems,
-  ]);
+    return [...projectedSavedItems, ...draftDisplayItems, ...previewGiftDisplayItems];
+  }, [isNew, projectedSavedItems, draftDisplayItems, previewGiftDisplayItems]);
 
   const mobileHeaderTitle = useMemo(() => {
     const tName = quote.data?.order.tableName ?? selectedTable?.name;
@@ -5313,35 +5540,142 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   ]);
 
   const displayedItems = allCurrentItems;
+  const committedDisplayItems = isNew ? [] : (quote.data?.items ?? []);
+  const pendingChangeRows = useMemo(() => {
+    const savedRows = updatedItemsPayload().flatMap((update) => {
+      const item = quote.data?.items.find((candidate) => candidate.id === update.itemId);
+      if (!item) return [];
+      const projected = projectedSavedItems.find((candidate) => candidate.id === update.itemId);
+      return [
+        {
+          key: `saved:${item.id}`,
+          sourceId: item.id,
+          source: 'SAVED' as const,
+          productType: item.productType,
+          productName: item.productName,
+          variantName: projected?.variantName ?? item.variantName,
+          unitName: item.unitName,
+          deltaQuantityMilli: update.quantityMilli - item.quantityMilli,
+          afterQuantityMilli: update.quantityMilli,
+          amountDeltaVnd:
+            (projected?.netLineTotalVnd ?? item.netLineTotalVnd) - item.netLineTotalVnd,
+          isNew: false,
+          removalReason: update.removalReason ?? null,
+        },
+      ];
+    });
+    const addedRows = draftDisplayItems.map((item) => ({
+      key: `draft:${item.id}`,
+      sourceId: item.id,
+      source: 'DRAFT' as const,
+      productType: item.productType,
+      productName: item.productName,
+      variantName: item.variantName,
+      unitName: item.unitName,
+      deltaQuantityMilli: item.quantityMilli,
+      afterQuantityMilli: item.quantityMilli,
+      amountDeltaVnd: item.netLineTotalVnd,
+      isNew: true,
+      removalReason: null,
+    }));
+    return [...savedRows, ...addedRows];
+  }, [
+    draftDisplayItems,
+    modifiedItemDetails,
+    modifiedItemQuantities,
+    projectedSavedItems,
+    quote.data,
+  ]);
+
+  const undoPendingChange = (source: 'DRAFT' | 'SAVED', sourceId: string) => {
+    if (source === 'DRAFT') {
+      setDraftLines((lines) => lines.filter((line) => line.id !== sourceId));
+      return;
+    }
+    setModifiedItemQuantities((current) => {
+      const next = { ...current };
+      delete next[sourceId];
+      return next;
+    });
+    setModifiedItemDetails((current) => {
+      const next = { ...current };
+      delete next[sourceId];
+      return next;
+    });
+  };
+
+  const pendingChangesPanel =
+    pendingChangeRows.length > 0 ? (
+      <section className="staff-pending-changes">
+        <div className="staff-pending-changes__header">
+          <strong>Đang thay đổi ({pendingChangeRows.length})</strong>
+          <button type="button" onClick={clearOrderDraft}>
+            Hoàn tác tất cả
+          </button>
+        </div>
+        {conflictingSavedItemIds.size > 0 ? (
+          <Alert
+            type="warning"
+            showIcon
+            message="Đơn vừa thay đổi trên thiết bị khác"
+            description="Số lượng nháp đã được giữ theo phần chênh lệch. Vui lòng đối chiếu lại trước khi lưu."
+          />
+        ) : null}
+        <div className="staff-pending-changes__list">
+          {pendingChangeRows.map((change) => (
+            <div className="staff-pending-change-row" key={change.key}>
+              <div className="staff-pending-change-row__quantity">
+                {change.deltaQuantityMilli > 0 ? '+' : ''}
+                {formatItemQuantity(change.productType, change.deltaQuantityMilli, change.unitName)}
+              </div>
+              <div className="staff-pending-change-row__content">
+                <strong>{change.productName}</strong>
+                <small>
+                  {[change.variantName, change.removalReason && `Lý do: ${change.removalReason}`]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </small>
+              </div>
+              {change.isNew ? <span className="staff-pending-change-row__new">New</span> : null}
+              <b className={change.amountDeltaVnd < 0 ? 'is-negative' : ''}>
+                {change.amountDeltaVnd > 0 ? '+' : ''}
+                {formatMoney(change.amountDeltaVnd)}
+              </b>
+              <button
+                type="button"
+                className="staff-pending-change-row__undo"
+                aria-label="Hoàn tác thay đổi"
+                onClick={() => undoPendingChange(change.source, change.sourceId)}
+              >
+                <CloseOutlined />
+              </button>
+            </div>
+          ))}
+        </div>
+      </section>
+    ) : null;
 
   const hasUnsavedChanges = useMemo(() => {
     if (isNew) {
       return draftLines.length > 0;
     }
-    const hasModifiedQty = Object.entries(modifiedItemQuantities).some(([id, qty]) => {
-      const it = quote.data?.items.find((x) => x.id === id);
-      return it && it.quantityMilli !== qty;
-    });
-    return draftLines.length > 0 || hasModifiedQty || manualPromotionIds !== null;
-  }, [isNew, draftLines.length, modifiedItemQuantities, quote.data?.items, manualPromotionIds]);
+    return draftLines.length > 0 || updatedItemsPayload().length > 0 || manualPromotionIds !== null;
+  }, [
+    isNew,
+    draftLines.length,
+    modifiedItemDetails,
+    modifiedItemQuantities,
+    quote.data,
+    manualPromotionIds,
+  ]);
+  const emphasizeSaveButton =
+    !saving && (isNew ? orderType === 'DINE_IN' || draftLines.length > 0 : hasUnsavedChanges);
 
   // 1. Tiền hàng (mặt hàng số lượng và trọng lượng)
   const regularProductGross = allCurrentItems
     .filter((item) => !item.promotionGift)
     .reduce((sum, item) => sum + item.grossLineTotalVnd, 0);
   const regularProductCount = allCurrentItems.filter((item) => !item.promotionGift).length;
-
-  // Tiền trong giỏ hàng tạm khi chọn món
-  const pickingCartTotal = useMemo(() => {
-    return pickingCart.reduce(
-      (sum, line) => sum + calculateLineTotal(line.variant.salePriceVnd ?? 0, line.quantityMilli),
-      0,
-    );
-  }, [pickingCart]);
-
-  const pickingCartCount = useMemo(() => {
-    return pickingCart.reduce((sum, line) => sum + line.quantityMilli / 1000, 0);
-  }, [pickingCart]);
 
   const displayedTotal = Math.max(0, combinedSubtotal - totalDiscount);
   const liveElapsedSeconds = quote.data?.time
@@ -5353,7 +5687,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
 
   const applyPromotion = async (promotionIds: string[]) => {
     setManualPromotionIds(promotionIds);
-    if (!isNew && quote.data && draftLines.length === 0) {
+    if (!isNew && quote.data && draftLines.length === 0 && !hasPendingSavedItemChanges()) {
       setPromotionSaving(true);
       try {
         const snapshot = await jsonRequest<OrderMutationSnapshot>(
@@ -5393,6 +5727,57 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         onClose={() => setPromotionModalOpen(false)}
         onApply={(ids) => void applyPromotion(ids)}
       />
+      <Drawer
+        open={callHistoryOpen}
+        title="Lịch sử gọi món"
+        width={isMobile ? '100%' : 460}
+        onClose={() => setCallHistoryOpen(false)}
+      >
+        {callHistory.isLoading ? (
+          <Skeleton active paragraph={{ rows: 8 }} />
+        ) : callHistory.data?.items.length ? (
+          <div className="staff-call-history">
+            {callHistory.data.items.map((batch) => (
+              <section className="staff-call-history__batch" key={batch.id}>
+                <div className="staff-call-history__heading">
+                  <strong>Đợt {batch.sequenceNo}</strong>
+                  <span>{formatDateTime(batch.createdAt)}</span>
+                </div>
+                <small>{batch.actorName}</small>
+                {batch.entries.length > 0 ? (
+                  <div className="staff-call-history__entries">
+                    {batch.entries.map((entry) => (
+                      <div className="staff-call-history__entry" key={entry.id}>
+                        <div>
+                          <strong>{entry.productName}</strong>
+                          {entry.variantName ? <small>{entry.variantName}</small> : null}
+                          {entry.removalReason ? <small>Lý do: {entry.removalReason}</small> : null}
+                        </div>
+                        <span>
+                          {entry.deltaQuantityMilli > 0 ? '+' : ''}
+                          {formatItemQuantity(
+                            entry.productType === 'TIME' ? 'QUANTITY' : entry.productType,
+                            entry.deltaQuantityMilli,
+                            entry.unitName,
+                          )}
+                          <small>
+                            {formatDecimal(entry.beforeQuantityMilli / 1000)} →{' '}
+                            {formatDecimal(entry.afterQuantityMilli / 1000)}
+                          </small>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <small>Khởi tạo đơn, chưa có mặt hàng.</small>
+                )}
+              </section>
+            ))}
+          </div>
+        ) : (
+          <Empty description="Đơn này không có lịch sử gọi món" />
+        )}
+      </Drawer>
 
       {isMobile ? (
         mobileView === 'PRODUCTS' ? (
@@ -5403,8 +5788,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                 type="button"
                 className="staff-product-picker-mobile__close-btn"
                 onClick={() => {
-                  setPickingCart([]);
-                  setCartPreviewOpen(false);
                   setMobileView('CART');
                 }}
                 aria-label="Thoát chọn món"
@@ -5478,14 +5861,19 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       .filter((p): p is number => p !== null);
                     const minPrice = prices.length > 0 ? Math.min(...prices) : null;
                     const maxPrice = prices.length > 0 ? Math.max(...prices) : null;
-                    const countInCart = pickingCart
-                      .filter((l) => l.product.productId === product.productId)
-                      .reduce((sum, l) => sum + Math.round(Number(l.quantityMilli) / 1000), 0);
+                    const effectiveCount = product.variants.reduce(
+                      (sum, variant) =>
+                        sum + effectiveVariantQuantityMilli(product.productId, variant.id) / 1000,
+                      0,
+                    );
+                    const committedCount = (quote.data?.items ?? [])
+                      .filter((item) => !item.promotionGift && item.productId === product.productId)
+                      .reduce((sum, item) => sum + item.quantityMilli / 1000, 0);
 
                     return (
                       <div
                         key={product.productId}
-                        className={`staff-product-compact-row ${countInCart > 0 ? 'is-selected' : ''}`}
+                        className={`staff-product-compact-row ${effectiveCount > 0 ? 'is-selected' : ''}`}
                         onClick={(e) => chooseProduct(product, e)}
                       >
                         <div
@@ -5506,6 +5894,9 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                             {product.productName}
                           </strong>
                           <div className="staff-product-compact-row__meta">
+                            {committedCount === 0 && effectiveCount > 0 ? (
+                              <span className="staff-product-compact-row__new-badge">New</span>
+                            ) : null}
                             {product.variants.length > 1 ? (
                               <span className="staff-product-compact-row__variant-badge">
                                 {product.variants.length} phiên bản
@@ -5526,7 +5917,9 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                         </div>
 
                         <div className="staff-product-compact-row__action">
-                          {countInCart > 0 ? (
+                          {effectiveCount > 0 &&
+                          product.productType === 'QUANTITY' &&
+                          product.variants.length === 1 ? (
                             <div
                               className="staff-product-compact-stepper"
                               onClick={(e) => e.stopPropagation()}
@@ -5536,30 +5929,15 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                                 className="staff-product-compact-stepper__btn minus"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setPickingCart((prev) => {
-                                    const idx = prev.findLastIndex(
-                                      (l) => l.product.productId === product.productId,
-                                    );
-                                    if (idx === -1) return prev;
-                                    const target = prev[idx];
-                                    if (!target) return prev;
-                                    if (target.quantityMilli > 1000) {
-                                      const next = [...prev];
-                                      next[idx] = {
-                                        ...target,
-                                        quantityMilli: target.quantityMilli - 1000,
-                                      };
-                                      return next;
-                                    }
-                                    return prev.filter((_, i) => i !== idx);
-                                  });
+                                  const variant = product.variants[0];
+                                  if (variant) decrementVariant(product, variant);
                                 }}
                                 aria-label="Giảm"
                               >
                                 −
                               </button>
                               <span className="staff-product-compact-stepper__count">
-                                {countInCart}
+                                {formatDecimal(effectiveCount)}
                               </span>
                               <button
                                 type="button"
@@ -5600,66 +5978,24 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                 type="button"
                 className="staff-product-picker-mobile__cart-btn"
                 ref={cartIconRef}
-                onClick={() => {
-                  if (pickingCart.length === 0) {
-                    messageApi.info('Chưa có món nào trong giỏ hàng.');
-                    return;
-                  }
-                  setCartPreviewOpen(true);
-                }}
+                onClick={() => setMobileView('CART')}
               >
                 <ShoppingCartOutlined />
-                <span className="staff-product-picker-mobile__cart-count">{pickingCartCount}</span>
+                <span className="staff-product-picker-mobile__cart-count">
+                  {pendingChangeRows.length}
+                </span>
               </button>
               <div className="staff-product-picker-mobile__bottom-actions">
                 <b className="staff-product-picker-mobile__bottom-price">
-                  {formatMoney(pickingCartTotal)}
+                  {formatMoney(
+                    pendingChangeRows.reduce((sum, change) => sum + change.amountDeltaVnd, 0),
+                  )}
                 </b>
                 <Button
                   type="primary"
                   size="large"
                   onClick={() => {
-                    if (pickingCart.length === 0) {
-                      messageApi.warning('Vui lòng chọn ít nhất một món vào giỏ hàng.');
-                      return;
-                    }
-                    // Xác nhận thêm các món từ pickingCart vào đơn hàng (draftLines / modifiedItemQuantities)
-                    setDraftLines((prev) => {
-                      const next = [...prev];
-                      for (const line of pickingCart) {
-                        const savedMatch =
-                          !isNew &&
-                          quote.data?.items?.find(
-                            (it) =>
-                              it.productId === line.product.productId &&
-                              (it.variantId ?? null) === (line.variant.id ?? null) &&
-                              !it.promotionGift,
-                          );
-                        if (savedMatch && line.product.productType !== 'WEIGHT' && !line.note) {
-                          setModifiedItemQuantities((prevMod) => {
-                            const cur = prevMod[savedMatch.id] ?? savedMatch.quantityMilli;
-                            return { ...prevMod, [savedMatch.id]: cur + line.quantityMilli };
-                          });
-                        } else {
-                          const found = next.find(
-                            (l) =>
-                              l.variant.id === line.variant.id &&
-                              l.variant.salePriceVnd === line.variant.salePriceVnd &&
-                              l.note === line.note,
-                          );
-                          if (found && line.product.productType !== 'WEIGHT') {
-                            found.quantityMilli += line.quantityMilli;
-                          } else {
-                            next.push(line);
-                          }
-                        }
-                      }
-                      return next;
-                    });
-                    setPickingCart([]);
-                    setCartPreviewOpen(false);
                     setMobileView('CART');
-                    messageApi.success('Đã thêm các món vào đơn hàng.');
                   }}
                   className="staff-product-picker-mobile__done-btn"
                 >
@@ -5805,7 +6141,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
               >
                 <span className="staff-order-mobile-section-title">
                   Mặt hàng đã gọi (
-                  {allCurrentItems.length +
+                  {committedDisplayItems.length +
                     (quote.data?.time ||
                     (isNew &&
                       orderType === 'DINE_IN' &&
@@ -5816,6 +6152,19 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       : 0)}
                   )
                 </span>
+                {!isNew && quote.data?.order.hasCallHistory ? (
+                  <button
+                    type="button"
+                    className="staff-order-mobile-history-btn"
+                    aria-label="Lịch sử gọi món"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setCallHistoryOpen(true);
+                    }}
+                  >
+                    <HistoryOutlined />
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className="staff-order-mobile-collapse-btn"
@@ -5963,8 +6312,10 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                     </div>
                   ) : null}
 
-                  {/* 2. Order items (Draft, Saved, and Realtime Gift items) */}
-                  {displayedItems.map((item) => {
+                  {pendingChangesPanel}
+
+                  {/* 2. Items already committed to the order */}
+                  {committedDisplayItems.map((item) => {
                     const isDraftLine = draftLines.some((l) => l.id === item.id);
                     const catalogProd = catalog.data?.find((p) => p.productId === item.productId);
                     const qtyInt = Math.round(Number(item.quantityMilli) / 1000);
@@ -6193,7 +6544,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                     );
                   })}
 
-                  {allCurrentItems.length === 0 &&
+                  {committedDisplayItems.length === 0 &&
+                    pendingChangeRows.length === 0 &&
                     !(
                       isNew &&
                       orderType === 'DINE_IN' &&
@@ -6208,8 +6560,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                           type="dashed"
                           icon={<PlusOutlined />}
                           onClick={() => {
-                            setPickingCart([]);
-                            setCartPreviewOpen(false);
                             setMobileView('PRODUCTS');
                           }}
                         >
@@ -6280,8 +6630,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
               type="button"
               className="staff-order-mobile-fab"
               onClick={() => {
-                setPickingCart([]);
-                setCartPreviewOpen(false);
                 setMobileView('PRODUCTS');
               }}
             >
@@ -6317,7 +6665,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       icon={<PlayCircleOutlined />}
                       loading={resuming}
                       onClick={() => setResumeModalOpen(true)}
-                      className="staff-order-mobile-btn staff-order-mobile-btn--save"
+                      className={`staff-order-mobile-btn staff-order-mobile-btn--save${emphasizeSaveButton ? ' staff-save-button--attention' : ''}`}
                     >
                       Tiếp tục chơi
                     </Button>
@@ -6610,59 +6958,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
               <div className="staff-cart-scroll-region">
                 {cartTab === 'DETAILS' ? (
                   <div className="staff-cart-tab-content">
-                    {!isNew && draftDisplayItems.length > 0 ? (
-                      <section className="staff-additional-products">
-                        <div className="staff-order-section-heading">
-                          <Typography.Title level={4}>Sản phẩm gọi thêm</Typography.Title>
-                          <Button
-                            type="text"
-                            icon={<DeleteOutlined />}
-                            aria-label="Xóa tất cả sản phẩm gọi thêm"
-                            onClick={() => setDraftLines([])}
-                          />
-                        </div>
-                        <div className="staff-compact-order-list">
-                          {draftDisplayItems.map((item) => (
-                            <SwipeableOrderItemRow
-                              key={item.id}
-                              onClick={() =>
-                                setEditingItem({
-                                  source: 'DRAFT',
-                                  ...item,
-                                  note: item.note ?? '',
-                                })
-                              }
-                              onDelete={() =>
-                                setDraftLines((lines) =>
-                                  lines.filter((line) => line.id !== item.id),
-                                )
-                              }
-                            >
-                              <span className="staff-order-quantity">
-                                {formatItemQuantity(
-                                  item.productType,
-                                  item.quantityMilli,
-                                  item.unitName,
-                                )}
-                              </span>
-                              <span className="staff-order-item-name">
-                                <strong>{item.productName}</strong>
-                                <small>{item.variantName}</small>
-                                <ItemDiscountDetail
-                                  amount={item.discountAmountVnd}
-                                  reason={item.discountReason}
-                                />
-                              </span>
-                              <b>{formatMoney(item.netLineTotalVnd)}</b>
-                            </SwipeableOrderItemRow>
-                          ))}
-                        </div>
-                      </section>
-                    ) : null}
+                    {pendingChangesPanel}
                     <div className="staff-cart-section-header">
                       <Typography.Title level={4} style={{ margin: 0 }}>
                         Sản phẩm đã gọi (
-                        {displayedItems.length +
+                        {committedDisplayItems.length +
                           (quote.data?.time ||
                           (isNew &&
                             orderType === 'DINE_IN' &&
@@ -6673,6 +6973,16 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                             : 0)}
                         )
                       </Typography.Title>
+                      {!isNew && quote.data?.order.hasCallHistory ? (
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={<HistoryOutlined />}
+                          onClick={() => setCallHistoryOpen(true)}
+                        >
+                          Lịch sử
+                        </Button>
+                      ) : null}
                       <Button
                         type="text"
                         size="small"
@@ -6897,7 +7207,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                         ) : null}
                         {quote.isLoading && !isNew ? (
                           <Skeleton active />
-                        ) : displayedItems.length === 0 &&
+                        ) : committedDisplayItems.length === 0 &&
+                          pendingChangeRows.length === 0 &&
                           !(
                             isNew &&
                             orderType === 'DINE_IN' &&
@@ -6911,7 +7222,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                           />
                         ) : (
                           <div className="staff-compact-order-list">
-                            {displayedItems.map((item) => (
+                            {committedDisplayItems.map((item) => (
                               <SwipeableOrderItemRow
                                 key={item.id}
                                 locked={Boolean(item.promotionGift)}
@@ -7213,6 +7524,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       }
                       loading={saving}
                       onClick={isNew ? saveOrder : () => void saveAdditionalItems(false)}
+                      className={emphasizeSaveButton ? 'staff-save-button--attention' : ''}
                     >
                       Lưu đơn
                     </Button>
@@ -7241,24 +7553,72 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       <Modal
         open={Boolean(variantProduct)}
         title={`Chọn phiên bản · ${variantProduct?.productName ?? ''}`}
+        width={480}
         footer={null}
         onCancel={() => setVariantProduct(null)}
       >
         <div className="staff-variant-picker">
-          {variantProduct?.variants.map((variant) => (
-            <button
-              type="button"
-              key={variant.id}
-              onClick={(e) => chooseVariant(variantProduct, variant, e)}
-            >
-              <span>{variant.name}</span>
-              <b>
-                {variant.salePriceVnd === null
-                  ? 'Nhập giá'
-                  : `${formatMoney(variant.salePriceVnd)}${variantProduct.productType === 'WEIGHT' ? `/${getWeightUnit(variantProduct.unitName)}` : ''}`}
-              </b>
-            </button>
-          ))}
+          {variantProduct?.variants.map((variant) => {
+            const quantityMilli = effectiveVariantQuantityMilli(
+              variantProduct.productId,
+              variant.id,
+            );
+            const wasCommitted = (quote.data?.items ?? []).some(
+              (item) =>
+                !item.promotionGift &&
+                item.productId === variantProduct.productId &&
+                item.variantId === variant.id,
+            );
+            return (
+              <div className="staff-variant-picker__row" key={variant.id}>
+                <button
+                  type="button"
+                  className="staff-variant-picker__info"
+                  onClick={(event) => incrementVariantFromPicker(variantProduct, variant, event)}
+                >
+                  <span>
+                    {variant.name}
+                    {!wasCommitted && quantityMilli > 0 ? (
+                      <small className="staff-variant-picker__new">New</small>
+                    ) : null}
+                  </span>
+                  <b>
+                    {variant.salePriceVnd === null
+                      ? 'Nhập giá'
+                      : `${formatMoney(variant.salePriceVnd)}${variantProduct.productType === 'WEIGHT' ? `/${getWeightUnit(variantProduct.unitName)}` : ''}`}
+                  </b>
+                </button>
+                {variantProduct.productType === 'QUANTITY' ? (
+                  <div className="staff-variant-stepper">
+                    <button
+                      type="button"
+                      className="staff-variant-stepper__btn"
+                      disabled={quantityMilli <= 0}
+                      onClick={() => decrementVariant(variantProduct, variant)}
+                    >
+                      −
+                    </button>
+                    <span className="staff-variant-stepper__count">
+                      {formatDecimal(quantityMilli / 1000)}
+                    </span>
+                    <button
+                      type="button"
+                      className="staff-variant-stepper__btn"
+                      onClick={(event) =>
+                        incrementVariantFromPicker(variantProduct, variant, event)
+                      }
+                    >
+                      +
+                    </button>
+                  </div>
+                ) : (
+                  <Button onClick={(event) => chooseVariant(variantProduct, variant, event)}>
+                    Chọn
+                  </Button>
+                )}
+              </div>
+            );
+          })}
         </div>
       </Modal>
       <Modal
@@ -8277,195 +8637,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
             await saveCustomerInfo(customer);
             if (customer) setCustomerModalOpen(false);
           }}
-        />
-      </Modal>
-
-      {/* Modal Xem trước đơn hàng (Mobile Cart Review) */}
-      <Modal
-        open={isMobile && cartPreviewOpen}
-        footer={null}
-        closable={false}
-        centered
-        width={480}
-        className="staff-cart-preview-modal"
-        styles={{
-          body: { padding: 0 },
-        }}
-        onCancel={() => setCartPreviewOpen(false)}
-      >
-        <div className="staff-cart-preview-container">
-          {/* Header */}
-          <div className="staff-cart-preview-header">
-            <button
-              type="button"
-              className="staff-cart-preview-clear-btn"
-              onClick={() => {
-                setPickingCart([]);
-                setCartPreviewOpen(false);
-              }}
-            >
-              Xoá tất cả
-            </button>
-            <strong className="staff-cart-preview-title">Xem trước đơn hàng</strong>
-            <button
-              type="button"
-              className="staff-cart-preview-close-btn"
-              onClick={() => setCartPreviewOpen(false)}
-              aria-label="Đóng xem trước"
-            >
-              <CloseOutlined />
-            </button>
-          </div>
-
-          {/* List */}
-          <div className="staff-cart-preview-list">
-            {pickingCart.length === 0 ? (
-              <div className="staff-cart-preview-empty">Giỏ hàng đang trống</div>
-            ) : (
-              pickingCart.map((item, index) => {
-                const lineTotal = calculateLineTotal(
-                  item.variant.salePriceVnd ?? 0,
-                  item.quantityMilli,
-                );
-                return (
-                  <div key={item.id || index} className="staff-cart-preview-item">
-                    <div className="staff-cart-preview-item__top">
-                      <div className="staff-cart-preview-item__name-wrap">
-                        <strong className="staff-cart-preview-item__name">
-                          {item.product.productName}
-                        </strong>
-                        {item.variant.name && item.variant.name !== 'Mặc định' && (
-                          <span className="staff-cart-preview-item__variant">
-                            ({item.variant.name})
-                          </span>
-                        )}
-                      </div>
-                      <span className="staff-cart-preview-item__price">
-                        {formatMoney(lineTotal)}
-                      </span>
-                    </div>
-
-                    <div
-                      className="staff-cart-preview-item__note-row"
-                      onClick={() => {
-                        setEditingNoteItemIndex(index);
-                        setItemNoteDraft(item.note ?? '');
-                      }}
-                    >
-                      <FileTextOutlined style={{ color: '#0975f7', marginRight: 6 }} />
-                      <span className="staff-cart-preview-item__note-label">Ghi chú:</span>
-                      <span className="staff-cart-preview-item__note-val">
-                        {item.note ? item.note : 'Không có'}
-                      </span>
-                    </div>
-
-                    <div className="staff-cart-preview-item__bottom">
-                      <button
-                        type="button"
-                        className="staff-cart-preview-item__del-btn"
-                        onClick={() => {
-                          setPickingCart((prev) => prev.filter((_, i) => i !== index));
-                        }}
-                      >
-                        Xoá
-                      </button>
-                      <div className="staff-cart-preview-stepper">
-                        <button
-                          type="button"
-                          className="staff-cart-preview-stepper__btn"
-                          onClick={() => {
-                            if (item.quantityMilli <= 1000) {
-                              setPickingCart((prev) => prev.filter((_, i) => i !== index));
-                            } else {
-                              setPickingCart((prev) =>
-                                prev.map((l, i) =>
-                                  i === index ? { ...l, quantityMilli: l.quantityMilli - 1000 } : l,
-                                ),
-                              );
-                            }
-                          }}
-                        >
-                          <MinusOutlined />
-                        </button>
-                        <span className="staff-cart-preview-stepper__val">
-                          {item.product.productType === 'WEIGHT'
-                            ? `${item.quantityMilli / 1000} ${getWeightUnit(item.product.unitName)}`
-                            : item.quantityMilli / 1000}
-                        </span>
-                        <button
-                          type="button"
-                          className="staff-cart-preview-stepper__btn"
-                          onClick={() => {
-                            setPickingCart((prev) =>
-                              prev.map((l, i) =>
-                                i === index ? { ...l, quantityMilli: l.quantityMilli + 1000 } : l,
-                              ),
-                            );
-                          }}
-                        >
-                          <PlusOutlined />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-
-          {/* Sticky Bottom Bar inside Preview */}
-          <div className="staff-cart-preview-footer">
-            <div className="staff-product-picker-mobile__cart-btn">
-              <ShoppingCartOutlined />
-              <span className="staff-product-picker-mobile__cart-count">{pickingCartCount}</span>
-            </div>
-            <div className="staff-product-picker-mobile__bottom-actions">
-              <b className="staff-product-picker-mobile__bottom-price">
-                {formatMoney(pickingCartTotal)}
-              </b>
-              <Button
-                type="primary"
-                size="large"
-                onClick={() => {
-                  // Đóng xem trước và quay ra lại danh sách món
-                  setCartPreviewOpen(false);
-                }}
-                className="staff-product-picker-mobile__done-btn"
-              >
-                Tiếp tục
-              </Button>
-            </div>
-          </div>
-        </div>
-      </Modal>
-
-      {/* Note Editing Modal */}
-      <Modal
-        open={editingNoteItemIndex !== null}
-        title="Ghi chú món"
-        okText="Lưu ghi chú"
-        cancelText="Hủy"
-        onOk={() => {
-          if (editingNoteItemIndex !== null) {
-            setPickingCart((prev) =>
-              prev.map((l, i) =>
-                i === editingNoteItemIndex ? { ...l, note: itemNoteDraft.trim() || null } : l,
-              ),
-            );
-            setEditingNoteItemIndex(null);
-            setItemNoteDraft('');
-          }
-        }}
-        onCancel={() => {
-          setEditingNoteItemIndex(null);
-          setItemNoteDraft('');
-        }}
-      >
-        <Input.TextArea
-          rows={3}
-          placeholder="Nhập ghi chú (ví dụ: ít đá, không đường, cay...)"
-          value={itemNoteDraft}
-          onChange={(e) => setItemNoteDraft(e.target.value)}
         />
       </Modal>
 

@@ -39,7 +39,8 @@ describe('online POS vertical slice', () => {
     const catalog = new CatalogService(env);
     const area = await catalog.createNamed(storeId, 'areas', 'Khu A');
     areaId = area.id;
-    const unit = await catalog.createNamed(storeId, 'units', 'Chai');
+    const existingUnits = (await catalog.listNamed(storeId, 'units')).results;
+    const unit = existingUnits.find((u) => u.name === 'Chai')!;
     const timeProduct = await catalog.createProduct(storeId, {
       name: 'Giờ Pool',
       productType: 'TIME',
@@ -290,6 +291,188 @@ describe('online POS vertical slice', () => {
       .bind(table.id)
       .first<{ status: string; version: number }>();
     expect(after).toEqual({ status: 'AVAILABLE', version: 1 });
+  });
+
+  it('records each saved item delta as a paged call batch while keeping merged totals', async () => {
+    const pos = new PosService(env);
+    const opened = await pos.openOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-call-batch-open',
+      idempotencyKey: 'call-batch-open-001',
+      values: {
+        orderType: 'TAKEAWAY',
+        items: [
+          {
+            productId,
+            variantId,
+            quantityMilli: 2_000,
+            note: null,
+            discount: null,
+          },
+        ],
+      },
+    });
+    expect(opened.callBatch).toMatchObject({ sequenceNo: 1 });
+    const savedItem = opened.quote.items.find((item) => item.productId === productId)!;
+
+    const adjusted = await pos.saveOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-call-batch-adjust',
+      idempotencyKey: 'call-batch-adjust-001',
+      orderId: opened.order.id,
+      values: {
+        expectedOrderVersion: opened.order.version,
+        nextAction: 'STAY',
+        addedItems: [],
+        updatedItems: [{ itemId: savedItem.id, quantityMilli: 3_000 }],
+      },
+    });
+    expect(adjusted.quote.items.find((item) => item.id === savedItem.id)?.quantityMilli).toBe(
+      3_000,
+    );
+    expect(adjusted.callBatch).toMatchObject({
+      sequenceNo: 2,
+      entries: [
+        {
+          changeType: 'ADJUST',
+          beforeQuantityMilli: 2_000,
+          deltaQuantityMilli: 1_000,
+          afterQuantityMilli: 3_000,
+        },
+      ],
+    });
+
+    const edited = await pos.saveOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-call-batch-edit',
+      idempotencyKey: 'call-batch-edit-001',
+      orderId: opened.order.id,
+      values: {
+        expectedOrderVersion: adjusted.order.version,
+        nextAction: 'STAY',
+        addedItems: [],
+        updatedItems: [
+          {
+            itemId: savedItem.id,
+            quantityMilli: 3_000,
+            note: 'Ít đá',
+            discount: { type: 'FIXED', value: 5_000, reason: 'Ưu đãi tại quầy' },
+          },
+        ],
+      },
+    });
+    expect(edited.quote.items.find((item) => item.id === savedItem.id)).toMatchObject({
+      note: 'Ít đá',
+      discountType: 'FIXED',
+      discountAmountVnd: 5_000,
+      netLineTotalVnd: 55_000,
+    });
+    expect(edited.callBatch).toMatchObject({
+      sequenceNo: 3,
+      entries: [{ changeType: 'EDIT', afterNote: 'Ít đá' }],
+    });
+
+    const removed = await pos.saveOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-call-batch-remove',
+      idempotencyKey: 'call-batch-remove-001',
+      orderId: opened.order.id,
+      values: {
+        expectedOrderVersion: edited.order.version,
+        nextAction: 'STAY',
+        addedItems: [],
+        updatedItems: [{ itemId: savedItem.id, quantityMilli: 0, removalReason: 'Khách đổi ý' }],
+      },
+    });
+    expect(removed.quote.items.some((item) => item.id === savedItem.id)).toBe(false);
+
+    const history = await pos.listOrderCallBatches(storeId, opened.order.id, undefined, 20);
+    expect(history.items.map((batch) => batch.sequenceNo)).toEqual([4, 3, 2, 1]);
+    expect(history.items[0]).toMatchObject({
+      entries: [
+        {
+          changeType: 'REMOVE',
+          deltaQuantityMilli: -3_000,
+          removalReason: 'Khách đổi ý',
+        },
+      ],
+    });
+  });
+
+  it('saves a pending call batch and begins checkout through one command response', async () => {
+    const catalog = new CatalogService(env);
+    const table = await catalog.createTable({
+      storeId,
+      areaId,
+      timeProductId,
+      name: 'Bàn save checkout command',
+      sortOrder: 13,
+    });
+    const pos = new PosService(env);
+    const opened = await pos.openOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-save-checkout-open',
+      idempotencyKey: 'save-checkout-open-001',
+      values: {
+        orderType: 'DINE_IN',
+        tableId: table.id,
+        expectedTableVersion: 1,
+        items: [],
+      },
+    });
+    const result = await pos.saveOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-save-checkout',
+      idempotencyKey: 'save-checkout-001',
+      orderId: opened.order.id,
+      values: {
+        expectedOrderVersion: opened.order.version,
+        nextAction: 'BEGIN_CHECKOUT',
+        addedItems: [{ productId, variantId, quantityMilli: 1_000, note: null, discount: null }],
+        updatedItems: [],
+      },
+    });
+    expect(result.callBatch).toMatchObject({ sequenceNo: 2 });
+    expect('paymentSnapshot' in result ? result.paymentSnapshot : null).toMatchObject({
+      status: 'PAYMENT_PENDING',
+    });
+    expect(result.quote.order.status).toBe('PAYMENT_PENDING');
+  });
+
+  it('does not invent call-batch history for legacy orders', async () => {
+    const pos = new PosService(env);
+    const legacy = await pos.createTakeaway({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-legacy-history-open',
+      idempotencyKey: 'legacy-history-open-001',
+      note: null,
+    });
+    const before = await pos.quote(storeId, legacy.orderId);
+    expect(before.order.hasCallHistory).toBe(false);
+
+    const saved = await pos.saveOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-legacy-history-save',
+      idempotencyKey: 'legacy-history-save-001',
+      orderId: legacy.orderId,
+      values: {
+        expectedOrderVersion: before.order.version,
+        nextAction: 'STAY',
+        addedItems: [{ productId, variantId, quantityMilli: 1_000, note: null, discount: null }],
+        updatedItems: [],
+      },
+    });
+    expect(saved.quote.order.hasCallHistory).toBe(false);
+    expect('callBatch' in saved).toBe(false);
+    expect((await pos.listOrderCallBatches(storeId, legacy.orderId)).items).toEqual([]);
   });
 
   it('freezes a payment snapshot and consumes it exactly once at checkout', async () => {

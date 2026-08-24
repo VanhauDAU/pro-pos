@@ -1,5 +1,6 @@
 import {
   ArrowLeftOutlined,
+  CloudDownloadOutlined,
   DeleteOutlined,
   EditOutlined,
   PlusOutlined,
@@ -32,8 +33,10 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
+import { SAMPLE_UNIT_GROUPS } from '@contracts/catalog';
 
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
+
 
 interface Unit {
   id: string;
@@ -103,6 +106,7 @@ export function OwnerUnitSettingsPage() {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [open, setOpen] = useState(false);
+  const [seeding, setSeeding] = useState(false);
   const [form] = Form.useForm<{ name: string }>();
   const authContext = useAuthContext();
   const units = useQuery({
@@ -126,6 +130,27 @@ export function OwnerUnitSettingsPage() {
       messageApi.success('Đã thêm đơn vị.');
     } catch (error) {
       messageApi.error(errorMessage(error, 'Không thể thêm đơn vị.'));
+    }
+  };
+
+  const seed = async () => {
+    setSeeding(true);
+    try {
+      const res = await jsonRequest<{ insertedCount: number }>(
+        '/api/v1/owner/catalog/units/seed',
+        {},
+        { headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' } },
+      );
+      await queryClient.invalidateQueries({ queryKey: UNIT_QUERY });
+      if (res.insertedCount > 0) {
+        messageApi.success(`Đã bổ sung ${res.insertedCount} đơn vị tính mẫu.`);
+      } else {
+        messageApi.info('Cửa hàng đã có đầy đủ tất cả đơn vị tính mẫu.');
+      }
+    } catch (error) {
+      messageApi.error(errorMessage(error, 'Không thể nạp đơn vị mẫu.'));
+    } finally {
+      setSeeding(false);
     }
   };
 
@@ -176,9 +201,14 @@ export function OwnerUnitSettingsPage() {
             Quản lý đơn vị dùng cho mặt hàng số lượng và trọng lượng.
           </Typography.Text>
         </div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
-          Thêm đơn vị
-        </Button>
+        <Space wrap>
+          <Button icon={<CloudDownloadOutlined />} loading={seeding} onClick={seed}>
+            Nạp đơn vị mẫu
+          </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
+            Thêm đơn vị
+          </Button>
+        </Space>
       </div>
       <Card className="owner-unit-card">
         <Input
@@ -232,6 +262,35 @@ export function OwnerUnitSettingsPage() {
           >
             <Input autoFocus maxLength={120} placeholder="Ví dụ: Cái, Chai, Ly, Kilogram" />
           </Form.Item>
+          <div style={{ marginTop: 12 }}>
+            <Typography.Text
+              type="secondary"
+              style={{ fontSize: 13, display: 'block', marginBottom: 8 }}
+            >
+              Gợi ý đơn vị mẫu theo ngành hàng (bấm để chọn nhanh):
+            </Typography.Text>
+            {SAMPLE_UNIT_GROUPS.map((group) => (
+              <div key={group.category} style={{ marginBottom: 10 }}>
+                <Typography.Text
+                  strong
+                  style={{ fontSize: 12, display: 'block', marginBottom: 4 }}
+                >
+                  {group.category}:
+                </Typography.Text>
+                <Space size={[4, 6]} wrap>
+                  {group.units.map((unitName) => (
+                    <Tag
+                      key={unitName}
+                      style={{ cursor: 'pointer', marginInlineEnd: 4, marginBottom: 4 }}
+                      onClick={() => form.setFieldsValue({ name: unitName })}
+                    >
+                      {unitName}
+                    </Tag>
+                  ))}
+                </Space>
+              </div>
+            ))}
+          </div>
         </Form>
       </Modal>
     </div>

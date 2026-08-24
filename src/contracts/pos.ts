@@ -70,13 +70,36 @@ export const openOrderCommandSchema = z
 export const saveExistingOrderCommandSchema = z
   .object({
     expectedOrderVersion: z.number().int().positive(),
+    nextAction: z.enum(['STAY', 'BEGIN_CHECKOUT']).default('STAY'),
     addedItems: z.array(saveOrderItemSchema).max(100).default([]),
     updatedItems: z
       .array(
-        z.object({
-          itemId: z.uuid(),
-          quantityMilli: z.number().int().positive().max(1_000_000_000),
-        }),
+        z
+          .object({
+            itemId: z.uuid(),
+            quantityMilli: z.number().int().nonnegative().max(1_000_000_000),
+            variantId: z.uuid().nullable().optional(),
+            enteredUnitPriceVnd: z.number().int().nonnegative().optional(),
+            note: z.string().trim().max(500).nullable().optional(),
+            discount: z
+              .object({
+                type: z.enum(['FIXED', 'PERCENT']),
+                value: z.number().int().nonnegative(),
+                reason: z.string().trim().min(1, 'Vui lòng nhập lý do giảm giá.').max(300),
+              })
+              .nullable()
+              .optional(),
+            removalReason: z.string().trim().max(500).optional(),
+          })
+          .superRefine((value, context) => {
+            if (value.quantityMilli === 0 && !value.removalReason?.trim()) {
+              context.addIssue({
+                code: 'custom',
+                path: ['removalReason'],
+                message: 'Vui lòng nhập lý do xóa món.',
+              });
+            }
+          }),
       )
       .max(100)
       .default([]),
@@ -91,6 +114,41 @@ export const saveExistingOrderCommandSchema = z
 
 export type OpenOrderCommandInput = z.infer<typeof openOrderCommandSchema>;
 export type SaveExistingOrderCommandInput = z.infer<typeof saveExistingOrderCommandSchema>;
+
+export interface OrderCallBatchEntryDto {
+  id: string;
+  itemId: string | null;
+  changeType: 'ADD' | 'ADJUST' | 'EDIT' | 'REMOVE';
+  productId: string;
+  variantId: string | null;
+  productType: 'QUANTITY' | 'WEIGHT' | 'TIME';
+  productName: string;
+  variantName: string | null;
+  unitName: string | null;
+  unitPriceVnd: number;
+  beforeQuantityMilli: number;
+  deltaQuantityMilli: number;
+  afterQuantityMilli: number;
+  beforeNote: string | null;
+  afterNote: string | null;
+  beforeDiscount: { type: 'FIXED' | 'PERCENT'; value: number; reason: string | null } | null;
+  afterDiscount: { type: 'FIXED' | 'PERCENT'; value: number; reason: string | null } | null;
+  removalReason: string | null;
+}
+
+export interface OrderCallBatchDto {
+  id: string;
+  sequenceNo: number;
+  actorId: string | null;
+  actorName: string;
+  createdAt: number;
+  entries: OrderCallBatchEntryDto[];
+}
+
+export interface OrderCallBatchPageDto {
+  items: OrderCallBatchDto[];
+  nextBeforeSequence: number | null;
+}
 
 export const updateOrderItemSchema = z.object({
   expectedOrderVersion: z.number().int().positive(),

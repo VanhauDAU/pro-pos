@@ -3219,7 +3219,7 @@ body,
   gap: 10px;
 }
 
-.staff-variant-picker button {
+.staff-variant-picker > button {
   padding: 14px 16px;
   border: 1px solid #e1e5ea;
   border-radius: 8px;
@@ -19126,4 +19126,374 @@ body {
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.06em;
+}
+/* Unified order draft and call-history surfaces (desktop, tablet, mobile). */
+.staff-pending-changes {
+  width: 100%;
+  margin-bottom: 12px;
+  padding: 10px;
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.staff-pending-changes__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 0 0 8px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.staff-pending-changes__header > strong {
+  min-width: 0;
+  color: #111827;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.staff-pending-changes__header > button {
+  flex: 0 0 auto;
+  max-width: 50%;
+  padding: 3px 0;
+  overflow: hidden;
+  border: 0;
+  color: #6b7280;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.staff-pending-changes__header > button:hover {
+  color: #111827;
+}
+
+.staff-pending-changes__list,
+.staff-call-history,
+.staff-call-history__entries {
+  display: grid;
+  gap: 0;
+}
+
+.staff-pending-change-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 0;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.staff-pending-change-row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.staff-pending-change-row__quantity {
+  min-width: 36px;
+  color: #374151;
+  font-weight: 700;
+}
+
+.staff-pending-change-row__content {
+  display: grid;
+  min-width: 0;
+}
+
+.staff-pending-change-row__content strong,
+.staff-pending-change-row__content small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.staff-pending-change-row b.is-negative {
+  color: #b42318;
+}
+
+.staff-pending-change-row__new {
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.staff-pending-change-row__undo {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: #6b7280;
+  background: transparent;
+  cursor: pointer;
+}
+
+.staff-pending-change-row__undo:hover {
+  color: #111827;
+  background: #f3f4f6;
+}
+
+.staff-product-compact-row__new-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: #0958d9;
+  background: #e6f4ff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.staff-variant-picker__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 58px;
+  padding: 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.staff-variant-picker__info {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.staff-variant-picker__info > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.staff-variant-picker__info b {
+  color: #111827;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.staff-variant-picker__new {
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.staff-variant-stepper {
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-columns: 30px 34px 30px;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  background: #fff;
+}
+
+.staff-variant-stepper__btn {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  color: #111827;
+  background: #f9fafb;
+  font: inherit;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.staff-variant-stepper__btn:first-child {
+  border-right: 1px solid #e5e7eb;
+}
+
+.staff-variant-stepper__btn:last-child {
+  border-left: 1px solid #e5e7eb;
+}
+
+.staff-variant-stepper__btn:disabled {
+  color: #d1d5db;
+  cursor: default;
+}
+
+.staff-variant-stepper__count {
+  min-width: 0;
+  color: #111827;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.staff-order-mobile-history-btn {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  margin-left: auto;
+  border: 0;
+  border-radius: 8px;
+  color: #0958d9;
+  background: #e6f4ff;
+}
+
+.staff-call-history__batch {
+  padding: 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.staff-call-history__heading,
+.staff-call-history__entry {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.staff-call-history__entries {
+  margin-top: 10px;
+}
+
+.staff-call-history__entry {
+  padding-top: 8px;
+  border-top: 1px dashed #e5e7eb;
+}
+
+.staff-call-history__entry > div,
+.staff-call-history__entry > span {
+  display: grid;
+}
+
+.staff-call-history__entry > span {
+  color: #0958d9;
+  font-weight: 700;
+  text-align: right;
+}
+
+/* Quiet save affordance: only active while the order has unsaved changes. */
+.staff-save-button--attention {
+  --staff-save-button-fill: #fff;
+  position: relative !important;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1.5px solid #aab4c2 !important;
+  background: transparent !important;
+  animation: staff-save-button-nudge 4.8s ease-in-out infinite;
+}
+
+.staff-save-button--attention::before,
+.staff-save-button--attention::after {
+  position: absolute;
+  content: '';
+  pointer-events: none;
+}
+
+.staff-save-button--attention::before {
+  z-index: 0;
+  inset: -110%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0 76%,
+    rgba(9, 117, 247, 0.12) 80%,
+    rgba(9, 117, 247, 0.9) 86%,
+    rgba(9, 117, 247, 0.12) 92%,
+    transparent 96% 100%
+  );
+  animation: staff-save-light-orbit 2.4s linear infinite;
+}
+
+.staff-save-button--attention::after {
+  z-index: 1;
+  inset: 2px;
+  border-radius: inherit;
+  background: var(--staff-save-button-fill);
+}
+
+.staff-save-button--attention > span,
+.staff-save-button--attention > .ant-btn-icon {
+  position: relative;
+  z-index: 2;
+}
+
+.staff-order-mobile-btn--save.staff-save-button--attention {
+  --staff-save-button-fill: #f8fafc;
+}
+
+@keyframes staff-save-light-orbit {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@keyframes staff-save-button-nudge {
+  0%,
+  88%,
+  100% {
+    translate: 0 0;
+  }
+
+  91% {
+    translate: -1px 0;
+  }
+
+  94% {
+    translate: 1px 0;
+  }
+
+  97% {
+    translate: -0.5px 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .staff-save-button--attention,
+  .staff-save-button--attention::before {
+    animation: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .staff-pending-changes {
+    width: auto;
+    margin: 8px 12px 12px;
+  }
+
+  .staff-pending-change-row {
+    grid-template-columns: auto minmax(0, 1fr) auto 26px;
+  }
+
+  .staff-pending-change-row > b,
+  .staff-pending-change-row > .ant-tag {
+    display: none;
+  }
+
+  .staff-pending-change-row__new {
+    grid-column: 3;
+    white-space: nowrap;
+  }
+
+  .staff-pending-change-row__undo {
+    grid-column: 4;
+  }
 }

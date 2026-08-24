@@ -19,9 +19,17 @@ describe('Owner unit settings', () => {
     });
     storeId = store.storeId;
     catalog = new CatalogService(env);
-    ({ id: unitId } = await catalog.createNamed(storeId, 'units', 'Chai'));
-    ({ id: unusedUnitId } = await catalog.createNamed(storeId, 'units', 'Cái'));
+    const existingUnits = (await catalog.listNamed(storeId, 'units')).results;
+    unitId = existingUnits.find((u) => u.name === 'Chai')!.id;
+    unusedUnitId = existingUnits.find((u) => u.name === 'Cái')!.id;
   });
+
+  it('seeds default units idempotently', async () => {
+    // Since store already has all default units, seed should insert 0
+    const res = await catalog.seedDefaultUnits(storeId);
+    expect(res.insertedCount).toBe(0);
+  });
+
 
   it('paginates units and returns active product usage counts', async () => {
     const category = await catalog.createNamed(storeId, 'categories', 'Đồ uống');

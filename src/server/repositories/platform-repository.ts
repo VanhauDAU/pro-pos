@@ -1,4 +1,6 @@
+import { DEFAULT_STORE_UNITS } from '@contracts/catalog';
 import type { StoreCapability } from '@contracts/platform';
+
 
 export class PlatformRepository {
   constructor(private readonly db: D1Database) {}
@@ -174,6 +176,14 @@ export class PlatformRepository {
           input.now,
           input.now,
         ),
+      ...DEFAULT_STORE_UNITS.map((unitName) =>
+        this.db
+          .prepare(
+            `INSERT INTO units (id, store_id, name, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?)`,
+          )
+          .bind(crypto.randomUUID(), input.storeId, unitName, input.now, input.now),
+      ),
     ];
 
     if (input.ownerPassword) {

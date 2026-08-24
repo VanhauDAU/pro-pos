@@ -35,6 +35,7 @@ export interface OrderRow {
   customer_name: string | null;
   customer_phone: string | null;
   customer_id: string | null;
+  has_call_history: 0 | 1;
 }
 
 export interface TimeSessionRow {
@@ -146,6 +147,52 @@ interface PromotionGiftInvoiceLineInput {
   discountAmountVnd: number;
   grossLineTotalVnd: number;
   snapshotJson: string;
+}
+
+export interface OrderCallBatchEntryInput {
+  itemId: string | null;
+  changeType: 'ADD' | 'ADJUST' | 'EDIT' | 'REMOVE';
+  productId: string;
+  variantId: string | null;
+  productType: 'QUANTITY' | 'WEIGHT' | 'TIME';
+  productName: string;
+  variantName: string | null;
+  unitName: string | null;
+  unitPriceVnd: number;
+  beforeQuantityMilli: number;
+  deltaQuantityMilli: number;
+  afterQuantityMilli: number;
+  beforeNote: string | null;
+  afterNote: string | null;
+  beforeDiscountJson: string | null;
+  afterDiscountJson: string | null;
+  removalReason: string | null;
+}
+
+export interface OrderCallBatchRow {
+  batchId: string;
+  sequenceNo: number;
+  actorId: string | null;
+  actorName: string | null;
+  createdAt: number;
+  entryId: string | null;
+  itemId: string | null;
+  changeType: 'ADD' | 'ADJUST' | 'EDIT' | 'REMOVE' | null;
+  productId: string | null;
+  variantId: string | null;
+  productType: 'QUANTITY' | 'WEIGHT' | 'TIME' | null;
+  productName: string | null;
+  variantName: string | null;
+  unitName: string | null;
+  unitPriceVnd: number | null;
+  beforeQuantityMilli: number | null;
+  deltaQuantityMilli: number | null;
+  afterQuantityMilli: number | null;
+  beforeNote: string | null;
+  afterNote: string | null;
+  beforeDiscountJson: string | null;
+  afterDiscountJson: string | null;
+  removalReason: string | null;
 }
 
 export class PosRepository {
@@ -261,6 +308,140 @@ export class PosRepository {
           input.now,
         ),
     ];
+  }
+
+  buildOrderCallBatchStatements(input: {
+    batchId: string;
+    storeId: string;
+    orderId: string;
+    orderType: 'DINE_IN' | 'TAKEAWAY';
+    actorId: string;
+    requestId: string;
+    entries: OrderCallBatchEntryInput[];
+    now: number;
+  }) {
+    const statements: D1PreparedStatement[] = [
+      this.db
+        .prepare(
+          `INSERT INTO order_call_batches (
+            id, store_id, order_id, order_type, sequence_no,
+            actor_user_id, request_id, created_at
+          ) VALUES (
+            ?, ?, ?, ?,
+            (SELECT COALESCE(MAX(sequence_no), 0) + 1
+             FROM order_call_batches WHERE store_id = ? AND order_id = ?),
+            ?, ?, ?
+          )`,
+        )
+        .bind(
+          input.batchId,
+          input.storeId,
+          input.orderId,
+          input.orderType,
+          input.storeId,
+          input.orderId,
+          input.actorId,
+          input.requestId,
+          input.now,
+        ),
+    ];
+    for (const entry of input.entries) {
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO order_call_batch_entries (
+              id, store_id, batch_id, order_id, item_id, change_type,
+              product_id, variant_id, product_type, product_name_snapshot,
+              variant_name_snapshot, unit_name_snapshot, unit_price_snapshot,
+              before_quantity_milli, delta_quantity_milli, after_quantity_milli,
+              before_note, after_note, before_discount_json, after_discount_json,
+              removal_reason, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .bind(
+            crypto.randomUUID(),
+            input.storeId,
+            input.batchId,
+            input.orderId,
+            entry.itemId,
+            entry.changeType,
+            entry.productId,
+            entry.variantId,
+            entry.productType,
+            entry.productName,
+            entry.variantName,
+            entry.unitName,
+            entry.unitPriceVnd,
+            entry.beforeQuantityMilli,
+            entry.deltaQuantityMilli,
+            entry.afterQuantityMilli,
+            entry.beforeNote,
+            entry.afterNote,
+            entry.beforeDiscountJson,
+            entry.afterDiscountJson,
+            entry.removalReason,
+            input.now,
+          ),
+      );
+    }
+    return statements;
+  }
+
+  listOrderCallBatchRows(input: {
+    storeId: string;
+    orderId: string;
+    beforeSequence?: number;
+    limit: number;
+  }) {
+    return this.db
+      .prepare(
+        `WITH selected_batches AS (
+          SELECT id, sequence_no, actor_user_id, created_at
+          FROM order_call_batches
+          WHERE store_id = ? AND order_id = ?
+            AND (? IS NULL OR sequence_no < ?)
+          ORDER BY sequence_no DESC
+          LIMIT ?
+        )
+        SELECT
+          batch.id AS batchId,
+          batch.sequence_no AS sequenceNo,
+          batch.actor_user_id AS actorId,
+          user.display_name AS actorName,
+          batch.created_at AS createdAt,
+          entry.id AS entryId,
+          entry.item_id AS itemId,
+          entry.change_type AS changeType,
+          entry.product_id AS productId,
+          entry.variant_id AS variantId,
+          entry.product_type AS productType,
+          entry.product_name_snapshot AS productName,
+          entry.variant_name_snapshot AS variantName,
+          entry.unit_name_snapshot AS unitName,
+          entry.unit_price_snapshot AS unitPriceVnd,
+          entry.before_quantity_milli AS beforeQuantityMilli,
+          entry.delta_quantity_milli AS deltaQuantityMilli,
+          entry.after_quantity_milli AS afterQuantityMilli,
+          entry.before_note AS beforeNote,
+          entry.after_note AS afterNote,
+          entry.before_discount_json AS beforeDiscountJson,
+          entry.after_discount_json AS afterDiscountJson,
+          entry.removal_reason AS removalReason
+        FROM selected_batches batch
+        LEFT JOIN order_call_batch_entries entry
+          ON entry.store_id = ? AND entry.batch_id = batch.id
+        LEFT JOIN users user ON user.id = batch.actor_user_id
+        ORDER BY batch.sequence_no DESC, entry.id`,
+      )
+      .bind(
+        input.storeId,
+        input.orderId,
+        input.beforeSequence ?? null,
+        input.beforeSequence ?? null,
+        input.limit,
+        input.storeId,
+      )
+      .all<OrderCallBatchRow>();
   }
 
   findSaveCommand(storeId: string, commandId: string) {
@@ -458,7 +639,11 @@ export class PosRepository {
                 COALESCE(o.guest_count, 1) AS guest_count, o.customer_name, o.customer_phone, o.customer_id,
                 COALESCE(st.display_name, st.name) AS table_name,
                 a.id AS area_id, a.name AS area_name,
-                COALESCE(u.display_name, 'Nhân viên') AS opened_by_name
+                COALESCE(u.display_name, 'Nhân viên') AS opened_by_name,
+                EXISTS (
+                  SELECT 1 FROM order_call_batches batch
+                  WHERE batch.store_id = o.store_id AND batch.order_id = o.id
+                ) AS has_call_history
          FROM orders o
          LEFT JOIN service_tables st ON st.id = o.table_id AND st.store_id = o.store_id
          LEFT JOIN areas a ON a.id = st.area_id AND a.store_id = st.store_id
@@ -478,7 +663,11 @@ export class PosRepository {
                 COALESCE(o.guest_count, 1) AS guest_count, o.customer_name, o.customer_phone, o.customer_id,
                 COALESCE(st.display_name, st.name) AS table_name,
                 a.id AS area_id, a.name AS area_name,
-                COALESCE(u.display_name, 'Nhân viên') AS opened_by_name
+                COALESCE(u.display_name, 'Nhân viên') AS opened_by_name,
+                EXISTS (
+                  SELECT 1 FROM order_call_batches batch
+                  WHERE batch.store_id = o.store_id AND batch.order_id = o.id
+                ) AS has_call_history
          FROM orders o
          LEFT JOIN service_tables st ON st.id = o.table_id AND st.store_id = o.store_id
          LEFT JOIN areas a ON a.id = st.area_id AND a.store_id = o.store_id
@@ -490,7 +679,11 @@ export class PosRepository {
                 t.status, t.version, t.opened_at, COALESCE(t.updated_at, t.opened_at) AS updated_at, t.note,
                 COALESCE(t.guest_count, 1) AS guest_count, t.customer_name, t.customer_phone, t.customer_id,
                 NULL AS table_name, NULL AS area_id, NULL AS area_name,
-                COALESCE(u.display_name, 'Nhân viên') AS opened_by_name
+                COALESCE(u.display_name, 'Nhân viên') AS opened_by_name,
+                EXISTS (
+                  SELECT 1 FROM order_call_batches batch
+                  WHERE batch.store_id = t.store_id AND batch.order_id = t.id
+                ) AS has_call_history
          FROM takeaway_orders t
          LEFT JOIN users u ON u.id = t.opened_by
          WHERE t.store_id = ? AND t.status IN ('OPEN', 'PAYMENT_PENDING')
@@ -508,7 +701,11 @@ export class PosRepository {
                 t.status, t.version, t.opened_at, COALESCE(t.updated_at, t.opened_at) AS updated_at, t.note,
                 COALESCE(t.guest_count, 1) AS guest_count, t.customer_name, t.customer_phone, t.customer_id,
                 NULL AS table_name, NULL AS area_id, NULL AS area_name,
-                COALESCE(u.display_name, 'Nhân viên') AS opened_by_name
+                COALESCE(u.display_name, 'Nhân viên') AS opened_by_name,
+                EXISTS (
+                  SELECT 1 FROM order_call_batches batch
+                  WHERE batch.store_id = t.store_id AND batch.order_id = t.id
+                ) AS has_call_history
          FROM takeaway_orders t
          LEFT JOIN users u ON u.id = t.opened_by
          WHERE t.store_id = ? AND t.id = ? LIMIT 1`,
@@ -1115,6 +1312,37 @@ export class PosRepository {
         input.issuedAt,
       )
       .run();
+  }
+
+  buildRemoveOrderItemStatement(input: {
+    commandId: string;
+    storeId: string;
+    orderType: 'DINE_IN' | 'TAKEAWAY';
+    orderId: string;
+    itemId: string;
+    expectedOrderVersion: number;
+    actorId: string;
+    requestId: string;
+    issuedAt: number;
+  }) {
+    return this.db
+      .prepare(
+        `INSERT INTO remove_order_item_commands (
+          id, store_id, order_type, order_id, item_id, expected_order_version,
+          actor_user_id, request_id, issued_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        input.commandId,
+        input.storeId,
+        input.orderType,
+        input.orderId,
+        input.itemId,
+        input.expectedOrderVersion,
+        input.actorId,
+        input.requestId,
+        input.issuedAt,
+      );
   }
 
   async removeTimeSession(input: {

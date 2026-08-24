@@ -8,6 +8,7 @@ import type {
   OrderAppliedPromotionDetail,
   OrderAuditEventDetail,
 } from '@contracts/order-detail';
+import type { OrderCallBatchDto, OrderCallBatchPageDto } from '@contracts/pos';
 import { calculateTimePrice } from '@domain/pricing/engine';
 import { AppError } from '@server/lib/app-error';
 import { PosRepository } from '@server/repositories/pos-repository';
@@ -17,6 +18,7 @@ import { CustomerService } from '@server/services/customer-service';
 import { PromotionService } from '@server/services/promotion-service';
 import { PromotionRepository } from '@server/repositories/promotion-repository';
 import type { OpenOrderCommandInput, SaveExistingOrderCommandInput } from '@contracts/pos';
+import type { OrderCallBatchEntryInput } from '@server/repositories/pos-repository';
 
 function checkedMoneyFromMilli(unitPriceVnd: number, quantityMilli: number) {
   const amount = (BigInt(unitPriceVnd) * BigInt(quantityMilli) + 500n) / 1000n;
@@ -52,6 +54,29 @@ interface PreparedSaveItem {
   discountReason: string | null;
   grossLineTotalVnd: number;
   netLineTotalVnd: number;
+}
+
+function discountSnapshot(input: {
+  type: 'FIXED' | 'PERCENT' | null;
+  value: number | null;
+  reason: string | null;
+}) {
+  return input.type
+    ? JSON.stringify({ type: input.type, value: input.value ?? 0, reason: input.reason })
+    : null;
+}
+
+function parseDiscountSnapshot(value: string | null) {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as {
+      type: 'FIXED' | 'PERCENT';
+      value: number;
+      reason: string | null;
+    };
+  } catch {
+    return null;
+  }
 }
 
 function mapDatabaseError(error: unknown): never {
@@ -476,9 +501,15 @@ export class PosService {
     orderId: string,
     clientMutationId: string,
     now = Date.now(),
+    includeLatestCallBatch = false,
   ) {
-    const quote = await this.quote(storeId, orderId, now);
-    const rawTables = await this.repository.listTables(storeId);
+    const [quote, rawTables, callBatchPage] = await Promise.all([
+      this.quote(storeId, orderId, now),
+      this.repository.listTables(storeId),
+      includeLatestCallBatch
+        ? this.listOrderCallBatches(storeId, orderId, undefined, 1)
+        : Promise.resolve<OrderCallBatchPageDto | null>(null),
+    ]);
     const table = quote.order.tableId
       ? rawTables.results.find((candidate) => candidate.id === quote.order.tableId)
       : null;
@@ -508,6 +539,111 @@ export class PosService {
         : [],
       orderVersion: quote.order.version,
       serverNowMs: now,
+      ...(callBatchPage?.items[0] ? { callBatch: callBatchPage.items[0] } : {}),
+    };
+  }
+
+  async listOrderCallBatches(
+    storeId: string,
+    orderId: string,
+    beforeSequence?: number,
+    limit = 20,
+  ): Promise<OrderCallBatchPageDto> {
+    const normalizedLimit = Math.max(1, Math.min(50, limit));
+    const result = await this.repository.listOrderCallBatchRows({
+      storeId,
+      orderId,
+      ...(beforeSequence === undefined ? {} : { beforeSequence }),
+      limit: normalizedLimit,
+    });
+    const batches = new Map<string, OrderCallBatchDto>();
+    for (const row of result.results) {
+      const batch = batches.get(row.batchId) ?? {
+        id: row.batchId,
+        sequenceNo: row.sequenceNo,
+        actorId: row.actorId,
+        actorName: row.actorName ?? 'Nhân viên',
+        createdAt: row.createdAt,
+        entries: [],
+      };
+      if (
+        row.entryId &&
+        row.changeType &&
+        row.productId &&
+        row.productType &&
+        row.productName &&
+        row.unitPriceVnd !== null &&
+        row.beforeQuantityMilli !== null &&
+        row.deltaQuantityMilli !== null &&
+        row.afterQuantityMilli !== null
+      ) {
+        batch.entries.push({
+          id: row.entryId,
+          itemId: row.itemId,
+          changeType: row.changeType,
+          productId: row.productId,
+          variantId: row.variantId,
+          productType: row.productType,
+          productName: row.productName,
+          variantName: row.variantName,
+          unitName: row.unitName,
+          unitPriceVnd: row.unitPriceVnd,
+          beforeQuantityMilli: row.beforeQuantityMilli,
+          deltaQuantityMilli: row.deltaQuantityMilli,
+          afterQuantityMilli: row.afterQuantityMilli,
+          beforeNote: row.beforeNote,
+          afterNote: row.afterNote,
+          beforeDiscount: parseDiscountSnapshot(row.beforeDiscountJson),
+          afterDiscount: parseDiscountSnapshot(row.afterDiscountJson),
+          removalReason: row.removalReason,
+        });
+      }
+      batches.set(row.batchId, batch);
+    }
+    const items = [...batches.values()];
+    const last = items.at(-1);
+    return {
+      items,
+      nextBeforeSequence: items.length === normalizedLimit && last ? last.sequenceNo : null,
+    };
+  }
+
+  private async finishSaveNextAction(
+    snapshot: Awaited<ReturnType<PosService['orderMutationSnapshot']>>,
+    input: {
+      storeId: string;
+      actorId: string;
+      actorSessionId?: string | null;
+      deviceId?: string | null;
+      requestId: string;
+      idempotencyKey: string;
+      nextAction: 'STAY' | 'BEGIN_CHECKOUT';
+    },
+  ) {
+    if (
+      input.nextAction !== 'BEGIN_CHECKOUT' ||
+      snapshot.quote.order.orderType !== 'DINE_IN' ||
+      !snapshot.quote.time
+    ) {
+      return snapshot;
+    }
+    const paymentSnapshot = await this.stopTimeForCheckout({
+      storeId: input.storeId,
+      actorId: input.actorId,
+      actorSessionId: input.actorSessionId ?? null,
+      deviceId: input.deviceId ?? null,
+      requestId: input.requestId,
+      idempotencyKey: `${input.idempotencyKey}:checkout`,
+      orderId: snapshot.order.id,
+      expectedOrderVersion: snapshot.order.version,
+    });
+    return {
+      ...snapshot,
+      quote: paymentSnapshot.quote,
+      order: paymentSnapshot.quote.order,
+      items: paymentSnapshot.quote.items,
+      orderVersion: paymentSnapshot.quote.order.version,
+      paymentSnapshot,
     };
   }
 
@@ -645,6 +781,29 @@ export class PosService {
       grossLineTotalVnd: item.grossLineTotalVnd,
       netLineTotalVnd: item.netLineTotalVnd,
     }));
+    const initialBatchEntries: OrderCallBatchEntryInput[] = preparedItems.map((item) => ({
+      itemId: item.itemId,
+      changeType: 'ADD',
+      productId: item.productId,
+      variantId: item.variantId,
+      productType: item.productType,
+      productName: item.productName,
+      variantName: item.variantName,
+      unitName: item.unitName,
+      unitPriceVnd: item.unitPriceVnd,
+      beforeQuantityMilli: 0,
+      deltaQuantityMilli: item.quantityMilli,
+      afterQuantityMilli: item.quantityMilli,
+      beforeNote: null,
+      afterNote: item.note,
+      beforeDiscountJson: null,
+      afterDiscountJson: discountSnapshot({
+        type: item.discountType,
+        value: item.discountInputValue,
+        reason: item.discountReason,
+      }),
+      removalReason: null,
+    }));
     statements.push(
       ...(await this.promotionStatements({
         storeId: input.storeId,
@@ -658,6 +817,16 @@ export class PosService {
         actorId: input.actorId,
         now,
       })),
+      ...this.repository.buildOrderCallBatchStatements({
+        batchId: crypto.randomUUID(),
+        storeId: input.storeId,
+        orderId,
+        orderType: input.values.orderType,
+        actorId: input.actorId,
+        requestId: input.requestId,
+        entries: initialBatchEntries,
+        now,
+      }),
       ...this.repository.buildConsolidateSaveAuditStatements({
         storeId: input.storeId,
         orderId,
@@ -695,6 +864,7 @@ export class PosService {
       orderId,
       input.idempotencyKey,
       now,
+      true,
     );
     await this.repository.completeSaveCommand(
       input.storeId,
@@ -712,23 +882,49 @@ export class PosService {
     idempotencyKey: string;
     orderId: string;
     values: SaveExistingOrderCommandInput;
+    actorSessionId?: string | null;
+    deviceId?: string | null;
   }) {
     const payloadHash = await this.commandPayloadHash(input.values);
     const replay = await this.replaySaveCommand(input.storeId, input.idempotencyKey, payloadHash);
-    if (replay) return replay;
+    if (replay) {
+      return this.finishSaveNextAction(replay, {
+        ...input,
+        nextAction: input.values.nextAction,
+      });
+    }
     const now = Date.now();
     const current = await this.quote(input.storeId, input.orderId, now);
     if (
       current.order.status !== 'OPEN' ||
       current.order.version !== input.values.expectedOrderVersion
     ) {
-      throw new AppError('ORDER_VERSION_CONFLICT', 'Đơn hàng đã thay đổi. Vui lòng tải lại.', 409);
+      throw new AppError(
+        'ORDER_VERSION_CONFLICT',
+        'Đơn hàng đã thay đổi. Vui lòng đối chiếu lại trước khi lưu.',
+        409,
+        { quote: current },
+      );
     }
     const takeaway = current.order.orderType === 'TAKEAWAY';
+    const recordCallHistory = current.order.hasCallHistory;
     const [preparedItems, guest] = await Promise.all([
       this.prepareSaveItems(input.storeId, input.values.addedItems, takeaway, now),
       this.resolveGuest(input.storeId, input.values.guest),
     ]);
+    const updateVariantEntries = await Promise.all(
+      input.values.updatedItems.map(async (update) => {
+        const item = current.items.find((candidate) => candidate.id === update.itemId);
+        if (!item || update.variantId === undefined || update.variantId === item.variantId) {
+          return [update.itemId, null] as const;
+        }
+        return [
+          update.itemId,
+          await this.repository.findSaleVariant(input.storeId, item.productId, update.variantId),
+        ] as const;
+      }),
+    );
+    const updateVariants = new Map(updateVariantEntries);
     const statements: D1PreparedStatement[] = [
       this.repository.prepareSaveCommand({
         commandId: input.idempotencyKey,
@@ -745,9 +941,8 @@ export class PosService {
       }),
     ];
     let version = input.values.expectedOrderVersion;
-    const updatedQuantities = new Map(
-      input.values.updatedItems.map((item) => [item.itemId, item.quantityMilli]),
-    );
+    const batchEntries: OrderCallBatchEntryInput[] = [];
+    const updatedPromotionItems = new Map<string, PromotionPreviewItem | null>();
     for (const [index, update] of input.values.updatedItems.entries()) {
       const item = current.items.find(
         (candidate) =>
@@ -755,16 +950,98 @@ export class PosService {
           !('promotionGift' in candidate && candidate.promotionGift),
       );
       if (!item) throw new AppError('ORDER_ITEM_NOT_FOUND', 'Không tìm thấy mặt hàng.', 404);
+      if (update.quantityMilli === 0) {
+        if (!update.removalReason?.trim()) {
+          throw new AppError('REMOVAL_REASON_REQUIRED', 'Vui lòng nhập lý do xóa món.', 422);
+        }
+        statements.push(
+          this.repository.buildRemoveOrderItemStatement({
+            commandId: `${input.idempotencyKey}:remove:${index}`,
+            storeId: input.storeId,
+            orderType: current.order.orderType,
+            orderId: input.orderId,
+            itemId: item.id,
+            expectedOrderVersion: version,
+            actorId: input.actorId,
+            requestId: input.requestId,
+            issuedAt: now,
+          }),
+        );
+        batchEntries.push({
+          itemId: item.id,
+          changeType: 'REMOVE',
+          productId: item.productId,
+          variantId: item.variantId,
+          productType: item.productType,
+          productName: item.productName,
+          variantName: item.variantName,
+          unitName: item.unitName,
+          unitPriceVnd: item.unitPriceVnd,
+          beforeQuantityMilli: item.quantityMilli,
+          deltaQuantityMilli: -item.quantityMilli,
+          afterQuantityMilli: 0,
+          beforeNote: item.note,
+          afterNote: null,
+          beforeDiscountJson: discountSnapshot({
+            type: item.discountType,
+            value: item.discountInputValue,
+            reason: item.discountReason,
+          }),
+          afterDiscountJson: null,
+          removalReason: update.removalReason?.trim() || null,
+        });
+        updatedPromotionItems.set(item.id, null);
+        version += 1;
+        continue;
+      }
       if (item.productType === 'QUANTITY' && update.quantityMilli % 1000 !== 0) {
         throw new AppError('QUANTITY_MUST_BE_WHOLE', 'Số lượng phải là số nguyên.', 422);
       }
-      const gross = checkedMoneyFromMilli(item.unitPriceVnd, update.quantityMilli);
+      let variantId = item.variantId;
+      let variantName = item.variantName;
+      let unitPriceVnd = item.unitPriceVnd;
+      if (update.variantId !== undefined && update.variantId !== item.variantId) {
+        const product = updateVariants.get(update.itemId);
+        if (
+          !product ||
+          product.product_status !== 'ACTIVE' ||
+          product.variant_status !== 'ACTIVE' ||
+          (product.prompt_price !== 1 && product.sale_price === null)
+        ) {
+          throw new AppError('PRODUCT_NOT_AVAILABLE', 'Phiên bản giá không khả dụng.', 422);
+        }
+        if (product.prompt_price === 1 && update.enteredUnitPriceVnd === undefined) {
+          throw new AppError('ENTERED_UNIT_PRICE_REQUIRED', 'Phiên bản yêu cầu nhập giá bán.', 422);
+        }
+        variantId = product.variant_id;
+        variantName = product.variant_name;
+        unitPriceVnd =
+          product.prompt_price === 1 ? update.enteredUnitPriceVnd! : product.sale_price!;
+      }
+      const note = update.note === undefined ? item.note : update.note?.trim() || null;
+      let discountType = item.discountType;
+      let discountInputValue = item.discountInputValue;
+      let discountReason = item.discountReason;
+      if (update.discount !== undefined) {
+        discountType = update.discount?.type ?? null;
+        discountInputValue = update.discount?.value ?? null;
+        discountReason = update.discount?.reason.trim() || null;
+      }
+      const gross = checkedMoneyFromMilli(unitPriceVnd, update.quantityMilli);
       const discount =
-        item.discountType === 'PERCENT'
-          ? checkedPercentAmount(gross, item.discountInputValue ?? 0)
-          : item.discountType === 'FIXED'
-            ? Math.min(gross, item.discountInputValue ?? 0)
+        discountType === 'PERCENT'
+          ? checkedPercentAmount(gross, discountInputValue ?? 0)
+          : discountType === 'FIXED'
+            ? Math.min(gross, discountInputValue ?? 0)
             : 0;
+      const metadataChanged =
+        variantId !== item.variantId ||
+        note !== item.note ||
+        discountType !== item.discountType ||
+        discountInputValue !== item.discountInputValue ||
+        discountReason !== item.discountReason;
+      const commandDiscountType = update.discount === null ? 'NONE' : discountType;
+      const commandDiscountInputValue = update.discount === null ? -1 : discountInputValue;
       statements.push(
         this.repository.buildUpdateItemStatement({
           commandId: `${input.idempotencyKey}:update:${index}`,
@@ -774,22 +1051,67 @@ export class PosService {
           itemId: item.id,
           expectedOrderVersion: version,
           quantityMilli: update.quantityMilli,
-          variantId: item.variantId,
-          variantName: item.variantName,
-          unitPriceVnd: item.unitPriceVnd,
-          discountType: item.discountType,
-          discountInputValue: item.discountInputValue,
+          variantId,
+          variantName,
+          unitPriceVnd,
+          discountType: commandDiscountType,
+          discountInputValue: commandDiscountInputValue,
           discountAmountVnd: discount,
           grossLineTotalVnd: gross,
           netLineTotalVnd: gross - discount,
           timeStartedAtMs: item.timeStartedAtMs,
           timeEndedAtMs: item.timeEndedAtMs,
-          note: item.note,
+          note,
           actorId: input.actorId,
           requestId: input.requestId,
           issuedAt: now,
         }),
+        this.repository.buildSetOrderItemDiscountReasonStatement({
+          storeId: input.storeId,
+          orderType: current.order.orderType,
+          orderId: input.orderId,
+          itemId: item.id,
+          reason: discountReason,
+        }),
       );
+      batchEntries.push({
+        itemId: item.id,
+        changeType: metadataChanged ? 'EDIT' : 'ADJUST',
+        productId: item.productId,
+        variantId,
+        productType: item.productType,
+        productName: item.productName,
+        variantName,
+        unitName: item.unitName,
+        unitPriceVnd,
+        beforeQuantityMilli: item.quantityMilli,
+        deltaQuantityMilli: update.quantityMilli - item.quantityMilli,
+        afterQuantityMilli: update.quantityMilli,
+        beforeNote: item.note,
+        afterNote: note,
+        beforeDiscountJson: discountSnapshot({
+          type: item.discountType,
+          value: item.discountInputValue,
+          reason: item.discountReason,
+        }),
+        afterDiscountJson: discountSnapshot({
+          type: discountType,
+          value: discountInputValue,
+          reason: discountReason,
+        }),
+        removalReason: null,
+      });
+      updatedPromotionItems.set(item.id, {
+        productId: item.productId,
+        variantId,
+        productType: item.productType,
+        productName: item.productName,
+        variantName,
+        unitPriceVnd,
+        quantityMilli: update.quantityMilli,
+        grossLineTotalVnd: gross,
+        netLineTotalVnd: gross - discount,
+      });
       version += 1;
     }
     for (const [index, item] of preparedItems.entries()) {
@@ -815,6 +1137,40 @@ export class PosService {
           reason: item.discountReason,
         }),
       );
+      const matchingCurrentItem = current.items.find(
+        (candidate) =>
+          !('promotionGift' in candidate && candidate.promotionGift) &&
+          candidate.productId === item.productId &&
+          candidate.variantId === item.variantId &&
+          candidate.unitPriceVnd === item.unitPriceVnd &&
+          candidate.note === item.note &&
+          !candidate.discountType &&
+          !item.discountType,
+      );
+      const beforeQuantityMilli = matchingCurrentItem?.quantityMilli ?? 0;
+      batchEntries.push({
+        itemId: matchingCurrentItem?.id ?? item.itemId,
+        changeType: matchingCurrentItem ? 'ADJUST' : 'ADD',
+        productId: item.productId,
+        variantId: item.variantId,
+        productType: item.productType,
+        productName: item.productName,
+        variantName: item.variantName,
+        unitName: item.unitName,
+        unitPriceVnd: item.unitPriceVnd,
+        beforeQuantityMilli,
+        deltaQuantityMilli: item.quantityMilli,
+        afterQuantityMilli: beforeQuantityMilli + item.quantityMilli,
+        beforeNote: matchingCurrentItem?.note ?? null,
+        afterNote: item.note,
+        beforeDiscountJson: null,
+        afterDiscountJson: discountSnapshot({
+          type: item.discountType,
+          value: item.discountInputValue,
+          reason: item.discountReason,
+        }),
+        removalReason: null,
+      });
       version += 1;
     }
     if (input.values.note !== undefined) {
@@ -851,8 +1207,11 @@ export class PosService {
     }
     const finalItems: PromotionPreviewItem[] = current.items
       .filter((item) => !('promotionGift' in item && item.promotionGift))
-      .map((item) => {
-        const quantityMilli = updatedQuantities.get(item.id) ?? item.quantityMilli;
+      .flatMap((item) => {
+        const updated = updatedPromotionItems.get(item.id);
+        if (updated === null) return [];
+        if (updated) return [updated];
+        const quantityMilli = item.quantityMilli;
         const grossLineTotalVnd = checkedMoneyFromMilli(item.unitPriceVnd, quantityMilli);
         const discountAmountVnd =
           item.discountType === 'PERCENT'
@@ -860,17 +1219,19 @@ export class PosService {
             : item.discountType === 'FIXED'
               ? Math.min(grossLineTotalVnd, item.discountInputValue ?? 0)
               : 0;
-        return {
-          productId: item.productId,
-          variantId: item.variantId,
-          productType: item.productType,
-          productName: item.productName,
-          variantName: item.variantName,
-          unitPriceVnd: item.unitPriceVnd,
-          quantityMilli,
-          grossLineTotalVnd,
-          netLineTotalVnd: grossLineTotalVnd - discountAmountVnd,
-        };
+        return [
+          {
+            productId: item.productId,
+            variantId: item.variantId,
+            productType: item.productType,
+            productName: item.productName,
+            variantName: item.variantName,
+            unitPriceVnd: item.unitPriceVnd,
+            quantityMilli,
+            grossLineTotalVnd,
+            netLineTotalVnd: grossLineTotalVnd - discountAmountVnd,
+          },
+        ];
       });
     finalItems.push(
       ...preparedItems.map((item) => ({
@@ -900,6 +1261,18 @@ export class PosService {
         actorId: input.actorId,
         now,
       })),
+      ...(recordCallHistory && batchEntries.length > 0
+        ? this.repository.buildOrderCallBatchStatements({
+            batchId: crypto.randomUUID(),
+            storeId: input.storeId,
+            orderId: input.orderId,
+            orderType: current.order.orderType,
+            actorId: input.actorId,
+            requestId: input.requestId,
+            entries: batchEntries,
+            now,
+          })
+        : []),
       ...this.repository.buildConsolidateSaveAuditStatements({
         storeId: input.storeId,
         orderId: input.orderId,
@@ -929,7 +1302,12 @@ export class PosService {
         input.idempotencyKey,
         payloadHash,
       );
-      if (concurrent) return concurrent;
+      if (concurrent) {
+        return this.finishSaveNextAction(concurrent, {
+          ...input,
+          nextAction: input.values.nextAction,
+        });
+      }
       mapDatabaseError(error);
     }
     const snapshot = await this.orderMutationSnapshot(
@@ -937,6 +1315,7 @@ export class PosService {
       input.orderId,
       input.idempotencyKey,
       now,
+      recordCallHistory && batchEntries.length > 0,
     );
     await this.repository.completeSaveCommand(
       input.storeId,
@@ -944,7 +1323,10 @@ export class PosService {
       JSON.stringify(snapshot),
       Date.now(),
     );
-    return snapshot;
+    return this.finishSaveNextAction(snapshot, {
+      ...input,
+      nextAction: input.values.nextAction,
+    });
   }
 
   async listCatalog(storeId: string) {
@@ -2017,6 +2399,7 @@ export class PosService {
         customerName: order.customer_name ?? null,
         customerPhone: order.customer_phone ?? null,
         customerId: order.customer_id ?? null,
+        hasCallHistory: order.has_call_history === 1,
       },
       items: [...processedItems, ...promotionGiftItems],
       time: pricing,

@@ -31,8 +31,9 @@ describe('Owner Dashboard Real Analytics (Acceptance Test)', () => {
 
     const catalog = new CatalogService(env);
     const area = await catalog.createNamed(storeId, 'areas', 'Khu Bida Lỗ');
-    const unitLon = await catalog.createNamed(storeId, 'units', 'Lon');
-    const unitChai = await catalog.createNamed(storeId, 'units', 'Chai');
+    const existingUnits = (await catalog.listNamed(storeId, 'units')).results;
+    const unitLon = existingUnits.find((u) => u.name === 'Lon')!;
+    const unitChai = existingUnits.find((u) => u.name === 'Chai')!;
     const catDoUong = await catalog.createNamed(storeId, 'categories', 'Đồ uống');
 
     // Time product (60k/h)

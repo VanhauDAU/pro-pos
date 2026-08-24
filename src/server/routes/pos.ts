@@ -539,7 +539,10 @@ posRoutes.post('/orders/open', requirePermission('order.manage'), async (c) => {
 
 posRoutes.post('/orders/:orderId/save', requirePermission('order.manage'), async (c) => {
   const body = await parseJson(c.req.raw, saveExistingOrderCommandSchema);
-  if (body.addedItems.some((item) => Boolean(item.discount))) {
+  if (
+    body.addedItems.some((item) => Boolean(item.discount)) ||
+    body.updatedItems.some((item) => Boolean(item.discount))
+  ) {
     await assertPermission(c, 'discount.apply');
   }
   if (body.promotionIds !== undefined) await assertPermission(c, 'promotion.apply');
@@ -554,7 +557,33 @@ posRoutes.post('/orders/:orderId/save', requirePermission('order.manage'), async
         idempotencyKey: idempotencyKey(c),
         orderId: c.req.param('orderId'),
         values: body,
+        actorSessionId: c.get('sessionId'),
+        deviceId: c.get('device')?.id ?? null,
       }),
+    ),
+  );
+});
+
+posRoutes.get('/orders/:orderId/call-batches', requirePermission('order.manage'), async (c) => {
+  const actor = c.get('actor');
+  const rawBeforeSequence = c.req.query('beforeSequence');
+  const rawLimit = c.req.query('limit');
+  const beforeSequence = rawBeforeSequence ? Number(rawBeforeSequence) : undefined;
+  const limit = rawLimit ? Number(rawLimit) : 20;
+  if (
+    (beforeSequence !== undefined && (!Number.isInteger(beforeSequence) || beforeSequence <= 0)) ||
+    !Number.isInteger(limit) ||
+    limit <= 0
+  ) {
+    throw new AppError('VALIDATION_ERROR', 'Tham số lịch sử gọi món không hợp lệ.', 422);
+  }
+  return success(
+    c,
+    await new PosService(c.env).listOrderCallBatches(
+      actor.storeId!,
+      c.req.param('orderId'),
+      beforeSequence,
+      limit,
     ),
   );
 });

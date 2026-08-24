@@ -21,7 +21,8 @@ describe('Owner catalog management', () => {
     storeId = store.storeId;
     catalog = new CatalogService(env);
     ({ id: categoryId } = await catalog.createNamed(storeId, 'categories', 'Đồ uống'));
-    ({ id: unitId } = await catalog.createNamed(storeId, 'units', 'Ly'));
+    const existingUnits = (await catalog.listNamed(storeId, 'units')).results;
+    unitId = existingUnits.find((u) => u.name === 'Ly')!.id;
   });
 
   it('creates and reads a quantity product with variants and avatar metadata', async () => {

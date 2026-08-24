@@ -1,3 +1,4 @@
+import { DEFAULT_STORE_UNITS } from '@contracts/catalog';
 import type { PricingConfigSnapshot } from '@domain/pricing/types';
 
 type NamedTable = 'areas' | 'categories' | 'units';
@@ -67,11 +68,19 @@ export interface ProductDetailRow {
   mediaId: string | null;
 }
 
+export interface NamedRow {
+  id: string;
+  name: string;
+  sortOrder?: number;
+  status?: 'ACTIVE' | 'DISABLED';
+  productCount?: number;
+}
+
 export class CatalogRepository {
   constructor(private readonly db: D1Database) {}
 
   async listNamed(storeId: string, table: NamedTable) {
-    return this.db.prepare(namedSelects[table]).bind(storeId).all();
+    return this.db.prepare(namedSelects[table]).bind(storeId).all<NamedRow>();
   }
 
   async listUnits(storeId: string, input: { page: number; pageSize: number; search: string }) {
@@ -146,6 +155,29 @@ export class CatalogRepository {
       .prepare('UPDATE units SET name = ?, updated_at = ? WHERE id = ? AND store_id = ?')
       .bind(name, now, unitId, storeId)
       .run();
+  }
+
+  async seedDefaultUnits(storeId: string, now: number) {
+    const existing = await this.db
+      .prepare('SELECT LOWER(name) AS name FROM units WHERE store_id = ?')
+      .bind(storeId)
+      .all<{ name: string }>();
+    const existingSet = new Set((existing.results ?? []).map((r) => r.name.trim().toLowerCase()));
+    const missing = DEFAULT_STORE_UNITS.filter(
+      (unitName) => !existingSet.has(unitName.trim().toLowerCase()),
+    );
+    if (missing.length === 0) {
+      return { insertedCount: 0 };
+    }
+    const statements = missing.map((unitName) =>
+      this.db
+        .prepare(
+          'INSERT INTO units (id, store_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+        )
+        .bind(crypto.randomUUID(), storeId, unitName, now, now),
+    );
+    await this.db.batch(statements);
+    return { insertedCount: missing.length };
   }
 
   deleteUnit(storeId: string, unitId: string) {

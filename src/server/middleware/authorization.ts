@@ -6,6 +6,7 @@ import { assertCsrf } from '@server/lib/security';
 import { AuthorizationRepository } from '@server/repositories/authorization-repository';
 import { AuthService } from '@server/services/auth-service';
 import type { AppEnv } from '@server/types';
+import { measureRequestTiming } from '@server/lib/performance';
 
 export function requireActor(
   ...allowedKinds: Array<'SUPER_ADMIN' | 'OWNER' | 'EMPLOYEE'>
@@ -16,13 +17,15 @@ export function requireActor(
       throw new AppError('AUTH_REQUIRED', 'Vui lòng đăng nhập.', 401);
     }
     const rawDevice = readCredentialCookie(c, 'device');
-    const context = await new AuthService(c.env).context(rawSession, rawDevice);
+    const context = await measureRequestTiming(c, 'auth', () =>
+      new AuthService(c.env).context(rawSession, rawDevice),
+    );
     if (!context.actor || !allowedKinds.includes(context.actor.kind)) {
       throw new AppError('AUTH_REQUIRED', 'Phiên đăng nhập không hợp lệ.', 401);
     }
     if (context.actor.storeId) {
-      const store = await new AuthorizationRepository(c.env.DB).getStoreStatus(
-        context.actor.storeId,
+      const store = await measureRequestTiming(c, 'store', () =>
+        new AuthorizationRepository(c.env.DB).getStoreStatus(context.actor!.storeId!),
       );
       if (!store || store.status !== 'ACTIVE') {
         throw new AppError('STORE_LOCKED', 'Cửa hàng đang bị khóa.', 403);
@@ -57,10 +60,8 @@ export async function assertPermission(
   if (!actor.storeId) {
     throw new AppError('STORE_CONTEXT_REQUIRED', 'Thiếu ngữ cảnh cửa hàng.', 403);
   }
-  const allowed = await new AuthorizationRepository(c.env.DB).hasPermission(
-    actor.storeId,
-    actor.id,
-    permissionKeys,
+  const allowed = await measureRequestTiming(c, 'permission', () =>
+    new AuthorizationRepository(c.env.DB).hasPermission(actor.storeId!, actor.id, permissionKeys),
   );
   if (!allowed) {
     throw new AppError('PERMISSION_DENIED', 'Bạn không có quyền thực hiện thao tác này.', 403);

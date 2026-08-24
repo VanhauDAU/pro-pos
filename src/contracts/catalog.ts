@@ -4,6 +4,61 @@ export const namedResourceSchema = z.object({
   name: z.string().trim().min(1).max(160),
 });
 
+export interface SampleUnitGroup {
+  category: 'Đồ ăn' | 'Đồ uống' | 'Khác';
+  units: readonly string[];
+}
+
+export const SAMPLE_UNIT_GROUPS: readonly SampleUnitGroup[] = [
+  {
+    category: 'Đồ ăn',
+    units: [
+      'Miligram (mg)',
+      'Gram (g)',
+      'Kilogram (kg)',
+      'Phần',
+      'Suất',
+      'Viên',
+      'Miếng',
+      'Cái',
+      'Đĩa',
+      'Chén',
+      'Bát',
+      'Tô',
+      'Hộp',
+      'Khay',
+      'Bao',
+      'Tá',
+    ],
+  },
+  {
+    category: 'Đồ uống',
+    units: [
+      'Milliliter (ml)',
+      'Liter (l)',
+      'Ly',
+      'Cốc',
+      'Tách',
+      'Lon',
+      'Chai',
+      'Bình',
+      'Can',
+      'Lốc',
+      'Pack',
+      'Két',
+      'Thùng',
+    ],
+  },
+  {
+    category: 'Khác',
+    units: ['Lần', 'Vé', 'Giờ', 'Buổi', 'Gói'],
+  },
+] as const;
+
+export const DEFAULT_STORE_UNITS: readonly string[] = SAMPLE_UNIT_GROUPS.flatMap(
+  (group) => group.units,
+);
+
 const productVariantSchema = z.object({
   id: z.uuid().optional(),
   name: z.string().trim().min(1).max(120),

@@ -291,9 +291,10 @@ export class StaffRepository {
     return this.db
       .prepare(
         `UPDATE auth_sessions SET status = 'REVOKED', revoked_at = ?
-         WHERE store_id = ? AND user_id = ? AND session_kind = 'EMPLOYEE' AND status = 'ACTIVE'`,
+         WHERE store_id = ? AND user_id = ? AND session_kind = 'EMPLOYEE' AND status = 'ACTIVE'
+         RETURNING id`,
       )
       .bind(now, storeId, userId)
-      .run();
+      .all<{ id: string }>();
   }
 }

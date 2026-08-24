@@ -103,23 +103,21 @@ platformRoutes.patch('/stores/:storeId/members/:userId', async (c) => {
 });
 
 platformRoutes.delete('/stores/:storeId/sessions/:sessionId', async (c) => {
-  return success(
-    c,
-    await new PlatformService(c.env).revokeSession({
-      storeId: c.req.param('storeId'),
-      sessionId: c.req.param('sessionId'),
-    }),
-  );
+  const storeId = c.req.param('storeId');
+  const sessionId = c.req.param('sessionId');
+  const result = await new PlatformService(c.env).revokeSession({ storeId, sessionId });
+  const room = c.env.STORE_REALTIME.getByName(storeId);
+  c.executionCtx.waitUntil(room.disconnectSession(storeId, sessionId).catch(() => 0));
+  return success(c, result);
 });
 
 platformRoutes.delete('/stores/:storeId/devices/:deviceId', async (c) => {
-  return success(
-    c,
-    await new PlatformService(c.env).revokeDevice({
-      storeId: c.req.param('storeId'),
-      deviceId: c.req.param('deviceId'),
-    }),
-  );
+  const storeId = c.req.param('storeId');
+  const deviceId = c.req.param('deviceId');
+  const result = await new PlatformService(c.env).revokeDevice({ storeId, deviceId });
+  const room = c.env.STORE_REALTIME.getByName(storeId);
+  c.executionCtx.waitUntil(room.disconnectDevice(storeId, deviceId).catch(() => 0));
+  return success(c, result);
 });
 
 platformRoutes.post('/maintenance/cleanup', async (c) => {

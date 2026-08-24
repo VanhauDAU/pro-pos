@@ -1,4 +1,5 @@
 import type { PricingConfigSnapshot } from '@domain/pricing/types';
+import type { BankAccountDto } from '@contracts/store';
 
 export type OrderDetailStatus = 'OPEN' | 'PAYMENT_PENDING' | 'PAID' | 'CANCELLED';
 export type OrderDetailType = 'DINE_IN' | 'TAKEAWAY';
@@ -140,6 +141,8 @@ export interface OrderPaymentAllocationDetail {
   method: 'CASH' | 'BANK_TRANSFER' | 'DEBT';
   amountVnd: number;
   tenderedVnd: number | null;
+  bankAccountId: string | null;
+  bankAccountSnapshot: BankAccountDto | null;
   createdAt: number;
 }
 

@@ -100,6 +100,24 @@ export class CatalogService {
     return { id: unitId, deleted: true };
   }
 
+  async seedDefaultUnits(storeId: string, auditContext?: AuditContext) {
+    const now = Date.now();
+    const result = await this.repository.seedDefaultUnits(storeId, now);
+    if (auditContext && result.insertedCount > 0) {
+      await new AuditRepository(this.env.DB).record({
+        storeId,
+        context: auditContext,
+        action: 'UNITS_SEEDED',
+        entityType: 'STORE',
+        entityId: storeId,
+        before: null,
+        after: { insertedCount: result.insertedCount },
+        now,
+      });
+    }
+    return result;
+  }
+
   async createNamed(
     storeId: string,
     table: 'areas' | 'categories' | 'units',

@@ -22,6 +22,17 @@ interface PromotionItem {
   netLineTotalVnd: number;
 }
 
+interface PromotionRelations {
+  categoryTargets: Awaited<ReturnType<PromotionRepository['targetIds']>>['results'];
+  categoryNames: Awaited<ReturnType<PromotionRepository['targetCategoryNames']>>['results'];
+  productTargets: Awaited<ReturnType<PromotionRepository['targetRows']>>['results'];
+  configuredProductTargets: Awaited<
+    ReturnType<PromotionRepository['targetItemDetails']>
+  >['results'];
+  giftDetails: Awaited<ReturnType<PromotionRepository['giftItemDetails']>>['results'];
+  groups: Awaited<ReturnType<PromotionRepository['customerGroupIds']>>['results'];
+}
+
 function allocateGiftItems(
   details: Array<Omit<PosPromotionGiftItem, 'quantityMilli' | 'grossAmountVnd'>>,
   maximumQuantity: number,
@@ -86,9 +97,72 @@ function minuteInRange(minute: number, start: number, end: number) {
 
 export class PromotionService {
   private readonly repository: PromotionRepository;
+  private readonly relationCache = new Map<string, Promise<Map<string, PromotionRelations>>>();
 
   constructor(private readonly env: CloudflareBindings) {
     this.repository = new PromotionRepository(env.DB);
+  }
+
+  private relationsForPrograms(storeId: string, programs: PromotionRow[]) {
+    const cacheKey = `${storeId}:${programs.map((program) => program.id).join(',')}`;
+    let cached = this.relationCache.get(cacheKey);
+    if (!cached) {
+      cached = this.repository.loadActiveRelations(storeId).then((bulk) => {
+        const relations = new Map<string, PromotionRelations>();
+        for (const program of programs) {
+          relations.set(program.id, {
+            categoryTargets: [],
+            categoryNames: [],
+            productTargets: [],
+            configuredProductTargets: [],
+            giftDetails: [],
+            groups: [],
+          });
+        }
+        for (const target of bulk.targets) {
+          const relation = relations.get(target.promotionId);
+          if (!relation) continue;
+          if (target.targetType === 'CATEGORY') {
+            relation.categoryTargets.push({ id: target.targetId });
+            if (target.categoryName) relation.categoryNames.push({ name: target.categoryName });
+          }
+          if (target.targetType === 'PRODUCT') {
+            relation.productTargets.push({
+              productId: target.targetId,
+              variantId: target.variantId,
+              quantity: target.requiredQuantity,
+            });
+            if (target.productName) {
+              relation.configuredProductTargets.push({
+                productId: target.targetId,
+                variantId: target.variantId,
+                productName: target.productName,
+                variantName: target.variantName,
+                requiredQuantity: target.requiredQuantity,
+              });
+            }
+          }
+        }
+        for (const gift of bulk.gifts) {
+          relations.get(gift.promotionId)?.giftDetails.push(gift);
+        }
+        for (const group of bulk.groups) {
+          relations.get(group.promotionId)?.groups.push({ id: group.groupId });
+        }
+        for (const relation of relations.values()) {
+          relation.categoryNames.sort((left, right) => left.name.localeCompare(right.name, 'vi'));
+          relation.configuredProductTargets.sort((left, right) =>
+            left.productName.localeCompare(right.productName, 'vi'),
+          );
+          relation.giftDetails.sort((left, right) =>
+            left.productName.localeCompare(right.productName, 'vi'),
+          );
+        }
+        return relations;
+      });
+      this.relationCache.set(cacheKey, cached);
+    }
+    return cached;
   }
 
   async list(storeId: string, filters: { search?: string; status?: string; type?: string }) {
@@ -248,25 +322,19 @@ export class PromotionService {
     ]);
     const explicitlySelected = new Set(selectedRows.results.map((row) => row.promotionId));
     const suppressed = new Set(suppressedRows.results.map((row) => row.promotionId));
+    const relations = await this.relationsForPrograms(input.storeId, programs.results);
     const options = await Promise.all(
       programs.results.map(async (program) => {
-        const [
+        const {
           categoryTargets,
           categoryNames,
           productTargets,
           configuredProductTargets,
           giftDetails,
           groups,
-        ] = await Promise.all([
-          this.repository.targetIds(input.storeId, program.id, 'CATEGORY'),
-          this.repository.targetCategoryNames(input.storeId, program.id),
-          this.repository.targetRows(input.storeId, program.id, 'PRODUCT'),
-          this.repository.targetItemDetails(input.storeId, program.id, 'PRODUCT'),
-          this.repository.giftItemDetails(input.storeId, program.id),
-          this.repository.customerGroupIds(input.storeId, program.id),
-        ]);
-        const categoryIds = new Set(categoryTargets.results.map((item) => item.id));
-        const groupIds = groups.results.map((item) => item.id);
+        } = relations.get(program.id)!;
+        const categoryIds = new Set(categoryTargets.map((item) => item.id));
+        const groupIds = groups.map((item) => item.id);
         let reason: string | null = null;
         if (computedStatus(program, input.now) !== 'ACTIVE')
           reason = 'Chương trình chưa đến hoặc đã hết thời gian áp dụng';
@@ -311,7 +379,7 @@ export class PromotionService {
             ? input.items
             : input.items.filter((item) =>
                 program.scope === 'PRODUCT'
-                  ? productTargets.results.some(
+                  ? productTargets.some(
                       (target) =>
                         target.productId === item.productId &&
                         (target.variantId === null || target.variantId === item.variantId),
@@ -321,7 +389,7 @@ export class PromotionService {
         if (!reason && program.scope !== 'INVOICE' && targetItems.length === 0)
           reason = 'Đơn chưa có mặt hàng được áp dụng';
         if (!reason && program.type === 'GIFT' && program.scope === 'PRODUCT') {
-          const requirementMet = (target: (typeof productTargets.results)[number]) =>
+          const requirementMet = (target: (typeof productTargets)[number]) =>
             input.items
               .filter(
                 (item) =>
@@ -332,11 +400,11 @@ export class PromotionService {
             target.quantity * 1000;
           const qualified =
             program.giftBuyAny === 1
-              ? productTargets.results.some(requirementMet)
-              : productTargets.results.every(requirementMet);
+              ? productTargets.some(requirementMet)
+              : productTargets.every(requirementMet);
           if (!qualified) reason = 'Chưa đủ số lượng mặt hàng mua để nhận món tặng';
         }
-        if (!reason && program.type === 'GIFT' && giftDetails.results.length === 0) {
+        if (!reason && program.type === 'GIFT' && giftDetails.length === 0) {
           reason = 'Mặt hàng tặng không còn kinh doanh';
         }
         const targetGross =
@@ -374,9 +442,9 @@ export class PromotionService {
         }
         const giftItems =
           !reason && program.type === 'GIFT'
-            ? allocateGiftItems(giftDetails.results, program.maximumGiftQuantity ?? 1)
+            ? allocateGiftItems(giftDetails, program.maximumGiftQuantity ?? 1)
             : [];
-        const names = [...new Set(giftDetails.results.map((item) => item.productName))];
+        const names = [...new Set(giftDetails.map((item) => item.productName))];
         return {
           id: program.id,
           name: program.name,
@@ -393,8 +461,8 @@ export class PromotionService {
           giftProductNames: names,
           giftItems,
           flatPriceItems,
-          categoryNames: categoryNames.results.map((item) => item.name),
-          configuredProductTargets: configuredProductTargets.results,
+          categoryNames: categoryNames.map((item) => item.name),
+          configuredProductTargets,
           giftBuyAny: program.giftBuyAny === 1,
           maximumGiftQuantity: program.maximumGiftQuantity,
         } satisfies PosPromotionOption;
@@ -452,25 +520,19 @@ export class PromotionService {
     const suppressed = new Set(
       input.promotionIds !== undefined ? [] : suppressedRows.results.map((row) => row.promotionId),
     );
+    const relations = await this.relationsForPrograms(input.storeId, programs.results);
     const options = await Promise.all(
       programs.results.map(async (program) => {
-        const [
+        const {
           categoryTargets,
           categoryNames,
           productTargets,
           configuredProductTargets,
           giftDetails,
           groups,
-        ] = await Promise.all([
-          this.repository.targetIds(input.storeId, program.id, 'CATEGORY'),
-          this.repository.targetCategoryNames(input.storeId, program.id),
-          this.repository.targetRows(input.storeId, program.id, 'PRODUCT'),
-          this.repository.targetItemDetails(input.storeId, program.id, 'PRODUCT'),
-          this.repository.giftItemDetails(input.storeId, program.id),
-          this.repository.customerGroupIds(input.storeId, program.id),
-        ]);
-        const categoryIds = new Set(categoryTargets.results.map((item) => item.id));
-        const groupIds = groups.results.map((item) => item.id);
+        } = relations.get(program.id)!;
+        const categoryIds = new Set(categoryTargets.map((item) => item.id));
+        const groupIds = groups.map((item) => item.id);
         let reason: string | null = null;
         if (computedStatus(program, now) !== 'ACTIVE')
           reason = 'Chương trình chưa đến hoặc đã hết thời gian áp dụng';
@@ -515,7 +577,7 @@ export class PromotionService {
             ? input.items
             : input.items.filter((item) =>
                 program.scope === 'PRODUCT'
-                  ? productTargets.results.some(
+                  ? productTargets.some(
                       (target) =>
                         target.productId === item.productId &&
                         (target.variantId === null || target.variantId === item.variantId),
@@ -525,7 +587,7 @@ export class PromotionService {
         if (!reason && program.scope !== 'INVOICE' && targetItems.length === 0)
           reason = 'Đơn chưa có mặt hàng được áp dụng';
         if (!reason && program.type === 'GIFT' && program.scope === 'PRODUCT') {
-          const requirementMet = (target: (typeof productTargets.results)[number]) =>
+          const requirementMet = (target: (typeof productTargets)[number]) =>
             input.items
               .filter(
                 (item) =>
@@ -536,11 +598,11 @@ export class PromotionService {
             target.quantity * 1000;
           const qualified =
             program.giftBuyAny === 1
-              ? productTargets.results.some(requirementMet)
-              : productTargets.results.every(requirementMet);
+              ? productTargets.some(requirementMet)
+              : productTargets.every(requirementMet);
           if (!qualified) reason = 'Chưa đủ số lượng mặt hàng mua để nhận món tặng';
         }
-        if (!reason && program.type === 'GIFT' && giftDetails.results.length === 0) {
+        if (!reason && program.type === 'GIFT' && giftDetails.length === 0) {
           reason = 'Mặt hàng tặng không còn kinh doanh';
         }
         const targetGross =
@@ -578,9 +640,9 @@ export class PromotionService {
         }
         const giftItems =
           !reason && program.type === 'GIFT'
-            ? allocateGiftItems(giftDetails.results, program.maximumGiftQuantity ?? 1)
+            ? allocateGiftItems(giftDetails, program.maximumGiftQuantity ?? 1)
             : [];
-        const names = [...new Set(giftDetails.results.map((item) => item.productName))];
+        const names = [...new Set(giftDetails.map((item) => item.productName))];
         return {
           id: program.id,
           name: program.name,
@@ -597,8 +659,8 @@ export class PromotionService {
           giftProductNames: names,
           giftItems,
           flatPriceItems,
-          categoryNames: categoryNames.results.map((item) => item.name),
-          configuredProductTargets: configuredProductTargets.results,
+          categoryNames: categoryNames.map((item) => item.name),
+          configuredProductTargets,
           giftBuyAny: program.giftBuyAny === 1,
           maximumGiftQuantity: program.maximumGiftQuantity,
         } satisfies PosPromotionOption;

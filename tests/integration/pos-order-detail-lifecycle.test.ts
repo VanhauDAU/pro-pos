@@ -30,7 +30,8 @@ describe('POS Order Detail & Lifecycle Audit (Acceptance Test)', () => {
     const catalog = new CatalogService(env);
     const areaA = await catalog.createNamed(storeId, 'areas', 'Khu Líp');
     const areaB = await catalog.createNamed(storeId, 'areas', 'Khu Lỗ');
-    const unitLon = await catalog.createNamed(storeId, 'units', 'Lon');
+    const existingUnits = (await catalog.listNamed(storeId, 'units')).results;
+    const unitLon = existingUnits.find((u) => u.name === 'Lon')!;
 
     // Time Product A (30,000 VND / hour)
     const timeProductA = await catalog.createProduct(storeId, {

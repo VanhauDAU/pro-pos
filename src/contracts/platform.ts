@@ -17,9 +17,16 @@ export const createStoreSchema = z.object({
 });
 
 export const setStoreCapabilitySchema = z.object({
-  capability: z.literal('POS_REALTIME'),
+  capability: z.enum([
+    'POS_REALTIME',
+    'POS_COMMANDS_V2',
+    'POS_PAYMENT_SNAPSHOT_V2',
+    'POS_REALTIME_DELTAS_V2',
+  ]),
   enabled: z.boolean(),
 });
+
+export type StoreCapability = z.infer<typeof setStoreCapabilitySchema>['capability'];
 
 export const updateStoreMemberSchema = z.object({
   displayName: z.string().trim().min(1).max(128).optional(),

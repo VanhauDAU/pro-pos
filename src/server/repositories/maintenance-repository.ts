@@ -136,17 +136,19 @@ export class MaintenanceRepository {
       'reject_guest_order_request_commands',
     ];
 
-    for (const cmdTable of commandTables) {
-      try {
-        const rCmd = await this.db
-          .prepare(`DELETE FROM ${cmdTable} WHERE issued_at < ?`)
-          .bind(cutoff)
-          .run();
-        tableStats[cmdTable] = rCmd.meta?.changes ?? 0;
-      } catch {
-        // Continue if table doesn't match
-      }
-    }
+    await Promise.all(
+      commandTables.map(async (cmdTable) => {
+        try {
+          const rCmd = await this.db
+            .prepare(`DELETE FROM ${cmdTable} WHERE issued_at < ?`)
+            .bind(cutoff)
+            .run();
+          tableStats[cmdTable] = rCmd.meta?.changes ?? 0;
+        } catch {
+          // Continue if table doesn't match
+        }
+      }),
+    );
 
     const totalDeleted = Object.values(tableStats).reduce((acc, count) => acc + count, 0);
 

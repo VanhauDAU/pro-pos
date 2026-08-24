@@ -41,7 +41,6 @@ import {
 } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
-import * as XLSX from 'xlsx';
 
 import type { AuthContextResponse } from '@contracts/auth';
 import type {
@@ -154,7 +153,7 @@ export function OwnerCustomerListPage({
     }
   };
 
-  const exportCustomers = () => {
+  const exportCustomers = async () => {
     const rows = (customers.data?.results ?? []).map((c) => ({
       'Họ tên': c.name,
       'Số điện thoại': c.phone,
@@ -165,6 +164,7 @@ export function OwnerCustomerListPage({
       'Công nợ': c.debtBalanceVnd,
       'Trạng thái': c.status === 'ACTIVE' ? 'Đang hoạt động' : 'Đã lưu trữ',
     }));
+    const XLSX = await import('xlsx');
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), 'Khách hàng');
     XLSX.writeFile(workbook, 'danh-sach-khach-hang.xlsx');
@@ -172,6 +172,7 @@ export function OwnerCustomerListPage({
 
   const importCustomers = async (file: File) => {
     try {
+      const XLSX = await import('xlsx');
       const workbook = XLSX.read(await file.arrayBuffer());
       const sheet = workbook.Sheets[workbook.SheetNames[0]!];
       const raw = XLSX.utils.sheet_to_json<Record<string, string>>(sheet!);
@@ -279,7 +280,7 @@ export function OwnerCustomerListPage({
               <Button icon={<UploadOutlined />} onClick={() => importInput.current?.click()}>
                 Nhập Excel
               </Button>
-              <Button icon={<DownloadOutlined />} onClick={exportCustomers}>
+              <Button icon={<DownloadOutlined />} onClick={() => void exportCustomers()}>
                 Xuất Excel
               </Button>
             </>

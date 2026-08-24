@@ -20,6 +20,7 @@ import { guestOrderRoutes } from '@server/routes/guest-order';
 import type { AppEnv } from '@server/types';
 import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
 import { MaintenanceService } from '@server/services/maintenance-service';
+import { serverTimingHeader } from '@server/lib/performance';
 
 export { StoreRealtimeRoom } from '@server/realtime/store-realtime-room';
 
@@ -42,11 +43,33 @@ app.get('/cdn-cgi/access/logout', (c) => {
 });
 
 app.use('/api/*', async (c, next) => {
+  const startedAt = performance.now();
   const requestId = c.req.header('X-Request-ID') ?? crypto.randomUUID();
+  const actionId = c.req.header('X-Action-ID') ?? null;
   c.set('requestId', requestId);
+  c.set('actionId', actionId);
+  c.set('requestTimings', {});
   c.header('X-Request-ID', requestId);
+  if (actionId) c.header('X-Action-ID', actionId);
   c.header('Cache-Control', 'no-store');
   await next();
+  const totalMs = performance.now() - startedAt;
+  const timings = c.get('requestTimings');
+  timings.total = totalMs;
+  c.header('Server-Timing', serverTimingHeader(timings));
+  console.log(
+    JSON.stringify({
+      level: totalMs > 500 ? 'warn' : 'info',
+      message: 'api request completed',
+      requestId,
+      actionId,
+      method: c.req.method,
+      path: c.req.path,
+      status: c.res.status,
+      durationMs: Math.round(totalMs * 10) / 10,
+      timings,
+    }),
+  );
 });
 
 app.get('/api/health', (c) =>
@@ -124,11 +147,12 @@ export default {
     const dispatcher = new RealtimeDispatcher(env);
     if (controller.cron === '17 18 * * *') {
       await Promise.all([
+        dispatcher.dispatchPendingStores(),
         dispatcher.cleanupPublished(),
         new MaintenanceService(env).runRetentionCleanup(7),
       ]);
       return;
     }
-    await dispatcher.dispatchPendingStores();
+    return;
   },
 } satisfies ExportedHandler<CloudflareBindings>;

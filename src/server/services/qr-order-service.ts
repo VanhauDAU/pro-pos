@@ -688,7 +688,8 @@ export class QrOrderService {
   async verifyLocationByToken(
     rawQrToken: string,
     input: VerifyGuestLocationInput,
-  ): Promise<VerifyGuestLocationResponse> {
+    rawGuest?: string,
+  ): Promise<VerifyGuestLocationResponse & { rawGuest?: string }> {
     const tokenHash = await hashOpaqueToken(rawQrToken, this.pepper);
     const tableContext = await this.repository.findQrTableContext(tokenHash);
     if (!tableContext || tableContext.tableStatus === 'DISABLED') {
@@ -707,11 +708,54 @@ export class QrOrderService {
       serverNow: now,
       sessionTtlMs: 15 * 60_000,
     });
+
+    let returnRawGuest = rawGuest;
+    if (rawGuest) {
+      const existing = await this.repository.findGuestSession(
+        await hashOpaqueToken(rawGuest, this.pepper),
+        now,
+      );
+      if (existing) {
+        await this.repository.updateGuestLocationVerification({
+          guestSessionId: existing.guestSessionId,
+          verifiedAt: result.verifiedAt,
+          distanceMeters: result.distanceMeters,
+          accuracyMeters: result.accuracyMeters,
+          expiresAt: result.expiresAt,
+        });
+      }
+    } else {
+      const activeContext = await this.repository.findActiveQrContext(tokenHash);
+      if (activeContext) {
+        const newRawGuest = randomOpaqueToken(32);
+        const guestSessionId = crypto.randomUUID();
+        const sessionExpiresAt = now + 8 * 60 * 60_000;
+        await this.repository.createGuestSession({
+          id: guestSessionId,
+          secretHash: await hashOpaqueToken(newRawGuest, this.pepper),
+          context: activeContext,
+          ipHash: null,
+          deviceNonce: null,
+          now,
+          expiresAt: sessionExpiresAt,
+        });
+        await this.repository.updateGuestLocationVerification({
+          guestSessionId,
+          verifiedAt: result.verifiedAt,
+          distanceMeters: result.distanceMeters,
+          accuracyMeters: result.accuracyMeters,
+          expiresAt: result.expiresAt,
+        });
+        returnRawGuest = newRawGuest;
+      }
+    }
+
     return {
       verified: true,
       distanceMeters: result.distanceMeters,
       allowedRadiusMeters: result.allowedRadiusMeters,
       expiresAt: result.expiresAt,
+      ...(returnRawGuest ? { rawGuest: returnRawGuest } : {}),
     };
   }
 
@@ -721,6 +765,32 @@ export class QrOrderService {
     ip: string | null,
   ): Promise<SubmitOrderResult> {
     const session = await this.contextFromSession(rawGuest);
+    if (input.location) {
+      const now = Date.now();
+      const result = verifyLocationCoordinates({
+        storeSettings: {
+          locationVerificationEnabled: session.locationVerificationEnabled === 1,
+          latitude: session.latitude,
+          longitude: session.longitude,
+          allowedRadiusMeters: session.allowedRadiusMeters,
+          maxAccuracyMeters: session.maxAccuracyMeters,
+        },
+        input: input.location,
+        serverNow: now,
+        sessionTtlMs: 15 * 60_000,
+      });
+      await this.repository.updateGuestLocationVerification({
+        guestSessionId: session.guestSessionId,
+        verifiedAt: result.verifiedAt,
+        distanceMeters: result.distanceMeters,
+        accuracyMeters: result.accuracyMeters,
+        expiresAt: result.expiresAt,
+      });
+      session.locationExpiresAt = result.expiresAt;
+      session.locationDistanceMeters = result.distanceMeters;
+      session.locationAccuracyMeters = result.accuracyMeters;
+      session.locationVerifiedAt = result.verifiedAt;
+    }
     this.assertLocationVerified(session);
     const replay = await this.repository.findRequestByClient(
       session.guestSessionId,
@@ -826,8 +896,39 @@ export class QrOrderService {
     return this.repository.listGuestRequestsBySession(session.guestSessionId);
   }
 
-  async createServiceRequest(rawGuest: string, type: 'CALL_STAFF' | 'CHECKOUT_REQUEST') {
+  async createServiceRequest(
+    rawGuest: string,
+    type: 'CALL_STAFF' | 'CHECKOUT_REQUEST',
+    _ip?: string | null,
+    location?: VerifyGuestLocationInput | null,
+  ) {
     const session = await this.contextFromSession(rawGuest);
+    if (location) {
+      const now = Date.now();
+      const result = verifyLocationCoordinates({
+        storeSettings: {
+          locationVerificationEnabled: session.locationVerificationEnabled === 1,
+          latitude: session.latitude,
+          longitude: session.longitude,
+          allowedRadiusMeters: session.allowedRadiusMeters,
+          maxAccuracyMeters: session.maxAccuracyMeters,
+        },
+        input: location,
+        serverNow: now,
+        sessionTtlMs: 15 * 60_000,
+      });
+      await this.repository.updateGuestLocationVerification({
+        guestSessionId: session.guestSessionId,
+        verifiedAt: result.verifiedAt,
+        distanceMeters: result.distanceMeters,
+        accuracyMeters: result.accuracyMeters,
+        expiresAt: result.expiresAt,
+      });
+      session.locationExpiresAt = result.expiresAt;
+      session.locationDistanceMeters = result.distanceMeters;
+      session.locationAccuracyMeters = result.accuracyMeters;
+      session.locationVerifiedAt = result.verifiedAt;
+    }
     this.assertLocationVerified(session);
     const now = Date.now();
     const existing = await this.repository.findOpenServiceRequest(

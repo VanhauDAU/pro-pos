@@ -107,8 +107,16 @@ guestOrderRoutes.post('/location/verify', async (c) => {
 
 guestOrderRoutes.post('/resolve/:token/location/verify', async (c) => {
   assertSameOrigin(c);
+  const rawGuest = readCredentialCookie(c, 'guest');
   const body = await parseJson(c.req.raw, verifyGuestLocationSchema);
-  const result = await new QrOrderService(c.env).verifyLocationByToken(c.req.param('token'), body);
+  const result = await new QrOrderService(c.env).verifyLocationByToken(
+    c.req.param('token'),
+    body,
+    rawGuest ?? undefined,
+  );
+  if (result.rawGuest) {
+    setCredentialCookie(c, 'guest', result.rawGuest, 8 * 60 * 60);
+  }
   return success(c, result);
 });
 
@@ -204,6 +212,8 @@ guestOrderRoutes.post('/service-requests', async (c) => {
   const result = await new QrOrderService(c.env).createServiceRequest(
     guestCredential(c),
     body.type,
+    clientIp(c),
+    body.location,
   );
   c.executionCtx.waitUntil(
     Promise.all([

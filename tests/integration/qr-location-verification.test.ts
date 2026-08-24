@@ -300,5 +300,25 @@ describe('QR Order Customer Location Verification', () => {
     ).rejects.toMatchObject({
       code: 'LOCATION_VERIFICATION_REQUIRED',
     });
+
+    // But submitting order with inline location coordinates should succeed immediately
+    const inlineOrderRes = await qr.submitOrder(
+      resolved.rawGuest,
+      {
+        clientRequestId: crypto.randomUUID(),
+        items: [{ productId: beverageProductId, quantity: 1 }],
+        location: {
+          latitude: 16.0544,
+          longitude: 108.2022,
+          accuracyMeters: 10,
+        },
+      },
+      '127.0.0.1',
+    );
+    expect(inlineOrderRes.replayed).toBe(false);
+
+    // And now the session should be marked verified
+    const freshContext = await qr.getContext(resolved.rawGuest);
+    expect(freshContext.locationRequirement.isVerified).toBe(true);
   });
 });

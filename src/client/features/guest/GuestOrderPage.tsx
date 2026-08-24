@@ -4,15 +4,12 @@ import {
   ClockCircleFilled,
   CloseCircleFilled,
   CloseOutlined,
-  CreditCardOutlined,
-  CustomerServiceOutlined,
   DeleteOutlined,
   EditOutlined,
   EnvironmentOutlined,
   FileTextOutlined,
   HistoryOutlined,
   HourglassOutlined,
-  InfoCircleOutlined,
   MinusOutlined,
   PlusOutlined,
   RightOutlined,
@@ -50,7 +47,12 @@ import type {
   GuestOrderRequestDto,
   VerifyGuestLocationResponse,
 } from '@contracts/qr-order';
+import type {
+  PosReceiptPrintData,
+  PosReceiptPrintOptions,
+} from '@domain/receipt/receipt-generator';
 import { apiRequest, jsonRequest } from '@client/lib/api';
+import { ReceiptPreviewPaper } from '@client/features/pos/ReceiptPreviewModal';
 import { GuestRobotAssistant } from './GuestRobotAssistant';
 import { type GuestAssistantAction, type GuestAssistantFeedback } from './guest-assistant';
 
@@ -64,26 +66,6 @@ interface CartLine {
 
 function formatVnd(value: number): string {
   return new Intl.NumberFormat('vi-VN').format(value) + 'đ';
-}
-
-function formatTime(timestamp: number): string {
-  return new Intl.DateTimeFormat('vi-VN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-    timeZone: 'Asia/Ho_Chi_Minh',
-  }).format(timestamp);
-}
-
-function formatDateTime(timestamp: number): string {
-  return new Intl.DateTimeFormat('vi-VN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    day: '2-digit',
-    month: '2-digit',
-    hour12: false,
-    timeZone: 'Asia/Ho_Chi_Minh',
-  }).format(timestamp);
 }
 
 function formatElapsedDetail(seconds: number): string {
@@ -254,6 +236,72 @@ export function GuestOrderPage() {
     0,
   );
 
+  const provisionalReceiptOptions = useMemo<PosReceiptPrintOptions | null>(() => {
+    if (!activeOrderQuery.data || !context.data) return null;
+    const order = activeOrderQuery.data;
+    const printData: PosReceiptPrintData = {
+      receiptType: 'PROVISIONAL',
+      orderCode: order.displayCode || order.id.slice(-6).toUpperCase(),
+      orderType: 'DINE_IN',
+      tableName: context.data.tableName,
+      areaName: context.data.areaName,
+      cashierName: null,
+      customerName: null,
+      guestPhone: null,
+      guestAddress: null,
+      note: null,
+      checkInTimeMs: order.openedAt,
+      issuedAtMs: order.calculatedAt || Date.now(),
+      subtotal: order.subtotalVnd,
+      discountTotal: order.discountTotalVnd,
+      promotionDiscount: 0,
+      total: order.totalVnd,
+      lines: [
+        ...(order.time
+          ? [
+              {
+                id: 'time-session',
+                name: 'Tiền giờ',
+                quantity: 1,
+                unitPrice: order.time.amountAfterRoundingVnd,
+                totalPrice: order.time.amountAfterRoundingVnd,
+                isTime: true,
+                timeStartedAtMs: order.time.startedAtMs,
+                timeEndedAtMs: order.time.endedAtMs,
+                timeElapsedSeconds: order.time.elapsedSeconds,
+              },
+            ]
+          : []),
+        ...order.items.map((it) => ({
+          id: it.id,
+          name:
+            it.variantName && it.variantName !== 'Mặc định' && it.variantName !== 'Default'
+              ? `${it.productName} (${it.variantName})`
+              : it.productName,
+          quantity: it.quantityMilli / 1000,
+          unitPrice: it.unitPriceVnd,
+          totalPrice: it.netLineTotalVnd,
+          unitName: it.unitName,
+          note: it.note,
+          discountAmount: it.discountAmountVnd,
+          isTime: it.productType === 'TIME',
+        })),
+      ],
+    };
+
+    return {
+      data: printData,
+      storeInfo: {
+        storeName: context.data.storeName,
+        phone: null,
+        address: null,
+        bankName: null,
+        bankAccountNumber: null,
+        bankAccountName: null,
+      },
+    };
+  }, [activeOrderQuery.data, context.data]);
+
   const categories = useMemo(() => {
     const rawCategories = (context.data?.menu ?? []).map((p) => p.categoryName || 'Món khác');
     return ['Tất cả', ...new Set(rawCategories)];
@@ -413,11 +461,17 @@ export function GuestOrderPage() {
 
   // Submit Order Mutation
   const submitOrder = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (coords?: {
+      latitude: number;
+      longitude: number;
+      accuracyMeters: number;
+      capturedAt?: number;
+    }) => {
       if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
         navigator.vibrate?.(40);
       }
       const clientRequestId = crypto.randomUUID();
+      const loc = coords ?? lastVerifiedCoords.current ?? undefined;
       return jsonRequest<{ requestId: string }>(
         '/api/v1/guest-order/requests',
         {
@@ -429,6 +483,7 @@ export function GuestOrderPage() {
             note: line.note.trim() || undefined,
           })),
           note: orderNote.trim() || undefined,
+          ...(loc ? { location: loc } : {}),
         },
         { headers: { 'Idempotency-Key': clientRequestId } },
       );
@@ -446,8 +501,31 @@ export function GuestOrderPage() {
       await queryClient.invalidateQueries({ queryKey: ['guest-order-own-requests'] });
       void activeOrderQuery.refetch();
       void queryClient.invalidateQueries({ queryKey: ['guest-active-order'] });
+      void queryClient.invalidateQueries({ queryKey: ['guest-order-context', token] });
     },
     onError: (error) => {
+      const isLocErr =
+        (error as { code?: string })?.code === 'LOCATION_VERIFICATION_REQUIRED' ||
+        (error instanceof Error && error.message.includes('xác minh vị trí'));
+      if (isLocErr) {
+        setLocalLocationVerified(false);
+        setVerifiedLocationData(null);
+        lastVerifiedCoords.current = null;
+        setLocationError(
+          error instanceof Error ? error.message : 'Vui lòng xác minh vị trí tại quán.',
+        );
+        setLocationModalOpen(true);
+        setPendingAction(
+          () =>
+            (coords?: {
+              latitude: number;
+              longitude: number;
+              accuracyMeters: number;
+              capturedAt?: number;
+            }) =>
+              submitOrder.mutate(coords),
+        );
+      }
       showAssistantFeedback(
         'error',
         error instanceof Error ? error.message : 'Không thể gửi yêu cầu gọi món.',
@@ -458,9 +536,27 @@ export function GuestOrderPage() {
 
   // Service Request Mutation (Call staff / Bill)
   const submitService = useMutation({
-    mutationFn: (type: 'CALL_STAFF' | 'CHECKOUT_REQUEST') =>
-      jsonRequest('/api/v1/guest-order/service-requests', { type }),
-    onSuccess: (_, type) => {
+    mutationFn: ({
+      type,
+      coords,
+    }: {
+      type: 'CALL_STAFF' | 'CHECKOUT_REQUEST';
+      coords?:
+        | {
+            latitude: number;
+            longitude: number;
+            accuracyMeters: number;
+            capturedAt?: number;
+          }
+        | undefined;
+    }) => {
+      const loc = coords ?? lastVerifiedCoords.current ?? undefined;
+      return jsonRequest('/api/v1/guest-order/service-requests', {
+        type,
+        ...(loc ? { location: loc } : {}),
+      });
+    },
+    onSuccess: (_, { type }) => {
       setServiceConfirm({ open: false, type: 'CALL_STAFF' });
       if (type === 'CALL_STAFF') {
         setCallStaffCooldown(60);
@@ -479,9 +575,32 @@ export function GuestOrderPage() {
           : 'Đã gửi yêu cầu thanh toán. Nhân viên sẽ mang hóa đơn tới bàn.',
       );
       void queryClient.invalidateQueries({ queryKey: ['guest-order-own-requests'] });
+      void queryClient.invalidateQueries({ queryKey: ['guest-order-context', token] });
     },
-    onError: (error, type) => {
+    onError: (error, { type }) => {
       setServiceConfirm({ open: false, type: 'CALL_STAFF' });
+      const isLocErr =
+        (error as { code?: string })?.code === 'LOCATION_VERIFICATION_REQUIRED' ||
+        (error instanceof Error && error.message.includes('xác minh vị trí'));
+      if (isLocErr) {
+        setLocalLocationVerified(false);
+        setVerifiedLocationData(null);
+        lastVerifiedCoords.current = null;
+        setLocationError(
+          error instanceof Error ? error.message : 'Vui lòng xác minh vị trí tại quán.',
+        );
+        setLocationModalOpen(true);
+        setPendingAction(
+          () =>
+            (coords?: {
+              latitude: number;
+              longitude: number;
+              accuracyMeters: number;
+              capturedAt?: number;
+            }) =>
+              submitService.mutate({ type, ...(coords ? { coords } : {}) }),
+        );
+      }
       const errMsg = error instanceof Error ? error.message : 'Không thể gửi yêu cầu.';
       const retryAfter =
         (error as { details?: { retryAfterSeconds?: number } })?.details?.retryAfterSeconds ?? 60;
@@ -588,7 +707,8 @@ export function GuestOrderPage() {
       return;
     }
 
-    if (locReq.isVerified || localLocationVerified) {
+    // If server confirmed verified OR we have verified coords in memory:
+    if (locReq.isVerified || (localLocationVerified && lastVerifiedCoords.current)) {
       await action(lastVerifiedCoords.current ?? undefined);
       return;
     }
@@ -619,9 +739,7 @@ export function GuestOrderPage() {
           };
           lastVerifiedCoords.current = coordsPayload;
 
-          const endpoint = isTableOpen
-            ? '/api/v1/guest-order/location/verify'
-            : `/api/v1/guest-order/resolve/${token}/location/verify`;
+          const endpoint = `/api/v1/guest-order/resolve/${token}/location/verify`;
 
           const verifyRes = await jsonRequest<VerifyGuestLocationResponse>(endpoint, coordsPayload);
 
@@ -1388,7 +1506,7 @@ export function GuestOrderPage() {
                   type="button"
                   className="qr-cart-submit-btn"
                   disabled={submitOrder.isPending || !isTableOpen}
-                  onClick={() => executeWithLocationCheck(() => submitOrder.mutate())}
+                  onClick={() => executeWithLocationCheck((coords) => submitOrder.mutate(coords))}
                 >
                   <div className="qr-cart-submit-btn__content">
                     <span className="qr-cart-submit-btn__icon">
@@ -1664,13 +1782,13 @@ export function GuestOrderPage() {
           )}
         </Drawer>
 
-        {/* ── 9b. Active Table Order Details Drawer ────────────────────────── */}
+        {/* ── 9b. Active Table Provisional Receipt Drawer ─────────────────── */}
         <Drawer
           title={
             <div className="qr-active-drawer-header">
               <div className="qr-active-drawer-title">
                 <FileTextOutlined style={{ color: '#0975f7' }} />
-                <span>Chi tiết đơn · {context.data.tableName}</span>
+                <span>Hóa đơn tạm tính · {context.data.tableName}</span>
               </div>
               <Button
                 type="text"
@@ -1684,232 +1802,22 @@ export function GuestOrderPage() {
             </div>
           }
           placement="bottom"
-          height="85vh"
+          height="88vh"
           open={activeOrderDrawerOpen}
           onClose={() => setActiveOrderDrawerOpen(false)}
-          styles={{ body: { padding: '14px 16px 28px', background: '#f8fafc' } }}
+          styles={{ body: { padding: '12px 8px 24px', background: '#f1f5f9' } }}
         >
-          {!activeOrderQuery.data ? (
-            <div style={{ textAlign: 'center', padding: '40px 0' }}>
-              <Spin tip="Đang tải thông tin đơn hàng..." />
+          {activeOrderQuery.isLoading ? (
+            <div style={{ textAlign: 'center', padding: '60px 0' }}>
+              <Spin tip="Đang tải hóa đơn tạm tính..." />
+            </div>
+          ) : provisionalReceiptOptions ? (
+            <div className="qr-receipt-stage-wrapper">
+              <ReceiptPreviewPaper options={provisionalReceiptOptions} />
             </div>
           ) : (
-            <div className="qr-active-drawer-content">
-              {/* Order Meta Header */}
-              <div className="qr-active-order-meta-card">
-                <div className="qr-active-order-meta-card__row">
-                  <span className="qr-active-order-meta-card__label">Mã đơn hàng:</span>
-                  <span className="qr-active-order-meta-card__val">
-                    #{activeOrderQuery.data.displayCode}
-                  </span>
-                </div>
-                <div className="qr-active-order-meta-card__row">
-                  <span className="qr-active-order-meta-card__label">Giờ vào:</span>
-                  <span className="qr-active-order-meta-card__val">
-                    {formatDateTime(activeOrderQuery.data.openedAt)}
-                  </span>
-                </div>
-                <div className="qr-active-order-meta-card__row">
-                  <span className="qr-active-order-meta-card__label">Khu vực / Bàn:</span>
-                  <span className="qr-active-order-meta-card__val">
-                    {context.data.areaName ? `${context.data.areaName} · ` : ''}
-                    {context.data.tableName}
-                  </span>
-                </div>
-              </div>
-
-              {/* Time Billing Session (if applicable) */}
-              {activeOrderQuery.data.time ? (
-                <div className="qr-active-time-card">
-                  <div className="qr-active-time-card__head">
-                    <div className="qr-active-time-card__title">
-                      <ClockCircleFilled style={{ color: '#10b981' }} />
-                      <span>Thời gian chơi</span>
-                    </div>
-                    <Tag
-                      color={
-                        activeOrderQuery.data.time.status === 'RUNNING' ? 'success' : 'warning'
-                      }
-                      style={{ borderRadius: 6, fontWeight: 700, margin: 0 }}
-                    >
-                      {activeOrderQuery.data.time.status === 'RUNNING'
-                        ? 'Đang tính giờ'
-                        : 'Đang tạm dừng'}
-                    </Tag>
-                  </div>
-
-                  <div className="qr-active-time-card__timer">
-                    {formatElapsedDetail(
-                      Math.max(
-                        0,
-                        Math.floor(
-                          ((activeOrderQuery.data.time.endedAtMs ?? clientNow) -
-                            activeOrderQuery.data.time.startedAtMs) /
-                            1000,
-                        ),
-                      ),
-                    )}
-                  </div>
-
-                  <div className="qr-active-time-card__details">
-                    <div className="qr-active-time-card__detail-row">
-                      <span>Bắt đầu lúc:</span>
-                      <span>{formatTime(activeOrderQuery.data.time.startedAtMs)}</span>
-                    </div>
-                    <div className="qr-active-time-card__detail-row">
-                      <span>Đơn giá giờ:</span>
-                      <span>{formatVnd(activeOrderQuery.data.time.basePriceVnd)}/giờ</span>
-                    </div>
-                    <div className="qr-active-time-card__detail-row qr-active-time-card__detail-row--highlight">
-                      <span>Tiền giờ tạm tính:</span>
-                      <strong>
-                        {formatVnd(activeOrderQuery.data.time.amountAfterRoundingVnd)}
-                      </strong>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-
-              {/* Ordered Items List */}
-              <div className="qr-active-items-card">
-                <div className="qr-active-items-card__head">
-                  <span style={{ fontWeight: 800, fontSize: 14, color: '#1e293b' }}>
-                    Danh sách món đã gọi ({activeOrderQuery.data.items.length})
-                  </span>
-                </div>
-
-                {activeOrderQuery.data.items.length === 0 ? (
-                  <div
-                    style={{
-                      textAlign: 'center',
-                      padding: '24px 0',
-                      color: '#94a3b8',
-                      fontSize: 13,
-                    }}
-                  >
-                    Chưa có món nào được gọi trên bàn
-                  </div>
-                ) : (
-                  <div className="qr-active-items-list">
-                    {activeOrderQuery.data.items.map((item, idx) => {
-                      const qty = item.quantityMilli / 1000;
-                      return (
-                        <div key={item.id || idx} className="qr-active-item-row">
-                          <div className="qr-active-item-row__info">
-                            <div className="qr-active-item-row__name">
-                              <span style={{ fontWeight: 700, color: '#0f172a' }}>
-                                {item.productName}
-                              </span>
-                              {item.variantName && item.variantName !== 'Default' ? (
-                                <span className="qr-active-item-row__variant">
-                                  {' '}
-                                  ({item.variantName})
-                                </span>
-                              ) : null}
-                              {item.promotionGift ? (
-                                <Tag color="orange" style={{ marginLeft: 6, fontSize: 10 }}>
-                                  🎁 {item.promotionGift.promotionName}
-                                </Tag>
-                              ) : null}
-                            </div>
-                            <div className="qr-active-item-row__meta">
-                              <span>
-                                {formatVnd(item.unitPriceVnd)} × {qty} {item.unitName || ''}
-                              </span>
-                              {item.discountAmountVnd > 0 ? (
-                                <span style={{ color: '#ef4444', marginLeft: 6 }}>
-                                  (-{formatVnd(item.discountAmountVnd)})
-                                </span>
-                              ) : null}
-                            </div>
-                            {item.note ? (
-                              <div className="qr-active-item-row__note">💬 {item.note}</div>
-                            ) : null}
-                          </div>
-                          <div className="qr-active-item-row__total">
-                            {formatVnd(item.netLineTotalVnd)}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* Financial Summary */}
-              <div className="qr-active-summary-card">
-                <div className="qr-active-summary-row">
-                  <span>Tiền mặt hàng:</span>
-                  <span>
-                    {formatVnd(
-                      activeOrderQuery.data.items.reduce((sum, i) => sum + i.grossLineTotalVnd, 0),
-                    )}
-                  </span>
-                </div>
-                {activeOrderQuery.data.time ? (
-                  <div className="qr-active-summary-row">
-                    <span>Tiền giờ tạm tính:</span>
-                    <span>{formatVnd(activeOrderQuery.data.time.amountAfterRoundingVnd)}</span>
-                  </div>
-                ) : null}
-                {activeOrderQuery.data.discountTotalVnd > 0 ? (
-                  <div className="qr-active-summary-row" style={{ color: '#ef4444' }}>
-                    <span>Tổng giảm giá:</span>
-                    <span>-{formatVnd(activeOrderQuery.data.discountTotalVnd)}</span>
-                  </div>
-                ) : null}
-                <div className="qr-active-summary-divider" />
-                <div className="qr-active-summary-total-row">
-                  <div>
-                    <span className="qr-active-summary-total-title">Tổng tạm tính</span>
-                    <div className="qr-active-summary-time-note">
-                      Tạm tính lúc {formatTime(activeOrderQuery.data.calculatedAt)}
-                    </div>
-                  </div>
-                  <span className="qr-active-summary-total-val">
-                    {formatVnd(activeOrderQuery.data.totalVnd)}
-                  </span>
-                </div>
-                <div className="qr-active-summary-notice">
-                  <InfoCircleOutlined style={{ marginRight: 4 }} /> Tiền giờ và chi phí thực tế sẽ
-                  được tính chuẩn xác đến phút khi thanh toán tại quầy.
-                </div>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="qr-active-actions-row">
-                <Button
-                  icon={<CustomerServiceOutlined />}
-                  size="large"
-                  disabled={callStaffCooldown > 0 || submitService.isPending}
-                  className="qr-active-action-btn"
-                  onClick={() =>
-                    executeWithLocationCheck(() =>
-                      setServiceConfirm({ open: true, type: 'CALL_STAFF' }),
-                    )
-                  }
-                >
-                  {callStaffCooldown > 0
-                    ? `Gọi nhân viên (${callStaffCooldown}s)`
-                    : 'Gọi nhân viên'}
-                </Button>
-                <Button
-                  type="primary"
-                  icon={<CreditCardOutlined />}
-                  size="large"
-                  disabled={checkoutCooldown > 0 || submitService.isPending}
-                  className="qr-active-action-btn qr-active-action-btn--primary"
-                  onClick={() =>
-                    executeWithLocationCheck(() =>
-                      setServiceConfirm({ open: true, type: 'CHECKOUT_REQUEST' }),
-                    )
-                  }
-                >
-                  {checkoutCooldown > 0
-                    ? `Yêu cầu thanh toán (${checkoutCooldown}s)`
-                    : 'Yêu cầu thanh toán'}
-                </Button>
-              </div>
+            <div style={{ textAlign: 'center', padding: '60px 0', color: '#64748b' }}>
+              Chưa có dữ liệu hóa đơn tạm tính cho bàn này.
             </div>
           )}
         </Drawer>
@@ -1926,7 +1834,7 @@ export function GuestOrderPage() {
           cancelText="Hủy"
           confirmLoading={submitService.isPending}
           centered
-          onOk={() => submitService.mutate(serviceConfirm.type)}
+          onOk={() => submitService.mutate({ type: serviceConfirm.type })}
           onCancel={() => setServiceConfirm({ open: false, type: 'CALL_STAFF' })}
         >
           <div style={{ padding: '8px 0', fontSize: 14.5, color: '#334155', lineHeight: 1.5 }}>

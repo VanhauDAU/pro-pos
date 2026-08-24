@@ -1,5 +1,14 @@
 import { z } from 'zod';
 
+export const verifyGuestLocationSchema = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  accuracyMeters: z.number().min(0).max(100000),
+  capturedAt: z.number().int().positive().optional(),
+});
+
+export type VerifyGuestLocationInput = z.infer<typeof verifyGuestLocationSchema>;
+
 export const guestOrderItemSchema = z.object({
   productId: z.uuid(),
   variantId: z.uuid().nullable().optional(),
@@ -11,10 +20,12 @@ export const submitGuestOrderSchema = z.object({
   clientRequestId: z.uuid(),
   items: z.array(guestOrderItemSchema).min(1).max(20),
   note: z.string().trim().max(300).nullable().optional(),
+  location: verifyGuestLocationSchema.optional(),
 });
 
 export const createServiceRequestSchema = z.object({
   type: z.enum(['CALL_STAFF', 'CHECKOUT_REQUEST']),
+  location: verifyGuestLocationSchema.optional(),
 });
 
 export const acceptGuestOrderSchema = z.object({
@@ -91,15 +102,6 @@ export interface GuestActiveOrderDto {
   totalVnd: number;
   calculatedAt: number;
 }
-
-export const verifyGuestLocationSchema = z.object({
-  latitude: z.number().min(-90).max(90),
-  longitude: z.number().min(-180).max(180),
-  accuracyMeters: z.number().min(0).max(100000),
-  capturedAt: z.number().int().positive().optional(),
-});
-
-export type VerifyGuestLocationInput = z.infer<typeof verifyGuestLocationSchema>;
 
 export interface VerifyGuestLocationResponse {
   verified: boolean;

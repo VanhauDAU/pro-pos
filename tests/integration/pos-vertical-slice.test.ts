@@ -228,11 +228,11 @@ describe('online POS vertical slice', () => {
       orderType: 'DINE_IN' as const,
       tableId: table.id,
       expectedTableVersion: 1,
-      items: Array.from({ length: 6 }, () => ({
+      items: Array.from({ length: 6 }, (_, index) => ({
         productId,
         variantId,
         quantityMilli: 1_000,
-        note: null,
+        note: `Món ${index + 1}`,
         discount: null,
       })),
       note: 'Lưu một command',
@@ -1247,6 +1247,168 @@ describe('online POS vertical slice', () => {
     const withDifferentNote = await pos.quote(storeId, order.orderId);
     expect(withDifferentNote.items).toHaveLength(2);
     expect(withDifferentNote.totalVnd).toBe(140_000);
+  });
+
+  it('merges matching addedItems when multiple staff save the same product on the same order', async () => {
+    const pos = new PosService(env);
+    const catalog = new CatalogService(env);
+    const table = await catalog.createTable({
+      storeId,
+      areaId,
+      timeProductId,
+      name: 'Bàn test merge nhân viên',
+      sortOrder: 15,
+    });
+
+    // 1. Order is opened on the table (e.g. empty table opened)
+    const opened = await pos.openOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-staff-merge-open',
+      idempotencyKey: 'staff-merge-open-001',
+      values: {
+        orderType: 'DINE_IN',
+        tableId: table.id,
+        expectedTableVersion: 1,
+        items: [],
+      },
+    });
+
+    // 2. Staff A adds 1 "Cà phê sữa" and saves
+    const saveStaffA = await pos.saveOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-staff-a-save',
+      idempotencyKey: 'staff-a-save-001',
+      orderId: opened.order.id,
+      values: {
+        expectedOrderVersion: opened.order.version,
+        nextAction: 'STAY',
+        addedItems: [
+          {
+            productId,
+            variantId,
+            quantityMilli: 1_000,
+            note: null,
+            discount: null,
+          },
+        ],
+        updatedItems: [],
+      },
+    });
+
+    expect(saveStaffA.quote.items).toHaveLength(1);
+    expect(saveStaffA.quote.items[0]).toMatchObject({
+      productId,
+      quantityMilli: 1_000,
+      grossLineTotalVnd: 20_000,
+      netLineTotalVnd: 20_000,
+    });
+    const staffAItemId = saveStaffA.quote.items[0]!.id;
+
+    // 3. Staff B also had 1 "Cà phê sữa" and saves after seeing order updated
+    const saveStaffB = await pos.saveOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-staff-b-save',
+      idempotencyKey: 'staff-b-save-001',
+      orderId: opened.order.id,
+      values: {
+        expectedOrderVersion: saveStaffA.order.version,
+        nextAction: 'STAY',
+        addedItems: [
+          {
+            productId,
+            variantId,
+            quantityMilli: 2_000,
+            note: null,
+            discount: null,
+          },
+        ],
+        updatedItems: [],
+      },
+    });
+
+    // 4. Verify in quote and in database: ONLY 1 LINE ITEM for the product, merged quantity 3,000 (3 items)
+    expect(saveStaffB.quote.items).toHaveLength(1);
+    expect(saveStaffB.quote.items[0]).toMatchObject({
+      id: staffAItemId,
+      productId,
+      quantityMilli: 3_000,
+      grossLineTotalVnd: 60_000,
+      netLineTotalVnd: 60_000,
+    });
+
+    const dbItems = await env.DB.prepare(
+      'SELECT id, product_id, quantity_milli, gross_line_total, net_line_total FROM order_items WHERE store_id = ? AND order_id = ?',
+    )
+      .bind(storeId, opened.order.id)
+      .all<{
+        id: string;
+        product_id: string;
+        quantity_milli: number;
+        gross_line_total: number;
+        net_line_total: number;
+      }>();
+
+    expect(dbItems.results).toHaveLength(1);
+    expect(dbItems.results[0]).toMatchObject({
+      id: staffAItemId,
+      product_id: productId,
+      quantity_milli: 3_000,
+      gross_line_total: 60_000,
+      net_line_total: 60_000,
+    });
+  });
+
+  it('merges duplicate items within addedItems payload itself in saveOrderCommand', async () => {
+    const pos = new PosService(env);
+    const catalog = new CatalogService(env);
+    const table = await catalog.createTable({
+      storeId,
+      areaId,
+      timeProductId,
+      name: 'Bàn test duplicate addedItems',
+      sortOrder: 16,
+    });
+
+    const opened = await pos.openOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-dup-open',
+      idempotencyKey: 'dup-open-001',
+      values: {
+        orderType: 'DINE_IN',
+        tableId: table.id,
+        expectedTableVersion: 1,
+        items: [],
+      },
+    });
+
+    const saved = await pos.saveOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-dup-save',
+      idempotencyKey: 'dup-save-001',
+      orderId: opened.order.id,
+      values: {
+        expectedOrderVersion: opened.order.version,
+        nextAction: 'STAY',
+        addedItems: [
+          { productId, variantId, quantityMilli: 1_000, note: null, discount: null },
+          { productId, variantId, quantityMilli: 3_000, note: null, discount: null },
+        ],
+        updatedItems: [],
+      },
+    });
+
+    expect(saved.quote.items).toHaveLength(1);
+    expect(saved.quote.items[0]).toMatchObject({
+      productId,
+      quantityMilli: 4_000,
+      grossLineTotalVnd: 80_000,
+      netLineTotalVnd: 80_000,
+    });
   });
 
   it('updates price version variant and discount on existing order items', async () => {

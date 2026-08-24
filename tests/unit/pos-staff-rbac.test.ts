@@ -169,3 +169,36 @@ describe('POS Staff RBAC Permission Matrix & Schemas', () => {
     );
   });
 });
+
+describe('Checkout schema ID compatibility', () => {
+  it('accepts both legacy 32-character hex IDs and UUIDs for bankAccountId and paymentSnapshotId', async () => {
+    const { checkoutSchema } = await import('@contracts/pos');
+
+    const legacyHexId = 'a1b2c3d4e5f67890123456789abcdef0';
+    const standardUuid = 'c3c9b740-4277-4b7c-87d9-9599d14fbf8e';
+
+    // 1. BANK_TRANSFER with legacy hex bankAccountId
+    const resultHex = checkoutSchema.safeParse({
+      expectedOrderVersion: 1,
+      bankAccountId: legacyHexId,
+      paymentSnapshotId: legacyHexId,
+      method: 'BANK_TRANSFER',
+      cashReceivedVnd: null,
+      allocations: [{ method: 'BANK_TRANSFER', amountVnd: 50000 }],
+      debtAmountVnd: 0,
+    });
+    expect(resultHex.success).toBe(true);
+
+    // 2. BANK_TRANSFER with UUID bankAccountId
+    const resultUuid = checkoutSchema.safeParse({
+      expectedOrderVersion: 1,
+      bankAccountId: standardUuid,
+      paymentSnapshotId: standardUuid,
+      method: 'BANK_TRANSFER',
+      cashReceivedVnd: null,
+      allocations: [{ method: 'BANK_TRANSFER', amountVnd: 50000 }],
+      debtAmountVnd: 0,
+    });
+    expect(resultUuid.success).toBe(true);
+  });
+});

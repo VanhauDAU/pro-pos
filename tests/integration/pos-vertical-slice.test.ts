@@ -6,6 +6,7 @@ import { PlatformService } from '@server/services/platform-service';
 import { PosService } from '@server/services/pos-service';
 import { PromotionService } from '@server/services/promotion-service';
 import { QrOrderService } from '@server/services/qr-order-service';
+import { StoreService } from '@server/services/store-service';
 import { QrOrderRepository } from '@server/repositories/qr-order-repository';
 
 describe('online POS vertical slice', () => {
@@ -23,6 +24,13 @@ describe('online POS vertical slice', () => {
   let weightProductId: string;
   let weightVariantId: string;
 
+  const bankAuditContext = (requestId: string) => ({
+    actorUserId: ownerUserId,
+    actorSessionId: null,
+    deviceId: null,
+    requestId,
+  });
+
   beforeAll(async () => {
     const platform = new PlatformService(env);
     await platform.bootstrap({
@@ -35,6 +43,18 @@ describe('online POS vertical slice', () => {
       ownerDisplayName: 'POS Owner',
       ownerEmail: 'pos.owner@example.com',
     }));
+    await new StoreService(env).createBankAccount({
+      storeId,
+      values: {
+        bankBin: '970418',
+        bankCode: 'BIDV',
+        bankName: 'Ngân hàng TMCP Đầu tư và Phát triển Việt Nam',
+        accountNumber: '0000000001',
+        accountName: 'POS OWNER',
+        isDefault: true,
+      },
+      auditContext: bankAuditContext('bank-before-all'),
+    });
 
     const catalog = new CatalogService(env);
     const area = await catalog.createNamed(storeId, 'areas', 'Khu A');
@@ -473,6 +493,128 @@ describe('online POS vertical slice', () => {
     expect(saved.quote.order.hasCallHistory).toBe(false);
     expect('callBatch' in saved).toBe(false);
     expect((await pos.listOrderCallBatches(storeId, legacy.orderId)).items).toEqual([]);
+  });
+
+  it('manages one default bank account and mirrors it to legacy settings', async () => {
+    const store = new StoreService(env);
+    const first = await store.createBankAccount({
+      storeId,
+      values: {
+        bankBin: '970422',
+        bankCode: 'MB',
+        bankName: 'Ngân hàng TMCP Quân đội',
+        accountNumber: '1111111111',
+        accountName: 'POS OWNER',
+        isDefault: false,
+      },
+      auditContext: bankAuditContext('bank-create-first'),
+    });
+    expect(first.bankAccount.isDefault).toBe(false);
+    const second = await store.createBankAccount({
+      storeId,
+      values: {
+        bankBin: '970436',
+        bankCode: 'VCB',
+        bankName: 'Ngân hàng TMCP Ngoại thương Việt Nam',
+        accountNumber: '2222222222',
+        accountName: 'POS OWNER',
+        isDefault: false,
+      },
+      auditContext: bankAuditContext('bank-create-second'),
+    });
+    expect(second.bankAccounts.filter((account) => account.isDefault)).toHaveLength(1);
+
+    const switched = await store.updateBankAccount({
+      storeId,
+      bankAccountId: second.bankAccount.id,
+      values: {
+        bankBin: '970436',
+        bankCode: 'VCB',
+        bankName: 'Ngân hàng TMCP Ngoại thương Việt Nam',
+        accountNumber: '2222222222',
+        accountName: 'POS OWNER',
+        isDefault: true,
+      },
+      auditContext: bankAuditContext('bank-switch-default'),
+    });
+    expect(switched.bankAccounts.find((account) => account.isDefault)?.id).toBe(
+      second.bankAccount.id,
+    );
+    const legacy = await env.DB.prepare(
+      `SELECT bank_name AS bankBin, bank_account_number AS accountNumber
+       FROM store_settings WHERE store_id = ?`,
+    )
+      .bind(storeId)
+      .first<{ bankBin: string; accountNumber: string }>();
+    expect(legacy).toEqual({ bankBin: '970436', accountNumber: '2222222222' });
+    await expect(
+      store.archiveBankAccount({
+        storeId,
+        bankAccountId: second.bankAccount.id,
+        auditContext: bankAuditContext('bank-delete-default-blocked'),
+      }),
+    ).rejects.toMatchObject({ code: 'BANK_ACCOUNT_DEFAULT_DELETE_BLOCKED' });
+  });
+
+  it('persists the selected bank account snapshot at checkout and falls back to default', async () => {
+    const store = new StoreService(env);
+    const accounts = await store.listBankAccounts(storeId);
+    const defaultBank = accounts.find((account) => account.isDefault)!;
+    const pos = new PosService(env);
+    const opened = await pos.openOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-bank-checkout-open',
+      idempotencyKey: 'bank-checkout-open-001',
+      values: {
+        orderType: 'TAKEAWAY',
+        items: [{ productId, variantId, quantityMilli: 1_000, note: null, discount: null }],
+      },
+    });
+    const checkout = await pos.checkout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-bank-checkout',
+      idempotencyKey: 'bank-checkout-001',
+      orderId: opened.order.id,
+      expectedOrderVersion: opened.order.version,
+      bankAccountId: defaultBank.id,
+      method: 'BANK_TRANSFER',
+      cashReceivedVnd: null,
+    });
+    const invoice = await pos.getInvoice(storeId, checkout.invoiceId);
+    expect(invoice.allocations[0]).toMatchObject({
+      method: 'BANK_TRANSFER',
+      bankAccountId: defaultBank.id,
+    });
+    expect(JSON.parse(invoice.allocations[0]!.bankAccountSnapshotJson!)).toMatchObject({
+      id: defaultBank.id,
+      accountNumber: defaultBank.accountNumber,
+    });
+
+    const fallbackOrder = await pos.openOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-bank-fallback-open',
+      idempotencyKey: 'bank-fallback-open-001',
+      values: {
+        orderType: 'TAKEAWAY',
+        items: [{ productId, variantId, quantityMilli: 1_000, note: null, discount: null }],
+      },
+    });
+    const fallback = await pos.checkout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-bank-fallback',
+      idempotencyKey: 'bank-fallback-001',
+      orderId: fallbackOrder.order.id,
+      expectedOrderVersion: fallbackOrder.order.version,
+      method: 'BANK_TRANSFER',
+      cashReceivedVnd: null,
+    });
+    expect((await pos.getInvoice(storeId, fallback.invoiceId)).allocations[0]).toMatchObject({
+      bankAccountId: defaultBank.id,
+    });
   });
 
   it('freezes a payment snapshot and consumes it exactly once at checkout', async () => {

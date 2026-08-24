@@ -47,7 +47,6 @@ import {
   Timeline,
   Tooltip,
   Typography,
-  message,
 } from 'antd';
 import type { TableColumnsType } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
@@ -64,6 +63,7 @@ import {
 } from '@client/lib/pos-receipt-printer';
 import { usePosPollingInterval, useRealtime } from '@client/realtime/RealtimeProvider';
 import { ReceiptPreviewModal, ReceiptPreviewPaper } from './ReceiptPreviewModal';
+import { toast } from 'sonner';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -282,7 +282,8 @@ export function OrderDetailPage({
   const params = useParams<{ orderId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [messageApi, contextHolder] = message.useMessage();
+  const messageApi = toast;
+  const contextHolder = null;
   const targetOrderId = propOrderId ?? params.orderId;
 
   const [activeTab, setActiveTab] = useState('overview');

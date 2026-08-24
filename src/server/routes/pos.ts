@@ -928,6 +928,7 @@ posRoutes.post('/orders/:orderId/checkout', requirePermission('checkout.complete
       orderId: c.req.param('orderId'),
       expectedOrderVersion: body.expectedOrderVersion,
       paymentSnapshotId: body.paymentSnapshotId ?? null,
+      bankAccountId: body.bankAccountId ?? null,
       method: body.method,
       cashReceivedVnd: body.cashReceivedVnd ?? null,
       allocations: body.allocations ?? [],

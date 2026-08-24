@@ -1,10 +1,13 @@
-import { Result, Spin } from 'antd';
+import { Result } from 'antd';
 import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes, useSearchParams } from 'react-router';
+
+import { Toaster } from 'sonner';
 
 import { DeviceActivationPage } from '@client/features/auth/DeviceActivationPage';
 import { LoginPage } from '@client/features/auth/LoginPage';
 import { PlatformAccessPage } from '@client/features/auth/PlatformAccessPage';
+import { PosAppSplash } from '@client/features/pos/PosAppSplash';
 import { PwaUpdatePrompt } from '@client/features/pwa/PwaUpdatePrompt';
 
 const OwnerPortalPage = lazy(async () => {
@@ -38,7 +41,8 @@ export function App() {
   return (
     <>
       <PwaUpdatePrompt />
-      <Suspense fallback={<Spin fullscreen description="Đang tải Pro POS" />}>
+      <Toaster position="top-right" richColors closeButton duration={3500} />
+      <Suspense fallback={<PosAppSplash />}>
         <Routes>
           <Route path="/" element={<LoginPage />} />
           <Route path="/logout-callback" element={<LogoutCallbackRoute />} />

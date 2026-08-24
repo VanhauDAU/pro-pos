@@ -184,7 +184,11 @@ export const updateOrderNoteSchema = z.object({
 
 export const checkoutSchema = z.object({
   expectedOrderVersion: z.number().int().positive(),
-  paymentSnapshotId: z.uuid().optional(),
+  paymentSnapshotId: z.string().trim().min(1).max(64).optional(),
+  // Legacy bank-account rows backfilled from SQLite use a 32-character hex id;
+  // newly created rows use UUIDs. Store ownership and active status are enforced
+  // by the checkout service before the account can be used.
+  bankAccountId: z.string().trim().min(1).max(64).optional(),
   method: z.enum(['CASH', 'BANK_TRANSFER']),
   cashReceivedVnd: z.number().int().nonnegative().nullable().optional(),
   allocations: z

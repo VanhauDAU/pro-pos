@@ -24,9 +24,9 @@ import {
   Spin,
   Switch,
   Typography,
-  message,
 } from 'antd';
 import { useEffect, useState } from 'react';
+import { toast } from 'sonner';
 
 import {
   type PrinterDeviceConfig,
@@ -62,7 +62,8 @@ export function StaffPrinterSettingsPage({
   onBack,
 }: StaffPrinterSettingsPageProps) {
   const queryClient = useQueryClient();
-  const [messageApi, holder] = message.useMessage();
+  const messageApi = toast;
+  const holder = null;
   const [form] = Form.useForm<PrinterDeviceConfig>();
   const [qzStatus, setQzStatus] = useState<{
     connected: boolean;

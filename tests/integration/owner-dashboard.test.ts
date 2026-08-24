@@ -6,6 +6,7 @@ import { OwnerDashboardService } from '@server/services/owner-dashboard-service'
 import { OwnerInvoiceService } from '@server/services/owner-invoice-service';
 import { PlatformService } from '@server/services/platform-service';
 import { PosService } from '@server/services/pos-service';
+import { StoreService } from '@server/services/store-service';
 
 describe('Owner Dashboard Real Analytics (Acceptance Test)', () => {
   let storeId: string;
@@ -28,6 +29,23 @@ describe('Owner Dashboard Real Analytics (Acceptance Test)', () => {
       ownerDisplayName: 'Store Owner',
       ownerEmail: 'owner.dashboard@example.com',
     }));
+    await new StoreService(env).createBankAccount({
+      storeId,
+      values: {
+        bankBin: '970422',
+        bankCode: 'MB',
+        bankName: 'Ngân hàng TMCP Quân đội',
+        accountNumber: '123456789',
+        accountName: 'STORE OWNER',
+        isDefault: true,
+      },
+      auditContext: {
+        actorUserId: ownerUserId,
+        actorSessionId: null,
+        deviceId: null,
+        requestId: 'dashboard-bank-setup',
+      },
+    });
 
     const catalog = new CatalogService(env);
     const area = await catalog.createNamed(storeId, 'areas', 'Khu Bida Lỗ');

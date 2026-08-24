@@ -474,6 +474,54 @@ describe('PRO-010A API security and tenant boundaries', () => {
     });
   });
 
+  it('keeps bank account mutations tenant-local', async () => {
+    const created = await SELF.fetch(`${ORIGIN}/api/v1/owner/store/bank-accounts`, {
+      method: 'POST',
+      headers: ownerHeaders(storeA),
+      body: JSON.stringify({
+        bankBin: '970422',
+        bankCode: 'MB',
+        bankName: 'Ngân hàng TMCP Quân đội',
+        accountNumber: '999999999',
+        accountName: 'STORE A',
+        isDefault: true,
+      }),
+    });
+    expect(created.status).toBe(201);
+    const bankAccountId = ((await created.json()) as { data: { bankAccount: { id: string } } }).data
+      .bankAccount.id;
+
+    const crossStoreUpdate = await SELF.fetch(
+      `${ORIGIN}/api/v1/owner/store/bank-accounts/${bankAccountId}`,
+      {
+        method: 'PATCH',
+        headers: ownerHeaders(storeB),
+        body: JSON.stringify({
+          bankBin: '970436',
+          bankCode: 'VCB',
+          bankName: 'Ngân hàng TMCP Ngoại thương Việt Nam',
+          accountNumber: '111111111',
+          accountName: 'STORE B',
+          isDefault: true,
+        }),
+      },
+    );
+    expect(crossStoreUpdate.status).toBe(404);
+    expect(await errorCode(crossStoreUpdate)).toBe('BANK_ACCOUNT_NOT_FOUND');
+
+    const crossStoreDelete = await SELF.fetch(
+      `${ORIGIN}/api/v1/owner/store/bank-accounts/${bankAccountId}`,
+      { method: 'DELETE', headers: ownerHeaders(storeB) },
+    );
+    expect(crossStoreDelete.status).toBe(404);
+    const account = await env.DB.prepare(
+      `SELECT status FROM store_bank_accounts WHERE store_id = ? AND id = ?`,
+    )
+      .bind(storeA.storeId, bankAccountId)
+      .first<{ status: string }>();
+    expect(account?.status).toBe('ACTIVE');
+  });
+
   it('protects Owners from staff status API and enforces one-user-one-store', async () => {
     const ownerTargetResponses = await Promise.all(
       [storeA.ownerUserId, storeB.ownerUserId, crypto.randomUUID()].map((target) =>

@@ -9,7 +9,7 @@ const databasePath = join(tempDirectory, 'upgrade.sqlite');
 
 const migrationFiles = (await readdir(new URL('migrations/', root)))
   .filter((file) => /^\d+_.+\.sql$/u.test(file))
-  .sort((left, right) => left.localeCompare(right));
+  .toSorted((left, right) => left.localeCompare(right));
 
 const fixture = `
 PRAGMA foreign_keys = ON;

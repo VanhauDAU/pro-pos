@@ -3,6 +3,30 @@ import { z } from 'zod';
 /** Vietnamese mobile (10 digits) and landline (10–11 digits) numbers. */
 export const VIETNAM_PHONE_REGEX = /^(?:02\d{8,9}|0[35789]\d{8})$/;
 
+export const bankAccountInputSchema = z.object({
+  bankBin: z.string().trim().min(1).max(20),
+  bankCode: z.string().trim().min(1).max(32),
+  bankName: z.string().trim().min(1).max(160),
+  accountNumber: z.string().trim().min(1).max(64),
+  accountName: z.string().trim().min(1).max(160),
+  isDefault: z.boolean().default(false),
+});
+
+export type BankAccountInput = z.infer<typeof bankAccountInputSchema>;
+
+export interface BankAccountDto {
+  id: string;
+  bankBin: string;
+  bankCode: string;
+  bankName: string;
+  accountNumber: string;
+  accountName: string;
+  isDefault: boolean;
+  status: 'ACTIVE' | 'ARCHIVED';
+  createdAt: number;
+  updatedAt: number;
+}
+
 export const updateStoreSettingsSchema = z.object({
   name: z.string().trim().min(1).max(160),
   phone: z

@@ -9,6 +9,7 @@ import type {
   OrderAuditEventDetail,
 } from '@contracts/order-detail';
 import type { OrderCallBatchDto, OrderCallBatchPageDto } from '@contracts/pos';
+import type { BankAccountDto } from '@contracts/store';
 import { calculateTimePrice } from '@domain/pricing/engine';
 import { AppError } from '@server/lib/app-error';
 import { PosRepository } from '@server/repositories/pos-repository';
@@ -74,6 +75,15 @@ function parseDiscountSnapshot(value: string | null) {
       value: number;
       reason: string | null;
     };
+  } catch {
+    return null;
+  }
+}
+
+function parseBankAccountSnapshot(value: string | null): BankAccountDto | null {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as BankAccountDto;
   } catch {
     return null;
   }
@@ -2330,26 +2340,32 @@ export class PosService {
       (sum, item) => sum + Number(item.discountAmountVnd),
       0,
     );
-    const bankSettings = await this.repository.findStoreBankSettings(storeId);
     const subtotal = productGross + (pricing?.amountAfterRoundingVnd ?? 0);
-    const promotions = await this.promotions.optionsForOrder({
-      storeId,
-      orderId,
-      subtotalVnd: Math.max(0, subtotal - discountTotal),
-      customerId: order.customer_id ?? null,
-      items: processedItems.map((item) => ({
-        productId: item.productId,
-        variantId: item.variantId,
-        productType: item.productType,
-        productName: item.productName,
-        variantName: item.variantName,
-        unitPriceVnd: Number(item.unitPriceVnd),
-        quantityMilli: Number(item.quantityMilli),
-        grossLineTotalVnd: Number(item.grossLineTotalVnd),
-        netLineTotalVnd: Number(item.netLineTotalVnd),
-      })),
-      now,
-    });
+    const [bankSettings, bankAccountRows, promotions] = await Promise.all([
+      this.repository.findStoreBankSettings(storeId),
+      this.repository.listStoreBankAccounts(storeId),
+      this.promotions.optionsForOrder({
+        storeId,
+        orderId,
+        subtotalVnd: Math.max(0, subtotal - discountTotal),
+        customerId: order.customer_id ?? null,
+        items: processedItems.map((item) => ({
+          productId: item.productId,
+          variantId: item.variantId,
+          productType: item.productType,
+          productName: item.productName,
+          variantName: item.variantName,
+          unitPriceVnd: Number(item.unitPriceVnd),
+          quantityMilli: Number(item.quantityMilli),
+          grossLineTotalVnd: Number(item.grossLineTotalVnd),
+          netLineTotalVnd: Number(item.netLineTotalVnd),
+        })),
+        now,
+      }),
+    ]);
+    const bankAccounts: BankAccountDto[] = bankAccountRows.results.map((account) =>
+      Object.assign({}, account, { isDefault: account.isDefault === 1 }),
+    );
     const promotionDiscount = promotions.applied.reduce(
       (sum, promotion) => sum + promotion.discountAmountVnd,
       0,
@@ -2412,6 +2428,7 @@ export class PosService {
       promotionOptions: promotions.options,
       totalVnd: Math.max(0, subtotal - discountTotal - promotionDiscount),
       bankSettings: bankSettings ?? null,
+      bankAccounts,
     };
   }
 
@@ -2865,6 +2882,7 @@ export class PosService {
       amountVnd: number;
       tenderedVnd?: number | undefined;
     }>;
+    bankAccount: BankAccountDto | null;
     debtAmountVnd: number;
     now: number;
   }) {
@@ -2885,8 +2903,9 @@ export class PosService {
       statements.push(
         this.env.DB.prepare(
           `INSERT INTO invoice_payment_allocations
-           (id, store_id, invoice_id, method, amount_vnd, tendered_vnd, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+           (id, store_id, invoice_id, method, amount_vnd, tendered_vnd,
+            bank_account_id, bank_account_snapshot_json, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).bind(
           crypto.randomUUID(),
           input.storeId,
@@ -2894,6 +2913,10 @@ export class PosService {
           allocation.method,
           allocation.amountVnd,
           allocation.tenderedVnd ?? null,
+          allocation.method === 'BANK_TRANSFER' ? (input.bankAccount?.id ?? null) : null,
+          allocation.method === 'BANK_TRANSFER' && input.bankAccount
+            ? JSON.stringify(input.bankAccount)
+            : null,
           input.now,
         ),
       );
@@ -3041,6 +3064,7 @@ export class PosService {
     orderId: string;
     expectedOrderVersion: number;
     paymentSnapshotId?: string | null;
+    bankAccountId?: string | null;
     method: 'CASH' | 'BANK_TRANSFER';
     cashReceivedVnd: number | null;
     allocations?: Array<{
@@ -3135,9 +3159,36 @@ export class PosService {
     ) {
       throw new AppError('INSUFFICIENT_CASH', 'Tiền khách đưa không đủ.', 422);
     }
+    const bankTransferVnd = usingAllocations
+      ? allocationsInput
+          .filter((allocation) => allocation.method === 'BANK_TRANSFER')
+          .reduce((sum, allocation) => sum + allocation.amountVnd, 0)
+      : input.method === 'BANK_TRANSFER'
+        ? quote.totalVnd
+        : 0;
+    const [businessDay, bankAccountRow] = await Promise.all([
+      this.businessDay(input.storeId, now),
+      bankTransferVnd > 0
+        ? this.repository.findActiveStoreBankAccount(input.storeId, input.bankAccountId ?? null)
+        : Promise.resolve(null),
+    ]);
+    if (bankTransferVnd > 0 && !bankAccountRow) {
+      throw new AppError(
+        input.bankAccountId ? 'BANK_ACCOUNT_NOT_AVAILABLE' : 'BANK_ACCOUNT_REQUIRED',
+        input.bankAccountId
+          ? 'Tài khoản ngân hàng đã chọn không còn khả dụng.'
+          : 'Cửa hàng chưa cấu hình tài khoản ngân hàng nhận chuyển khoản.',
+        422,
+      );
+    }
+    const bankAccount: BankAccountDto | null = bankAccountRow
+      ? {
+          ...bankAccountRow,
+          isDefault: bankAccountRow.isDefault === 1,
+        }
+      : null;
     const invoiceId = crypto.randomUUID();
     const paymentId = crypto.randomUUID();
-    const businessDay = await this.businessDay(input.storeId, now);
     const finalizedTime = quote.time
       ? {
           ...quote.time,
@@ -3157,6 +3208,7 @@ export class PosService {
       issuedAt: now,
       promotion: quote.promotion,
       promotions: quote.promotions,
+      bankAccount,
     };
     const timeDescription =
       quote.time?.tableSegments && quote.time.tableSegments.length > 1
@@ -3198,6 +3250,7 @@ export class PosService {
       invoiceId,
       quote,
       allocations: resolvedAllocations,
+      bankAccount,
       debtAmountVnd,
       now,
     });
@@ -3763,7 +3816,12 @@ export class PosService {
         }
       : null;
     const paymentAllocations = invoice
-      ? (await this.repository.listInvoicePaymentAllocations(storeId, invoice.id)).results
+      ? (await this.repository.listInvoicePaymentAllocations(storeId, invoice.id)).results.map(
+          ({ bankAccountSnapshotJson, ...allocation }) =>
+            Object.assign({}, allocation, {
+              bankAccountSnapshot: parseBankAccountSnapshot(bankAccountSnapshotJson),
+            }),
+        )
       : [];
 
     // 8. Audit logs & timeline

@@ -1,7 +1,11 @@
 import {
   ArrowLeftOutlined,
+  BankOutlined,
+  DeleteOutlined,
+  EditOutlined,
   EnvironmentOutlined,
   LockOutlined,
+  PlusOutlined,
   SaveOutlined,
 } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -9,14 +13,17 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   Col,
   Divider,
+  Empty,
   Form,
   Input,
   Modal,
   Row,
   Select,
   Spin,
+  Tag,
   Typography,
   message,
 } from 'antd';
@@ -24,6 +31,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
+import type { BankAccountDto } from '@contracts/store';
 import { VIETNAM_PHONE_REGEX } from '@contracts/store';
 
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
@@ -58,6 +66,7 @@ interface StoreSettings {
   bankAccountNumber: string | null;
   bankAccountName: string | null;
   bankQrMediaId: string | null;
+  bankAccounts: BankAccountDto[];
   provinceCode: number | null;
   provinceName: string | null;
   wardCode: number | null;
@@ -71,9 +80,13 @@ interface StoreFormValues {
   address: string;
   provinceCode: number;
   wardCode: number;
-  bankName?: string | undefined;
-  bankAccountNumber?: string | undefined;
-  bankAccountName?: string | undefined;
+}
+
+interface BankAccountFormValues {
+  bankBin: string;
+  accountNumber: string;
+  accountName: string;
+  isDefault: boolean;
 }
 
 interface VietQRBank {
@@ -104,6 +117,10 @@ export function OwnerStoreSettingsPage() {
   const [provinceCode, setProvinceCode] = useState<number | undefined>();
   const [saving, setSaving] = useState(false);
   const [messageApi, contextHolder] = message.useMessage();
+  const [bankAccountModalOpen, setBankAccountModalOpen] = useState(false);
+  const [editingBankAccount, setEditingBankAccount] = useState<BankAccountDto | null>(null);
+  const [bankAccountSaving, setBankAccountSaving] = useState(false);
+  const [bankAccountForm] = Form.useForm<BankAccountFormValues>();
 
   const settings = useQuery({
     queryKey: ['owner-settings'],
@@ -169,15 +186,110 @@ export function OwnerStoreSettingsPage() {
       address: data.address ?? '',
       ...(data.provinceCode === null ? {} : { provinceCode: data.provinceCode }),
       ...(data.wardCode === null ? {} : { wardCode: data.wardCode }),
-      bankName: data.bankName ?? undefined,
-      bankAccountNumber: data.bankAccountNumber ?? undefined,
-      bankAccountName: data.bankAccountName ?? undefined,
     });
   }, [form, settings.data]);
+
+  const applyBankAccounts = (bankAccounts: BankAccountDto[]) => {
+    const defaultAccount = bankAccounts.find((account) => account.isDefault) ?? null;
+    queryClient.setQueryData<StoreSettings>(['owner-settings'], (current) =>
+      current
+        ? {
+            ...current,
+            bankAccounts,
+            bankName: defaultAccount?.bankBin ?? null,
+            bankAccountNumber: defaultAccount?.accountNumber ?? null,
+            bankAccountName: defaultAccount?.accountName ?? null,
+            bankQrMediaId: null,
+          }
+        : current,
+    );
+  };
+
+  const openCreateBankAccount = () => {
+    setEditingBankAccount(null);
+    bankAccountForm.resetFields();
+    bankAccountForm.setFieldsValue({
+      isDefault: (settings.data?.bankAccounts.length ?? 0) === 0,
+    });
+    setBankAccountModalOpen(true);
+  };
+
+  const openEditBankAccount = (account: BankAccountDto) => {
+    setEditingBankAccount(account);
+    bankAccountForm.setFieldsValue({
+      bankBin: account.bankBin,
+      accountNumber: account.accountNumber,
+      accountName: account.accountName,
+      isDefault: account.isDefault,
+    });
+    setBankAccountModalOpen(true);
+  };
+
+  const saveBankAccount = async (values: BankAccountFormValues) => {
+    const bank = banks.data?.find((candidate) => candidate.bin === values.bankBin);
+    if (!bank) {
+      messageApi.warning('Vui lòng chọn ngân hàng hợp lệ.');
+      return;
+    }
+    setBankAccountSaving(true);
+    try {
+      const result = await jsonRequest<{ bankAccounts: BankAccountDto[] }>(
+        editingBankAccount
+          ? `/api/v1/owner/store/bank-accounts/${editingBankAccount.id}`
+          : '/api/v1/owner/store/bank-accounts',
+        {
+          bankBin: bank.bin,
+          bankCode: bank.code || bank.shortName,
+          bankName: bank.name,
+          accountNumber: values.accountNumber,
+          accountName: values.accountName.toUpperCase(),
+          isDefault: values.isDefault,
+        },
+        {
+          method: editingBankAccount ? 'PATCH' : 'POST',
+          headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' },
+        },
+      );
+      applyBankAccounts(result.bankAccounts);
+      setBankAccountModalOpen(false);
+      bankAccountForm.resetFields();
+      messageApi.success(editingBankAccount ? 'Đã cập nhật tài khoản.' : 'Đã thêm tài khoản.');
+    } catch (error) {
+      messageApi.error(error instanceof ApiError ? error.message : 'Không thể lưu tài khoản.');
+    } finally {
+      setBankAccountSaving(false);
+    }
+  };
+
+  const deleteBankAccount = (account: BankAccountDto) => {
+    Modal.confirm({
+      title: 'Xóa tài khoản ngân hàng?',
+      content: `${account.bankCode} · ${account.accountNumber}`,
+      okText: 'Xóa',
+      okButtonProps: { danger: true },
+      cancelText: 'Hủy',
+      onOk: async () => {
+        try {
+          const result = await apiRequest<{ bankAccounts: BankAccountDto[] }>(
+            `/api/v1/owner/store/bank-accounts/${account.id}`,
+            {
+              method: 'DELETE',
+              headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' },
+            },
+          );
+          applyBankAccounts(result.bankAccounts);
+          messageApi.success('Đã xóa tài khoản ngân hàng.');
+        } catch (error) {
+          messageApi.error(error instanceof ApiError ? error.message : 'Không thể xóa tài khoản.');
+        }
+      },
+    });
+  };
 
   const save = async (values: StoreFormValues) => {
     const province = provinces.data?.find((item) => item.code === values.provinceCode);
     const ward = wards.data?.find((item) => item.code === values.wardCode);
+    const defaultBankAccount = settings.data?.bankAccounts.find((account) => account.isDefault);
     setSaving(true);
     try {
       await apiRequest('/api/v1/owner/store/settings', {
@@ -191,10 +303,10 @@ export function OwnerStoreSettingsPage() {
           phone: values.phone || null,
           address: values.address,
           businessDayCutoffMinutes: settings.data?.businessDayCutoffMinutes ?? 0,
-          bankName: values.bankName || null,
-          bankAccountNumber: values.bankAccountNumber || null,
-          bankAccountName: values.bankAccountName || null,
-          bankQrMediaId: settings.data?.bankQrMediaId ?? null,
+          bankName: defaultBankAccount?.bankBin ?? null,
+          bankAccountNumber: defaultBankAccount?.accountNumber ?? null,
+          bankAccountName: defaultBankAccount?.accountName ?? null,
+          bankQrMediaId: null,
           provinceCode: province?.code ?? null,
           provinceName: province?.name ?? null,
           wardCode: ward?.code ?? null,
@@ -372,41 +484,61 @@ export function OwnerStoreSettingsPage() {
           <aside className="owner-store-settings-intro">
             <Typography.Title level={4}>Thanh toán VietQR</Typography.Title>
             <Typography.Paragraph type="secondary">
-              Cấu hình ngân hàng nhận tiền để in mã VietQR trên hóa đơn bán hàng.
+              Quản lý các tài khoản nhận chuyển khoản và tài khoản được chọn mặc định tại quầy.
             </Typography.Paragraph>
           </aside>
           <Card className="owner-store-settings-card">
-            <Row gutter={16}>
-              <Col xs={24} md={12}>
-                <Form.Item label="Ngân hàng" name="bankName">
-                  <Select
-                    showSearch
-                    allowClear
-                    optionFilterProp="label"
-                    loading={banks.isLoading}
-                    placeholder="Chọn ngân hàng"
-                    options={
-                      banks.data?.map((b) => ({
-                        value: b.bin,
-                        label: `${b.shortName} - ${b.name}`,
-                      })) ?? []
-                    }
-                  />
-                </Form.Item>
-              </Col>
-              <Col xs={24} md={12}>
-                <Form.Item label="Số tài khoản" name="bankAccountNumber">
-                  <Input placeholder="Nhập số tài khoản" />
-                </Form.Item>
-              </Col>
-            </Row>
-            <Form.Item
-              label="Tên chủ tài khoản"
-              name="bankAccountName"
-              normalize={(value) => (value || '').toUpperCase()}
-            >
-              <Input placeholder="Ví dụ: NGUYEN VAN A" />
-            </Form.Item>
+            <div className="owner-bank-accounts-heading">
+              <div>
+                <Typography.Text strong>Tài khoản ngân hàng</Typography.Text>
+                <br />
+                <Typography.Text type="secondary">
+                  QR được tạo tự động theo tài khoản và số tiền thanh toán.
+                </Typography.Text>
+              </div>
+              <Button type="primary" icon={<PlusOutlined />} onClick={openCreateBankAccount}>
+                Thêm tài khoản
+              </Button>
+            </div>
+            {settings.data.bankAccounts.length === 0 ? (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="Chưa có tài khoản nhận chuyển khoản"
+              />
+            ) : (
+              <div className="owner-bank-accounts-list">
+                {settings.data.bankAccounts.map((account) => (
+                  <div className="owner-bank-account-row" key={account.id}>
+                    <div className="owner-bank-account-row__icon">
+                      <BankOutlined />
+                    </div>
+                    <div className="owner-bank-account-row__content">
+                      <div>
+                        <strong>{account.bankCode || account.bankName}</strong>
+                        {account.isDefault ? <Tag color="blue">Mặc định</Tag> : null}
+                      </div>
+                      <span>{account.accountNumber}</span>
+                      <small>{account.accountName}</small>
+                    </div>
+                    <div className="owner-bank-account-row__actions">
+                      <Button
+                        type="text"
+                        icon={<EditOutlined />}
+                        aria-label="Sửa tài khoản"
+                        onClick={() => openEditBankAccount(account)}
+                      />
+                      <Button
+                        type="text"
+                        danger
+                        icon={<DeleteOutlined />}
+                        aria-label="Xóa tài khoản"
+                        onClick={() => deleteBankAccount(account)}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </Card>
 
           <aside className="owner-store-settings-intro">
@@ -446,6 +578,68 @@ export function OwnerStoreSettingsPage() {
           </Button>
         </div>
       </Form>
+
+      <Modal
+        title={editingBankAccount ? 'Sửa tài khoản ngân hàng' : 'Thêm tài khoản ngân hàng'}
+        open={bankAccountModalOpen}
+        okText={editingBankAccount ? 'Lưu thay đổi' : 'Thêm tài khoản'}
+        cancelText="Hủy"
+        confirmLoading={bankAccountSaving}
+        onOk={() => bankAccountForm.submit()}
+        onCancel={() => !bankAccountSaving && setBankAccountModalOpen(false)}
+        destroyOnHidden
+      >
+        <Form
+          form={bankAccountForm}
+          layout="vertical"
+          requiredMark={false}
+          onFinish={(values) => void saveBankAccount(values)}
+        >
+          <Form.Item
+            label="Ngân hàng"
+            name="bankBin"
+            rules={[{ required: true, message: 'Vui lòng chọn ngân hàng.' }]}
+          >
+            <Select
+              showSearch
+              optionFilterProp="label"
+              loading={banks.isLoading}
+              placeholder="Chọn ngân hàng"
+              options={
+                banks.data?.map((bank) => ({
+                  value: bank.bin,
+                  label: `${bank.shortName} - ${bank.name}`,
+                })) ?? []
+              }
+            />
+          </Form.Item>
+          <Form.Item
+            label="Số tài khoản"
+            name="accountNumber"
+            rules={[{ required: true, message: 'Vui lòng nhập số tài khoản.' }]}
+          >
+            <Input maxLength={64} placeholder="Nhập số tài khoản" />
+          </Form.Item>
+          <Form.Item
+            label="Tên chủ tài khoản"
+            name="accountName"
+            normalize={(value) => (value || '').toUpperCase()}
+            rules={[{ required: true, message: 'Vui lòng nhập tên chủ tài khoản.' }]}
+          >
+            <Input maxLength={160} placeholder="Ví dụ: NGUYEN VAN A" />
+          </Form.Item>
+          <Form.Item name="isDefault" valuePropName="checked">
+            <Checkbox disabled={Boolean(editingBankAccount?.isDefault)}>
+              Tài khoản mặc định
+            </Checkbox>
+          </Form.Item>
+          {editingBankAccount?.isDefault ? (
+            <Typography.Text type="secondary">
+              Hãy đặt tài khoản khác làm mặc định trước nếu muốn thay đổi trạng thái này.
+            </Typography.Text>
+          ) : null}
+        </Form>
+      </Modal>
 
       <Modal
         title="Đổi mật khẩu Chủ cửa hàng"

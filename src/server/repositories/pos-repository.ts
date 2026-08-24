@@ -16,6 +16,19 @@ export interface TablePricingRow {
   first_period_price: number | null;
 }
 
+export interface PosBankAccountRow {
+  id: string;
+  bankBin: string;
+  bankCode: string;
+  bankName: string;
+  accountNumber: string;
+  accountName: string;
+  isDefault: 0 | 1;
+  status: 'ACTIVE' | 'ARCHIVED';
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface OrderRow {
   id: string;
   store_id: string;
@@ -940,6 +953,37 @@ export class PosRepository {
         bankAccountNumber: string | null;
         bankAccountName: string | null;
       }>();
+  }
+
+  listStoreBankAccounts(storeId: string) {
+    return this.db
+      .prepare(
+        `SELECT id, bank_bin AS bankBin, bank_code AS bankCode, bank_name AS bankName,
+                account_number AS accountNumber, account_name AS accountName,
+                is_default AS isDefault, status, created_at AS createdAt,
+                updated_at AS updatedAt
+         FROM store_bank_accounts
+         WHERE store_id = ? AND status = 'ACTIVE'
+         ORDER BY is_default DESC, created_at, id`,
+      )
+      .bind(storeId)
+      .all<PosBankAccountRow>();
+  }
+
+  findActiveStoreBankAccount(storeId: string, bankAccountId?: string | null) {
+    return this.db
+      .prepare(
+        `SELECT id, bank_bin AS bankBin, bank_code AS bankCode, bank_name AS bankName,
+                account_number AS accountNumber, account_name AS accountName,
+                is_default AS isDefault, status, created_at AS createdAt,
+                updated_at AS updatedAt
+         FROM store_bank_accounts
+         WHERE store_id = ? AND status = 'ACTIVE'
+           AND ((? IS NOT NULL AND id = ?) OR (? IS NULL AND is_default = 1))
+         LIMIT 1`,
+      )
+      .bind(storeId, bankAccountId ?? null, bankAccountId ?? null, bankAccountId ?? null)
+      .first<PosBankAccountRow>();
   }
 
   findTimeSession(storeId: string, orderId: string) {
@@ -3109,6 +3153,8 @@ export class PosRepository {
     return this.db
       .prepare(
         `SELECT id, method, amount_vnd AS amountVnd, tendered_vnd AS tenderedVnd,
+                bank_account_id AS bankAccountId,
+                bank_account_snapshot_json AS bankAccountSnapshotJson,
                 created_at AS createdAt
          FROM invoice_payment_allocations
          WHERE store_id = ? AND invoice_id = ?
@@ -3120,6 +3166,8 @@ export class PosRepository {
         method: 'CASH' | 'BANK_TRANSFER' | 'DEBT';
         amountVnd: number;
         tenderedVnd: number | null;
+        bankAccountId: string | null;
+        bankAccountSnapshotJson: string | null;
         createdAt: number;
       }>();
   }

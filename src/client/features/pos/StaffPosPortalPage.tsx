@@ -2,19 +2,16 @@ import {
   AppstoreOutlined,
   BellOutlined,
   CheckCircleOutlined,
-  CheckOutlined,
   ClockCircleOutlined,
   CloseCircleFilled,
   CloseCircleOutlined,
   CloseOutlined,
-  CopyOutlined,
   CreditCardOutlined,
   DeleteOutlined,
   DownOutlined,
   EditOutlined,
   EllipsisOutlined,
   FileTextOutlined,
-  FullscreenOutlined,
   GiftOutlined,
   HistoryOutlined,
   LeftOutlined,
@@ -63,15 +60,22 @@ import {
   Select,
   Skeleton,
   Spin,
-  Switch,
   Tag,
   Tooltip,
   Typography,
-  message,
 } from 'antd';
 import type { MenuProps } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
-import { createContext, lazy, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  createContext,
+  lazy,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
@@ -84,7 +88,7 @@ import type {
   StaffNotificationStatus,
   TableOpenRequestDto,
 } from '@contracts/qr-order';
-import type { StorePrintSettings } from '@contracts/store';
+import type { BankAccountDto, StorePrintSettings } from '@contracts/store';
 import type { PricingConfigSnapshot } from '@domain/pricing/types';
 import {
   buildPrintDataFromInvoice,
@@ -97,6 +101,8 @@ import { StaffOnboarding } from './StaffOnboarding';
 import { PosCustomerSelector } from './PosCustomerSelector';
 import { ReceiptPreviewModal, ReceiptPreviewPaper } from './ReceiptPreviewModal';
 import { TableQrModal } from '@client/components/TableQrModal';
+import { PosAppSplash } from './PosAppSplash';
+import { toast } from 'sonner';
 import type { CustomerSummary } from '@contracts/customer';
 import type { PosPromotionOption, PromotionPreviewResult } from '@contracts/promotion';
 import { PushNotificationControl } from '@client/features/pwa/PushNotificationControl';
@@ -274,6 +280,7 @@ interface OrderQuote {
     bankAccountNumber: string | null;
     bankAccountName: string | null;
   } | null;
+  bankAccounts: BankAccountDto[];
 }
 
 interface OrderMutationSnapshot {
@@ -664,6 +671,8 @@ interface InvoiceDetail {
     method: 'CASH' | 'BANK_TRANSFER' | 'DEBT';
     amountVnd: number;
     tenderedVnd: number | null;
+    bankAccountId: string | null;
+    bankAccountSnapshotJson: string | null;
     createdAt: number;
   }>;
   snapshot: Record<string, unknown> | null;
@@ -1618,7 +1627,8 @@ function StaffNotificationCenter({ open, onClose }: { open: boolean; onClose: ()
 function QrOrderPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [messageApi, holder] = message.useMessage();
+  const messageApi = toast;
+  const holder = null;
   const [modal, modalHolder] = Modal.useModal();
   const realtime = useRealtime();
   const notifications = usePosNotifications();
@@ -2138,7 +2148,8 @@ function MorePage({
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [messageApi, holder] = message.useMessage();
+  const messageApi = toast;
+  const holder = null;
   const context = useQuery({
     queryKey: ['pos-context'],
     queryFn: () => apiRequest<StaffContext>('/api/v1/pos/context'),
@@ -3230,15 +3241,13 @@ function WeightInputSection({
   };
 
   const isKg = unit.toLowerCase() === 'kg';
-  const presets = isKg ? [0.1, 0.2, 0.5, 1, 1.5, 2, 3, 5] : [50, 100, 200, 500, 1000];
+  const presets = isKg ? [0.5, 1, 1.5, 2, 3, 5] : [50, 100, 200, 500];
 
   return (
     <div className="staff-weight-section">
       <div className="staff-weight-section__header">
         <div className="staff-item-modal__section-title">Trọng lượng ({unit})</div>
-        <div className="staff-item-modal__section-subtitle">
-          Nhập trực tiếp hoặc bấm chọn nhanh mức cân bên dưới
-        </div>
+        <div className="staff-item-modal__section-subtitle">Nhập trọng lượng thực tế</div>
       </div>
 
       {/* Main Large Input */}
@@ -3277,14 +3286,6 @@ function WeightInputSection({
           <button
             type="button"
             className="staff-weight-adjust-btn"
-            onClick={() => handleAdjust(-0.5)}
-            title="Giảm 0.5"
-          >
-            -0.5
-          </button>
-          <button
-            type="button"
-            className="staff-weight-adjust-btn"
             onClick={() => handleAdjust(-0.1)}
             title="Giảm 0.1"
           >
@@ -3305,14 +3306,6 @@ function WeightInputSection({
             title="Tăng 0.5"
           >
             +0.5
-          </button>
-          <button
-            type="button"
-            className="staff-weight-adjust-btn staff-weight-adjust-btn--add"
-            onClick={() => handleAdjust(1.0)}
-            title="Tăng 1.0"
-          >
-            +1.0
           </button>
         </div>
       </div>
@@ -3405,11 +3398,11 @@ function OrderItemDetailModal({
 
   const handleSave = () => {
     if (item.productType === 'WEIGHT' && itemQuantityMilli <= 0) {
-      message.warning('Vui lòng nhập trọng lượng lớn hơn 0');
+      toast.warning('Vui lòng nhập trọng lượng lớn hơn 0');
       return;
     }
     if (discountAmount > 0 && !discountReason.trim()) {
-      message.warning('Vui lòng nhập lý do giảm giá');
+      toast.warning('Vui lòng nhập lý do giảm giá');
       return;
     }
 
@@ -3450,149 +3443,154 @@ function OrderItemDetailModal({
       destroyOnHidden
       onCancel={onCancel}
       footer={null}
+      wrapClassName="staff-item-detail-modal-wrap"
       className="staff-item-detail-modal-v2"
     >
       <div className="staff-item-modal__body">
-        <div className="staff-item-modal__avatar-wrap">
-          <div
-            className={`staff-item-modal__avatar-box ${product?.avatarType === 'IMAGE' && product?.mediaId ? 'has-image' : 'has-color'} ${product?.avatarColor ? 'has-custom-color' : ''}`}
-            style={{
-              background: product?.avatarColor || '#f8fafc',
-            }}
-          >
-            {product?.avatarType === 'IMAGE' && product?.mediaId ? (
-              <img
-                src={`/api/v1/media/${product.mediaId}`}
-                alt={item.productName}
-                className="staff-item-modal__avatar-img"
-              />
-            ) : (
-              <span className="staff-item-modal__avatar-letter">
-                {getProductInitials(item.productName)}
-              </span>
-            )}
-          </div>
-        </div>
-
-        <div className="staff-item-modal__section">
-          <div className="staff-item-modal__section-title">Phiên bản giá</div>
-          <div className="staff-item-modal__section-subtitle">Chọn một phiên bản giá</div>
-          <div className="staff-item-modal__variants">
-            {variants.map((v) => {
-              const isChecked = v.id === selectedVariantId;
-              return (
-                <div
-                  key={v.id}
-                  className={`staff-item-modal__variant-row ${isChecked ? 'is-selected' : ''}`}
-                  onClick={() => {
-                    setSelectedVariantId(v.id);
-                  }}
-                >
-                  <div className="staff-item-modal__variant-left">
-                    <div className={`staff-item-modal__radio ${isChecked ? 'is-checked' : ''}`}>
-                      {isChecked ? <div className="staff-item-modal__radio-inner" /> : null}
-                    </div>
-                    <span className="staff-item-modal__variant-name">{v.name}</span>
-                  </div>
-                  <strong className="staff-item-modal__variant-price">
-                    {formatMoney(v.salePriceVnd ?? unitPriceVnd)}
-                    {item.productType === 'WEIGHT' ? `/${getWeightUnit(item.unitName)}` : ''}
-                  </strong>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Dedicated Weight Input Section for WEIGHT items */}
-        {item.productType === 'WEIGHT' ? (
-          <WeightInputSection
-            unitName={item.unitName}
-            unitPriceVnd={unitPriceVnd}
-            quantityMilli={itemQuantityMilli}
-            onChangeQuantityMilli={setItemQuantityMilli}
-            grossTotal={grossTotal}
-          />
-        ) : null}
-
-        <div className="staff-item-modal__section">
-          <div className="staff-item-modal__section-title">Ghi chú</div>
-          <Input.TextArea
-            rows={3}
-            placeholder="Nhập ghi chú"
-            value={itemNote}
-            onChange={(e) => setItemNote(e.target.value)}
-            className="staff-item-modal__note-input"
-          />
-        </div>
-
-        <div className="staff-item-modal__section">
-          <div className="staff-item-modal__section-title">Giảm giá sản phẩm</div>
-          {!showDiscountInput && discountAmount === 0 ? (
-            <button
-              type="button"
-              className="staff-item-modal__discount-toggle"
-              onClick={() => {
-                setShowDiscountInput(true);
-                setDiscountType('FIXED');
+        <div className="staff-item-modal__scrollable-content">
+          <div className="staff-item-modal__avatar-wrap">
+            <div
+              className={`staff-item-modal__avatar-box ${product?.avatarType === 'IMAGE' && product?.mediaId ? 'has-image' : 'has-color'} ${product?.avatarColor ? 'has-custom-color' : ''}`}
+              style={{
+                background: product?.avatarColor || '#f8fafc',
               }}
             >
-              <span>Giảm giá thủ công</span>
-              <PlusCircleOutlined className="staff-item-modal__plus-icon" />
-            </button>
-          ) : (
-            <div className="staff-item-modal__discount-box">
-              <div className="staff-item-modal__discount-row">
-                <Radio.Group
-                  value={discountType}
-                  onChange={(e) => setDiscountType(e.target.value as 'FIXED' | 'PERCENT')}
-                  size="middle"
-                  buttonStyle="solid"
-                >
-                  <Radio.Button value="FIXED">VNĐ</Radio.Button>
-                  <Radio.Button value="PERCENT">%</Radio.Button>
-                </Radio.Group>
-                <InputNumber
-                  min={0}
-                  max={discountType === 'PERCENT' ? 100 : grossTotal}
-                  value={discountValue}
-                  onChange={(val) => setDiscountValue(val === null ? null : Number(val))}
-                  placeholder="0"
-                  suffix={discountType === 'PERCENT' ? '%' : 'đ'}
-                  formatter={(val) => `${val ?? ''}`.replace(/\B(?=(\d{3})+(?!\d))/gu, '.')}
-                  parser={(val) => Number((val ?? '').replaceAll('.', ''))}
-                  style={{ flex: 1 }}
+              {product?.avatarType === 'IMAGE' && product?.mediaId ? (
+                <img
+                  src={`/api/v1/media/${product.mediaId}`}
+                  alt={item.productName}
+                  className="staff-item-modal__avatar-img"
                 />
-                <Button
-                  type="text"
-                  danger
-                  icon={<DeleteOutlined />}
-                  className="staff-item-modal__discount-delete-btn"
-                  onClick={() => {
-                    setDiscountType(null);
-                    setDiscountValue(null);
-                    setDiscountReason('');
-                    setShowDiscountInput(false);
-                  }}
+              ) : (
+                <span className="staff-item-modal__avatar-letter">
+                  {getProductInitials(item.productName)}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {variants.length > 1 ? (
+            <div className="staff-item-modal__section">
+              <div className="staff-item-modal__section-title">Phiên bản giá</div>
+              <div className="staff-item-modal__section-subtitle">Chọn một phiên bản giá</div>
+              <div className="staff-item-modal__variants">
+                {variants.map((v) => {
+                  const isChecked = v.id === selectedVariantId;
+                  return (
+                    <div
+                      key={v.id}
+                      className={`staff-item-modal__variant-row ${isChecked ? 'is-selected' : ''}`}
+                      onClick={() => {
+                        setSelectedVariantId(v.id);
+                      }}
+                    >
+                      <div className="staff-item-modal__variant-left">
+                        <div className={`staff-item-modal__radio ${isChecked ? 'is-checked' : ''}`}>
+                          {isChecked ? <div className="staff-item-modal__radio-inner" /> : null}
+                        </div>
+                        <span className="staff-item-modal__variant-name">{v.name}</span>
+                      </div>
+                      <strong className="staff-item-modal__variant-price">
+                        {formatMoney(v.salePriceVnd ?? unitPriceVnd)}
+                        {item.productType === 'WEIGHT' ? `/${getWeightUnit(item.unitName)}` : ''}
+                      </strong>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
+          {/* Dedicated Weight Input Section for WEIGHT items */}
+          {item.productType === 'WEIGHT' ? (
+            <WeightInputSection
+              unitName={item.unitName}
+              unitPriceVnd={unitPriceVnd}
+              quantityMilli={itemQuantityMilli}
+              onChangeQuantityMilli={setItemQuantityMilli}
+              grossTotal={grossTotal}
+            />
+          ) : null}
+
+          <div className="staff-item-modal__section">
+            <div className="staff-item-modal__section-title">Ghi chú</div>
+            <Input.TextArea
+              rows={2}
+              placeholder="Nhập ghi chú"
+              value={itemNote}
+              onChange={(e) => setItemNote(e.target.value)}
+              className="staff-item-modal__note-input"
+            />
+          </div>
+
+          <div className="staff-item-modal__section">
+            <div className="staff-item-modal__section-title">Giảm giá sản phẩm</div>
+            {!showDiscountInput && discountAmount === 0 ? (
+              <button
+                type="button"
+                className="staff-item-modal__discount-toggle"
+                onClick={() => {
+                  setShowDiscountInput(true);
+                  setDiscountType('FIXED');
+                }}
+              >
+                <span>Giảm giá thủ công</span>
+                <PlusCircleOutlined className="staff-item-modal__plus-icon" />
+              </button>
+            ) : (
+              <div className="staff-item-modal__discount-box">
+                <div className="staff-item-modal__discount-row">
+                  <Radio.Group
+                    value={discountType}
+                    onChange={(e) => setDiscountType(e.target.value as 'FIXED' | 'PERCENT')}
+                    size="middle"
+                    buttonStyle="solid"
+                  >
+                    <Radio.Button value="FIXED">VNĐ</Radio.Button>
+                    <Radio.Button value="PERCENT">%</Radio.Button>
+                  </Radio.Group>
+                  <InputNumber
+                    min={0}
+                    max={discountType === 'PERCENT' ? 100 : grossTotal}
+                    value={discountValue}
+                    onChange={(val) => setDiscountValue(val === null ? null : Number(val))}
+                    placeholder="0"
+                    suffix={discountType === 'PERCENT' ? '%' : 'đ'}
+                    formatter={(val) => `${val ?? ''}`.replace(/\B(?=(\d{3})+(?!\d))/gu, '.')}
+                    parser={(val) => Number((val ?? '').replaceAll('.', ''))}
+                    style={{ flex: 1 }}
+                  />
+                  <Button
+                    type="text"
+                    danger
+                    icon={<DeleteOutlined />}
+                    className="staff-item-modal__discount-delete-btn"
+                    onClick={() => {
+                      setDiscountType(null);
+                      setDiscountValue(null);
+                      setDiscountReason('');
+                      setShowDiscountInput(false);
+                    }}
+                  />
+                </div>
+                {discountAmount > 0 ? (
+                  <div className="staff-item-modal__discount-preview">
+                    Giảm: -{formatMoney(discountAmount)} (Còn {formatMoney(netTotal)})
+                  </div>
+                ) : null}
+                <Input.TextArea
+                  rows={2}
+                  maxLength={300}
+                  showCount
+                  value={discountReason}
+                  status={discountAmount > 0 && !discountReason.trim() ? 'error' : ''}
+                  placeholder="Nhập lý do giảm giá (*)"
+                  onChange={(event) => setDiscountReason(event.target.value)}
+                  className="staff-item-modal__discount-reason"
                 />
               </div>
-              {discountAmount > 0 ? (
-                <div className="staff-item-modal__discount-preview">
-                  Giảm: -{formatMoney(discountAmount)} (Còn {formatMoney(netTotal)})
-                </div>
-              ) : null}
-              <Input.TextArea
-                rows={2}
-                maxLength={300}
-                showCount
-                value={discountReason}
-                status={discountAmount > 0 && !discountReason.trim() ? 'error' : ''}
-                placeholder="Nhập lý do giảm giá (*)"
-                onChange={(event) => setDiscountReason(event.target.value)}
-                className="staff-item-modal__discount-reason"
-              />
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         <div className="staff-item-modal__footer">
@@ -3663,16 +3661,25 @@ function OrderItemDetailModal({
   );
 }
 
-function OrderEditor({ auth }: { auth: AuthContextResponse }) {
+function OrderEditor({
+  auth,
+  orderIdOverride,
+  suppressPaymentAutoResume = false,
+}: {
+  auth: AuthContextResponse;
+  orderIdOverride?: string;
+  suppressPaymentAutoResume?: boolean;
+}) {
   const location = useLocation();
-  const orderId = location.pathname.match(/^\/pos\/orders\/([^/]+)$/u)?.[1];
+  const orderId = orderIdOverride ?? location.pathname.match(/^\/pos\/orders\/([^/]+)$/u)?.[1];
   const isNew = !orderId || orderId === 'new';
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const quotePollingInterval = usePosPollingInterval(5_000);
   const { serverTimeOffsetMs } = useRealtime();
-  const [messageApi, holder] = message.useMessage();
+  const messageApi = toast;
+  const holder = null;
   const preselectedTableId = searchParams.get('tableId');
   const typeParam = searchParams.get('type');
   const [orderType, setOrderType] = useState<'DINE_IN' | 'TAKEAWAY'>(() => {
@@ -3733,6 +3740,9 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const [clockNow, setClockNow] = useState(() => Date.now());
   const [isMobile, setIsMobile] = useState(() =>
     typeof window !== 'undefined' ? window.innerWidth <= 900 : false,
+  );
+  const [isDesktopPayment, setIsDesktopPayment] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth >= 1200 : false,
   );
   const [mobileView, setMobileView] = useState<'CART' | 'PRODUCTS'>('CART');
   const cartIconRef = useRef<HTMLButtonElement>(null);
@@ -3845,11 +3855,25 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
 
   const navigateToPayment = (targetOrderId: string, replace = false) => {
     markPaymentNavigationStarted(targetOrderId);
+    if (isDesktopPayment) {
+      setSearchParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          next.set('checkout', '1');
+          return next;
+        },
+        { replace },
+      );
+      return;
+    }
     navigate(`/pos/orders/${targetOrderId}/payment`, replace ? { replace: true } : undefined);
   };
 
   useEffect(() => {
-    const handleResize = () => setIsMobile(window.innerWidth <= 900);
+    const handleResize = () => {
+      setIsMobile(window.innerWidth <= 900);
+      setIsDesktopPayment(window.innerWidth >= 1200);
+    };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
@@ -4055,10 +4079,10 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   }, [quote.data?.time?.status, serverTimeOffsetMs]);
 
   useEffect(() => {
-    if (!isNew && quote.data && searchParams.get('checkout') === '1') {
+    if (!isNew && quote.data && searchParams.get('checkout') === '1' && !isDesktopPayment) {
       navigateToPayment(quote.data.order.id, true);
     }
-  }, [isNew, quote.data, searchParams, navigate]);
+  }, [isDesktopPayment, isNew, quote.data, searchParams, navigate]);
 
   useEffect(() => {
     if (!isNew && quote.data) {
@@ -4162,6 +4186,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     return matchesSearch && (selectedCategory === 'ALL' || product.categoryId === selectedCategory);
   });
   const isPaymentPending = !isNew && quote.data?.order.status === 'PAYMENT_PENDING';
+  const desktopCheckoutOpen =
+    !isNew && Boolean(orderId) && isDesktopPayment && searchParams.get('checkout') === '1';
 
   const addDraftVariant = (
     product: CatalogProduct,
@@ -4838,6 +4864,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   useEffect(() => {
     const currentQuote = quote.data;
     if (
+      suppressPaymentAutoResume ||
       !currentQuote?.time ||
       currentQuote.order.status !== 'PAYMENT_PENDING' ||
       !isReturningFromPayment(currentQuote.order.id, currentQuote.order.version) ||
@@ -4862,7 +4889,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     return () => {
       if (retryTimer !== null) window.clearTimeout(retryTimer);
     };
-  }, [autoResumeRetryToken, quote.data]);
+  }, [autoResumeRetryToken, quote.data, suppressPaymentAutoResume]);
 
   const handleOpenTableQrModal = async () => {
     const tableId = quote.data?.order.tableId ?? selectedTable?.id ?? preselectedTableId;
@@ -5727,6 +5754,9 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         onClose={() => setPromotionModalOpen(false)}
         onApply={(ids) => void applyPromotion(ids)}
       />
+      {desktopCheckoutOpen && orderId ? (
+        <PaymentPage orderId={orderId} auth={auth} presentation="drawer" />
+      ) : null}
       <Drawer
         open={callHistoryOpen}
         title="Lịch sử gọi món"
@@ -8659,7 +8689,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
 function InvoicePage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const [messageApi, holder] = message.useMessage();
+  const messageApi = toast;
+  const holder = null;
   const [printPreviewOpen, setPrintPreviewOpen] = useState(false);
   const [printing, setPrinting] = useState(false);
   const invoiceId = location.pathname.match(/^\/pos\/invoices\/([^/]+)$/u)?.[1];
@@ -9006,30 +9037,50 @@ const PAYMENT_METHODS: PaymentMethodItem[] = [
   },
 ];
 
-function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResponse }) {
+function quickCashAmounts(totalVnd: number) {
+  const amounts = new Set<number>([totalVnd]);
+  for (const denomination of [1_000, 5_000, 10_000, 50_000, 100_000, 200_000]) {
+    amounts.add((Math.floor(totalVnd / denomination) + 1) * denomination);
+  }
+  return [...amounts].filter((amount) => amount >= totalVnd).slice(0, 6);
+}
+
+function PaymentPage({
+  orderId,
+  auth,
+  presentation = 'page',
+}: {
+  orderId: string;
+  auth: AuthContextResponse;
+  presentation?: 'page' | 'drawer';
+}) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const quotePollingInterval = usePosPollingInterval(5_000);
-  const [messageApi, holder] = message.useMessage();
+  const messageApi = toast;
+  const holder = null;
   const [selectedMethod, setSelectedMethod] = useState<PaymentMethodType>('CASH');
   const [isMultiMethod, setIsMultiMethod] = useState(false);
   const [cashReceived, setCashReceived] = useState<number | null>(null);
   const [cashApplied, setCashApplied] = useState(0);
   const [bankApplied, setBankApplied] = useState(0);
   const [debtAmount, setDebtAmount] = useState(0);
+  const [selectedBankAccountId, setSelectedBankAccountId] = useState<string | null>(null);
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
-  const [customerName, setCustomerName] = useState('');
-  const [customerPhone, setCustomerPhone] = useState('');
-  const [_attachedCustomer, setAttachedCustomer] = useState<{
-    name: string;
-    phone?: string | undefined;
-  } | null>(null);
+  const [customerSaving, setCustomerSaving] = useState(false);
   const [qrModalOpen, setQrModalOpen] = useState(false);
   const [paymentPreviewOpen, setPaymentPreviewOpen] = useState(false);
   const [preparingCheckout, setPreparingCheckout] = useState(false);
   const [prepareCheckoutError, setPrepareCheckoutError] = useState<string | null>(null);
   const [returningToOrder, setReturningToOrder] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [paymentSuccessData, setPaymentSuccessData] = useState<{
+    invoiceCode: string;
+    tableName: string;
+    totalVnd: number;
+    method: 'CASH' | 'BANK_TRANSFER';
+    andPrint: boolean;
+  } | null>(null);
   const [paymentSnapshotId, setPaymentSnapshotId] = useState<string | null>(() => {
     const cached = queryClient.getQueryData<PaymentSnapshotResult>([
       'pos-payment-snapshot',
@@ -9071,6 +9122,22 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
       armPaymentReturn(orderId);
     }
   }, [orderId, quote.data?.order.status, quote.data?.order.version, Boolean(quote.data?.time)]);
+
+  const handleCelebrationComplete = useCallback(() => {
+    if (quote.data?.order.id) {
+      clearPaymentPageActive(quote.data.order.id);
+    }
+    setPaymentSuccessData(null);
+    navigate('/pos/areas', { replace: true });
+  }, [quote.data?.order.id, navigate]);
+
+  useEffect(() => {
+    if (!paymentSuccessData) return;
+    const timer = setTimeout(() => {
+      handleCelebrationComplete();
+    }, 1400);
+    return () => clearTimeout(timer);
+  }, [paymentSuccessData, handleCelebrationComplete]);
 
   const resumeFrozenCheckout = async (frozenQuote: OrderQuote, notify: boolean) => {
     const sendResume = (expectedOrderVersion: number) =>
@@ -9209,12 +9276,6 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
     staffContext.isSuccess,
   ]);
 
-  const handleCopy = (text: string, label: string) => {
-    if (!text) return;
-    void navigator.clipboard.writeText(text);
-    messageApi.success(`Đã sao chép ${label}`);
-  };
-
   // Mặc định tiền khách đưa điền đúng giá tiền khách phải trả
   useEffect(() => {
     if (quote.data && cashReceived === null) {
@@ -9222,7 +9283,23 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
     }
   }, [quote.data, cashReceived]);
 
+  useEffect(() => {
+    const bankAccounts = quote.data?.bankAccounts ?? [];
+    if (
+      selectedBankAccountId &&
+      bankAccounts.some((account) => account.id === selectedBankAccountId)
+    ) {
+      return;
+    }
+    setSelectedBankAccountId(bankAccounts.find((account) => account.isDefault)?.id ?? null);
+  }, [quote.data?.bankAccounts, selectedBankAccountId]);
+
   const totalVnd = quote.data?.totalVnd ?? 0;
+  const bankAccounts = quote.data?.bankAccounts ?? [];
+  const selectedBankAccount =
+    bankAccounts.find((account) => account.id === selectedBankAccountId) ??
+    bankAccounts.find((account) => account.isDefault) ??
+    null;
   const currentMethodItem =
     PAYMENT_METHODS.find((m) => m.key === selectedMethod) ?? PAYMENT_METHODS[0]!;
   const isDebtMethod = selectedMethod === 'DEBT';
@@ -9276,9 +9353,11 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
           storeName: staffContext.data?.storeName ?? null,
           phone: staffContext.data?.storePhone ?? null,
           address: staffContext.data?.storeAddress ?? null,
-          bankName: staffContext.data?.bankName ?? null,
-          bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
-          bankAccountName: staffContext.data?.bankAccountName ?? null,
+          bankName: selectedBankAccount?.bankBin ?? staffContext.data?.bankName ?? null,
+          bankAccountNumber:
+            selectedBankAccount?.accountNumber ?? staffContext.data?.bankAccountNumber ?? null,
+          bankAccountName:
+            selectedBankAccount?.accountName ?? staffContext.data?.bankAccountName ?? null,
         },
       }
     : null;
@@ -9329,6 +9408,13 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
       messageApi.warning('Vui lòng chọn hoặc tạo khách hàng để ghi nợ.');
       return;
     }
+    const requiresBankAccount = isMultiMethod
+      ? bankApplied > 0
+      : selectedMethod === 'BANK_TRANSFER';
+    if (requiresBankAccount && !selectedBankAccount) {
+      messageApi.warning('Cửa hàng chưa có tài khoản ngân hàng nhận chuyển khoản.');
+      return;
+    }
     setSubmitting(true);
     try {
       const result = await jsonRequest<{
@@ -9340,6 +9426,9 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
         {
           expectedOrderVersion: quote.data.order.version,
           ...(paymentSnapshotV2Enabled && paymentSnapshotId ? { paymentSnapshotId } : {}),
+          ...(requiresBankAccount && selectedBankAccount
+            ? { bankAccountId: selectedBankAccount.id }
+            : {}),
           method: currentMethodItem.backendMethod,
           cashReceivedVnd: currentMethodItem.backendMethod === 'CASH' ? cashReceived : null,
           allocations: isMultiMethod
@@ -9374,12 +9463,13 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
         });
       }
 
+      const resolvedCode =
+        result.displayCode ||
+        quote.data.order.displayCode ||
+        (quote.data.order.id ? `HD-${quote.data.order.id.slice(0, 8).toUpperCase()}` : '—');
+
       if (andPrint) {
         const printData = buildCurrentPaymentPrintData()!;
-        const resolvedCode =
-          result.displayCode ||
-          quote.data.order.displayCode ||
-          (quote.data.order.id ? `HD-${quote.data.order.id.slice(0, 8).toUpperCase()}` : '—');
         printData.orderCode = resolvedCode;
         printData.invoiceCode = resolvedCode;
         const printResult = await printReceipt({
@@ -9389,25 +9479,29 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
             storeName: staffContext.data?.storeName ?? null,
             phone: staffContext.data?.storePhone ?? null,
             address: staffContext.data?.storeAddress ?? null,
-            bankName: staffContext.data?.bankName ?? null,
-            bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
-            bankAccountName: staffContext.data?.bankAccountName ?? null,
+            bankName: selectedBankAccount?.bankBin ?? staffContext.data?.bankName ?? null,
+            bankAccountNumber:
+              selectedBankAccount?.accountNumber ?? staffContext.data?.bankAccountNumber ?? null,
+            bankAccountName:
+              selectedBankAccount?.accountName ?? staffContext.data?.bankAccountName ?? null,
           },
         });
-        if (printResult.success) {
-          messageApi.success('Thanh toán và in hóa đơn thành công!');
-        } else {
+        if (!printResult.success) {
           messageApi.warning(
             `Thanh toán thành công nhưng chưa in được hóa đơn: ${printResult.message ?? 'Không rõ lỗi'}`,
           );
         }
-      } else {
-        messageApi.success('Thanh toán đơn hàng thành công!');
       }
 
-      // Return directly to POS home
-      clearPaymentPageActive(quote.data.order.id);
-      navigate('/pos/areas', { replace: true });
+      setPaymentSuccessData({
+        invoiceCode: resolvedCode,
+        tableName:
+          quote.data.order.tableName ||
+          (quote.data.order.orderType === 'TAKEAWAY' ? 'Mang về' : 'Đơn hàng'),
+        totalVnd: quote.data.totalVnd,
+        method: currentMethodItem.backendMethod,
+        andPrint: Boolean(andPrint),
+      });
     } catch (error) {
       messageApi.error(errorText(error));
     } finally {
@@ -9415,35 +9509,286 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
     }
   };
 
-  const handleSaveCustomer = () => {
-    if (!customerName.trim()) {
-      messageApi.warning('Vui lòng nhập tên khách hàng.');
-      return;
+  const attachCustomerDuringCheckout = async (customer: CustomerSummary | null) => {
+    if (!quote.data || customerSaving) return;
+    setCustomerSaving(true);
+    try {
+      let currentQuote = quote.data;
+      const shouldRefreeze = Boolean(
+        currentQuote.time && currentQuote.order.status === 'PAYMENT_PENDING',
+      );
+      if (shouldRefreeze) {
+        const resumed = await jsonRequest<{
+          orderId: string;
+          status: 'OPEN';
+          resumedAt: number;
+          quote: OrderQuote;
+        }>(
+          `/api/v1/pos/orders/${orderId}/resume-checkout`,
+          { expectedOrderVersion: currentQuote.order.version },
+          { headers: mutationHeaders(csrf) },
+        );
+        currentQuote = resumed.quote;
+      }
+      const updated = await jsonRequest<OrderMutationSnapshot>(
+        `/api/v1/pos/orders/${orderId}/guest`,
+        {
+          expectedOrderVersion: currentQuote.order.version,
+          guestCount: currentQuote.order.guestCount ?? 1,
+          customerId: customer?.id ?? null,
+        },
+        { method: 'PATCH', headers: mutationHeaders(csrf) },
+      );
+      currentQuote = updated.quote;
+      if (shouldRefreeze) {
+        const stopped = await jsonRequest<PaymentSnapshotResult>(
+          `/api/v1/pos/orders/${orderId}/stop-time`,
+          { expectedOrderVersion: currentQuote.order.version },
+          { headers: mutationHeaders(csrf) },
+        );
+        currentQuote = stopped.quote;
+        setPaymentSnapshotId(stopped.paymentSnapshotId);
+        queryClient.setQueryData(['pos-payment-snapshot', orderId], stopped);
+        armPaymentReturn(orderId, stopped.quote.order.version);
+      }
+      queryClient.setQueryData(['pos-order-quote', orderId], currentQuote);
+      setCustomerModalOpen(false);
+      messageApi.success(customer ? 'Đã cập nhật khách hàng.' : 'Đã chuyển về khách lẻ.');
+    } catch (error) {
+      messageApi.error(errorText(error));
+    } finally {
+      setCustomerSaving(false);
     }
-    setAttachedCustomer({
-      name: customerName.trim(),
-      phone: customerPhone.trim() || undefined,
-    });
-    setCustomerModalOpen(false);
-    messageApi.success('Đã lưu thông tin khách hàng vào đơn.');
   };
 
-  return (
+  const selectPaymentMethod = (method: PaymentMethodType) => {
+    if (method === 'BANK_TRANSFER' && bankAccounts.length === 0) {
+      messageApi.warning('Cửa hàng chưa cấu hình tài khoản ngân hàng.');
+      return;
+    }
+    setSelectedMethod(method);
+    if (method === 'DEBT') {
+      setCashApplied(0);
+      setBankApplied(0);
+      setDebtAmount(totalVnd);
+    } else {
+      setDebtAmount(0);
+    }
+    if (cashReceived === null || cashReceived === 0) setCashReceived(totalVnd);
+  };
+
+  const productItems = (quote.data?.items ?? []).filter((item) => !item.promotionGift);
+  const productCount = productItems.reduce(
+    (sum, item) => sum + (item.productType === 'WEIGHT' ? 1 : item.quantityMilli / 1000),
+    0,
+  );
+  const productTotalVnd = productItems.reduce((sum, item) => sum + item.grossLineTotalVnd, 0);
+  const timeTotalVnd = quote.data?.time?.amountAfterRoundingVnd ?? 0;
+  const transferNote = quote.data
+    ? `TT ${quote.data.order.tableName ? `${quote.data.order.tableName} ` : ''}${quote.data.order.displayCode || quote.data.order.id.slice(0, 6)}`.trim()
+    : '';
+  const transferQrUrl = selectedBankAccount
+    ? `https://img.vietqr.io/image/${encodeURIComponent(selectedBankAccount.bankBin)}-${encodeURIComponent(selectedBankAccount.accountNumber)}-compact2.png?amount=${isMultiMethod ? bankApplied : totalVnd}&addInfo=${encodeURIComponent(transferNote)}&accountName=${encodeURIComponent(selectedBankAccount.accountName)}`
+    : null;
+  const primaryActionDisabled =
+    !quote.data ||
+    preparingCheckout ||
+    (selectedMethod === 'CASH' && (cashReceived ?? 0) < totalVnd) ||
+    (selectedMethod === 'BANK_TRANSFER' && !selectedBankAccount) ||
+    (selectedMethod === 'DEBT' && !quote.data?.order.customerId) ||
+    (isMultiMethod && cashApplied + bankApplied + debtAmount !== totalVnd) ||
+    (isMultiMethod && bankApplied > 0 && !selectedBankAccount);
+  const advancedPaymentMenu: MenuProps = {
+    items: [
+      { key: 'preview', label: 'Xem trước hóa đơn', icon: <FileTextOutlined /> },
+      { key: 'pay-print', label: 'Thanh toán & in', icon: <PrinterOutlined /> },
+      {
+        key: 'multi',
+        label: isMultiMethod ? 'Tắt thanh toán kết hợp' : 'Thanh toán kết hợp',
+        icon: <SwapOutlined />,
+      },
+    ],
+    onClick: ({ key }) => {
+      if (key === 'preview') setPaymentPreviewOpen(true);
+      if (key === 'pay-print') void handleConfirmPayment(true);
+      if (key === 'multi') {
+        const enabled = !isMultiMethod;
+        setIsMultiMethod(enabled);
+        if (enabled) {
+          setCashApplied(totalVnd);
+          setBankApplied(0);
+          setDebtAmount(0);
+        }
+      }
+    },
+  };
+  const methodDetail = isMultiMethod ? (
+    <div className="payment-workspace__allocations">
+      <label>
+        Tiền mặt
+        <InputNumber
+          min={0}
+          max={totalVnd}
+          value={cashApplied}
+          onChange={(value) => setCashApplied(Number(value ?? 0))}
+          formatter={(value) => `${value ?? ''}`.replace(/\B(?=(\d{3})+(?!\d))/gu, ',')}
+          parser={(value) => Number((value ?? '').replaceAll(',', ''))}
+          addonAfter="đ"
+        />
+      </label>
+      <label>
+        Chuyển khoản
+        <InputNumber
+          min={0}
+          max={totalVnd}
+          value={bankApplied}
+          onChange={(value) => setBankApplied(Number(value ?? 0))}
+          formatter={(value) => `${value ?? ''}`.replace(/\B(?=(\d{3})+(?!\d))/gu, ',')}
+          parser={(value) => Number((value ?? '').replaceAll(',', ''))}
+          addonAfter="đ"
+        />
+      </label>
+      <label>
+        Ghi nợ
+        <InputNumber
+          min={0}
+          max={totalVnd}
+          value={debtAmount}
+          onChange={(value) => setDebtAmount(Number(value ?? 0))}
+          formatter={(value) => `${value ?? ''}`.replace(/\B(?=(\d{3})+(?!\d))/gu, ',')}
+          parser={(value) => Number((value ?? '').replaceAll(',', ''))}
+          addonAfter="đ"
+        />
+      </label>
+      {bankApplied > 0 ? (
+        <Select<string>
+          value={selectedBankAccount?.id ?? null}
+          placeholder="Chọn tài khoản nhận tiền"
+          options={bankAccounts.map((account) => ({
+            value: account.id,
+            label: `${account.bankCode} · ${account.accountNumber}${account.isDefault ? ' · Mặc định' : ''}`,
+          }))}
+          onChange={(value) => setSelectedBankAccountId(value)}
+        />
+      ) : null}
+      <Typography.Text
+        type={cashApplied + bankApplied + debtAmount === totalVnd ? 'success' : 'danger'}
+      >
+        Còn lại: {formatMoney(totalVnd - cashApplied - bankApplied - debtAmount)}
+      </Typography.Text>
+    </div>
+  ) : selectedMethod === 'CASH' ? (
+    <div className="payment-workspace__cash-detail">
+      <div className="payment-workspace__amount-input">
+        <span className="payment-workspace__currency">VND</span>
+        <InputNumber
+          min={0}
+          value={cashReceived}
+          onChange={(value) => setCashReceived(Number(value ?? 0))}
+          formatter={(value) => `${value ?? ''}`.replace(/\B(?=(\d{3})+(?!\d))/gu, ',')}
+          parser={(value) => Number((value ?? '').replaceAll(',', ''))}
+          controls={false}
+        />
+      </div>
+      <div className="payment-workspace__quick-cash">
+        {quickCashAmounts(totalVnd).map((amount) => (
+          <button type="button" key={amount} onClick={() => setCashReceived(amount)}>
+            {formatMoney(amount)}
+          </button>
+        ))}
+      </div>
+      <div className="payment-workspace__change">
+        <span>Tiền thừa trả khách</span>
+        <strong>{formatMoney(changeVnd)}</strong>
+      </div>
+    </div>
+  ) : selectedMethod === 'BANK_TRANSFER' ? (
+    <div className="payment-workspace__bank-detail">
+      <Select<string>
+        value={selectedBankAccount?.id ?? null}
+        placeholder="Chọn tài khoản nhận tiền"
+        options={bankAccounts.map((account) => ({
+          value: account.id,
+          label: `${account.bankCode} · ${account.accountNumber}${account.isDefault ? ' · Mặc định' : ''}`,
+        }))}
+        onChange={(value) => setSelectedBankAccountId(value)}
+      />
+      {transferQrUrl && selectedBankAccount ? (
+        <button
+          type="button"
+          className="payment-workspace__qr"
+          onClick={() => setQrModalOpen(true)}
+        >
+          <img src={transferQrUrl} alt="VietQR thanh toán" />
+        </button>
+      ) : (
+        <Alert type="warning" showIcon message="Chưa có tài khoản ngân hàng nhận chuyển khoản." />
+      )}
+    </div>
+  ) : (
+    <div className="payment-workspace__debt-detail">
+      <div>
+        <span>Ghi công nợ</span>
+        <strong>{formatMoney(totalVnd)}</strong>
+      </div>
+      {quote.data?.order.customerId ? (
+        <Alert
+          type="info"
+          showIcon
+          message={`Khoản nợ được ghi cho ${quote.data.order.customerName || 'khách hàng'}.`}
+        />
+      ) : (
+        <Alert type="error" showIcon message="Vui lòng chọn khách hàng trước khi ghi nợ." />
+      )}
+    </div>
+  );
+
+  const paymentPage = (
     <div className="staff-payment-page">
       {holder}
-      <header className="staff-payment-page__header">
+      <header
+        className={`staff-payment-page__header${presentation === 'drawer' ? ' is-drawer' : ''}`}
+      >
         <Button
           type="text"
-          icon={<LeftOutlined />}
+          icon={presentation === 'drawer' ? <CloseOutlined /> : <LeftOutlined />}
           loading={returningToOrder || preparingCheckout}
           disabled={returningToOrder || preparingCheckout || submitting}
           className="staff-payment-page__back-btn"
           aria-label="Quay lại đơn hàng"
           onClick={() => void handleBackToOrder()}
         />
-        <Typography.Title level={4} className="staff-payment-page__title">
-          Thanh toán
-        </Typography.Title>
+        <div className="staff-payment-page__heading-copy">
+          <Typography.Title level={4} className="staff-payment-page__title">
+            {presentation === 'drawer' && quote.data
+              ? `Thanh toán #${quote.data.order.displayCode || quote.data.order.id.slice(0, 6).toUpperCase()} · ${[quote.data.order.tableName, quote.data.order.areaName].filter(Boolean).join(' / ') || 'Đơn mang về'}`
+              : 'Thanh toán'}
+          </Typography.Title>
+          {quote.data ? (
+            <span>
+              {presentation === 'drawer' ? (
+                formatDateTime(Date.now())
+              ) : (
+                <>
+                  #{quote.data.order.displayCode || quote.data.order.id.slice(0, 6).toUpperCase()}
+                  {quote.data.order.tableName ? ` · ${quote.data.order.tableName}` : ''}
+                  {quote.data.order.areaName ? ` / ${quote.data.order.areaName}` : ''}
+                </>
+              )}
+            </span>
+          ) : null}
+        </div>
+        {presentation === 'page' ? (
+          <Button
+            type="text"
+            icon={<FileTextOutlined />}
+            className="staff-payment-page__preview-btn"
+            aria-label="Xem trước hóa đơn"
+            onClick={() => setPaymentPreviewOpen(true)}
+          />
+        ) : (
+          <div className="staff-payment-page__header-spacer" />
+        )}
       </header>
 
       {quote.isLoading ? (
@@ -9490,485 +9835,222 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
           <Spin size="large" description="Đang dừng giờ và chốt số tiền trên máy chủ..." />
         </div>
       ) : (
-        <div className="staff-payment-page__body">
-          <div className="staff-payment-page__left">
-            <section className="staff-payment-page__section">
-              <div className="staff-payment-page__section-title">Khách hàng</div>
-              {paymentSnapshotId ? (
-                <Typography.Text>
-                  {quote.data.order.customerName || 'Khách lẻ'}
-                  {quote.data.order.customerPhone ? ` · ${quote.data.order.customerPhone}` : ''}
-                </Typography.Text>
-              ) : (
-                <PosCustomerSelector
-                  customerId={quote.data.order.customerId ?? null}
-                  csrfToken={csrf}
-                  allowCreate
-                  variant="compact"
-                  onSelect={async (customer) => {
-                    const snapshot = await jsonRequest<OrderMutationSnapshot>(
-                      `/api/v1/pos/orders/${orderId}/guest`,
-                      {
-                        expectedOrderVersion: quote.data!.order.version,
-                        guestCount: quote.data!.order.guestCount ?? 1,
-                        customerId: customer?.id ?? null,
-                      },
-                      { method: 'PATCH', headers: mutationHeaders(csrf) },
+        <>
+          {presentation === 'drawer' ? (
+            <div className="payment-workspace payment-workspace--desktop">
+              <section className="payment-workspace__order-column">
+                <button
+                  type="button"
+                  className="payment-workspace__customer"
+                  onClick={() => setCustomerModalOpen(true)}
+                >
+                  <UserOutlined />
+                  <span>
+                    <strong>{quote.data.order.customerName || 'Khách lẻ'}</strong>
+                    {quote.data.order.customerPhone ? (
+                      <small>{quote.data.order.customerPhone}</small>
+                    ) : null}
+                  </span>
+                  <RightOutlined />
+                </button>
+                <div className="payment-workspace__items">
+                  <div className="payment-workspace__items-heading">
+                    <span>Mặt hàng</span>
+                    <span>SL</span>
+                    <span>Thành tiền</span>
+                  </div>
+                  {productItems.map((item) => (
+                    <div className="payment-workspace__item" key={item.id}>
+                      <span>
+                        <strong>{item.productName}</strong>
+                        {item.variantName ? <small>{item.variantName}</small> : null}
+                      </span>
+                      <span>{formatDecimal(item.quantityMilli / 1000)}</span>
+                      <b>{formatMoney(item.netLineTotalVnd)}</b>
+                    </div>
+                  ))}
+                  {quote.data.time ? (
+                    <div className="payment-workspace__time-row">
+                      <ClockCircleOutlined />
+                      <span>
+                        <strong>Tiền giờ</strong>
+                        <small>{formatElapsed(quote.data.time.elapsedSeconds)}</small>
+                      </span>
+                      <b>{formatMoney(timeTotalVnd)}</b>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="payment-workspace__order-total">
+                  <span>Tổng cộng</span>
+                  <strong>{formatMoney(totalVnd)}</strong>
+                </div>
+              </section>
+
+              <section className="payment-workspace__transaction-column">
+                <div className="payment-workspace__section-heading">
+                  <strong>Chi tiết giao dịch</strong>
+                  <Dropdown menu={advancedPaymentMenu} trigger={['click']}>
+                    <Button
+                      type="text"
+                      icon={<EllipsisOutlined />}
+                      aria-label="Thao tác nâng cao"
+                    />
+                  </Dropdown>
+                </div>
+                <div className="payment-workspace__summary">
+                  <div>
+                    <span>Tổng tiền hàng</span>
+                    <b>{formatMoney(productTotalVnd)}</b>
+                  </div>
+                  {timeTotalVnd > 0 ? (
+                    <div>
+                      <span>Tiền giờ</span>
+                      <b>{formatMoney(timeTotalVnd)}</b>
+                    </div>
+                  ) : null}
+                  <div>
+                    <span>Giảm giá</span>
+                    <b>-{formatMoney(quote.data.discountTotalVnd)}</b>
+                  </div>
+                  <div className="is-total">
+                    <span>Khách cần trả</span>
+                    <b>{formatMoney(totalVnd)}</b>
+                  </div>
+                </div>
+                <div className="payment-workspace__method-radios is-horizontal">
+                  {PAYMENT_METHODS.map((method) => {
+                    const disabled = method.key === 'BANK_TRANSFER' && bankAccounts.length === 0;
+                    return (
+                      <button
+                        type="button"
+                        key={method.key}
+                        disabled={disabled}
+                        className={selectedMethod === method.key ? 'is-active' : ''}
+                        onClick={() => selectPaymentMethod(method.key)}
+                      >
+                        <span className="payment-workspace__radio" />
+                        {method.label}
+                      </button>
                     );
-                    queryClient.setQueryData(['pos-order-quote', orderId], snapshot.quote);
-                  }}
-                />
-              )}
-            </section>
-
-            <section className="staff-payment-page__section">
-              <div className="staff-payment-page__methods-header">
-                <div className="staff-payment-page__section-title" style={{ margin: 0 }}>
-                  Thanh toán
+                  })}
                 </div>
-                <div className="staff-payment-page__multi-switch">
-                  <span>Nhiều phương thức</span>
-                  <Switch checked={isMultiMethod} onChange={setIsMultiMethod} />
-                </div>
-              </div>
-
-              <div className="staff-payment-page__methods-grid">
-                {PAYMENT_METHODS.map((method) => {
-                  const isActive = selectedMethod === method.key;
-                  return (
-                    <button
-                      key={method.key}
-                      type="button"
-                      className={`staff-payment-method-card ${isActive ? 'is-active' : ''}`}
-                      onClick={() => {
-                        setSelectedMethod(method.key);
-                        if (method.key === 'DEBT') {
-                          setCashApplied(0);
-                          setBankApplied(0);
-                          setDebtAmount(totalVnd);
-                        } else {
-                          setDebtAmount(0);
-                        }
-                        if (cashReceived === null || cashReceived === 0) {
-                          setCashReceived(totalVnd);
-                        }
-                      }}
-                    >
-                      <div className="staff-payment-method-card__icon">{method.icon}</div>
-                      <span>{method.label}</span>
-                      {isActive ? (
-                        <div className="staff-payment-method-card__badge">
-                          <CheckOutlined />
-                        </div>
-                      ) : null}
-                    </button>
-                  );
-                })}
-              </div>
-              {isMultiMethod ? (
-                <div className="staff-payment-allocations">
-                  <label>
-                    Tiền mặt
-                    <InputNumber
-                      min={0}
-                      max={totalVnd}
-                      value={cashApplied}
-                      onChange={(v) => setCashApplied(Number(v ?? 0))}
-                      addonAfter="đ"
-                    />
-                  </label>
-                  <label>
-                    Chuyển khoản
-                    <InputNumber
-                      min={0}
-                      max={totalVnd}
-                      value={bankApplied}
-                      onChange={(v) => setBankApplied(Number(v ?? 0))}
-                      addonAfter="đ"
-                    />
-                  </label>
-                  <label>
-                    Ghi công nợ
-                    <InputNumber
-                      min={0}
-                      max={totalVnd}
-                      value={debtAmount}
-                      onChange={(v) => setDebtAmount(Number(v ?? 0))}
-                      addonAfter="đ"
-                    />
-                  </label>
-                  <Typography.Text
-                    type={
-                      cashApplied + bankApplied + debtAmount === totalVnd ? 'success' : 'danger'
-                    }
+                <div className="payment-workspace__method-detail">{methodDetail}</div>
+                <div className="payment-workspace__submit">
+                  <Button
+                    type="primary"
+                    size="large"
+                    loading={submitting}
+                    disabled={primaryActionDisabled}
+                    onClick={() => void handleConfirmPayment(false)}
                   >
-                    Còn lại: {formatMoney(totalVnd - cashApplied - bankApplied - debtAmount)}
-                  </Typography.Text>
+                    {selectedMethod === 'DEBT' ? 'Ghi nợ' : 'Thanh toán'}: {formatMoney(totalVnd)}
+                  </Button>
                 </div>
-              ) : null}
-            </section>
-
-            {selectedMethod === 'BANK_TRANSFER'
-              ? (() => {
-                  const bankSettings = quote.data?.bankSettings;
-                  const hasBank = Boolean(
-                    bankSettings?.bankName && bankSettings?.bankAccountNumber,
-                  );
-                  const transferNote =
-                    `TT ${quote.data?.order.tableName ? `${quote.data.order.tableName} ` : ''}${quote.data?.order.displayCode || quote.data?.order.id.slice(0, 6) || ''}`.trim();
-
-                  return (
-                    <section className="staff-payment-page__section staff-vietqr-card">
-                      <div className="staff-vietqr-card__header">
-                        <div className="staff-vietqr-card__title">
-                          <QrcodeOutlined style={{ color: '#0877ee', fontSize: 18 }} />
-                          <span>Thông tin chuyển khoản</span>
-                        </div>
-                        <Tag color="processing" style={{ borderRadius: 12, margin: 0 }}>
-                          Tự động điền số tiền
-                        </Tag>
-                      </div>
-
-                      {hasBank ? (
-                        <div className="staff-vietqr-details" style={{ width: '100%' }}>
-                          <div className="staff-vietqr-detail-item">
-                            <span className="staff-vietqr-detail-label">Số tài khoản</span>
-                            <div className="staff-vietqr-detail-value">
-                              <strong className="staff-vietqr-copyable">
-                                {bankSettings?.bankAccountNumber}
-                              </strong>
-                              <Tooltip title="Sao chép STK">
-                                <Button
-                                  type="text"
-                                  size="small"
-                                  icon={<CopyOutlined />}
-                                  onClick={() =>
-                                    handleCopy(
-                                      bankSettings?.bankAccountNumber || '',
-                                      'số tài khoản',
-                                    )
-                                  }
-                                />
-                              </Tooltip>
-                            </div>
-                          </div>
-
-                          {bankSettings?.bankAccountName ? (
-                            <div className="staff-vietqr-detail-item">
-                              <span className="staff-vietqr-detail-label">Chủ tài khoản</span>
-                              <div className="staff-vietqr-detail-value">
-                                <strong>{bankSettings.bankAccountName}</strong>
-                                <Tooltip title="Sao chép tên chủ TK">
-                                  <Button
-                                    type="text"
-                                    size="small"
-                                    icon={<CopyOutlined />}
-                                    onClick={() =>
-                                      handleCopy(
-                                        bankSettings.bankAccountName || '',
-                                        'tên chủ tài khoản',
-                                      )
-                                    }
-                                  />
-                                </Tooltip>
-                              </div>
-                            </div>
-                          ) : null}
-
-                          <div className="staff-vietqr-detail-item">
-                            <span className="staff-vietqr-detail-label">Số tiền cần chuyển</span>
-                            <div className="staff-vietqr-detail-value">
-                              <strong style={{ color: '#0877ee', fontSize: 16 }}>
-                                {formatMoney(totalVnd)}
-                              </strong>
-                              <Tooltip title="Sao chép số tiền">
-                                <Button
-                                  type="text"
-                                  size="small"
-                                  icon={<CopyOutlined />}
-                                  onClick={() => handleCopy(String(totalVnd), 'số tiền')}
-                                />
-                              </Tooltip>
-                            </div>
-                          </div>
-
-                          <div className="staff-vietqr-detail-item">
-                            <span className="staff-vietqr-detail-label">Nội dung CK</span>
-                            <div className="staff-vietqr-detail-value">
-                              <strong style={{ color: '#d97706' }}>{transferNote}</strong>
-                              <Tooltip title="Sao chép nội dung">
-                                <Button
-                                  type="text"
-                                  size="small"
-                                  icon={<CopyOutlined />}
-                                  onClick={() => handleCopy(transferNote, 'nội dung')}
-                                />
-                              </Tooltip>
-                            </div>
-                          </div>
-                        </div>
-                      ) : (
-                        <Alert
-                          type="warning"
-                          showIcon
-                          title="Chưa cấu hình tài khoản ngân hàng"
-                          description={
-                            <div style={{ marginTop: 6 }}>
-                              <p style={{ margin: '0 0 10px', color: '#64748b', fontSize: 13 }}>
-                                Vui lòng cấu hình tài khoản ngân hàng trong Thiết lập để tự động tạo
-                                mã VietQR cho khách quét chuyển khoản.
-                              </p>
-                              <Button
-                                size="small"
-                                type="primary"
-                                onClick={() => navigate('/owner/settings/store')}
-                              >
-                                Đến trang Cấu hình ngân hàng
-                              </Button>
-                            </div>
-                          }
-                        />
-                      )}
-                    </section>
-                  );
-                })()
-              : null}
-          </div>
-
-          <div className="staff-payment-page__right">
-            <div className="staff-payment-page__right-top">
-              {selectedMethod === 'CASH' ? (
-                <>
-                  <div className="staff-payment-page__input-row">
-                    <span className="staff-payment-page__input-label">Tiền khách đưa</span>
-                    <div className="staff-payment-page__input-wrap">
-                      <InputNumber
-                        className="staff-payment-page__amount-input"
-                        min={0}
-                        value={cashReceived}
-                        onChange={(val) => setCashReceived(val === null ? 0 : Number(val))}
-                        formatter={(val) => `${val ?? ''}`.replace(/\B(?=(\d{3})+(?!\d))/gu, ',')}
-                        parser={(val) => Number((val ?? '').replaceAll(',', ''))}
-                        addonAfter="đ"
-                      />
+              </section>
+            </div>
+          ) : (
+            <div className="payment-workspace payment-workspace--mobile">
+              <main className="payment-mobile__content">
+                <button
+                  type="button"
+                  className="payment-workspace__customer"
+                  onClick={() => setCustomerModalOpen(true)}
+                >
+                  <span className="payment-mobile__customer-icon">
+                    <UserOutlined />
+                  </span>
+                  <span>
+                    <strong>{quote.data.order.customerName || 'Khách lẻ'}</strong>
+                    {quote.data.order.customerPhone ? (
+                      <small>{quote.data.order.customerPhone}</small>
+                    ) : null}
+                  </span>
+                  <RightOutlined />
+                </button>
+                <div className="payment-mobile__summary">
+                  <div>
+                    <span>
+                      Tổng tiền hàng <em>{formatDecimal(productCount)}</em>
+                    </span>
+                    <b>{formatMoney(productTotalVnd)}</b>
+                  </div>
+                  {timeTotalVnd > 0 ? (
+                    <div>
+                      <span>Tiền giờ</span>
+                      <b>{formatMoney(timeTotalVnd)}</b>
                     </div>
+                  ) : null}
+                  <div>
+                    <span>Giảm giá</span>
+                    <b>{formatMoney(quote.data.discountTotalVnd)}</b>
                   </div>
-
-                  <div className="staff-payment-page__quick-cash">
-                    <button type="button" onClick={() => setCashReceived(totalVnd)}>
-                      Đúng giá ({formatMoney(totalVnd)})
-                    </button>
-                    {[50000, 100000, 200000, 500000]
-                      .filter((amount) => amount >= totalVnd)
-                      .map((amount) => (
-                        <button key={amount} type="button" onClick={() => setCashReceived(amount)}>
-                          {formatMoney(amount)}
-                        </button>
-                      ))}
+                  <div className="is-total">
+                    <span>Khách cần trả</span>
+                    <b>{formatMoney(totalVnd)}</b>
                   </div>
-                </>
-              ) : isDebtMethod ? (
-                <div className="staff-payment-debt-panel">
-                  <div className="staff-payment-page__input-row">
-                    <span className="staff-payment-page__input-label">Tiền khách trả trước</span>
-                    <div className="staff-payment-page__input-wrap">
-                      <InputNumber
-                        className="staff-payment-page__amount-input"
-                        min={0}
-                        max={totalVnd}
-                        value={cashApplied}
-                        onChange={(value) => {
-                          const paid = Number(value ?? 0);
-                          setCashApplied(paid);
-                          setDebtAmount(Math.max(0, totalVnd - paid));
-                        }}
-                        formatter={(value) =>
-                          `${value ?? ''}`.replace(/\B(?=(\d{3})+(?!\d))/gu, ',')
-                        }
-                        parser={(value) => Number((value ?? '').replaceAll(',', ''))}
-                        addonAfter="đ"
-                      />
-                    </div>
-                  </div>
-                  <div className="staff-payment-page__input-row">
-                    <span className="staff-payment-page__input-label">Ghi công nợ</span>
-                    <div className="staff-payment-page__input-wrap">
-                      <InputNumber
-                        className="staff-payment-page__amount-input"
-                        value={Math.max(0, totalVnd - cashApplied)}
-                        readOnly
-                        formatter={(value) =>
-                          `${value ?? ''}`.replace(/\B(?=(\d{3})+(?!\d))/gu, ',')
-                        }
-                        addonAfter="đ"
-                      />
-                    </div>
-                  </div>
-                  {!quote.data.order.customerId ? (
-                    <Alert
-                      type="error"
-                      showIcon
-                      message="Vui lòng chọn hoặc tạo khách hàng để ghi nợ."
-                    />
-                  ) : (
-                    <Alert
-                      type="info"
-                      showIcon
-                      message={`Khoản nợ ${formatMoney(Math.max(0, totalVnd - cashApplied))} sẽ được ghi vào hồ sơ khách hàng.`}
-                    />
-                  )}
                 </div>
-              ) : (
-                <>
-                  <div className="staff-payment-bank-summary">
-                    <div className="staff-payment-bank-summary__badge">
-                      <CreditCardOutlined /> Chuyển khoản ngân hàng (VietQR)
-                    </div>
-                    <p className="staff-payment-bank-summary__hint">
-                      Khách quét mã VietQR bên dưới để thanh toán đúng số tiền{' '}
-                      <b>{formatMoney(totalVnd)}</b>. Sau khi kiểm tra tiền đã vào tài khoản, bấm
-                      nút <b>Xác nhận đã nhận tiền</b>.
-                    </p>
-                  </div>
-
-                  {(() => {
-                    const bankSettings = quote.data?.bankSettings;
-                    const hasBank = Boolean(
-                      bankSettings?.bankName && bankSettings?.bankAccountNumber,
-                    );
-                    const transferNote =
-                      `TT ${quote.data?.order.tableName ? `${quote.data.order.tableName} ` : ''}${quote.data?.order.displayCode || quote.data?.order.id.slice(0, 6) || ''}`.trim();
-                    const qrUrl = hasBank
-                      ? `https://img.vietqr.io/image/${encodeURIComponent(bankSettings!.bankName!.trim())}-${encodeURIComponent(bankSettings!.bankAccountNumber!.trim())}-compact2.png?amount=${totalVnd}&addInfo=${encodeURIComponent(transferNote)}&accountName=${encodeURIComponent(bankSettings!.bankAccountName?.trim() || '')}`
-                      : null;
-
-                    if (!hasBank || !qrUrl) return null;
-
+                <div className="payment-mobile__methods-title">
+                  <strong>PHƯƠNG THỨC THANH TOÁN</strong>
+                  <Dropdown menu={advancedPaymentMenu} trigger={['click']}>
+                    <Button
+                      type="text"
+                      icon={<EllipsisOutlined />}
+                      aria-label="Thao tác nâng cao"
+                    />
+                  </Dropdown>
+                </div>
+                <div className="payment-workspace__method-radios is-vertical">
+                  {PAYMENT_METHODS.map((method) => {
+                    const active = selectedMethod === method.key && !isMultiMethod;
+                    const disabled = method.key === 'BANK_TRANSFER' && bankAccounts.length === 0;
                     return (
                       <div
-                        className="staff-vietqr-sidebar-box"
-                        style={{
-                          display: 'flex',
-                          flexDirection: 'column',
-                          alignItems: 'center',
-                          gap: 10,
-                          padding: '12px 0 4px',
-                        }}
+                        className={`payment-mobile__method${active ? ' is-active' : ''}`}
+                        key={method.key}
                       >
-                        <div
-                          className="staff-vietqr-img-wrapper"
-                          onClick={() => setQrModalOpen(true)}
-                          title="Nhấn để phóng to mã QR"
-                          style={{
-                            maxWidth: 340,
-                            width: '100%',
-                            cursor: 'pointer',
-                            borderRadius: 12,
-                            overflow: 'hidden',
-                            border: '1px solid #e2e8f0',
-                            boxShadow: '0 6px 24px rgba(0, 0, 0, 0.08)',
-                            background: '#fff',
+                        <button
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => {
+                            setIsMultiMethod(false);
+                            selectPaymentMethod(method.key);
                           }}
                         >
-                          <img
-                            src={qrUrl}
-                            alt="VietQR Payment"
-                            className="staff-vietqr-img"
-                            loading="eager"
-                            style={{ display: 'block', width: '100%', height: 'auto' }}
-                          />
-                          <div className="staff-vietqr-img-overlay">
-                            <FullscreenOutlined /> Phóng to QR
-                          </div>
-                        </div>
-                        <Button
-                          type="dashed"
-                          icon={<FullscreenOutlined />}
-                          onClick={() => setQrModalOpen(true)}
-                          className="staff-vietqr-zoom-btn"
-                          style={{ maxWidth: 340, width: '100%' }}
-                        >
-                          Phóng to cho khách quét
-                        </Button>
+                          <span className="payment-workspace__radio" />
+                          <strong>{method.label}</strong>
+                        </button>
+                        {active ? (
+                          <div className="payment-mobile__method-detail">{methodDetail}</div>
+                        ) : null}
                       </div>
                     );
-                  })()}
-                </>
-              )}
-            </div>
-
-            <div className="staff-payment-page__right-bottom">
-              <div className="staff-payment-sticky-summary">
-                <div className="staff-payment-page__change-row staff-payment-page__change-row--total">
-                  <span className="staff-payment-page__change-label">Khách phải trả</span>
-                  <strong className="staff-payment-page__total-val">{formatMoney(totalVnd)}</strong>
+                  })}
+                  {isMultiMethod ? (
+                    <div className="payment-mobile__method is-active">
+                      <button type="button">
+                        <span className="payment-workspace__radio" />
+                        <strong>Kết hợp</strong>
+                      </button>
+                      <div className="payment-mobile__method-detail">{methodDetail}</div>
+                    </div>
+                  ) : null}
                 </div>
-                {selectedMethod === 'CASH' ? (
-                  <div className="staff-payment-page__change-row">
-                    <span className="staff-payment-page__change-label">Tiền thừa trả khách</span>
-                    <strong className="staff-payment-page__change-val">
-                      {formatMoney(changeVnd)}
-                    </strong>
-                  </div>
-                ) : (
-                  <div className="staff-payment-page__change-row">
-                    <span className="staff-payment-page__change-label">Phương thức</span>
-                    <Tag color="blue">
-                      {isDebtMethod ? 'Ghi nợ - Thanh toán sau' : 'Chuyển khoản VietQR'}
-                    </Tag>
-                  </div>
-                )}
-              </div>
-
-              <div className="staff-payment-actions-grid">
+              </main>
+              <footer className="payment-mobile__footer">
                 <Button
                   type="primary"
-                  icon={<PrinterOutlined />}
-                  className="staff-payment-page__submit-btn"
+                  size="large"
                   loading={submitting}
-                  disabled={
-                    !quote.data ||
-                    (selectedMethod === 'CASH' && (cashReceived ?? 0) < totalVnd) ||
-                    (isDebtMethod && !quote.data.order.customerId)
-                  }
-                  onClick={() => {
-                    void handleConfirmPayment(true);
-                  }}
+                  disabled={primaryActionDisabled}
+                  onClick={() => void handleConfirmPayment(false)}
                 >
-                  {isDebtMethod
-                    ? 'Ghi nợ & in'
-                    : selectedMethod === 'CASH'
-                      ? 'Thanh toán & in'
-                      : 'Đã nhận tiền & in'}
+                  {selectedMethod === 'DEBT' && !isMultiMethod ? 'Ghi nợ' : 'Thanh toán'}:{' '}
+                  {formatMoney(totalVnd)}
                 </Button>
-                <Button
-                  icon={<FileTextOutlined />}
-                  disabled={!quote.data}
-                  onClick={() => setPaymentPreviewOpen(true)}
-                >
-                  Xem trước
-                </Button>
-                <Button
-                  icon={<CheckOutlined />}
-                  disabled={
-                    !quote.data ||
-                    (selectedMethod === 'CASH' && (cashReceived ?? 0) < totalVnd) ||
-                    (isDebtMethod && !quote.data.order.customerId)
-                  }
-                  onClick={() => {
-                    void handleConfirmPayment(false);
-                  }}
-                >
-                  {isDebtMethod
-                    ? 'Ghi nợ'
-                    : selectedMethod === 'CASH'
-                      ? 'Thanh toán'
-                      : 'Đã nhận tiền'}
-                </Button>
-              </div>
+              </footer>
             </div>
-          </div>
-        </div>
+          )}
+        </>
       )}
 
       <Modal
@@ -9989,19 +10071,11 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
         width={420}
       >
         {(() => {
-          const bankSettings = quote.data?.bankSettings;
-          const hasBank = Boolean(bankSettings?.bankName && bankSettings?.bankAccountNumber);
-          const transferNote =
-            `TT ${quote.data?.order.tableName ? `${quote.data.order.tableName} ` : ''}${quote.data?.order.displayCode || quote.data?.order.id.slice(0, 6) || ''}`.trim();
-          const qrUrl = hasBank
-            ? `https://img.vietqr.io/image/${encodeURIComponent(bankSettings!.bankName!.trim())}-${encodeURIComponent(bankSettings!.bankAccountNumber!.trim())}-compact2.png?amount=${totalVnd}&addInfo=${encodeURIComponent(transferNote)}&accountName=${encodeURIComponent(bankSettings!.bankAccountName?.trim() || '')}`
-            : null;
-
-          if (!qrUrl) return null;
+          if (!transferQrUrl) return null;
           return (
             <div style={{ textAlign: 'center', padding: '8px 0' }}>
               <img
-                src={qrUrl}
+                src={transferQrUrl}
                 alt="VietQR Full"
                 style={{
                   maxWidth: '100%',
@@ -10031,36 +10105,97 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
 
       <Modal
         open={customerModalOpen}
-        title="Thêm thông tin khách hàng"
-        okText="Lưu khách hàng"
-        cancelText="Hủy"
-        onOk={handleSaveCustomer}
-        onCancel={() => setCustomerModalOpen(false)}
+        title="Chọn khách hàng"
+        footer={null}
+        onCancel={() => !customerSaving && setCustomerModalOpen(false)}
+        width={680}
+        className="pos-customer-selection-shell"
       >
-        <div style={{ display: 'grid', gap: 14, paddingTop: 10 }}>
-          <label>
-            <span style={{ fontWeight: 600, display: 'block', marginBottom: 6 }}>
-              Tên khách hàng *
-            </span>
-            <Input
-              placeholder="Nhập tên khách hàng"
-              value={customerName}
-              onChange={(e) => setCustomerName(e.target.value)}
-            />
-          </label>
-          <label>
-            <span style={{ fontWeight: 600, display: 'block', marginBottom: 6 }}>
-              Số điện thoại
-            </span>
-            <Input
-              placeholder="Nhập số điện thoại"
-              value={customerPhone}
-              onChange={(e) => setCustomerPhone(e.target.value)}
-            />
-          </label>
-        </div>
+        <PosCustomerSelector
+          customerId={quote.data?.order.customerId ?? null}
+          csrfToken={csrf}
+          allowCreate
+          reopenPickerOnDeselect
+          onSelect={(customer) => attachCustomerDuringCheckout(customer)}
+        />
       </Modal>
+
+      {paymentSuccessData ? (
+        <div className="pos-payment-celebration" role="alert" aria-live="assertive">
+          <div className="pos-payment-celebration__card">
+            <div className="pos-payment-celebration__icon-wrap">
+              <div className="pos-payment-celebration__ring" />
+              <svg className="pos-payment-celebration__checkmark" viewBox="0 0 52 52">
+                <circle
+                  className="pos-payment-celebration__circle"
+                  cx="26"
+                  cy="26"
+                  r="24"
+                  fill="none"
+                />
+                <path
+                  className="pos-payment-celebration__check"
+                  fill="none"
+                  d="M14.1 27.2l7.1 7.2 16.7-16.8"
+                />
+              </svg>
+            </div>
+
+            <h3 className="pos-payment-celebration__title">Thanh toán thành công!</h3>
+            <div className="pos-payment-celebration__amount">
+              {formatMoney(paymentSuccessData.totalVnd)}
+            </div>
+
+            <div className="pos-payment-celebration__details">
+              <div className="pos-payment-celebration__row">
+                <span>Bàn / Đơn</span>
+                <strong>{paymentSuccessData.tableName}</strong>
+              </div>
+              <div className="pos-payment-celebration__row">
+                <span>Mã hóa đơn</span>
+                <strong>{paymentSuccessData.invoiceCode}</strong>
+              </div>
+              <div className="pos-payment-celebration__row">
+                <span>Phương thức</span>
+                <strong>
+                  {paymentSuccessData.method === 'BANK_TRANSFER' ? 'Chuyển khoản' : 'Tiền mặt'}
+                </strong>
+              </div>
+              {paymentSuccessData.andPrint ? (
+                <div className="pos-payment-celebration__row">
+                  <span>Hóa đơn</span>
+                  <span className="pos-payment-celebration__print-badge">Đang in hóa đơn...</span>
+                </div>
+              ) : null}
+            </div>
+
+            <button
+              type="button"
+              className="pos-payment-celebration__btn"
+              onClick={handleCelebrationComplete}
+            >
+              Về sơ đồ bàn
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
+  );
+  return presentation === 'drawer' ? (
+    <Drawer
+      open
+      placement="right"
+      width="50vw"
+      closable={false}
+      maskClosable={!returningToOrder && !preparingCheckout && !submitting}
+      styles={{ body: { padding: 0, overflow: 'hidden' } }}
+      className="staff-payment-drawer"
+      onClose={() => void handleBackToOrder()}
+    >
+      {paymentPage}
+    </Drawer>
+  ) : (
+    paymentPage
   );
 }
 
@@ -10069,6 +10204,9 @@ export function StaffPosPortalPage() {
   const location = useLocation();
   const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
   const [onboardingRestartToken, setOnboardingRestartToken] = useState(0);
+  const [desktopPayment, setDesktopPayment] = useState(() =>
+    typeof window === 'undefined' ? false : window.innerWidth >= 1200,
+  );
   const auth = useQuery({
     queryKey: ['auth-context'],
     queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
@@ -10078,7 +10216,14 @@ export function StaffPosPortalPage() {
     queryFn: () => apiRequest<StaffContext>('/api/v1/pos/context'),
     staleTime: Infinity,
   });
-  if (auth.isLoading) return <Spin fullscreen description="Đang mở cổng nhân viên" />;
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 1200px)');
+    const sync = () => setDesktopPayment(media.matches);
+    sync();
+    media.addEventListener('change', sync);
+    return () => media.removeEventListener('change', sync);
+  }, []);
+  if (auth.isLoading) return <PosAppSplash message="Đang nạp dữ liệu POS..." />;
   if (auth.isError || auth.data?.actor?.kind !== 'EMPLOYEE') {
     return <Navigate to="/?tab=employee&authError=SESSION_EXPIRED" replace />;
   }
@@ -10386,7 +10531,18 @@ export function StaffPosPortalPage() {
               ) : isDetail && detailOrderId ? (
                 <OrderDetailPage orderId={detailOrderId} />
               ) : isPayment && paymentOrderId ? (
-                <PaymentPage orderId={paymentOrderId} auth={auth.data} />
+                desktopPayment ? (
+                  <>
+                    <OrderEditor
+                      auth={auth.data}
+                      orderIdOverride={paymentOrderId}
+                      suppressPaymentAutoResume
+                    />
+                    <PaymentPage orderId={paymentOrderId} auth={auth.data} presentation="drawer" />
+                  </>
+                ) : (
+                  <PaymentPage orderId={paymentOrderId} auth={auth.data} presentation="page" />
+                )
               ) : isEditor ? (
                 <OrderEditor auth={auth.data} />
               ) : active === 'qr' ? (

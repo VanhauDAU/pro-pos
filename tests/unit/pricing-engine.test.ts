@@ -266,4 +266,44 @@ describe('calculateTimePrice', () => {
       }),
     ).toThrow(PricingConfigurationError);
   });
+
+  it('efficiently calculates multi-day sessions (5-6 days) without timeout', () => {
+    const days = 6;
+    const sixDaysMs = days * 24 * HOUR;
+    const t0 = performance.now();
+    const result = calculateTimePrice({
+      startedAtMs: start - sixDaysMs,
+      endedAtMs: start,
+      config: config({
+        firstPeriod: { enabled: true, durationSeconds: 3600, priceVnd: 70_000 },
+        specialWindows: [
+          {
+            id: 'evening',
+            name: 'Giờ tối',
+            priceVnd: 90_000,
+            startMinute: 21 * 60,
+            endMinute: 23 * 60,
+            weekdaysMask: 127,
+          },
+        ],
+      }),
+    });
+    const elapsed = performance.now() - t0;
+
+    expect(elapsed).toBeLessThan(50);
+    expect(result.elapsedSeconds).toBe(days * 24 * 3600);
+    expect(result.amountAfterRoundingVnd).toBeGreaterThan(0);
+  });
+
+  it('accurately calculates a 30-day session with actual time', () => {
+    const thirtyDaysMs = 30 * 24 * HOUR;
+    const result = calculateTimePrice({
+      startedAtMs: start - thirtyDaysMs,
+      endedAtMs: start,
+      config: config(),
+    });
+    expect(result.elapsedSeconds).toBe(30 * 24 * 3600);
+    // 30 days * 24 hours * 60,000 VND/hour = 43,200,000 VND
+    expect(result.amountAfterRoundingVnd).toBe(30 * 24 * 60_000);
+  });
 });

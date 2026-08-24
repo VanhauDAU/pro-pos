@@ -1,7 +1,7 @@
 import { AppError } from '@server/lib/app-error';
 import { StoreRepository } from '@server/repositories/store-repository';
 import { AuditRepository, type AuditContext } from '@server/repositories/audit-repository';
-import type { BankAccountDto, BankAccountInput } from '@contracts/store';
+import type { BankAccountDto, BankAccountInput, StorePrintSettings } from '@contracts/store';
 
 export class StoreService {
   private readonly repository: StoreRepository;
@@ -193,6 +193,11 @@ export class StoreService {
     provinceName: string | null;
     wardCode: number | null;
     wardName: string | null;
+    locationVerificationEnabled?: boolean;
+    latitude?: number | null;
+    longitude?: number | null;
+    allowedRadiusMeters?: number;
+    maxAccuracyMeters?: number;
     auditContext?: AuditContext;
   }) {
     if (
@@ -203,7 +208,15 @@ export class StoreService {
     }
     const before = input.auditContext ? await this.repository.getSettings(input.storeId) : null;
     const now = Date.now();
-    await this.repository.updateSettings({ ...input, now });
+    await this.repository.updateSettings({
+      ...input,
+      locationVerificationEnabled: Boolean(input.locationVerificationEnabled),
+      latitude: input.latitude ?? null,
+      longitude: input.longitude ?? null,
+      allowedRadiusMeters: input.allowedRadiusMeters ?? 300,
+      maxAccuracyMeters: input.maxAccuracyMeters ?? 100,
+      now,
+    });
     if (input.auditContext) {
       const after = await this.repository.getSettings(input.storeId);
       await new AuditRepository(this.env.DB).record({
@@ -225,7 +238,7 @@ export class StoreService {
     return result.results;
   }
 
-  async getPrintSettings(storeId: string) {
+  async getPrintSettings(storeId: string): Promise<StorePrintSettings> {
     const raw = (await this.repository.getPrintSettings(storeId)) as Record<string, unknown> | null;
     if (raw) {
       return {
@@ -294,26 +307,26 @@ export class StoreService {
     allowProvisionalPrint: boolean;
     provisionalCopyCount: number;
     logoHorizontalLayout: boolean;
-    logoMediaId?: string | null;
-    bottomImageDescription?: string | null;
+    logoMediaId?: string | null | undefined;
+    bottomImageDescription?: string | null | undefined;
     bottomImageType: string;
-    bottomImageMediaId?: string | null;
-    bottomBankName?: string | null;
-    bottomBankAccountNumber?: string | null;
-    bottomBankAccountName?: string | null;
+    bottomImageMediaId?: string | null | undefined;
+    bottomBankName?: string | null | undefined;
+    bottomBankAccountNumber?: string | null | undefined;
+    bottomBankAccountName?: string | null | undefined;
     customAddressEnabled: boolean;
-    customAddress?: string | null;
-    footerLine1?: string | null;
+    customAddress?: string | null | undefined;
+    footerLine1?: string | null | undefined;
     footerLine1Bold: boolean;
-    footerLine2?: string | null;
+    footerLine2?: string | null | undefined;
     footerLine2Bold: boolean;
     printWifiEnabled: boolean;
-    wifiName?: string | null;
-    wifiPassword?: string | null;
+    wifiName?: string | null | undefined;
+    wifiPassword?: string | null | undefined;
     paperSize: string;
-    printersJson?: string | null;
-    templateConfigJson?: string | null;
-    auditContext?: AuditContext;
+    printersJson?: string | null | undefined;
+    templateConfigJson?: string | null | undefined;
+    auditContext?: AuditContext | undefined;
   }) {
     const before = input.auditContext ? await this.getPrintSettings(input.storeId) : null;
     const now = Date.now();

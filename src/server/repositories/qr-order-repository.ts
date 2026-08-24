@@ -16,6 +16,11 @@ export interface QrActiveContextRow {
   timeSessionId: string;
   orderId: string;
   orderVersion: number;
+  locationVerificationEnabled: number;
+  latitude: number | null;
+  longitude: number | null;
+  allowedRadiusMeters: number;
+  maxAccuracyMeters: number;
 }
 
 export interface QrTableContextRow {
@@ -27,11 +32,20 @@ export interface QrTableContextRow {
   areaName: string;
   tableStatus: 'AVAILABLE' | 'OCCUPIED' | 'DISABLED';
   tableVersion: number;
+  locationVerificationEnabled: number;
+  latitude: number | null;
+  longitude: number | null;
+  allowedRadiusMeters: number;
+  maxAccuracyMeters: number;
 }
 
 export interface GuestSessionRow extends QrActiveContextRow {
   guestSessionId: string;
   expiresAt: number;
+  locationVerifiedAt: number | null;
+  locationDistanceMeters: number | null;
+  locationAccuracyMeters: number | null;
+  locationExpiresAt: number | null;
 }
 
 interface GuestRequestRow {
@@ -74,9 +88,14 @@ export class QrOrderRepository {
       .prepare(
         `SELECT qr.id AS qrId, s.id AS storeId, s.name AS storeName,
                 st.id AS tableId, COALESCE(st.display_name, st.name) AS tableName,
-                a.name AS areaName, st.status AS tableStatus, st.version AS tableVersion
+                a.name AS areaName, st.status AS tableStatus, st.version AS tableVersion,
+                ss.location_verification_enabled AS locationVerificationEnabled,
+                ss.latitude AS latitude, ss.longitude AS longitude,
+                ss.allowed_radius_meters AS allowedRadiusMeters,
+                ss.max_accuracy_meters AS maxAccuracyMeters
          FROM table_qr_codes qr
          JOIN stores s ON s.id = qr.store_id AND s.status = 'ACTIVE'
+         JOIN store_settings ss ON ss.store_id = s.id
          JOIN service_tables st ON st.id = qr.table_id AND st.store_id = qr.store_id
          JOIN areas a ON a.id = st.area_id AND a.store_id = st.store_id AND a.status = 'ACTIVE'
          WHERE qr.token_hash = ? AND qr.enabled = 1 LIMIT 1`,
@@ -91,9 +110,14 @@ export class QrOrderRepository {
         `SELECT qr.id AS qrId, s.id AS storeId, s.name AS storeName,
                 st.id AS tableId, COALESCE(st.display_name, st.name) AS tableName,
                 a.name AS areaName, ts.id AS timeSessionId, o.id AS orderId,
-                o.version AS orderVersion
+                o.version AS orderVersion,
+                ss.location_verification_enabled AS locationVerificationEnabled,
+                ss.latitude AS latitude, ss.longitude AS longitude,
+                ss.allowed_radius_meters AS allowedRadiusMeters,
+                ss.max_accuracy_meters AS maxAccuracyMeters
          FROM table_qr_codes qr
          JOIN stores s ON s.id = qr.store_id AND s.status = 'ACTIVE'
+         JOIN store_settings ss ON ss.store_id = s.id
          JOIN service_tables st ON st.id = qr.table_id AND st.store_id = qr.store_id
            AND st.status = 'OCCUPIED'
          JOIN areas a ON a.id = st.area_id AND a.store_id = st.store_id AND a.status = 'ACTIVE'
@@ -221,13 +245,22 @@ export class QrOrderRepository {
     return this.db
       .prepare(
         `SELECT gs.id AS guestSessionId, gs.expires_at AS expiresAt,
+                gs.location_verified_at AS locationVerifiedAt,
+                gs.location_distance_meters AS locationDistanceMeters,
+                gs.location_accuracy_meters AS locationAccuracyMeters,
+                gs.location_expires_at AS locationExpiresAt,
                 qr.id AS qrId, s.id AS storeId, s.name AS storeName,
                 st.id AS tableId, COALESCE(st.display_name, st.name) AS tableName,
                 a.name AS areaName, ts.id AS timeSessionId, o.id AS orderId,
-                o.version AS orderVersion
+                o.version AS orderVersion,
+                ss.location_verification_enabled AS locationVerificationEnabled,
+                ss.latitude AS latitude, ss.longitude AS longitude,
+                ss.allowed_radius_meters AS allowedRadiusMeters,
+                ss.max_accuracy_meters AS maxAccuracyMeters
          FROM guest_order_sessions gs
          JOIN table_qr_codes qr ON qr.id = gs.qr_code_id AND qr.enabled = 1
          JOIN stores s ON s.id = gs.store_id AND s.status = 'ACTIVE'
+         JOIN store_settings ss ON ss.store_id = s.id
          JOIN service_tables st ON st.id = gs.table_id AND st.store_id = gs.store_id
          JOIN areas a ON a.id = st.area_id AND a.store_id = st.store_id
          JOIN time_sessions ts ON ts.id = gs.time_session_id AND ts.store_id = gs.store_id
@@ -237,6 +270,30 @@ export class QrOrderRepository {
       )
       .bind(secretHash, now)
       .first<GuestSessionRow>();
+  }
+
+  updateGuestLocationVerification(input: {
+    guestSessionId: string;
+    verifiedAt: number;
+    distanceMeters: number;
+    accuracyMeters: number;
+    expiresAt: number;
+  }) {
+    return this.db
+      .prepare(
+        `UPDATE guest_order_sessions
+         SET location_verified_at = ?, location_distance_meters = ?,
+             location_accuracy_meters = ?, location_expires_at = ?
+         WHERE id = ?`,
+      )
+      .bind(
+        input.verifiedAt,
+        input.distanceMeters,
+        input.accuracyMeters,
+        input.expiresAt,
+        input.guestSessionId,
+      )
+      .run();
   }
 
   createGuestSession(input: {
@@ -646,13 +703,13 @@ export class QrOrderRepository {
   findOpenServiceRequest(timeSessionId: string, type: string, since: number) {
     return this.db
       .prepare(
-        `SELECT id FROM service_requests
+        `SELECT id, created_at AS createdAt FROM service_requests
          WHERE time_session_id = ? AND type = ?
            AND (status IN ('OPEN', 'ACKNOWLEDGED') OR created_at > ?)
          ORDER BY created_at DESC LIMIT 1`,
       )
       .bind(timeSessionId, type, since)
-      .first<{ id: string }>();
+      .first<{ id: string; createdAt?: number }>();
   }
 
   async createServiceRequest(input: {

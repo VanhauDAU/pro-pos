@@ -1,11 +1,5 @@
 import { isSpecialWindowActiveAt, validatePricingConfig } from './validation';
-import type {
-  PauseInterval,
-  PricingConfigSnapshot,
-  PricingResult,
-  PricingSegment,
-  SpecialPriceWindow,
-} from './types';
+import type { PauseInterval, PricingConfigSnapshot, PricingResult, PricingSegment } from './types';
 
 interface Fraction {
   numerator: bigint;
@@ -58,26 +52,34 @@ function roundMoney(value: number, unit: number): number {
   return Math.floor((value + unit / 2) / unit) * unit;
 }
 
-function localMinute(timestampMs: number, timezone: string) {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: timezone,
-    weekday: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  }).formatToParts(new Date(timestampMs));
+const formatterCache = new Map<string, Intl.DateTimeFormat>();
+
+function getFormatter(timeZone: string) {
+  let formatter = formatterCache.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      weekday: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    });
+    formatterCache.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
+function localTime(timestampMs: number, timezone: string) {
+  const parts = getFormatter(timezone).formatToParts(new Date(timestampMs));
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   const weekday = weekdayMap[values.weekday ?? ''];
   if (weekday === undefined) throw new Error('Unable to resolve local weekday');
   return {
     weekday,
     minute: Number(values.hour) * 60 + Number(values.minute),
+    second: Number(values.second),
   };
-}
-
-function applicableWindow(timestampMs: number, timezone: string, windows: SpecialPriceWindow[]) {
-  const local = localMinute(timestampMs, timezone);
-  return windows.find((window) => isSpecialWindowActiveAt(window, local.weekday, local.minute));
 }
 
 function subtractPauses(startedAtMs: number, endedAtMs: number, pauses: PauseInterval[]) {
@@ -204,14 +206,32 @@ export function calculateTimePrice(input: {
         continue;
       }
 
-      const window = applicableWindow(cursor, input.config.timezone, input.config.specialWindows);
-      const nextMinuteBoundary = Math.min(
-        interval.end,
-        Math.floor(cursor / 60_000) * 60_000 + 60_000,
+      const local = localTime(cursor, input.config.timezone);
+      const window = input.config.specialWindows.find((w) =>
+        isSpecialWindowActiveAt(w, local.weekday, local.minute),
       );
-      const elapsedSeconds = Math.max(1, Math.floor((nextMinuteBoundary - cursor) / 1000));
-      const endedAtMs = Math.min(interval.end, cursor + elapsedSeconds * 1000);
-      const effectiveSeconds = Math.floor((endedAtMs - cursor) / 1000);
+
+      let nextTransitionMinute = 1440;
+      for (const w of input.config.specialWindows) {
+        if (w.startMinute > local.minute && w.startMinute < nextTransitionMinute) {
+          nextTransitionMinute = w.startMinute;
+        }
+        if (w.endMinute > local.minute && w.endMinute < nextTransitionMinute) {
+          nextTransitionMinute = w.endMinute;
+        }
+      }
+
+      const msIntoMinute = local.second * 1000 + (cursor % 1000);
+      const msUntilTransition = (nextTransitionMinute - local.minute) * 60_000 - msIntoMinute;
+      const nextBoundaryMs = cursor + Math.max(1000, msUntilTransition);
+      const endedAtMs = Math.min(interval.end, nextBoundaryMs);
+      const elapsedSeconds = Math.floor((endedAtMs - cursor) / 1000);
+
+      if (elapsedSeconds <= 0) {
+        cursor = endedAtMs;
+        continue;
+      }
+
       const priceVnd = window?.priceVnd ?? input.config.basePriceVnd;
       drafts.push({
         type: window ? 'SPECIAL' : 'BASE',
@@ -219,11 +239,11 @@ export function calculateTimePrice(input: {
         name: window?.name ?? 'Giá thường',
         startedAtMs: cursor,
         endedAtMs,
-        elapsedSeconds: effectiveSeconds,
+        elapsedSeconds,
         priceVnd,
         durationSeconds: input.config.baseDurationSeconds,
         amount: segmentAmount(
-          effectiveSeconds,
+          elapsedSeconds,
           priceVnd,
           input.config.baseDurationSeconds,
           input.config.calculationMode,

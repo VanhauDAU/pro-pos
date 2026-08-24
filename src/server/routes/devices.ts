@@ -18,15 +18,16 @@ ownerDeviceRoutes.get('/', async (c) =>
 
 ownerDeviceRoutes.post('/:deviceId/revoke', async (c) => {
   const actor = c.get('actor');
-  return success(
-    c,
-    await new AuthService(c.env).revokeDevice(actor.storeId!, c.req.param('deviceId'), {
-      actorUserId: actor.id,
-      actorSessionId: c.get('sessionId'),
-      deviceId: c.get('device')?.id ?? null,
-      requestId: c.get('requestId'),
-    }),
-  );
+  const deviceId = c.req.param('deviceId');
+  const result = await new AuthService(c.env).revokeDevice(actor.storeId!, deviceId, {
+    actorUserId: actor.id,
+    actorSessionId: c.get('sessionId'),
+    deviceId: c.get('device')?.id ?? null,
+    requestId: c.get('requestId'),
+  });
+  const room = c.env.STORE_REALTIME.getByName(actor.storeId!);
+  c.executionCtx.waitUntil(room.disconnectDevice(actor.storeId!, deviceId).catch(() => 0));
+  return success(c, result);
 });
 
 const currentDeviceRoutes = new Hono<AppEnv>();
@@ -44,6 +45,8 @@ currentDeviceRoutes.post('/revoke', requirePermission('device.manage'), async (c
     deviceId: device.id,
     requestId: c.get('requestId'),
   });
+  const room = c.env.STORE_REALTIME.getByName(actor.storeId!);
+  c.executionCtx.waitUntil(room.disconnectDevice(actor.storeId!, device.id).catch(() => 0));
   clearCredentialCookie(c, 'device');
   return success(c, result);
 });

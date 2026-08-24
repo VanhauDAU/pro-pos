@@ -28,6 +28,128 @@ export const addOrderItemSchema = z.object({
     .optional(),
 });
 
+export const saveOrderItemSchema = addOrderItemSchema.omit({ expectedOrderVersion: true });
+
+const saveOrderGuestSchema = z.object({
+  guestCount: z.number().int().min(1).max(999).default(1),
+  customerName: z.string().trim().max(100).nullable().optional(),
+  customerPhone: z.string().trim().max(30).nullable().optional(),
+  customerId: z.uuid().nullable().optional(),
+});
+
+export const openOrderCommandSchema = z
+  .object({
+    orderType: z.enum(['DINE_IN', 'TAKEAWAY']),
+    tableId: z.uuid().optional(),
+    expectedTableVersion: z.number().int().positive().optional(),
+    items: z.array(saveOrderItemSchema).max(100),
+    note: z.string().trim().max(500).nullable().optional(),
+    guest: saveOrderGuestSchema.optional(),
+    promotionIds: z.array(z.uuid()).max(50).optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.orderType === 'DINE_IN' && !value.tableId) {
+      context.addIssue({ code: 'custom', path: ['tableId'], message: 'Thiếu bàn cần mở.' });
+    }
+    if (value.orderType === 'DINE_IN' && value.expectedTableVersion === undefined) {
+      context.addIssue({
+        code: 'custom',
+        path: ['expectedTableVersion'],
+        message: 'Thiếu phiên bản bàn.',
+      });
+    }
+    if (value.orderType === 'TAKEAWAY' && value.items.length === 0) {
+      context.addIssue({
+        code: 'custom',
+        path: ['items'],
+        message: 'Đơn mang về cần ít nhất một mặt hàng.',
+      });
+    }
+  });
+
+export const saveExistingOrderCommandSchema = z
+  .object({
+    expectedOrderVersion: z.number().int().positive(),
+    nextAction: z.enum(['STAY', 'BEGIN_CHECKOUT']).default('STAY'),
+    addedItems: z.array(saveOrderItemSchema).max(100).default([]),
+    updatedItems: z
+      .array(
+        z
+          .object({
+            itemId: z.uuid(),
+            quantityMilli: z.number().int().nonnegative().max(1_000_000_000),
+            variantId: z.uuid().nullable().optional(),
+            enteredUnitPriceVnd: z.number().int().nonnegative().optional(),
+            note: z.string().trim().max(500).nullable().optional(),
+            discount: z
+              .object({
+                type: z.enum(['FIXED', 'PERCENT']),
+                value: z.number().int().nonnegative(),
+                reason: z.string().trim().min(1, 'Vui lòng nhập lý do giảm giá.').max(300),
+              })
+              .nullable()
+              .optional(),
+            removalReason: z.string().trim().max(500).optional(),
+          })
+          .superRefine((value, context) => {
+            if (value.quantityMilli === 0 && !value.removalReason?.trim()) {
+              context.addIssue({
+                code: 'custom',
+                path: ['removalReason'],
+                message: 'Vui lòng nhập lý do xóa món.',
+              });
+            }
+          }),
+      )
+      .max(100)
+      .default([]),
+    note: z.string().trim().max(500).nullable().optional(),
+    guest: saveOrderGuestSchema.optional(),
+    promotionIds: z.array(z.uuid()).max(50).optional(),
+  })
+  .refine((value) => value.addedItems.length + value.updatedItems.length <= 100, {
+    message: 'Mỗi lần lưu tối đa 100 dòng thay đổi.',
+    path: ['addedItems'],
+  });
+
+export type OpenOrderCommandInput = z.infer<typeof openOrderCommandSchema>;
+export type SaveExistingOrderCommandInput = z.infer<typeof saveExistingOrderCommandSchema>;
+
+export interface OrderCallBatchEntryDto {
+  id: string;
+  itemId: string | null;
+  changeType: 'ADD' | 'ADJUST' | 'EDIT' | 'REMOVE';
+  productId: string;
+  variantId: string | null;
+  productType: 'QUANTITY' | 'WEIGHT' | 'TIME';
+  productName: string;
+  variantName: string | null;
+  unitName: string | null;
+  unitPriceVnd: number;
+  beforeQuantityMilli: number;
+  deltaQuantityMilli: number;
+  afterQuantityMilli: number;
+  beforeNote: string | null;
+  afterNote: string | null;
+  beforeDiscount: { type: 'FIXED' | 'PERCENT'; value: number; reason: string | null } | null;
+  afterDiscount: { type: 'FIXED' | 'PERCENT'; value: number; reason: string | null } | null;
+  removalReason: string | null;
+}
+
+export interface OrderCallBatchDto {
+  id: string;
+  sequenceNo: number;
+  actorId: string | null;
+  actorName: string;
+  createdAt: number;
+  entries: OrderCallBatchEntryDto[];
+}
+
+export interface OrderCallBatchPageDto {
+  items: OrderCallBatchDto[];
+  nextBeforeSequence: number | null;
+}
+
 export const updateOrderItemSchema = z.object({
   expectedOrderVersion: z.number().int().positive(),
   quantityMilli: z.number().int().positive().max(1_000_000_000),
@@ -62,6 +184,11 @@ export const updateOrderNoteSchema = z.object({
 
 export const checkoutSchema = z.object({
   expectedOrderVersion: z.number().int().positive(),
+  paymentSnapshotId: z.string().trim().min(1).max(64).optional(),
+  // Legacy bank-account rows backfilled from SQLite use a 32-character hex id;
+  // newly created rows use UUIDs. Store ownership and active status are enforced
+  // by the checkout service before the account can be used.
+  bankAccountId: z.string().trim().min(1).max(64).optional(),
   method: z.enum(['CASH', 'BANK_TRANSFER']),
   cashReceivedVnd: z.number().int().nonnegative().nullable().optional(),
   allocations: z

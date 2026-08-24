@@ -1,3 +1,18 @@
+import type { BankAccountInput } from '@contracts/store';
+
+export interface StoreBankAccountRow {
+  id: string;
+  bankBin: string;
+  bankCode: string;
+  bankName: string;
+  accountNumber: string;
+  accountName: string;
+  isDefault: 0 | 1;
+  status: 'ACTIVE' | 'ARCHIVED';
+  createdAt: number;
+  updatedAt: number;
+}
+
 export class StoreRepository {
   constructor(private readonly db: D1Database) {}
 
@@ -16,6 +31,162 @@ export class StoreRepository {
       )
       .bind(storeId)
       .first();
+  }
+
+  listBankAccounts(storeId: string, includeArchived = false) {
+    return this.db
+      .prepare(
+        `SELECT id, bank_bin AS bankBin, bank_code AS bankCode, bank_name AS bankName,
+                account_number AS accountNumber, account_name AS accountName,
+                is_default AS isDefault, status, created_at AS createdAt,
+                updated_at AS updatedAt
+         FROM store_bank_accounts
+         WHERE store_id = ? AND (? = 1 OR status = 'ACTIVE')
+         ORDER BY is_default DESC, created_at, id`,
+      )
+      .bind(storeId, includeArchived ? 1 : 0)
+      .all<StoreBankAccountRow>();
+  }
+
+  findBankAccount(storeId: string, bankAccountId: string) {
+    return this.db
+      .prepare(
+        `SELECT id, bank_bin AS bankBin, bank_code AS bankCode, bank_name AS bankName,
+                account_number AS accountNumber, account_name AS accountName,
+                is_default AS isDefault, status, created_at AS createdAt,
+                updated_at AS updatedAt
+         FROM store_bank_accounts WHERE store_id = ? AND id = ? LIMIT 1`,
+      )
+      .bind(storeId, bankAccountId)
+      .first<StoreBankAccountRow>();
+  }
+
+  private mirrorDefaultBankAccountStatement(storeId: string, now: number) {
+    return this.db
+      .prepare(
+        `UPDATE store_settings
+         SET bank_name = (
+               SELECT bank_bin FROM store_bank_accounts
+               WHERE store_id = ? AND status = 'ACTIVE' AND is_default = 1 LIMIT 1
+             ),
+             bank_account_number = (
+               SELECT account_number FROM store_bank_accounts
+               WHERE store_id = ? AND status = 'ACTIVE' AND is_default = 1 LIMIT 1
+             ),
+             bank_account_name = (
+               SELECT account_name FROM store_bank_accounts
+               WHERE store_id = ? AND status = 'ACTIVE' AND is_default = 1 LIMIT 1
+             ),
+             bank_qr_media_id = NULL,
+             updated_at = ?
+         WHERE store_id = ?`,
+      )
+      .bind(storeId, storeId, storeId, now, storeId);
+  }
+
+  createBankAccount(input: {
+    id: string;
+    storeId: string;
+    values: BankAccountInput;
+    isDefault: boolean;
+    now: number;
+  }) {
+    const statements: D1PreparedStatement[] = [];
+    if (input.isDefault) {
+      statements.push(
+        this.db
+          .prepare(
+            `UPDATE store_bank_accounts SET is_default = 0, updated_at = ?
+             WHERE store_id = ? AND status = 'ACTIVE' AND is_default = 1`,
+          )
+          .bind(input.now, input.storeId),
+      );
+    }
+    statements.push(
+      this.db
+        .prepare(
+          `INSERT INTO store_bank_accounts (
+             id, store_id, bank_bin, bank_code, bank_name, account_number,
+             account_name, is_default, status, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)`,
+        )
+        .bind(
+          input.id,
+          input.storeId,
+          input.values.bankBin,
+          input.values.bankCode,
+          input.values.bankName,
+          input.values.accountNumber,
+          input.values.accountName,
+          input.isDefault ? 1 : 0,
+          input.now,
+          input.now,
+        ),
+    );
+    if (input.isDefault)
+      statements.push(this.mirrorDefaultBankAccountStatement(input.storeId, input.now));
+    return this.db.batch(statements);
+  }
+
+  updateBankAccount(input: {
+    id: string;
+    storeId: string;
+    values: BankAccountInput;
+    isDefault: boolean;
+    mirrorLegacy: boolean;
+    now: number;
+  }) {
+    const statements: D1PreparedStatement[] = [];
+    if (input.isDefault) {
+      statements.push(
+        this.db
+          .prepare(
+            `UPDATE store_bank_accounts SET is_default = 0, updated_at = ?
+             WHERE store_id = ? AND status = 'ACTIVE' AND is_default = 1 AND id <> ?`,
+          )
+          .bind(input.now, input.storeId, input.id),
+      );
+    }
+    statements.push(
+      this.db
+        .prepare(
+          `UPDATE store_bank_accounts
+           SET bank_bin = ?, bank_code = ?, bank_name = ?, account_number = ?,
+               account_name = ?, is_default = ?, updated_at = ?
+           WHERE store_id = ? AND id = ? AND status = 'ACTIVE'`,
+        )
+        .bind(
+          input.values.bankBin,
+          input.values.bankCode,
+          input.values.bankName,
+          input.values.accountNumber,
+          input.values.accountName,
+          input.isDefault ? 1 : 0,
+          input.now,
+          input.storeId,
+          input.id,
+        ),
+    );
+    if (input.mirrorLegacy) {
+      statements.push(this.mirrorDefaultBankAccountStatement(input.storeId, input.now));
+    }
+    return this.db.batch(statements);
+  }
+
+  archiveBankAccount(input: { id: string; storeId: string; wasDefault: boolean; now: number }) {
+    const statements: D1PreparedStatement[] = [
+      this.db
+        .prepare(
+          `UPDATE store_bank_accounts
+           SET status = 'ARCHIVED', is_default = 0, archived_at = ?, updated_at = ?
+           WHERE store_id = ? AND id = ? AND status = 'ACTIVE'`,
+        )
+        .bind(input.now, input.now, input.storeId, input.id),
+    ];
+    if (input.wasDefault) {
+      statements.push(this.mirrorDefaultBankAccountStatement(input.storeId, input.now));
+    }
+    return this.db.batch(statements);
   }
 
   findActiveBankQrMedia(storeId: string, mediaId: string) {

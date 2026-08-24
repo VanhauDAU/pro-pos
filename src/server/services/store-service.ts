@@ -1,6 +1,7 @@
 import { AppError } from '@server/lib/app-error';
 import { StoreRepository } from '@server/repositories/store-repository';
 import { AuditRepository, type AuditContext } from '@server/repositories/audit-repository';
+import type { BankAccountDto, BankAccountInput } from '@contracts/store';
 
 export class StoreService {
   private readonly repository: StoreRepository;
@@ -9,8 +10,173 @@ export class StoreService {
     this.repository = new StoreRepository(env.DB);
   }
 
-  getSettings(storeId: string) {
-    return this.repository.getSettings(storeId);
+  private bankAccountDto(
+    row: Awaited<ReturnType<StoreRepository['findBankAccount']>>,
+  ): BankAccountDto | null {
+    if (!row) return null;
+    return {
+      ...row,
+      isDefault: row.isDefault === 1,
+    };
+  }
+
+  async listBankAccounts(storeId: string): Promise<BankAccountDto[]> {
+    const result = await this.repository.listBankAccounts(storeId);
+    return result.results.map((row) => Object.assign({}, row, { isDefault: row.isDefault === 1 }));
+  }
+
+  async getSettings(storeId: string) {
+    const [settings, bankAccounts] = await Promise.all([
+      this.repository.getSettings(storeId),
+      this.listBankAccounts(storeId),
+    ]);
+    return settings ? { ...settings, bankAccounts } : settings;
+  }
+
+  private mapBankAccountMutationError(error: unknown): never {
+    const message = error instanceof Error ? error.message : String(error);
+    if (
+      message.includes('uq_store_bank_accounts_active_identity') ||
+      message.includes(
+        'store_bank_accounts.store_id, store_bank_accounts.bank_bin, store_bank_accounts.account_number',
+      )
+    ) {
+      throw new AppError('BANK_ACCOUNT_DUPLICATE', 'Tài khoản ngân hàng này đã tồn tại.', 409);
+    }
+    if (
+      message.includes('uq_store_bank_accounts_default') ||
+      message.includes('UNIQUE constraint failed: store_bank_accounts.store_id')
+    ) {
+      throw new AppError(
+        'BANK_ACCOUNT_DEFAULT_CONFLICT',
+        'Tài khoản mặc định đã thay đổi. Vui lòng tải lại.',
+        409,
+      );
+    }
+    throw error;
+  }
+
+  async createBankAccount(input: {
+    storeId: string;
+    values: BankAccountInput;
+    auditContext: AuditContext;
+  }) {
+    const active = await this.listBankAccounts(input.storeId);
+    const id = crypto.randomUUID();
+    const now = Date.now();
+    try {
+      await this.repository.createBankAccount({
+        id,
+        storeId: input.storeId,
+        values: input.values,
+        isDefault: active.length === 0 || input.values.isDefault,
+        now,
+      });
+    } catch (error) {
+      this.mapBankAccountMutationError(error);
+    }
+    const after = this.bankAccountDto(await this.repository.findBankAccount(input.storeId, id));
+    await new AuditRepository(this.env.DB).record({
+      storeId: input.storeId,
+      context: input.auditContext,
+      action: 'STORE_BANK_ACCOUNT_CREATED',
+      entityType: 'STORE_BANK_ACCOUNT',
+      entityId: id,
+      before: null,
+      after,
+      now,
+    });
+    return { bankAccount: after!, bankAccounts: await this.listBankAccounts(input.storeId) };
+  }
+
+  async updateBankAccount(input: {
+    storeId: string;
+    bankAccountId: string;
+    values: BankAccountInput;
+    auditContext: AuditContext;
+  }) {
+    const beforeRow = await this.repository.findBankAccount(input.storeId, input.bankAccountId);
+    if (!beforeRow || beforeRow.status !== 'ACTIVE') {
+      throw new AppError('BANK_ACCOUNT_NOT_FOUND', 'Không tìm thấy tài khoản ngân hàng.', 404);
+    }
+    if (beforeRow.isDefault === 1 && !input.values.isDefault) {
+      throw new AppError(
+        'BANK_ACCOUNT_DEFAULT_REQUIRED',
+        'Hãy đặt một tài khoản khác làm mặc định trước.',
+        422,
+      );
+    }
+    const now = Date.now();
+    try {
+      await this.repository.updateBankAccount({
+        id: input.bankAccountId,
+        storeId: input.storeId,
+        values: input.values,
+        isDefault: input.values.isDefault,
+        mirrorLegacy: input.values.isDefault || beforeRow.isDefault === 1,
+        now,
+      });
+    } catch (error) {
+      this.mapBankAccountMutationError(error);
+    }
+    const before = this.bankAccountDto(beforeRow);
+    const after = this.bankAccountDto(
+      await this.repository.findBankAccount(input.storeId, input.bankAccountId),
+    );
+    await new AuditRepository(this.env.DB).record({
+      storeId: input.storeId,
+      context: input.auditContext,
+      action: 'STORE_BANK_ACCOUNT_UPDATED',
+      entityType: 'STORE_BANK_ACCOUNT',
+      entityId: input.bankAccountId,
+      before,
+      after,
+      now,
+    });
+    return { bankAccount: after!, bankAccounts: await this.listBankAccounts(input.storeId) };
+  }
+
+  async archiveBankAccount(input: {
+    storeId: string;
+    bankAccountId: string;
+    auditContext: AuditContext;
+  }) {
+    const [beforeRow, active] = await Promise.all([
+      this.repository.findBankAccount(input.storeId, input.bankAccountId),
+      this.listBankAccounts(input.storeId),
+    ]);
+    if (!beforeRow || beforeRow.status !== 'ACTIVE') {
+      throw new AppError('BANK_ACCOUNT_NOT_FOUND', 'Không tìm thấy tài khoản ngân hàng.', 404);
+    }
+    if (beforeRow.isDefault === 1 && active.length > 1) {
+      throw new AppError(
+        'BANK_ACCOUNT_DEFAULT_DELETE_BLOCKED',
+        'Hãy đặt một tài khoản khác làm mặc định trước khi xóa.',
+        422,
+      );
+    }
+    const now = Date.now();
+    await this.repository.archiveBankAccount({
+      id: input.bankAccountId,
+      storeId: input.storeId,
+      wasDefault: beforeRow.isDefault === 1,
+      now,
+    });
+    const before = this.bankAccountDto(beforeRow);
+    const after = this.bankAccountDto(
+      await this.repository.findBankAccount(input.storeId, input.bankAccountId),
+    );
+    await new AuditRepository(this.env.DB).record({
+      storeId: input.storeId,
+      context: input.auditContext,
+      action: 'STORE_BANK_ACCOUNT_ARCHIVED',
+      entityType: 'STORE_BANK_ACCOUNT',
+      entityId: input.bankAccountId,
+      before,
+      after,
+      now,
+    });
+    return { bankAccounts: await this.listBankAccounts(input.storeId) };
   }
 
   async updateSettings(input: {

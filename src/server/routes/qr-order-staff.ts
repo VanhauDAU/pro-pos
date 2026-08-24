@@ -29,6 +29,27 @@ qrOrderStaffRoutes.get('/', requirePermission('table.view'), async (c) =>
   ),
 );
 
+qrOrderStaffRoutes.get('/summary', requirePermission('table.view'), async (c) => {
+  const service = new QrOrderService(c.env);
+  const storeId = c.get('actor').storeId!;
+  const [guestOrders, serviceRequests, tableOpenRequests] = await Promise.all([
+    service.listStaffRequests(storeId, 'PENDING'),
+    service.listServiceRequests(storeId),
+    service.listTableOpenRequests(storeId),
+  ]);
+  return success(c, {
+    guestOrders,
+    serviceRequests,
+    tableOpenRequests,
+    counts: {
+      guestOrders: guestOrders.length,
+      serviceRequests: serviceRequests.filter((request) => request.status === 'OPEN').length,
+      tableOpenRequests: tableOpenRequests.length,
+    },
+    serverNowMs: Date.now(),
+  });
+});
+
 qrOrderStaffRoutes.get('/audit', requirePermission('table.view'), async (c) => {
   const rawLimit = c.req.query('limit');
   const limit = rawLimit === undefined ? 50 : Number(rawLimit);

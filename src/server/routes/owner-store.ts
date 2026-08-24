@@ -1,6 +1,10 @@
 import { Hono } from 'hono';
 
-import { updatePrintSettingsSchema, updateStoreSettingsSchema } from '@contracts/store';
+import {
+  bankAccountInputSchema,
+  updatePrintSettingsSchema,
+  updateStoreSettingsSchema,
+} from '@contracts/store';
 import { success } from '@server/lib/response';
 import { parseJson } from '@server/lib/validation';
 import { requireActor, requirePermission } from '@server/middleware/authorization';
@@ -40,6 +44,65 @@ ownerStoreRoutes.put('/settings', requirePermission('store.manage'), async (c) =
   });
   return success(c, result);
 });
+
+ownerStoreRoutes.post('/bank-accounts', requirePermission('store.manage'), async (c) => {
+  const values = await parseJson(c.req.raw, bankAccountInputSchema);
+  return success(
+    c,
+    await new StoreService(c.env).createBankAccount({
+      storeId: c.get('actor').storeId!,
+      values,
+      auditContext: {
+        actorUserId: c.get('actor').id,
+        actorSessionId: c.get('sessionId'),
+        deviceId: c.get('device')?.id ?? null,
+        requestId: c.get('requestId'),
+      },
+    }),
+    201,
+  );
+});
+
+ownerStoreRoutes.patch(
+  '/bank-accounts/:bankAccountId',
+  requirePermission('store.manage'),
+  async (c) => {
+    const values = await parseJson(c.req.raw, bankAccountInputSchema);
+    return success(
+      c,
+      await new StoreService(c.env).updateBankAccount({
+        storeId: c.get('actor').storeId!,
+        bankAccountId: c.req.param('bankAccountId'),
+        values,
+        auditContext: {
+          actorUserId: c.get('actor').id,
+          actorSessionId: c.get('sessionId'),
+          deviceId: c.get('device')?.id ?? null,
+          requestId: c.get('requestId'),
+        },
+      }),
+    );
+  },
+);
+
+ownerStoreRoutes.delete(
+  '/bank-accounts/:bankAccountId',
+  requirePermission('store.manage'),
+  async (c) =>
+    success(
+      c,
+      await new StoreService(c.env).archiveBankAccount({
+        storeId: c.get('actor').storeId!,
+        bankAccountId: c.req.param('bankAccountId'),
+        auditContext: {
+          actorUserId: c.get('actor').id,
+          actorSessionId: c.get('sessionId'),
+          deviceId: c.get('device')?.id ?? null,
+          requestId: c.get('requestId'),
+        },
+      }),
+    ),
+);
 
 ownerStoreRoutes.get('/print-settings', requirePermission('store.manage'), async (c) =>
   success(c, await new StoreService(c.env).getPrintSettings(c.get('actor').storeId!)),

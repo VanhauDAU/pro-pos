@@ -83,6 +83,13 @@ for (const table of ['areas', 'categories', 'units'] as const) {
   });
 }
 
+ownerCatalogRoutes.post('/units/seed', requirePermission('catalog.manage'), async (c) =>
+  success(
+    c,
+    await new CatalogService(c.env).seedDefaultUnits(c.get('actor').storeId!, auditContext(c)),
+  ),
+);
+
 ownerCatalogRoutes.get('/units/:unitId/products', requirePermission('catalog.manage'), async (c) =>
   success(
     c,

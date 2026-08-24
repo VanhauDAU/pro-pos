@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,29 +7,9 @@ const root = new URL('..', import.meta.url);
 const tempDirectory = await mkdtemp(join(tmpdir(), 'pro-pos-migration-'));
 const databasePath = join(tempDirectory, 'upgrade.sqlite');
 
-const migrationFiles = [
-  '0001_identity_and_access.sql',
-  '0002_catalog_and_pricing.sql',
-  '0003_pos_and_billing.sql',
-  '0004_access_otp_and_pin_verifiers.sql',
-  '0005_access_bridge_codes.sql',
-  '0006_security_tenant_financial_hardening.sql',
-  '0007_owner_store_location.sql',
-  '0008_area_table_setup.sql',
-  '0009_staff_roles_permissions.sql',
-  '0010_staff_pos_orders.sql',
-  '0011_pos_order_lifecycle.sql',
-  '0012_compact_pos_codes.sql',
-  '0013_adjust_time_session.sql',
-  '0014_time_item_ranges.sql',
-  '0015_table_transfer_segments.sql',
-  '0016_checkout_pending_lifecycle.sql',
-  '0017_update_order_item_variant_discount.sql',
-  '0018_fix_checkout_command_session_references.sql',
-  '0019_order_guest_count.sql',
-  '0020_store_print_settings.sql',
-  '0021_print_template_config.sql',
-];
+const migrationFiles = (await readdir(new URL('migrations/', root)))
+  .filter((file) => /^\d+_.+\.sql$/u.test(file))
+  .toSorted((left, right) => left.localeCompare(right));
 
 const fixture = `
 PRAGMA foreign_keys = ON;
@@ -95,10 +75,10 @@ try {
   const rows = result.stdout.trim().split('\n');
   const expected = ['100000|100000|0', '100000|100000|0'];
   if (rows.at(-2) !== expected[0] || rows.at(-1) !== expected[1]) {
-    throw new Error(`Unexpected 0005 → 0013 backfill: ${rows.slice(-2).join(', ')}`);
+    throw new Error(`Unexpected migration backfill: ${rows.slice(-2).join(', ')}`);
   }
   console.log(
-    '0005 → 0013 upgrade path passed: accounting, POS lifecycle, compact codes and time corrections are safe.',
+    `0005 → ${migrationFiles.at(-1)?.slice(0, 4)} upgrade path passed across ${migrationFiles.length} migrations.`,
   );
 } finally {
   await rm(tempDirectory, { recursive: true, force: true });

@@ -18,6 +18,8 @@ import {
   updateOrderItemSchema,
   updateOrderNoteSchema,
   updateOrderGuestSchema,
+  openOrderCommandSchema,
+  saveExistingOrderCommandSchema,
 } from '@contracts/pos';
 import { applyPromotionSchema, promotionPreviewSchema } from '@contracts/promotion';
 import { AppError } from '@server/lib/app-error';
@@ -54,14 +56,26 @@ import { qrOrderStaffRoutes } from '@server/routes/qr-order-staff';
 import { QrOrderService } from '@server/services/qr-order-service';
 import { pushNotificationRoutes } from '@server/routes/push-notifications';
 import type { AppEnv } from '@server/types';
+import { measureRequestTiming } from '@server/lib/performance';
 
 const posRoutes = new Hono<AppEnv>();
 posRoutes.use('*', requireActor('OWNER', 'EMPLOYEE'));
+
+function producesRealtimeEvent(path: string) {
+  return (
+    path.includes('/api/v1/pos/orders/') ||
+    path.endsWith('/api/v1/pos/orders/open') ||
+    path.endsWith('/api/v1/pos/tables/open') ||
+    path.includes('/api/v1/pos/qr-orders/')
+  );
+}
+
 posRoutes.use('*', async (c, next) => {
   await next();
   if (
     ['POST', 'PUT', 'PATCH', 'DELETE'].includes(c.req.method) &&
     !c.req.path.endsWith('/promotions/preview') &&
+    producesRealtimeEvent(c.req.path) &&
     c.res.status >= 200 &&
     c.res.status < 300
   ) {
@@ -72,41 +86,6 @@ posRoutes.use('*', async (c, next) => {
       );
     }
   }
-});
-
-posRoutes.get('/onboarding/audio/:track', async (c) => {
-  const track = c.req.param('track');
-  if (!/^(0[0-9]|1[0-3])$/.test(track)) {
-    throw new AppError('ONBOARDING_AUDIO_NOT_FOUND', 'Không tìm thấy âm thanh hướng dẫn.', 404);
-  }
-  const object = await c.env.MEDIA.get(`onboarding/sound_${track}.MP3`);
-  if (!object) {
-    throw new AppError('ONBOARDING_AUDIO_NOT_FOUND', 'Không tìm thấy âm thanh hướng dẫn.', 404);
-  }
-  const headers = new Headers();
-  object.writeHttpMetadata(headers);
-  headers.set('Content-Type', 'audio/mpeg');
-  headers.set('ETag', object.httpEtag);
-  headers.set('Cache-Control', 'private, max-age=31536000, immutable');
-  return new Response(object.body, { headers });
-});
-
-posRoutes.get('/sound/:soundName', async (c) => {
-  const soundName = c.req.param('soundName');
-  if (!/^[a-zA-Z0-9_\-.]+\.(ogg|mp3|wav|m4a)$/i.test(soundName)) {
-    throw new AppError('SOUND_NOT_FOUND', 'Không tìm thấy file âm thanh.', 404);
-  }
-  const object =
-    (await c.env.MEDIA.get(`sound/${soundName}`)) ?? (await c.env.MEDIA.get(soundName));
-  if (!object) {
-    throw new AppError('SOUND_NOT_FOUND', 'Không tìm thấy file âm thanh trong R2.', 404);
-  }
-  const headers = new Headers();
-  object.writeHttpMetadata(headers);
-  headers.set('Content-Type', soundName.endsWith('.ogg') ? 'audio/ogg' : 'audio/mpeg');
-  headers.set('ETag', object.httpEtag);
-  headers.set('Cache-Control', 'public, max-age=31536000, immutable');
-  return new Response(object.body, { headers });
 });
 
 function idempotencyKey(c: Parameters<typeof success>[0]) {
@@ -445,15 +424,21 @@ posRoutes.post(
   requirePermission('staff.employees.edit'),
   async (c) => {
     const actor = c.get('actor');
-    return success(
-      c,
-      await new StaffService(c.env).terminateSessions(actor.storeId!, c.req.param('userId'), {
+    const result = await new StaffService(c.env).terminateSessions(
+      actor.storeId!,
+      c.req.param('userId'),
+      {
         actorUserId: actor.id,
         actorSessionId: c.get('sessionId'),
         deviceId: c.get('device')?.id ?? null,
         requestId: c.get('requestId'),
-      }),
+      },
     );
+    const room = c.env.STORE_REALTIME.getByName(actor.storeId!);
+    for (const sessionId of result.sessionIds) {
+      c.executionCtx.waitUntil(room.disconnectSession(actor.storeId!, sessionId).catch(() => 0));
+    }
+    return success(c, result);
   },
 );
 
@@ -521,6 +506,88 @@ posRoutes.get('/orders', requirePermission('table.view'), async (c) =>
   success(c, await new PosService(c.env).listOrders(c.get('actor').storeId!)),
 );
 
+posRoutes.get('/overview', requirePermission('table.view'), async (c) =>
+  success(
+    c,
+    await measureRequestTiming(c, 'overview', () =>
+      new PosService(c.env).overview(c.get('actor').storeId!),
+    ),
+  ),
+);
+
+posRoutes.post('/orders/open', requirePermission('order.manage'), async (c) => {
+  const body = await parseJson(c.req.raw, openOrderCommandSchema);
+  if (body.items.some((item) => Boolean(item.discount))) {
+    await assertPermission(c, 'discount.apply');
+  }
+  if (body.promotionIds !== undefined) await assertPermission(c, 'promotion.apply');
+  const actor = c.get('actor');
+  return success(
+    c,
+    await measureRequestTiming(c, 'command', () =>
+      new PosService(c.env).openOrderCommand({
+        storeId: actor.storeId!,
+        actorId: actor.id,
+        requestId: c.get('requestId'),
+        idempotencyKey: idempotencyKey(c),
+        values: body,
+      }),
+    ),
+    201,
+  );
+});
+
+posRoutes.post('/orders/:orderId/save', requirePermission('order.manage'), async (c) => {
+  const body = await parseJson(c.req.raw, saveExistingOrderCommandSchema);
+  if (
+    body.addedItems.some((item) => Boolean(item.discount)) ||
+    body.updatedItems.some((item) => Boolean(item.discount))
+  ) {
+    await assertPermission(c, 'discount.apply');
+  }
+  if (body.promotionIds !== undefined) await assertPermission(c, 'promotion.apply');
+  const actor = c.get('actor');
+  return success(
+    c,
+    await measureRequestTiming(c, 'command', () =>
+      new PosService(c.env).saveOrderCommand({
+        storeId: actor.storeId!,
+        actorId: actor.id,
+        requestId: c.get('requestId'),
+        idempotencyKey: idempotencyKey(c),
+        orderId: c.req.param('orderId'),
+        values: body,
+        actorSessionId: c.get('sessionId'),
+        deviceId: c.get('device')?.id ?? null,
+      }),
+    ),
+  );
+});
+
+posRoutes.get('/orders/:orderId/call-batches', requirePermission('order.manage'), async (c) => {
+  const actor = c.get('actor');
+  const rawBeforeSequence = c.req.query('beforeSequence');
+  const rawLimit = c.req.query('limit');
+  const beforeSequence = rawBeforeSequence ? Number(rawBeforeSequence) : undefined;
+  const limit = rawLimit ? Number(rawLimit) : 20;
+  if (
+    (beforeSequence !== undefined && (!Number.isInteger(beforeSequence) || beforeSequence <= 0)) ||
+    !Number.isInteger(limit) ||
+    limit <= 0
+  ) {
+    throw new AppError('VALIDATION_ERROR', 'Tham số lịch sử gọi món không hợp lệ.', 422);
+  }
+  return success(
+    c,
+    await new PosService(c.env).listOrderCallBatches(
+      actor.storeId!,
+      c.req.param('orderId'),
+      beforeSequence,
+      limit,
+    ),
+  );
+});
+
 posRoutes.post('/orders', requirePermission('order.manage'), async (c) => {
   const body = await parseJson(c.req.raw, createTakeawayOrderSchema);
   const actor = c.get('actor');
@@ -579,7 +646,7 @@ posRoutes.get('/orders/:orderId/detail', requirePermission('table.view'), async 
   ),
 );
 
-posRoutes.post('/promotions/preview', requirePermission('table.view'), async (c) => {
+posRoutes.post('/promotions/preview', requirePermission('promotion.apply'), async (c) => {
   const body = await parseJson(c.req.raw, promotionPreviewSchema);
   const actor = c.get('actor');
   return success(
@@ -860,6 +927,8 @@ posRoutes.post('/orders/:orderId/checkout', requirePermission('checkout.complete
       idempotencyKey: idempotencyKey(c),
       orderId: c.req.param('orderId'),
       expectedOrderVersion: body.expectedOrderVersion,
+      paymentSnapshotId: body.paymentSnapshotId ?? null,
+      bankAccountId: body.bankAccountId ?? null,
       method: body.method,
       cashReceivedVnd: body.cashReceivedVnd ?? null,
       allocations: body.allocations ?? [],

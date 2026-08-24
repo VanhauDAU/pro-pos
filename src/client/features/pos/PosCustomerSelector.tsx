@@ -87,6 +87,7 @@ export function PosCustomerSelector({
   const printSettings = useQuery({
     queryKey: ['pos-print-settings'],
     queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
+    staleTime: Infinity,
   });
   const posContext = useQuery({
     queryKey: ['pos-context'],
@@ -96,6 +97,7 @@ export function PosCustomerSelector({
         storePhone?: string | null;
         storeAddress?: string | null;
       }>('/api/v1/pos/context'),
+    staleTime: Infinity,
   });
   const provinces = useQuery({
     queryKey: ['vn-provinces-v2'],

@@ -15,6 +15,23 @@ registerRoute(
   new NavigationRoute(createHandlerBoundToURL('/index.html'), { denylist: [/^\/api(?:\/|$)/] }),
 );
 
+const RUNTIME_ASSET_CACHE = 'propos-runtime-assets-v1';
+registerRoute(
+  ({ request, url }) =>
+    request.method === 'GET' &&
+    url.origin === self.location.origin &&
+    !url.pathname.startsWith('/api/') &&
+    ['script', 'style', 'image'].includes(request.destination),
+  async ({ request }) => {
+    const cache = await caches.open(RUNTIME_ASSET_CACHE);
+    const cached = await cache.match(request);
+    if (cached) return cached;
+    const response = await fetch(request);
+    if (response.ok) await cache.put(request, response.clone());
+    return response;
+  },
+);
+
 self.addEventListener('message', (event) => {
   if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
 });
@@ -31,31 +48,7 @@ self.addEventListener('push', (event) => {
   const payload = pushPayload(event);
   event.waitUntil(
     (async () => {
-      const windowClients = await self.clients.matchAll({
-        type: 'window',
-        includeUncontrolled: true,
-      });
-      const audioClient =
-        windowClients.find((client) => client.focused) ??
-        windowClients.find((client) => client.visibilityState === 'visible');
-      const soundType =
-        payload.soundType === 'PAYMENT_SUCCESS'
-          ? 'PAYMENT_SUCCESS'
-          : payload.soundType === 'CHECKOUT_REQUEST'
-            ? 'CHECKOUT_REQUEST'
-            : payload.soundType === 'TABLE_OPEN_REQUEST'
-              ? 'TABLE_OPEN_REQUEST'
-              : 'NEW_QR_ORDER';
       const tag = payload.tag ?? 'propos-notification';
-
-      if (audioClient) {
-        audioClient.postMessage({
-          type: 'PUSH_NOTIFICATION_RECEIVED',
-          soundType,
-          tag,
-          receivedAt: Date.now(),
-        }); // oxlint-disable-line unicorn/require-post-message-target-origin -- Service Worker Client API has no targetOrigin.
-      }
 
       const options = {
         body: payload.body ?? 'Bạn có thông báo mới.',
@@ -64,7 +57,7 @@ self.addEventListener('push', (event) => {
         tag,
         renotify: true,
         requireInteraction: payload.requireInteraction !== false,
-        silent: Boolean(audioClient),
+        silent: true,
         timestamp: payload.timestamp ?? Date.now(),
         actions: [{ action: 'open', title: payload.actionTitle ?? 'Mở QR Order' }],
         data: {
@@ -74,7 +67,7 @@ self.addEventListener('push', (event) => {
           requestId: payload.requestId ?? null,
           orderId: payload.orderId ?? null,
         },
-        ...(audioClient ? {} : { vibrate: [300, 120, 300, 120, 700] }),
+        vibrate: [300, 120, 300, 120, 700],
       };
 
       await Promise.all([

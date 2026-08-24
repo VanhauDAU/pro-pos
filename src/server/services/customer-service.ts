@@ -100,12 +100,17 @@ export class CustomerService {
   async validateImport(storeId: string, rows: CustomerInput[]) {
     const errors: Array<{ row: number; message: string }> = [];
     const seen = new Set<string>();
+    const existingChecks = await Promise.all(
+      rows.map((row) => this.repository.findByPhone(storeId, normalizeCustomerPhone(row.phone))),
+    );
+
     for (const [index, row] of rows.entries()) {
       const phone = normalizeCustomerPhone(row.phone);
-      if (seen.has(phone))
+      if (seen.has(phone)) {
         errors.push({ row: index + 2, message: 'Số điện thoại bị trùng trong file.' });
-      else if (await this.repository.findByPhone(storeId, phone))
+      } else if (existingChecks[index]) {
         errors.push({ row: index + 2, message: 'Số điện thoại đã tồn tại.' });
+      }
       seen.add(phone);
     }
     return { valid: errors.length === 0, total: rows.length, errors };
@@ -120,7 +125,9 @@ export class CustomerService {
         422,
         validation,
       );
-    for (const row of rows) await this.create(storeId, actorId, row);
+    for (const row of rows) {
+      await this.create(storeId, actorId, row);
+    }
     return { imported: rows.length };
   }
 

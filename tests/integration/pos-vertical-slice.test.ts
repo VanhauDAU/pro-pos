@@ -6,6 +6,7 @@ import { PlatformService } from '@server/services/platform-service';
 import { PosService } from '@server/services/pos-service';
 import { PromotionService } from '@server/services/promotion-service';
 import { QrOrderService } from '@server/services/qr-order-service';
+import { StoreService } from '@server/services/store-service';
 import { QrOrderRepository } from '@server/repositories/qr-order-repository';
 
 describe('online POS vertical slice', () => {
@@ -23,6 +24,13 @@ describe('online POS vertical slice', () => {
   let weightProductId: string;
   let weightVariantId: string;
 
+  const bankAuditContext = (requestId: string) => ({
+    actorUserId: ownerUserId,
+    actorSessionId: null,
+    deviceId: null,
+    requestId,
+  });
+
   beforeAll(async () => {
     const platform = new PlatformService(env);
     await platform.bootstrap({
@@ -35,11 +43,24 @@ describe('online POS vertical slice', () => {
       ownerDisplayName: 'POS Owner',
       ownerEmail: 'pos.owner@example.com',
     }));
+    await new StoreService(env).createBankAccount({
+      storeId,
+      values: {
+        bankBin: '970418',
+        bankCode: 'BIDV',
+        bankName: 'Ngân hàng TMCP Đầu tư và Phát triển Việt Nam',
+        accountNumber: '0000000001',
+        accountName: 'POS OWNER',
+        isDefault: true,
+      },
+      auditContext: bankAuditContext('bank-before-all'),
+    });
 
     const catalog = new CatalogService(env);
     const area = await catalog.createNamed(storeId, 'areas', 'Khu A');
     areaId = area.id;
-    const unit = await catalog.createNamed(storeId, 'units', 'Chai');
+    const existingUnits = (await catalog.listNamed(storeId, 'units')).results;
+    const unit = existingUnits.find((u) => u.name === 'Chai')!;
     const timeProduct = await catalog.createProduct(storeId, {
       name: 'Giờ Pool',
       productType: 'TIME',
@@ -191,6 +212,443 @@ describe('online POS vertical slice', () => {
         expectedTableVersion: 1,
       }),
     ).rejects.toMatchObject({ code: 'TABLE_NOT_AVAILABLE' });
+  });
+
+  it('opens and saves a multi-item order atomically with idempotent replay', async () => {
+    const catalog = new CatalogService(env);
+    const table = await catalog.createTable({
+      storeId,
+      areaId,
+      timeProductId,
+      name: 'Bàn batch command',
+      sortOrder: 11,
+    });
+    const pos = new PosService(env);
+    const values = {
+      orderType: 'DINE_IN' as const,
+      tableId: table.id,
+      expectedTableVersion: 1,
+      items: Array.from({ length: 6 }, () => ({
+        productId,
+        variantId,
+        quantityMilli: 1_000,
+        note: null,
+        discount: null,
+      })),
+      note: 'Lưu một command',
+    };
+    const first = await pos.openOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-batch-open',
+      idempotencyKey: 'batch-open-command-001',
+      values,
+    });
+    expect(first.order.version).toBe(8);
+    expect(first.items).toHaveLength(6);
+    expect(first.items.every((item) => item.quantityMilli === 1_000)).toBe(true);
+    expect(first.totals.totalVnd).toBe(120_000);
+    const [auditCount, eventCount] = await env.DB.batch([
+      env.DB.prepare(
+        'SELECT COUNT(*) AS total FROM audit_logs WHERE store_id = ? AND request_id = ?',
+      ).bind(storeId, 'request-batch-open'),
+      env.DB.prepare(
+        `SELECT COUNT(*) AS total FROM realtime_events
+         WHERE store_id = ? AND client_mutation_id = ?`,
+      ).bind(storeId, 'batch-open-command-001'),
+    ]);
+    expect((auditCount!.results[0] as { total: number }).total).toBe(1);
+    expect((eventCount!.results[0] as { total: number }).total).toBe(1);
+
+    const replay = await pos.openOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-batch-open-replay',
+      idempotencyKey: 'batch-open-command-001',
+      values,
+    });
+    expect(replay).toEqual(first);
+    const commandCount = await env.DB.prepare(
+      'SELECT COUNT(*) AS total FROM pos_save_commands WHERE store_id = ? AND id = ?',
+    )
+      .bind(storeId, 'batch-open-command-001')
+      .first<{ total: number }>();
+    expect(commandCount?.total).toBe(1);
+  });
+
+  it('does not occupy a table when batch validation fails', async () => {
+    const catalog = new CatalogService(env);
+    const table = await catalog.createTable({
+      storeId,
+      areaId,
+      timeProductId,
+      name: 'Bàn batch rollback',
+      sortOrder: 12,
+    });
+    await expect(
+      new PosService(env).openOrderCommand({
+        storeId,
+        actorId: ownerUserId,
+        requestId: 'request-batch-invalid',
+        idempotencyKey: 'batch-open-invalid-001',
+        values: {
+          orderType: 'DINE_IN',
+          tableId: table.id,
+          expectedTableVersion: 1,
+          items: [
+            {
+              productId: crypto.randomUUID(),
+              variantId: null,
+              quantityMilli: 1_000,
+              note: null,
+              discount: null,
+            },
+          ],
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'PRODUCT_NOT_AVAILABLE' });
+    const after = await env.DB.prepare('SELECT status, version FROM service_tables WHERE id = ?')
+      .bind(table.id)
+      .first<{ status: string; version: number }>();
+    expect(after).toEqual({ status: 'AVAILABLE', version: 1 });
+  });
+
+  it('records each saved item delta as a paged call batch while keeping merged totals', async () => {
+    const pos = new PosService(env);
+    const opened = await pos.openOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-call-batch-open',
+      idempotencyKey: 'call-batch-open-001',
+      values: {
+        orderType: 'TAKEAWAY',
+        items: [
+          {
+            productId,
+            variantId,
+            quantityMilli: 2_000,
+            note: null,
+            discount: null,
+          },
+        ],
+      },
+    });
+    expect(opened.callBatch).toMatchObject({ sequenceNo: 1 });
+    const savedItem = opened.quote.items.find((item) => item.productId === productId)!;
+
+    const adjusted = await pos.saveOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-call-batch-adjust',
+      idempotencyKey: 'call-batch-adjust-001',
+      orderId: opened.order.id,
+      values: {
+        expectedOrderVersion: opened.order.version,
+        nextAction: 'STAY',
+        addedItems: [],
+        updatedItems: [{ itemId: savedItem.id, quantityMilli: 3_000 }],
+      },
+    });
+    expect(adjusted.quote.items.find((item) => item.id === savedItem.id)?.quantityMilli).toBe(
+      3_000,
+    );
+    expect(adjusted.callBatch).toMatchObject({
+      sequenceNo: 2,
+      entries: [
+        {
+          changeType: 'ADJUST',
+          beforeQuantityMilli: 2_000,
+          deltaQuantityMilli: 1_000,
+          afterQuantityMilli: 3_000,
+        },
+      ],
+    });
+
+    const edited = await pos.saveOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-call-batch-edit',
+      idempotencyKey: 'call-batch-edit-001',
+      orderId: opened.order.id,
+      values: {
+        expectedOrderVersion: adjusted.order.version,
+        nextAction: 'STAY',
+        addedItems: [],
+        updatedItems: [
+          {
+            itemId: savedItem.id,
+            quantityMilli: 3_000,
+            note: 'Ít đá',
+            discount: { type: 'FIXED', value: 5_000, reason: 'Ưu đãi tại quầy' },
+          },
+        ],
+      },
+    });
+    expect(edited.quote.items.find((item) => item.id === savedItem.id)).toMatchObject({
+      note: 'Ít đá',
+      discountType: 'FIXED',
+      discountAmountVnd: 5_000,
+      netLineTotalVnd: 55_000,
+    });
+    expect(edited.callBatch).toMatchObject({
+      sequenceNo: 3,
+      entries: [{ changeType: 'EDIT', afterNote: 'Ít đá' }],
+    });
+
+    const removed = await pos.saveOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-call-batch-remove',
+      idempotencyKey: 'call-batch-remove-001',
+      orderId: opened.order.id,
+      values: {
+        expectedOrderVersion: edited.order.version,
+        nextAction: 'STAY',
+        addedItems: [],
+        updatedItems: [{ itemId: savedItem.id, quantityMilli: 0, removalReason: 'Khách đổi ý' }],
+      },
+    });
+    expect(removed.quote.items.some((item) => item.id === savedItem.id)).toBe(false);
+
+    const history = await pos.listOrderCallBatches(storeId, opened.order.id, undefined, 20);
+    expect(history.items.map((batch) => batch.sequenceNo)).toEqual([4, 3, 2, 1]);
+    expect(history.items[0]).toMatchObject({
+      entries: [
+        {
+          changeType: 'REMOVE',
+          deltaQuantityMilli: -3_000,
+          removalReason: 'Khách đổi ý',
+        },
+      ],
+    });
+  });
+
+  it('saves a pending call batch and begins checkout through one command response', async () => {
+    const catalog = new CatalogService(env);
+    const table = await catalog.createTable({
+      storeId,
+      areaId,
+      timeProductId,
+      name: 'Bàn save checkout command',
+      sortOrder: 13,
+    });
+    const pos = new PosService(env);
+    const opened = await pos.openOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-save-checkout-open',
+      idempotencyKey: 'save-checkout-open-001',
+      values: {
+        orderType: 'DINE_IN',
+        tableId: table.id,
+        expectedTableVersion: 1,
+        items: [],
+      },
+    });
+    const result = await pos.saveOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-save-checkout',
+      idempotencyKey: 'save-checkout-001',
+      orderId: opened.order.id,
+      values: {
+        expectedOrderVersion: opened.order.version,
+        nextAction: 'BEGIN_CHECKOUT',
+        addedItems: [{ productId, variantId, quantityMilli: 1_000, note: null, discount: null }],
+        updatedItems: [],
+      },
+    });
+    expect(result.callBatch).toMatchObject({ sequenceNo: 2 });
+    expect('paymentSnapshot' in result ? result.paymentSnapshot : null).toMatchObject({
+      status: 'PAYMENT_PENDING',
+    });
+    expect(result.quote.order.status).toBe('PAYMENT_PENDING');
+  });
+
+  it('does not invent call-batch history for legacy orders', async () => {
+    const pos = new PosService(env);
+    const legacy = await pos.createTakeaway({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-legacy-history-open',
+      idempotencyKey: 'legacy-history-open-001',
+      note: null,
+    });
+    const before = await pos.quote(storeId, legacy.orderId);
+    expect(before.order.hasCallHistory).toBe(false);
+
+    const saved = await pos.saveOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-legacy-history-save',
+      idempotencyKey: 'legacy-history-save-001',
+      orderId: legacy.orderId,
+      values: {
+        expectedOrderVersion: before.order.version,
+        nextAction: 'STAY',
+        addedItems: [{ productId, variantId, quantityMilli: 1_000, note: null, discount: null }],
+        updatedItems: [],
+      },
+    });
+    expect(saved.quote.order.hasCallHistory).toBe(false);
+    expect('callBatch' in saved).toBe(false);
+    expect((await pos.listOrderCallBatches(storeId, legacy.orderId)).items).toEqual([]);
+  });
+
+  it('manages one default bank account and mirrors it to legacy settings', async () => {
+    const store = new StoreService(env);
+    const first = await store.createBankAccount({
+      storeId,
+      values: {
+        bankBin: '970422',
+        bankCode: 'MB',
+        bankName: 'Ngân hàng TMCP Quân đội',
+        accountNumber: '1111111111',
+        accountName: 'POS OWNER',
+        isDefault: false,
+      },
+      auditContext: bankAuditContext('bank-create-first'),
+    });
+    expect(first.bankAccount.isDefault).toBe(false);
+    const second = await store.createBankAccount({
+      storeId,
+      values: {
+        bankBin: '970436',
+        bankCode: 'VCB',
+        bankName: 'Ngân hàng TMCP Ngoại thương Việt Nam',
+        accountNumber: '2222222222',
+        accountName: 'POS OWNER',
+        isDefault: false,
+      },
+      auditContext: bankAuditContext('bank-create-second'),
+    });
+    expect(second.bankAccounts.filter((account) => account.isDefault)).toHaveLength(1);
+
+    const switched = await store.updateBankAccount({
+      storeId,
+      bankAccountId: second.bankAccount.id,
+      values: {
+        bankBin: '970436',
+        bankCode: 'VCB',
+        bankName: 'Ngân hàng TMCP Ngoại thương Việt Nam',
+        accountNumber: '2222222222',
+        accountName: 'POS OWNER',
+        isDefault: true,
+      },
+      auditContext: bankAuditContext('bank-switch-default'),
+    });
+    expect(switched.bankAccounts.find((account) => account.isDefault)?.id).toBe(
+      second.bankAccount.id,
+    );
+    const legacy = await env.DB.prepare(
+      `SELECT bank_name AS bankBin, bank_account_number AS accountNumber
+       FROM store_settings WHERE store_id = ?`,
+    )
+      .bind(storeId)
+      .first<{ bankBin: string; accountNumber: string }>();
+    expect(legacy).toEqual({ bankBin: '970436', accountNumber: '2222222222' });
+    await expect(
+      store.archiveBankAccount({
+        storeId,
+        bankAccountId: second.bankAccount.id,
+        auditContext: bankAuditContext('bank-delete-default-blocked'),
+      }),
+    ).rejects.toMatchObject({ code: 'BANK_ACCOUNT_DEFAULT_DELETE_BLOCKED' });
+  });
+
+  it('persists the selected bank account snapshot at checkout and falls back to default', async () => {
+    const store = new StoreService(env);
+    const accounts = await store.listBankAccounts(storeId);
+    const defaultBank = accounts.find((account) => account.isDefault)!;
+    const pos = new PosService(env);
+    const opened = await pos.openOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-bank-checkout-open',
+      idempotencyKey: 'bank-checkout-open-001',
+      values: {
+        orderType: 'TAKEAWAY',
+        items: [{ productId, variantId, quantityMilli: 1_000, note: null, discount: null }],
+      },
+    });
+    const checkout = await pos.checkout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-bank-checkout',
+      idempotencyKey: 'bank-checkout-001',
+      orderId: opened.order.id,
+      expectedOrderVersion: opened.order.version,
+      bankAccountId: defaultBank.id,
+      method: 'BANK_TRANSFER',
+      cashReceivedVnd: null,
+    });
+    const invoice = await pos.getInvoice(storeId, checkout.invoiceId);
+    expect(invoice.allocations[0]).toMatchObject({
+      method: 'BANK_TRANSFER',
+      bankAccountId: defaultBank.id,
+    });
+    expect(JSON.parse(invoice.allocations[0]!.bankAccountSnapshotJson!)).toMatchObject({
+      id: defaultBank.id,
+      accountNumber: defaultBank.accountNumber,
+    });
+
+    const fallbackOrder = await pos.openOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-bank-fallback-open',
+      idempotencyKey: 'bank-fallback-open-001',
+      values: {
+        orderType: 'TAKEAWAY',
+        items: [{ productId, variantId, quantityMilli: 1_000, note: null, discount: null }],
+      },
+    });
+    const fallback = await pos.checkout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-bank-fallback',
+      idempotencyKey: 'bank-fallback-001',
+      orderId: fallbackOrder.order.id,
+      expectedOrderVersion: fallbackOrder.order.version,
+      method: 'BANK_TRANSFER',
+      cashReceivedVnd: null,
+    });
+    expect((await pos.getInvoice(storeId, fallback.invoiceId)).allocations[0]).toMatchObject({
+      bankAccountId: defaultBank.id,
+    });
+  });
+
+  it('freezes a payment snapshot and consumes it exactly once at checkout', async () => {
+    const pos = new PosService(env);
+    const opened = await openFreshTable('Bàn frozen payment', 'frozen-payment-open-001');
+    const stopped = await pos.stopTimeForCheckout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-frozen-stop',
+      idempotencyKey: 'frozen-payment-stop-001',
+      orderId: opened.orderId,
+      expectedOrderVersion: 1,
+      now: Date.now() + 1_000,
+    });
+    expect(stopped.paymentSnapshotId).toBeTruthy();
+    expect(stopped.quote.order.status).toBe('PAYMENT_PENDING');
+    const checkout = await pos.checkout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-frozen-checkout',
+      idempotencyKey: 'frozen-payment-checkout-001',
+      orderId: opened.orderId,
+      expectedOrderVersion: stopped.orderVersion,
+      paymentSnapshotId: stopped.paymentSnapshotId,
+      method: 'CASH',
+      cashReceivedVnd: stopped.quote.totalVnd,
+    });
+    expect(checkout.total).toBe(stopped.quote.totalVnd);
+    const snapshot = await env.DB.prepare(
+      'SELECT status FROM payment_snapshots WHERE store_id = ? AND id = ?',
+    )
+      .bind(storeId, stopped.paymentSnapshotId)
+      .first<{ status: string }>();
+    expect(snapshot?.status).toBe('CONSUMED');
   });
 
   it('creates, selects, prices, and snapshots an invoice promotion', async () => {

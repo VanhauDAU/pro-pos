@@ -3,9 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   getGuestAssistantActions,
   getGuestAssistantNarration,
-  getGuestAssistantVoiceUrl,
   guestAssistantStorageKey,
-  guestAssistantVoiceUrl,
 } from '../../src/client/features/guest/guest-assistant';
 
 describe('guest QR robot assistant', () => {
@@ -36,18 +34,5 @@ describe('guest QR robot assistant', () => {
     expect(getGuestAssistantNarration('OPEN_REQUESTED')).toContain('đã báo nhân viên');
     expect(getGuestAssistantNarration('OPEN')).toContain('Bàn đã sẵn sàng');
     expect(guestAssistantStorageKey('qr-token-a')).not.toBe(guestAssistantStorageKey('qr-token-b'));
-  });
-
-  it('maps table states and feedback cues to the allowlisted guest voice route', () => {
-    expect(getGuestAssistantVoiceUrl('AVAILABLE')).toBe(
-      '/api/v1/guest-order/voice/guest_qr_available.ogg',
-    );
-    expect(getGuestAssistantVoiceUrl('OPEN_REQUESTED')).toBe(
-      '/api/v1/guest-order/voice/guest_qr_open_requested.ogg',
-    );
-    expect(getGuestAssistantVoiceUrl('OPEN')).toBe('/api/v1/guest-order/voice/guest_qr_open.ogg');
-    expect(guestAssistantVoiceUrl('guest_order_sent.ogg')).toBe(
-      '/api/v1/guest-order/voice/guest_order_sent.ogg',
-    );
   });
 });

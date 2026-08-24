@@ -6,6 +6,7 @@ import {
   type RealtimeEventV1,
   type RealtimeServerFrame,
 } from '@contracts/realtime';
+import { RealtimeRepository } from '@server/repositories/realtime-repository';
 
 export interface RealtimeConnectionAttachment {
   connectionId: string;
@@ -48,6 +49,11 @@ export class StoreRealtimeRoom extends DurableObject<CloudflareBindings> {
       );
       CREATE INDEX IF NOT EXISTS idx_delivered_events_time
         ON delivered_events(delivered_at);
+      CREATE TABLE IF NOT EXISTS retry_state (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        attempts INTEGER NOT NULL DEFAULT 0
+      );
+      INSERT OR IGNORE INTO retry_state (singleton, attempts) VALUES (1, 0);
       INSERT OR IGNORE INTO _sql_schema_migrations (id, applied_at)
         VALUES (1, unixepoch('subsec') * 1000);
     `);
@@ -99,12 +105,20 @@ export class StoreRealtimeRoom extends DurableObject<CloudflareBindings> {
     if (deviceId) tags.push(tag('device', deviceId));
     this.ctx.acceptWebSocket(server, tags);
     server.serializeAttachment(attachment);
+    const rawAfter = new URL(request.url).searchParams.get('after');
+    const parsedAfter = rawAfter === null ? null : Number(rawAfter);
+    const after =
+      parsedAfter !== null && Number.isSafeInteger(parsedAfter) && parsedAfter >= 0
+        ? parsedAfter
+        : null;
+    const sync = await new RealtimeRepository(this.env.DB).sync(storeId, after);
     const ready: RealtimeServerFrame = {
       type: 'ready',
       connectionId,
       serverNowMs: Date.now(),
       reauthAtMs: reauthAt,
       schemaVersion: REALTIME_SCHEMA_VERSION,
+      sync,
     };
     server.send(JSON.stringify(ready));
     return new Response(null, {
@@ -120,19 +134,16 @@ export class StoreRealtimeRoom extends DurableObject<CloudflareBindings> {
     const fresh: RealtimeEventV1[] = [];
     for (const event of events.toSorted((a, b) => a.sequence - b.sequence)) {
       if (event.storeId !== storeId) throw new Error('REALTIME_EVENT_STORE_MISMATCH');
-      const existing = this.ctx.storage.sql
+      const inserted = this.ctx.storage.sql
         .exec<{ event_id: string }>(
-          'SELECT event_id FROM delivered_events WHERE event_id = ? LIMIT 1',
+          `INSERT OR IGNORE INTO delivered_events (event_id, sequence, delivered_at)
+         VALUES (?, ?, ?) RETURNING event_id`,
           event.eventId,
+          event.sequence,
+          now,
         )
         .toArray()[0];
-      if (existing) continue;
-      this.ctx.storage.sql.exec(
-        'INSERT INTO delivered_events (event_id, sequence, delivered_at) VALUES (?, ?, ?)',
-        event.eventId,
-        event.sequence,
-        now,
-      );
+      if (!inserted) continue;
       fresh.push(event);
     }
 
@@ -155,11 +166,57 @@ export class StoreRealtimeRoom extends DurableObject<CloudflareBindings> {
       }
     }
 
-    this.ctx.storage.sql.exec(
-      'DELETE FROM delivered_events WHERE delivered_at < ?',
-      now - 7 * 24 * 60 * 60 * 1000,
-    );
     return { acceptedEvents: events.length, newEvents: fresh.length, deliveredConnections };
+  }
+
+  async scheduleRetry(storeId: string) {
+    this.ensureStore(storeId);
+    const current = await this.ctx.storage.getAlarm();
+    const dueAt = Date.now() + 5_000;
+    if (current === null || current > dueAt) await this.ctx.storage.setAlarm(dueAt);
+  }
+
+  async alarm() {
+    const identity = this.ctx.storage.sql
+      .exec<{ store_id: string }>('SELECT store_id FROM room_identity WHERE singleton = 1')
+      .toArray()[0];
+    if (!identity) return;
+    const repository = new RealtimeRepository(this.env.DB);
+    try {
+      const events = await repository.listPendingForStore(identity.store_id);
+      if (events.length > 0) {
+        await this.broadcast(identity.store_id, events);
+        await repository.markPublished(
+          identity.store_id,
+          events.map((event) => event.eventId),
+          Date.now(),
+        );
+      }
+      this.ctx.storage.sql.exec('UPDATE retry_state SET attempts = 0 WHERE singleton = 1');
+      this.ctx.storage.sql.exec(
+        'DELETE FROM delivered_events WHERE delivered_at < ?',
+        Date.now() - 7 * 24 * 60 * 60 * 1000,
+      );
+    } catch (error) {
+      const state = this.ctx.storage.sql
+        .exec<{ attempts: number }>(
+          `UPDATE retry_state SET attempts = attempts + 1 WHERE singleton = 1
+           RETURNING attempts`,
+        )
+        .one();
+      const delayMs = Math.min(5 * 60_000, 5_000 * 2 ** Math.min(state.attempts, 6));
+      await this.ctx.storage.setAlarm(Date.now() + delayMs);
+      console.error(
+        JSON.stringify({
+          level: 'error',
+          message: 'realtime alarm retry failed',
+          storeId: identity.store_id,
+          attempts: state.attempts,
+          retryInMs: delayMs,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    }
   }
 
   async disconnectSession(storeId: string, sessionId: string) {

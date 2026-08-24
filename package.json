@@ -43,9 +43,6 @@
     "bootstrap:local": "node scripts/bootstrap-platform.mjs local",
     "bootstrap:staging": "node scripts/bootstrap-platform.mjs staging",
     "bootstrap:production": "node scripts/bootstrap-platform.mjs production",
-    "sound:upload:local": "node scripts/upload-sounds-r2.mjs local",
-    "sound:upload:staging": "node scripts/upload-sounds-r2.mjs staging",
-    "sound:upload:production": "node scripts/upload-sounds-r2.mjs production",
     "db:cleanup:local": "node scripts/cleanup-db.mjs local",
     "db:cleanup:staging": "node scripts/cleanup-db.mjs staging",
     "db:cleanup:production": "node scripts/cleanup-db.mjs production"
@@ -63,6 +60,7 @@
     "react-dom": "^19.2.8",
     "react-hook-form": "^7.85.0",
     "react-router": "^8.3.0",
+    "sonner": "^2.0.8",
     "web-push": "^3.6.7",
     "xlsx": "^0.18.5",
     "zod": "^4.4.3"

@@ -3,6 +3,7 @@
   "name": "pro-pos",
   "main": "./src/server/index.ts",
   "compatibility_date": "2026-08-20",
+  "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*"],
@@ -21,7 +22,8 @@
   },
   "observability": {
     "enabled": true,
-    "head_sampling_rate": 1,
+    "logs": { "enabled": true, "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 0.1 },
   },
   "durable_objects": {
     "bindings": [
@@ -38,7 +40,7 @@
     },
   ],
   "triggers": {
-    "crons": ["* * * * *", "17 18 * * *"],
+    "crons": ["17 18 * * *"],
   },
   "vars": {
     "ENVIRONMENT": "local",
@@ -76,7 +78,7 @@
         ],
       },
       "triggers": {
-        "crons": ["* * * * *", "17 18 * * *"],
+        "crons": ["17 18 * * *"],
       },
       "secrets": {
         "required": [
@@ -125,7 +127,7 @@
         ],
       },
       "triggers": {
-        "crons": ["* * * * *", "17 18 * * *"],
+        "crons": ["17 18 * * *"],
       },
       "secrets": {
         "required": [

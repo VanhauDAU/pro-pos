@@ -206,13 +206,23 @@ export function OwnerInvoicesPage({
         method: 'DELETE',
         headers: { 'X-CSRF-Token': authQuery.data?.csrfToken ?? '' },
       }),
-    onSuccess: () => {
+    onSuccess: async () => {
       void messageApi.success('Đã xóa hóa đơn thành công.');
       setDeletingInvoice(null);
-      void queryClient.invalidateQueries({ queryKey: [apiPrefix] });
-      void queryClient.invalidateQueries({ queryKey: ['owner-invoices'] });
-      void queryClient.invalidateQueries({ queryKey: ['owner-dashboard'] });
-      void queryClient.invalidateQueries({ queryKey: ['owner-analytics'] });
+      setSelectedOrderId(null);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: [apiPrefix] }),
+        queryClient.invalidateQueries({ queryKey: ['/api/v1/owner/invoices'] }),
+        queryClient.invalidateQueries({ queryKey: ['/api/v1/pos/invoices'] }),
+        queryClient.invalidateQueries({ queryKey: ['owner-invoices'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-invoices'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-invoice'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-order-detail'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-overview'] }),
+        queryClient.invalidateQueries({ queryKey: ['owner-dashboard'] }),
+        queryClient.invalidateQueries({ queryKey: ['owner-analytics'] }),
+      ]);
     },
     onError: (err: unknown) => {
       const msg = err instanceof Error ? err.message : 'Không thể xóa hóa đơn.';

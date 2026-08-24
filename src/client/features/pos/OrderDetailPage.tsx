@@ -50,7 +50,7 @@ import {
 } from 'antd';
 import type { TableColumnsType } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router';
+import { useLocation, useNavigate, useParams } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
 import type { OrderDetailDto, OrderItemDetail } from '@contracts/order-detail';
@@ -294,6 +294,7 @@ export function OrderDetailPage({
   const detailPollingInterval = usePosPollingInterval(5_000);
   const { serverTimeOffsetMs } = useRealtime();
 
+  const location = useLocation();
   const authQuery = useQuery({
     queryKey: ['auth-context'],
     queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
@@ -301,20 +302,41 @@ export function OrderDetailPage({
   const isOwner =
     authQuery.data?.allowedEntrypoints?.includes('OWNER') ||
     authQuery.data?.actor?.kind === 'OWNER';
+  const isPos = location.pathname.startsWith('/pos');
 
   const deleteMutation = useMutation({
-    mutationFn: () =>
-      apiRequest<{ deleted: boolean }>(`/api/v1/owner/invoices/${targetOrderId}`, {
+    mutationFn: () => {
+      const endpoint =
+        isPos || !isOwner
+          ? `/api/v1/pos/invoices/${targetOrderId}`
+          : `/api/v1/owner/invoices/${targetOrderId}`;
+      return apiRequest<{ deleted: boolean }>(endpoint, {
         method: 'DELETE',
         headers: { 'X-CSRF-Token': authQuery.data?.csrfToken ?? '' },
-      }),
-    onSuccess: () => {
+      });
+    },
+    onSuccess: async () => {
       void messageApi.success('Đã xóa hóa đơn thành công.');
       setDeleteConfirmVisible(false);
-      void queryClient.invalidateQueries({ queryKey: ['owner-invoices'] });
-      void queryClient.invalidateQueries({ queryKey: ['owner-dashboard'] });
-      void queryClient.invalidateQueries({ queryKey: ['pos-order-detail', targetOrderId] });
-      onClose?.();
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['owner-invoices'] }),
+        queryClient.invalidateQueries({ queryKey: ['/api/v1/owner/invoices'] }),
+        queryClient.invalidateQueries({ queryKey: ['/api/v1/pos/invoices'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-invoices'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-invoice'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-order-detail'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-overview'] }),
+        queryClient.invalidateQueries({ queryKey: ['owner-dashboard'] }),
+        queryClient.invalidateQueries({ queryKey: ['owner-analytics'] }),
+      ]);
+      if (onClose) {
+        onClose();
+      } else if (window.history.length > 1) {
+        navigate(-1);
+      } else {
+        navigate('/pos/invoices');
+      }
     },
     onError: (err: unknown) => {
       const msg = err instanceof Error ? err.message : 'Không thể xóa hóa đơn.';

@@ -272,6 +272,7 @@ export function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const loginInFlightRef = useRef(false);
   const [ownerRetryAfterSeconds, setOwnerRetryAfterSeconds] = useState(0);
+  const [employeeRetryAfterSeconds, setEmployeeRetryAfterSeconds] = useState(0);
   const [showPin, setShowPin] = useState(false);
   const [pinValue, setPinValue] = useState('');
   const [pinError, setPinError] = useState(false);
@@ -315,6 +316,14 @@ export function LoginPage() {
     }, 1000);
     return () => window.clearTimeout(timer);
   }, [ownerRetryAfterSeconds]);
+
+  useEffect(() => {
+    if (employeeRetryAfterSeconds <= 0) return;
+    const timer = window.setTimeout(() => {
+      setEmployeeRetryAfterSeconds((seconds) => Math.max(0, seconds - 1));
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [employeeRetryAfterSeconds]);
 
   const switchTab = (key: string) => {
     setActiveTab(key);
@@ -362,7 +371,13 @@ export function LoginPage() {
   };
 
   const executeEmployeeLogin = async (username: string, pin: string) => {
-    if (loginInFlightRef.current || !username.trim() || pin.length !== 4) return;
+    if (
+      loginInFlightRef.current ||
+      employeeRetryAfterSeconds > 0 ||
+      !username.trim() ||
+      pin.length !== 4
+    )
+      return;
     loginInFlightRef.current = true;
     setSubmitting(true);
     setError(null);
@@ -381,7 +396,13 @@ export function LoginPage() {
       await queryClient.invalidateQueries({ queryKey: ['auth-context'] });
       navigate('/pos', { replace: true });
     } catch (loginError) {
-      setError(errorMessage(loginError));
+      const retryAfter = retryAfterSeconds(loginError);
+      setEmployeeRetryAfterSeconds(retryAfter);
+      setError(
+        retryAfter > 0
+          ? `Thiết bị đang tạm khóa đăng nhập PIN. Vui lòng thử lại sau ${formatRetryDelay(retryAfter)}.`
+          : errorMessage(loginError),
+      );
       setPinError(true);
       setPinValue('');
     } finally {
@@ -608,7 +629,7 @@ export function LoginPage() {
             onChange={(val) => {
               setPinValue(val);
               if (pinError) setPinError(false);
-              if (error) setError(null);
+              if (error && employeeRetryAfterSeconds <= 0) setError(null);
             }}
             onComplete={handleQuickPinComplete}
             showPin={showPin}
@@ -623,10 +644,12 @@ export function LoginPage() {
             block
             className="employee-login-submit-btn"
             loading={submitting}
-            disabled={pinValue.length < 4}
+            disabled={pinValue.length < 4 || employeeRetryAfterSeconds > 0}
             onClick={() => void executeEmployeeLogin(rememberedEmployee.username, pinValue)}
           >
-            Đăng nhập
+            {employeeRetryAfterSeconds > 0
+              ? `Thử lại sau ${formatRetryDelay(employeeRetryAfterSeconds)}`
+              : 'Đăng nhập'}
           </Button>
 
           {renderDeviceBar()}
@@ -682,11 +705,11 @@ export function LoginPage() {
             onChange={(val) => {
               setPinValue(val);
               if (pinError) setPinError(false);
-              if (error) setError(null);
+              if (error && employeeRetryAfterSeconds <= 0) setError(null);
             }}
             showPin={showPin}
             onToggleShowPin={() => setShowPin((prev) => !prev)}
-            disabled={submitting}
+            disabled={submitting || employeeRetryAfterSeconds > 0}
             hasError={pinError}
           />
         </Form.Item>
@@ -698,9 +721,11 @@ export function LoginPage() {
           block
           className="employee-login-submit-btn"
           loading={submitting}
-          disabled={pinValue.length < 4}
+          disabled={pinValue.length < 4 || employeeRetryAfterSeconds > 0}
         >
-          Đăng nhập
+          {employeeRetryAfterSeconds > 0
+            ? `Thử lại sau ${formatRetryDelay(employeeRetryAfterSeconds)}`
+            : 'Đăng nhập'}
         </Button>
 
         {renderDeviceBar()}

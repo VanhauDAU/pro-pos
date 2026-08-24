@@ -202,21 +202,20 @@ body,
 }
 
 .staff-pos-brand {
-  gap: 10px;
-  color: #0877ee;
-  font-size: 22px;
+  display: flex;
+  align-items: center;
   flex-shrink: 0;
+  cursor: pointer;
 }
 
-.staff-pos-brand__mark {
-  width: 38px;
+.staff-pos-brand__logo {
   height: 38px;
-  border-radius: 12px;
-  display: grid;
-  place-items: center;
-  color: #fff;
-  font-weight: 800;
-  background: linear-gradient(135deg, #00c98b, #0877ee 65%);
+  width: auto;
+  max-width: 140px;
+  object-fit: contain;
+  display: block;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
 }
 
 .staff-pos-account {
@@ -3881,8 +3880,9 @@ body,
     border-radius: 8px;
   }
 
-  .staff-pos-brand strong {
-    display: none;
+  .staff-pos-brand__logo {
+    height: 30px;
+    max-width: 110px;
   }
 
   .staff-pos-sync-label {
@@ -4257,6 +4257,11 @@ body,
 }
 
 @media (max-width: 480px) {
+  .staff-pos-brand__logo {
+    height: 26px;
+    max-width: 92px;
+  }
+
   .staff-order-grid {
     grid-template-columns: 1fr;
   }

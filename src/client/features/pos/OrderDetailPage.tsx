@@ -298,6 +298,8 @@ export function OrderDetailPage({
   const authQuery = useQuery({
     queryKey: ['auth-context'],
     queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
+    staleTime: 10 * 60_000,
+    refetchOnMount: false,
   });
   const isOwner =
     authQuery.data?.allowedEntrypoints?.includes('OWNER') ||
@@ -482,6 +484,7 @@ export function OrderDetailPage({
     queryKey: ['pos-print-settings'],
     queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
     staleTime: Infinity,
+    refetchOnMount: false,
   });
 
   const staffContext = useQuery({
@@ -496,6 +499,7 @@ export function OrderDetailPage({
         bankAccountName?: string | null;
       }>('/api/v1/pos/context'),
     staleTime: Infinity,
+    refetchOnMount: false,
   });
 
   const buildReceiptPrintData = (receiptType: 'PROVISIONAL' | 'PAYMENT'): PosReceiptPrintData => {
@@ -540,7 +544,7 @@ export function OrderDetailPage({
                 id: 'time-session',
                 name: 'Tiền giờ',
                 quantity: 1,
-                unitPrice: liveTotalTimeAmount,
+                unitPrice: liveTimeSegments[0]?.unitPriceSnapshot ?? liveTotalTimeAmount,
                 totalPrice: liveTotalTimeAmount,
                 isTime: true,
                 timeStartedAtMs: data.order.openedAt,

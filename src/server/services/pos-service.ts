@@ -89,6 +89,36 @@ function parseBankAccountSnapshot(value: string | null): BankAccountDto | null {
   }
 }
 
+function mergeCompatibleSaveItems(items: SaveOrderItemInput[]): SaveOrderItemInput[] {
+  const result: SaveOrderItemInput[] = [];
+  for (const item of items) {
+    if (item.discount || item.timeStartedAtMs !== undefined) {
+      result.push({ ...item, note: item.note?.trim() || null });
+      continue;
+    }
+    const normalizedNote = item.note?.trim() || null;
+    const existing = result.find((candidate) => {
+      if (candidate.discount || candidate.timeStartedAtMs !== undefined) return false;
+      const candidateNote = candidate.note?.trim() || null;
+      return (
+        candidate.productId === item.productId &&
+        (candidate.variantId ?? null) === (item.variantId ?? null) &&
+        candidate.enteredUnitPriceVnd === item.enteredUnitPriceVnd &&
+        candidateNote === normalizedNote
+      );
+    });
+    if (existing) {
+      existing.quantityMilli += item.quantityMilli;
+    } else {
+      result.push({
+        ...item,
+        note: normalizedNote,
+      });
+    }
+  }
+  return result;
+}
+
 function mapDatabaseError(error: unknown): never {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes('TABLE_NOT_AVAILABLE')) {
@@ -169,11 +199,10 @@ export class PosService {
     return Promise.all(
       result.results.map(async (table) => {
         if (!table.activeOrderId || table.status !== 'OCCUPIED') {
-          return {
-            ...table,
+          return Object.assign({}, table, {
             totalVnd: 0,
             itemCount: 0,
-          };
+          });
         }
         try {
           const quote = await this.quote(storeId, table.activeOrderId, now);
@@ -182,19 +211,17 @@ export class PosService {
               sum + (item.productType === 'TIME' ? 0 : Number(item.quantityMilli) / 1000),
             0,
           );
-          return {
-            ...table,
+          return Object.assign({}, table, {
             totalVnd: quote.totalVnd,
             itemCount,
             guestCount: quote.order?.guestCount ?? table.guestCount ?? 1,
             timeSessionStatus: quote.time?.status ?? table.timeSessionStatus ?? null,
-          };
+          });
         } catch {
-          return {
-            ...table,
+          return Object.assign({}, table, {
             totalVnd: 0,
             itemCount: 0,
-          };
+          });
         }
       }),
     );
@@ -204,22 +231,43 @@ export class PosService {
     const result = await this.repository.listActiveOrders(storeId);
     return Promise.all(
       result.results.map(async (order) => {
-        const quote = await this.quote(storeId, order.id, now);
-        return {
-          id: order.id,
-          displayCode: order.display_code,
-          orderType: order.order_type,
-          status: order.status,
-          version: order.version,
-          openedAt: order.opened_at,
-          tableId: order.table_id,
-          tableName: order.table_name,
-          areaId: order.area_id,
-          areaName: order.area_name,
-          itemCount: quote.items.reduce((sum, item) => sum + Number(item.quantityMilli) / 1000, 0),
-          totalVnd: quote.totalVnd,
-          timeStatus: quote.time?.status ?? null,
-        };
+        try {
+          const quote = await this.quote(storeId, order.id, now);
+          return {
+            id: order.id,
+            displayCode: order.display_code,
+            orderType: order.order_type,
+            status: order.status,
+            version: order.version,
+            openedAt: order.opened_at,
+            tableId: order.table_id,
+            tableName: order.table_name,
+            areaId: order.area_id,
+            areaName: order.area_name,
+            itemCount: quote.items.reduce(
+              (sum, item) => sum + Number(item.quantityMilli) / 1000,
+              0,
+            ),
+            totalVnd: quote.totalVnd,
+            timeStatus: quote.time?.status ?? null,
+          };
+        } catch {
+          return {
+            id: order.id,
+            displayCode: order.display_code,
+            orderType: order.order_type,
+            status: order.status,
+            version: order.version,
+            openedAt: order.opened_at,
+            tableId: order.table_id,
+            tableName: order.table_name,
+            areaId: order.area_id,
+            areaName: order.area_name,
+            itemCount: 0,
+            totalVnd: 0,
+            timeStatus: null,
+          };
+        }
       }),
     );
   }
@@ -230,13 +278,17 @@ export class PosService {
       this.repository.listActiveOrders(storeId),
     ]);
     const quoteEntries = await Promise.all(
-      orderRows.results.map(
-        async (order) => [order.id, await this.quote(storeId, order.id, now)] as const,
-      ),
+      orderRows.results.map(async (order) => {
+        try {
+          return [order.id, await this.quote(storeId, order.id, now)] as const;
+        } catch {
+          return [order.id, null] as const;
+        }
+      }),
     );
     const quotes = new Map(quoteEntries);
     const orders = orderRows.results.map((order) => {
-      const quote = quotes.get(order.id)!;
+      const quote = quotes.get(order.id);
       return {
         id: order.id,
         displayCode: order.display_code,
@@ -248,20 +300,21 @@ export class PosService {
         tableName: order.table_name,
         areaId: order.area_id,
         areaName: order.area_name,
-        itemCount: quote.items.reduce(
-          (sum, item) =>
-            sum + (item.productType === 'TIME' ? 0 : Number(item.quantityMilli) / 1000),
-          0,
-        ),
-        totalVnd: quote.totalVnd,
-        timeStatus: quote.time?.status ?? null,
+        itemCount: quote
+          ? quote.items.reduce(
+              (sum, item) =>
+                sum + (item.productType === 'TIME' ? 0 : Number(item.quantityMilli) / 1000),
+              0,
+            )
+          : 0,
+        totalVnd: quote?.totalVnd ?? 0,
+        timeStatus: quote?.time?.status ?? null,
       };
     });
     const tables = tableRows.results.map((table) => {
       const quote = table.activeOrderId ? quotes.get(table.activeOrderId) : null;
-      if (!quote) return { ...table, totalVnd: 0, itemCount: 0 };
-      return {
-        ...table,
+      if (!quote) return Object.assign({}, table, { totalVnd: 0, itemCount: 0 });
+      return Object.assign({}, table, {
         totalVnd: quote.totalVnd,
         itemCount: quote.items.reduce(
           (sum, item) =>
@@ -270,7 +323,7 @@ export class PosService {
         ),
         guestCount: quote.order.guestCount ?? table.guestCount ?? 1,
         timeSessionStatus: quote.time?.status ?? table.timeSessionStatus ?? null,
-      };
+      });
     });
     return { tables, orders, serverNowMs: now };
   }
@@ -671,7 +724,12 @@ export class PosService {
     const orderId = crypto.randomUUID();
     const takeaway = input.values.orderType === 'TAKEAWAY';
     const [preparedItems, guest, businessDay] = await Promise.all([
-      this.prepareSaveItems(input.storeId, input.values.items, takeaway, now),
+      this.prepareSaveItems(
+        input.storeId,
+        mergeCompatibleSaveItems(input.values.items),
+        takeaway,
+        now,
+      ),
       this.resolveGuest(input.storeId, input.values.guest),
       this.businessDay(input.storeId, now),
     ]);
@@ -919,7 +977,12 @@ export class PosService {
     const takeaway = current.order.orderType === 'TAKEAWAY';
     const recordCallHistory = current.order.hasCallHistory;
     const [preparedItems, guest] = await Promise.all([
-      this.prepareSaveItems(input.storeId, input.values.addedItems, takeaway, now),
+      this.prepareSaveItems(
+        input.storeId,
+        mergeCompatibleSaveItems(input.values.addedItems),
+        takeaway,
+        now,
+      ),
       this.resolveGuest(input.storeId, input.values.guest),
     ]);
     const updateVariantEntries = await Promise.all(
@@ -1124,7 +1187,30 @@ export class PosService {
       });
       version += 1;
     }
+    const mergedCurrentQuantities = new Map<string, number>();
+    for (const item of current.items) {
+      const updated = input.values.updatedItems.find((u) => u.itemId === item.id);
+      mergedCurrentQuantities.set(
+        item.id,
+        updated !== undefined ? updated.quantityMilli : item.quantityMilli,
+      );
+    }
     for (const [index, item] of preparedItems.entries()) {
+      const matchingCurrentItem = current.items.find(
+        (candidate) =>
+          !('promotionGift' in candidate && candidate.promotionGift) &&
+          candidate.productType !== 'TIME' &&
+          item.productType !== 'TIME' &&
+          !candidate.discountType &&
+          !item.discountType &&
+          candidate.productId === item.productId &&
+          (candidate.variantId ?? null) === (item.variantId ?? null) &&
+          candidate.unitPriceVnd === item.unitPriceVnd &&
+          (candidate.note ?? null) === (item.note ?? null) &&
+          !(input.values.updatedItems.find((u) => u.itemId === candidate.id)?.quantityMilli === 0),
+      );
+      const effectiveItemId = matchingCurrentItem?.id ?? item.itemId;
+      item.itemId = effectiveItemId;
       const command = {
         commandId: `${input.idempotencyKey}:item:${index}`,
         storeId: input.storeId,
@@ -1143,23 +1229,16 @@ export class PosService {
           storeId: input.storeId,
           orderType: current.order.orderType,
           orderId: input.orderId,
-          itemId: item.itemId,
+          itemId: effectiveItemId,
           reason: item.discountReason,
         }),
       );
-      const matchingCurrentItem = current.items.find(
-        (candidate) =>
-          !('promotionGift' in candidate && candidate.promotionGift) &&
-          candidate.productId === item.productId &&
-          candidate.variantId === item.variantId &&
-          candidate.unitPriceVnd === item.unitPriceVnd &&
-          candidate.note === item.note &&
-          !candidate.discountType &&
-          !item.discountType,
-      );
-      const beforeQuantityMilli = matchingCurrentItem?.quantityMilli ?? 0;
+      const beforeQuantityMilli = matchingCurrentItem ? matchingCurrentItem.quantityMilli : 0;
+      const currentRunningQuantity = mergedCurrentQuantities.get(effectiveItemId) ?? 0;
+      const afterQuantityMilli = currentRunningQuantity + item.quantityMilli;
+      mergedCurrentQuantities.set(effectiveItemId, afterQuantityMilli);
       batchEntries.push({
-        itemId: matchingCurrentItem?.id ?? item.itemId,
+        itemId: effectiveItemId,
         changeType: matchingCurrentItem ? 'ADJUST' : 'ADD',
         productId: item.productId,
         variantId: item.variantId,
@@ -1170,7 +1249,7 @@ export class PosService {
         unitPriceVnd: item.unitPriceVnd,
         beforeQuantityMilli,
         deltaQuantityMilli: item.quantityMilli,
-        afterQuantityMilli: beforeQuantityMilli + item.quantityMilli,
+        afterQuantityMilli,
         beforeNote: matchingCurrentItem?.note ?? null,
         afterNote: item.note,
         beforeDiscountJson: null,
@@ -1181,6 +1260,20 @@ export class PosService {
         }),
         removalReason: null,
       });
+      if (matchingCurrentItem) {
+        const mergedGross = checkedMoneyFromMilli(item.unitPriceVnd, afterQuantityMilli);
+        updatedPromotionItems.set(effectiveItemId, {
+          productId: item.productId,
+          variantId: item.variantId,
+          productType: item.productType,
+          productName: item.productName,
+          variantName: item.variantName,
+          unitPriceVnd: item.unitPriceVnd,
+          quantityMilli: afterQuantityMilli,
+          grossLineTotalVnd: mergedGross,
+          netLineTotalVnd: mergedGross,
+        });
+      }
       version += 1;
     }
     if (input.values.note !== undefined) {
@@ -1243,19 +1336,21 @@ export class PosService {
           },
         ];
       });
-    finalItems.push(
-      ...preparedItems.map((item) => ({
-        productId: item.productId,
-        variantId: item.variantId,
-        productType: item.productType,
-        productName: item.productName,
-        variantName: item.variantName,
-        unitPriceVnd: item.unitPriceVnd,
-        quantityMilli: item.quantityMilli,
-        grossLineTotalVnd: item.grossLineTotalVnd,
-        netLineTotalVnd: item.netLineTotalVnd,
-      })),
-    );
+    for (const item of preparedItems) {
+      if (!current.items.some((c) => c.id === item.itemId)) {
+        finalItems.push({
+          productId: item.productId,
+          variantId: item.variantId,
+          productType: item.productType,
+          productName: item.productName,
+          variantName: item.variantName,
+          unitPriceVnd: item.unitPriceVnd,
+          quantityMilli: item.quantityMilli,
+          grossLineTotalVnd: item.grossLineTotalVnd,
+          netLineTotalVnd: item.netLineTotalVnd,
+        });
+      }
+    }
     statements.push(
       ...(await this.promotionStatements({
         storeId: input.storeId,

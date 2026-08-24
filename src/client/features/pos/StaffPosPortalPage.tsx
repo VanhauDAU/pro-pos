@@ -1,5 +1,6 @@
 import {
   AppstoreOutlined,
+  BellFilled,
   BellOutlined,
   CheckCircleOutlined,
   ClockCircleOutlined,
@@ -49,9 +50,11 @@ import {
   Checkbox,
   ConfigProvider,
   DatePicker,
+  Divider,
   Drawer,
   Dropdown,
   Empty,
+  Form,
   Input,
   InputNumber,
   Modal,
@@ -59,6 +62,7 @@ import {
   Result,
   Select,
   Skeleton,
+  Space,
   Spin,
   Tag,
   Tooltip,
@@ -88,6 +92,7 @@ import type {
   StaffNotificationStatus,
   TableOpenRequestDto,
 } from '@contracts/qr-order';
+import { QrOrderConfirmModal } from './QrOrderConfirmModal';
 import type { BankAccountDto, StorePrintSettings } from '@contracts/store';
 import type { PricingConfigSnapshot } from '@domain/pricing/types';
 import {
@@ -964,6 +969,8 @@ function PosNotificationsProvider({ children }: { children: React.ReactNode }) {
     queryKey: ['pos-notification-summary'],
     queryFn: ({ signal }) =>
       apiRequest<PosNotificationSummary>('/api/v1/pos/qr-orders/summary', { signal }),
+    staleTime: 30_000,
+    refetchOnMount: false,
     refetchInterval: pollingInterval,
   });
   const value = useMemo<PosNotificationsContextValue>(
@@ -1002,6 +1009,21 @@ function StaffHeader({
   const [modal, holder] = Modal.useModal();
   const [loggingOut, setLoggingOut] = useState(false);
   const notifications = usePosNotifications();
+  const allQrOrdersQuery = useQuery<GuestOrderRequestDto[]>({
+    queryKey: ['pos-staff-all-qr-orders'],
+    queryFn: ({ signal }) =>
+      apiRequest<GuestOrderRequestDto[]>('/api/v1/pos/qr-orders', { signal }),
+    staleTime: 30_000,
+    refetchOnMount: false,
+    refetchInterval: 15_000,
+  });
+  const pendingQrCount =
+    (notifications.data?.counts.guestOrders ?? 0) +
+    (notifications.data?.counts.tableOpenRequests ?? 0);
+  const totalQrOrdersCount = (allQrOrdersQuery.data ?? []).length;
+  const showQrBell = pendingQrCount > 0 || totalQrOrdersCount > 0;
+  const [qrConfirmModalOpen, setQrConfirmModalOpen] = useState(false);
+
   const pendingNotificationCount =
     (notifications.data?.counts.guestOrders ?? 0) +
     (notifications.data?.counts.serviceRequests ?? 0) +
@@ -1117,6 +1139,22 @@ function StaffHeader({
           </span>
         </div>
       </Tooltip>
+      {showQrBell ? (
+        <button
+          type="button"
+          className={`pos-qr-bell-btn pos-qr-bell-btn--header ${pendingQrCount > 0 ? 'pos-qr-bell-btn--shake' : ''}`}
+          onClick={() => setQrConfirmModalOpen(true)}
+          title="Xác nhận gọi món qua QR"
+        >
+          <span className="pos-qr-bell-btn__icon">
+            <BellFilled />
+          </span>
+          <span className="pos-qr-bell-btn__text">Gọi món qua QR</span>
+          {pendingQrCount > 0 ? (
+            <span className="pos-qr-bell-btn__badge">{pendingQrCount}</span>
+          ) : null}
+        </button>
+      ) : null}
       <Tooltip title="Trung tâm thông báo">
         <Button
           type="text"
@@ -1160,6 +1198,7 @@ function StaffHeader({
           <DownOutlined style={{ fontSize: 11, color: '#8c8c8c' }} />
         </Button>
       </Dropdown>
+      <QrOrderConfirmModal open={qrConfirmModalOpen} onClose={() => setQrConfirmModalOpen(false)} />
     </header>
   );
 }
@@ -1235,6 +1274,8 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 
 function AreasPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const [now, setNow] = useState(() => Date.now());
   const pollingInterval = usePosPollingInterval(20_000);
@@ -1255,6 +1296,8 @@ function AreasPage() {
         serverNowMs: number;
       }>('/api/v1/pos/overview', { signal }),
     refetchInterval: pollingInterval,
+    staleTime: 20_000,
+    refetchOnMount: false,
   });
   const tables = {
     data: overview.data?.tables,
@@ -1296,8 +1339,23 @@ function AreasPage() {
     return [...map.values()];
   }, [tables.data]);
 
-  const [selectedArea, setSelectedArea] = useState<string | null>(null);
+  const initialArea =
+    searchParams.get('tab') === 'takeaway' ||
+    (location.state as { selectedArea?: string } | null)?.selectedArea === '__TAKEAWAY__'
+      ? '__TAKEAWAY__'
+      : ((location.state as { selectedArea?: string } | null)?.selectedArea ?? null);
+
+  const [selectedArea, setSelectedArea] = useState<string | null>(initialArea);
   const [status, setStatus] = useState<'ALL' | 'OCCUPIED' | 'AVAILABLE'>('ALL');
+
+  useEffect(() => {
+    const stateArea = (location.state as { selectedArea?: string } | null)?.selectedArea;
+    if (searchParams.get('tab') === 'takeaway' || stateArea === '__TAKEAWAY__') {
+      setSelectedArea('__TAKEAWAY__');
+    } else if (stateArea) {
+      setSelectedArea(stateArea);
+    }
+  }, [searchParams, location.state]);
 
   const isTakeaway = selectedArea === '__TAKEAWAY__';
   const effectiveAreaId = isTakeaway ? '__TAKEAWAY__' : (selectedArea ?? areas[0]?.id ?? null);
@@ -1330,7 +1388,10 @@ function AreasPage() {
             <button
               type="button"
               className={`staff-area-pill staff-area-pill--takeaway ${isTakeaway ? 'is-active' : ''}`}
-              onClick={() => setSelectedArea('__TAKEAWAY__')}
+              onClick={() => {
+                setSelectedArea('__TAKEAWAY__');
+                setSearchParams({ tab: 'takeaway' }, { replace: true });
+              }}
             >
               <ShoppingOutlined /> Mang về
             </button>
@@ -1339,7 +1400,10 @@ function AreasPage() {
                 key={item.id}
                 type="button"
                 className={`staff-area-pill ${!isTakeaway && item.id === currentArea?.id ? 'is-active' : ''}`}
-                onClick={() => setSelectedArea(item.id)}
+                onClick={() => {
+                  setSelectedArea(item.id);
+                  setSearchParams({}, { replace: true });
+                }}
               >
                 {item.name}
               </button>
@@ -1353,7 +1417,10 @@ function AreasPage() {
         <button
           type="button"
           className={`staff-area-sidebar__item staff-area-sidebar__item--takeaway ${isTakeaway ? 'is-active' : ''}`}
-          onClick={() => setSelectedArea('__TAKEAWAY__')}
+          onClick={() => {
+            setSelectedArea('__TAKEAWAY__');
+            setSearchParams({ tab: 'takeaway' }, { replace: true });
+          }}
         >
           <ShoppingOutlined /> <span>Mang về</span>
         </button>
@@ -1363,7 +1430,10 @@ function AreasPage() {
             key={item.id}
             type="button"
             className={`staff-area-sidebar__item ${!isTakeaway && item.id === currentArea?.id ? 'is-active' : ''}`}
-            onClick={() => setSelectedArea(item.id)}
+            onClick={() => {
+              setSelectedArea(item.id);
+              setSearchParams({}, { replace: true });
+            }}
           >
             {item.name}
           </button>
@@ -1400,20 +1470,86 @@ function AreasPage() {
                 <div className="staff-takeaway-create-header">
                   <svg
                     className="staff-takeaway-create-icon"
-                    width="26"
-                    height="26"
-                    viewBox="0 0 24 24"
+                    width="38"
+                    height="25"
+                    viewBox="0 0 114 74"
                     fill="none"
                     xmlns="http://www.w3.org/2000/svg"
                   >
                     <path
-                      d="M19 7H16.73L14.71 2.96C14.53 2.6 14.16 2.37 13.76 2.37H10.24C9.84 2.37 9.47 2.6 9.29 2.96L7.27 7H5C3.9 7 3 7.9 3 9V20C3 21.1 3.9 22 5 22H19C20.1 22 21 21.1 21 20V9C21 7.9 20.1 7 19 7ZM10.5 4.37H13.5L14.82 7H9.18L10.5 4.37ZM19 20H5V9H19V20Z"
-                      fill="#0975f7"
+                      d="M39.9713 15.4421C40.1863 13.4832 41.8412 12 43.812 12H70.6703C72.641 12 74.2959 13.4832 74.511 15.4421L75.3526 23.1084H39.1296L39.9713 15.4421Z"
+                      fill="#AACCF5"
                     />
                     <path
-                      d="M8 12H10V17H8V12ZM14 12H16V17H14V12ZM11 12H13V17H11V12Z"
-                      fill="#0975f7"
+                      d="M32.7784 25.6388C33.1058 20.5556 37.3241 16.6003 42.4178 16.6003H71.5815C76.6752 16.6003 80.8935 20.5556 81.221 25.6388L83.0996 54.8034C83.3507 58.7007 80.2573 61.9997 76.352 61.9997H37.6474C33.742 61.9997 30.6487 58.7007 30.8997 54.8034L32.7784 25.6388Z"
+                      fill="#81A7D5"
                     />
+                    <mask
+                      id="mask0_takeaway_card"
+                      style={{ maskType: 'alpha' }}
+                      maskUnits="userSpaceOnUse"
+                      x="30"
+                      y="16"
+                      width="54"
+                      height="46"
+                    >
+                      <path
+                        d="M32.779 25.639C33.1064 20.5558 37.3247 16.6004 42.4184 16.6004H71.5821C76.6758 16.6004 80.8941 20.5558 81.2216 25.639L83.1002 54.8036C83.3513 58.7009 80.2579 61.9999 76.3526 61.9999H37.648C33.7426 61.9999 30.6493 58.7009 30.9003 54.8036L32.779 25.639Z"
+                        fill="#6682A3"
+                      />
+                    </mask>
+                    <g mask="url(#mask0_takeaway_card)">
+                      <g filter="url(#filter0_takeaway_card)">
+                        <ellipse
+                          cx="40.2927"
+                          cy="56.207"
+                          rx="28.0486"
+                          ry="28.6584"
+                          fill="#C1DAF9"
+                          fillOpacity="0.7"
+                        />
+                      </g>
+                    </g>
+                    <path
+                      fillRule="evenodd"
+                      clipRule="evenodd"
+                      d="M46.376 25.0522C47.843 25.0522 49.0323 26.2415 49.0323 27.7085C49.0323 32.4318 52.763 36.1606 57.2428 36.1606C61.7227 36.1606 65.4534 32.4318 65.4534 27.7085C65.4534 26.2415 66.6427 25.0522 68.1097 25.0522C69.5768 25.0522 70.7661 26.2415 70.7661 27.7085C70.7661 35.2552 64.7663 41.4733 57.2428 41.4733C49.7194 41.4733 43.7196 35.2552 43.7196 27.7085C43.7196 26.2415 44.9089 25.0522 46.376 25.0522Z"
+                      fill="url(#paint0_takeaway_card)"
+                    />
+                    <defs>
+                      <filter
+                        id="filter0_takeaway_card"
+                        x="-16.7343"
+                        y="-1.42981"
+                        width="114.054"
+                        height="115.274"
+                        filterUnits="userSpaceOnUse"
+                        colorInterpolationFilters="sRGB"
+                      >
+                        <feFlood floodOpacity="0" result="BackgroundImageFix" />
+                        <feBlend
+                          mode="normal"
+                          in="SourceGraphic"
+                          in2="BackgroundImageFix"
+                          result="shape"
+                        />
+                        <feGaussianBlur
+                          stdDeviation="14.4892"
+                          result="effect1_foregroundBlur_9518_135563"
+                        />
+                      </filter>
+                      <linearGradient
+                        id="paint0_takeaway_card"
+                        x1="57.2428"
+                        y1="25.0522"
+                        x2="57.2428"
+                        y2="35.6776"
+                        gradientUnits="userSpaceOnUse"
+                      >
+                        <stop stopColor="#D0DCF7" />
+                        <stop offset="1" stopColor="#F4FEFF" />
+                      </linearGradient>
+                    </defs>
                   </svg>
                   <strong className="staff-takeaway-create-title">Mang về</strong>
                 </div>
@@ -2154,6 +2290,7 @@ function MorePage({
     queryKey: ['pos-context'],
     queryFn: () => apiRequest<StaffContext>('/api/v1/pos/context'),
     staleTime: Infinity,
+    refetchOnMount: false,
   });
 
   const permissions = context.data?.permissions ?? [];
@@ -3661,6 +3798,531 @@ function OrderItemDetailModal({
   );
 }
 
+// ─── QuickAddProductModal ─────────────────────────────────────────────────────
+// A compact popup to quickly create a QUANTITY or WEIGHT product from the POS
+// screen. Only available to users with catalog.manage permission (or Owner).
+// Does NOT support TIME products (those have complex pricing configuration).
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface QuickVariantRow {
+  name: string;
+  salePriceVnd: number | null;
+  promptPrice: boolean;
+}
+
+interface QuickProductForm {
+  name: string;
+  productType: 'QUANTITY' | 'WEIGHT';
+  categoryId?: string;
+  unitId?: string;
+  variants: QuickVariantRow[];
+}
+
+const AVATAR_COLORS_QA = [
+  '#f87171',
+  '#fb923c',
+  '#facc15',
+  '#4ade80',
+  '#34d399',
+  '#38bdf8',
+  '#818cf8',
+  '#e879f9',
+  '#94a3b8',
+  '#f97316',
+];
+
+function QuickAddProductModal({
+  open,
+  auth,
+  onClose,
+  onCreated,
+}: {
+  open: boolean;
+  auth: AuthContextResponse;
+  onClose: () => void;
+  onCreated: (productId: string, name: string) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [form] = Form.useForm<QuickProductForm>();
+  const [saving, setSaving] = useState(false);
+  const [productType, setProductType] = useState<'QUANTITY' | 'WEIGHT'>('QUANTITY');
+
+  // Inline category creation states
+  const [categorySearch, setCategorySearch] = useState('');
+  const [inlineCategoryName, setInlineCategoryName] = useState('');
+  const [creatingCategory, setCreatingCategory] = useState(false);
+  const [categorySelectOpen, setCategorySelectOpen] = useState(false);
+
+  // Inline unit creation states
+  const [unitSearch, setUnitSearch] = useState('');
+  const [inlineUnitName, setInlineUnitName] = useState('');
+  const [creatingUnit, setCreatingUnit] = useState(false);
+  const [unitSelectOpen, setUnitSelectOpen] = useState(false);
+
+  const categories = useQuery({
+    queryKey: ['owner-catalog-categories'],
+    queryFn: () =>
+      apiRequest<{ id: string; name: string; status?: string }[]>(
+        '/api/v1/owner/catalog/categories',
+      ),
+    enabled: open,
+    staleTime: 60_000,
+  });
+
+  const units = useQuery({
+    queryKey: ['owner-units'],
+    queryFn: () => apiRequest<{ id: string; name: string }[]>('/api/v1/owner/catalog/units'),
+    enabled: open,
+    staleTime: 60_000,
+  });
+
+  const createCategoryDirect = async (nameToCreate: string) => {
+    const name = nameToCreate.trim();
+    if (!name) return;
+    const existing = (categories.data ?? []).find(
+      (c) => c.name.trim().toLowerCase() === name.toLowerCase(),
+    );
+    if (existing) {
+      form.setFieldsValue({ categoryId: existing.id });
+      setCategorySearch('');
+      setInlineCategoryName('');
+      setCategorySelectOpen(false);
+      return;
+    }
+    setCreatingCategory(true);
+    try {
+      const result = await jsonRequest<{ id: string }>(
+        '/api/v1/owner/catalog/categories',
+        { name },
+        { headers: { 'X-CSRF-Token': auth.csrfToken ?? '' } },
+      );
+      queryClient.setQueryData<{ id: string; name: string; status?: string }[]>(
+        ['owner-catalog-categories'],
+        (old) => {
+          const current = old ?? [];
+          if (current.some((c) => c.id === result.id)) return current;
+          return [...current, { id: result.id, name, status: 'ACTIVE' }];
+        },
+      );
+      form.setFieldsValue({ categoryId: result.id });
+      setCategorySearch('');
+      setInlineCategoryName('');
+      setCategorySelectOpen(false);
+      void queryClient.invalidateQueries({ queryKey: ['owner-catalog-categories'] });
+      toast.success(`Đã thêm danh mục "${name}".`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Không thể thêm danh mục.');
+    } finally {
+      setCreatingCategory(false);
+    }
+  };
+
+  const createUnitDirect = async (nameToCreate: string) => {
+    const name = nameToCreate.trim();
+    if (!name) return;
+    const existing = (units.data ?? []).find(
+      (u) => u.name.trim().toLowerCase() === name.toLowerCase(),
+    );
+    if (existing) {
+      form.setFieldsValue({ unitId: existing.id });
+      setUnitSearch('');
+      setInlineUnitName('');
+      setUnitSelectOpen(false);
+      return;
+    }
+    setCreatingUnit(true);
+    try {
+      const result = await jsonRequest<{ id: string }>(
+        '/api/v1/owner/catalog/units',
+        { name },
+        { headers: { 'X-CSRF-Token': auth.csrfToken ?? '' } },
+      );
+      queryClient.setQueryData<{ id: string; name: string }[]>(['owner-units'], (old) => {
+        const current = old ?? [];
+        if (current.some((u) => u.id === result.id)) return current;
+        return [...current, { id: result.id, name }];
+      });
+      form.setFieldsValue({ unitId: result.id });
+      setUnitSearch('');
+      setInlineUnitName('');
+      setUnitSelectOpen(false);
+      void queryClient.invalidateQueries({ queryKey: ['owner-units'] });
+      toast.success(`Đã thêm đơn vị tính "${name}".`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Không thể thêm đơn vị.');
+    } finally {
+      setCreatingUnit(false);
+    }
+  };
+
+  const categoryDropdown = (menu: React.ReactNode) => {
+    const trimmedSearch = categorySearch.trim();
+    const existingMatches = (categories.data ?? []).some(
+      (c) => c.name.toLowerCase() === trimmedSearch.toLowerCase(),
+    );
+
+    return (
+      <div onMouseDown={(e) => e.stopPropagation()}>
+        {menu}
+        <Divider style={{ margin: '6px 0' }} />
+        <div style={{ padding: '4px 8px 8px' }}>
+          {trimmedSearch && !existingMatches ? (
+            <div style={{ marginBottom: 6 }}>
+              <Button
+                type="link"
+                size="small"
+                icon={<PlusOutlined />}
+                loading={creatingCategory}
+                onClick={() => void createCategoryDirect(trimmedSearch)}
+                style={{ padding: 0, fontWeight: 600, height: 'auto', textAlign: 'left' }}
+              >
+                Thêm danh mục &ldquo;{trimmedSearch}&rdquo;
+              </Button>
+            </div>
+          ) : null}
+          <Space.Compact style={{ width: '100%' }}>
+            <Input
+              size="middle"
+              placeholder="Nhập tên danh mục mới..."
+              value={inlineCategoryName}
+              onChange={(e) => setInlineCategoryName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (inlineCategoryName.trim()) {
+                    void createCategoryDirect(inlineCategoryName.trim());
+                  }
+                }
+              }}
+            />
+            <Button
+              type="primary"
+              size="middle"
+              icon={<PlusOutlined />}
+              loading={creatingCategory}
+              disabled={!inlineCategoryName.trim()}
+              onClick={() => void createCategoryDirect(inlineCategoryName.trim())}
+            >
+              Thêm
+            </Button>
+          </Space.Compact>
+        </div>
+      </div>
+    );
+  };
+
+  const unitDropdown = (menu: React.ReactNode) => {
+    const trimmedSearch = unitSearch.trim();
+    const existingMatches = (units.data ?? []).some(
+      (u) => u.name.toLowerCase() === trimmedSearch.toLowerCase(),
+    );
+
+    return (
+      <div onMouseDown={(e) => e.stopPropagation()}>
+        {menu}
+        <Divider style={{ margin: '6px 0' }} />
+        <div style={{ padding: '4px 8px 8px' }}>
+          {trimmedSearch && !existingMatches ? (
+            <div style={{ marginBottom: 6 }}>
+              <Button
+                type="link"
+                size="small"
+                icon={<PlusOutlined />}
+                loading={creatingUnit}
+                onClick={() => void createUnitDirect(trimmedSearch)}
+                style={{ padding: 0, fontWeight: 600, height: 'auto', textAlign: 'left' }}
+              >
+                Thêm đơn vị &ldquo;{trimmedSearch}&rdquo;
+              </Button>
+            </div>
+          ) : null}
+          <Space.Compact style={{ width: '100%' }}>
+            <Input
+              size="middle"
+              placeholder="Nhập đơn vị mới..."
+              value={inlineUnitName}
+              onChange={(e) => setInlineUnitName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (inlineUnitName.trim()) {
+                    void createUnitDirect(inlineUnitName.trim());
+                  }
+                }
+              }}
+            />
+            <Button
+              type="primary"
+              size="middle"
+              icon={<PlusOutlined />}
+              loading={creatingUnit}
+              disabled={!inlineUnitName.trim()}
+              onClick={() => void createUnitDirect(inlineUnitName.trim())}
+            >
+              Thêm
+            </Button>
+          </Space.Compact>
+        </div>
+      </div>
+    );
+  };
+
+  // Pick random avatar color
+  const avatarColor =
+    AVATAR_COLORS_QA[Math.floor(Math.random() * AVATAR_COLORS_QA.length)] ?? '#818cf8';
+
+  const handleClose = () => {
+    form.resetFields();
+    setProductType('QUANTITY');
+    setCategorySearch('');
+    setInlineCategoryName('');
+    setUnitSearch('');
+    setInlineUnitName('');
+    onClose();
+  };
+
+  const save = async (values: QuickProductForm) => {
+    setSaving(true);
+    try {
+      const payload = {
+        name: values.name.trim(),
+        productType: values.productType,
+        categoryId: values.categoryId || null,
+        unitId: values.unitId || null,
+        avatarType: 'COLOR' as const,
+        avatarColor,
+        mediaId: null,
+        variants: (values.variants ?? []).map((v) => ({
+          name: v.name?.trim() || 'Giá mặc định',
+          salePriceVnd: v.promptPrice ? null : (v.salePriceVnd ?? 0),
+          costPriceVnd: 0,
+          promptPrice: Boolean(v.promptPrice),
+        })),
+      };
+      const saved = await jsonRequest<{ id: string }>('/api/v1/owner/catalog/products', payload, {
+        headers: { 'X-CSRF-Token': auth.csrfToken ?? '' },
+      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['pos-catalog'] }),
+        queryClient.invalidateQueries({ queryKey: ['owner-catalog-categories'] }),
+      ]);
+      onCreated(saved.id, values.name.trim());
+      handleClose();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Không thể thêm mặt hàng.';
+      Modal.error({ title: 'Lỗi', content: msg, centered: true });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={open}
+      onCancel={handleClose}
+      title={<span style={{ fontWeight: 700, fontSize: 16 }}>➕ Thêm nhanh mặt hàng</span>}
+      footer={null}
+      centered
+      width={540}
+      styles={{ body: { paddingTop: 8 } }}
+      destroyOnHidden
+    >
+      <Form
+        form={form}
+        layout="vertical"
+        requiredMark={false}
+        onFinish={(values) => void save(values)}
+        initialValues={{
+          productType: 'QUANTITY',
+          variants: [{ name: 'Giá mặc định', salePriceVnd: 0, promptPrice: false }],
+        }}
+      >
+        {/* Tên mặt hàng */}
+        <Form.Item
+          name="name"
+          label="Tên mặt hàng"
+          rules={[{ required: true, message: 'Vui lòng nhập tên mặt hàng.' }]}
+        >
+          <Input placeholder="Ví dụ: Nước suối, Bít tết, Trà đào..." maxLength={160} autoFocus />
+        </Form.Item>
+
+        {/* Loại / Danh mục / Đơn vị */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <Form.Item name="productType" label="Loại tính tiền" rules={[{ required: true }]}>
+            <Select
+              options={[
+                { value: 'QUANTITY', label: '📦 Số lượng' },
+                { value: 'WEIGHT', label: '⚖️ Trọng lượng' },
+              ]}
+              onChange={(v: 'QUANTITY' | 'WEIGHT') => setProductType(v)}
+            />
+          </Form.Item>
+          <Form.Item name="categoryId" label="Danh mục">
+            <Select
+              allowClear
+              showSearch
+              open={categorySelectOpen}
+              onDropdownVisibleChange={setCategorySelectOpen}
+              optionFilterProp="label"
+              placeholder="Chọn hoặc thêm danh mục"
+              loading={categories.isLoading}
+              searchValue={categorySearch}
+              onSearch={setCategorySearch}
+              onChange={(val) => {
+                form.setFieldValue('categoryId', val);
+                setCategorySearch('');
+              }}
+              dropdownRender={categoryDropdown}
+              options={(categories.data ?? [])
+                .filter((c) => c.status !== 'DISABLED')
+                .map((c) => ({ value: c.id, label: c.name }))}
+            />
+          </Form.Item>
+        </div>
+
+        <Form.Item
+          name="unitId"
+          label={productType === 'WEIGHT' ? 'Đơn vị trọng lượng' : 'Đơn vị tính'}
+          rules={[{ required: true, message: 'Vui lòng chọn đơn vị.' }]}
+        >
+          <Select
+            showSearch
+            allowClear
+            open={unitSelectOpen}
+            onDropdownVisibleChange={setUnitSelectOpen}
+            optionFilterProp="label"
+            placeholder="Chọn hoặc thêm đơn vị (vd: cái, ly, kg...)"
+            loading={units.isLoading}
+            searchValue={unitSearch}
+            onSearch={setUnitSearch}
+            onChange={(val) => {
+              form.setFieldValue('unitId', val);
+              setUnitSearch('');
+            }}
+            dropdownRender={unitDropdown}
+            options={(units.data ?? []).map((u) => ({ value: u.id, label: u.name }))}
+          />
+        </Form.Item>
+
+        <Divider style={{ margin: '8px 0' }} />
+
+        {/* Danh sách phiên bản giá */}
+        <Form.List name="variants">
+          {(fields, { add, remove }) => (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>
+                Phiên bản giá <span style={{ color: '#6b7280', fontWeight: 400 }}>(ít nhất 1)</span>
+              </div>
+              {fields.map((field, index) => (
+                <div
+                  key={field.key}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr auto auto',
+                    gap: 8,
+                    alignItems: 'flex-end',
+                  }}
+                >
+                  <Form.Item
+                    name={[field.name, 'name']}
+                    label={index === 0 ? 'Tên giá' : undefined}
+                    rules={[{ required: true, message: 'Nhập tên.' }]}
+                    style={{ marginBottom: 0 }}
+                  >
+                    <Input placeholder={index === 0 ? 'Giá mặc định' : 'Size M, Size L...'} />
+                  </Form.Item>
+
+                  <Form.Item
+                    noStyle
+                    shouldUpdate={(prev, cur) =>
+                      prev.variants?.[field.name]?.promptPrice !==
+                      cur.variants?.[field.name]?.promptPrice
+                    }
+                  >
+                    {({ getFieldValue }) => {
+                      const isPrompt = Boolean(
+                        getFieldValue(['variants', field.name, 'promptPrice']),
+                      );
+                      return (
+                        <Form.Item
+                          name={[field.name, 'salePriceVnd']}
+                          label={index === 0 ? 'Giá bán' : undefined}
+                          rules={isPrompt ? [] : [{ required: true, message: 'Nhập giá.' }]}
+                          style={{ marginBottom: 0 }}
+                        >
+                          <InputNumber
+                            min={0}
+                            disabled={isPrompt}
+                            className="owner-full-width"
+                            addonAfter="đ"
+                            style={{ width: '100%' }}
+                          />
+                        </Form.Item>
+                      );
+                    }}
+                  </Form.Item>
+
+                  <Form.Item
+                    name={[field.name, 'promptPrice']}
+                    valuePropName="checked"
+                    label={index === 0 ? 'Nhập khi bán' : undefined}
+                    style={{ marginBottom: 0 }}
+                  >
+                    <Checkbox />
+                  </Form.Item>
+
+                  {fields.length > 1 && (
+                    <Button
+                      type="text"
+                      danger
+                      size="small"
+                      style={{ marginBottom: 0, alignSelf: 'flex-end' }}
+                      onClick={() => remove(field.name)}
+                    >
+                      ✕
+                    </Button>
+                  )}
+                </div>
+              ))}
+              <Button
+                type="dashed"
+                block
+                size="small"
+                icon={<PlusOutlined />}
+                onClick={() =>
+                  add({ name: `Giá ${fields.length + 1}`, salePriceVnd: 0, promptPrice: false })
+                }
+                style={{ marginTop: 4 }}
+              >
+                Thêm phiên bản giá
+              </Button>
+            </div>
+          )}
+        </Form.List>
+
+        {/* Footer actions */}
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'flex-end',
+            gap: 8,
+            marginTop: 20,
+            paddingTop: 12,
+            borderTop: '1px solid #f1f5f9',
+          }}
+        >
+          <Button onClick={handleClose}>Hủy</Button>
+          <Button type="primary" loading={saving} onClick={() => form.submit()}>
+            Thêm mặt hàng
+          </Button>
+        </div>
+      </Form>
+    </Modal>
+  );
+}
+
 function OrderEditor({
   auth,
   orderIdOverride,
@@ -3779,6 +4441,7 @@ function OrderEditor({
     }
   });
   const [isResizing, setIsResizing] = useState(false);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
   const csrf = auth.csrfToken!;
 
   const draftItemsPayload = () =>
@@ -3839,6 +4502,9 @@ function OrderEditor({
       const changed = new Map(snapshot.tableSummaries.map((table) => [table.id, table]));
       return cached.map((table) => changed.get(table.id) ?? table);
     });
+    void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
+    void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
+    void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
     if (snapshot.callBatch) {
       queryClient.setQueryData<OrderCallBatchPageDto>(
         ['pos-order-call-batches', snapshot.order.id],
@@ -3908,8 +4574,13 @@ function OrderEditor({
   };
 
   const handleExit = () => {
+    void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
+    void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
+    void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
     if (draftLines.length > 0 || hasPendingSavedItemChanges()) {
       setDiscardModalOpen(true);
+    } else if (orderType === 'TAKEAWAY' || quote.data?.order.orderType === 'TAKEAWAY') {
+      navigate('/pos/areas?tab=takeaway', { state: { selectedArea: '__TAKEAWAY__' } });
     } else {
       navigate('/pos/areas');
     }
@@ -3930,16 +4601,21 @@ function OrderEditor({
     queryKey: ['pos-catalog'],
     queryFn: ({ signal }) => apiRequest<CatalogProduct[]>('/api/v1/pos/catalog', { signal }),
     staleTime: 15 * 60_000,
+    refetchOnMount: false,
   });
   const tables = useQuery({
     queryKey: ['pos-tables'],
     queryFn: ({ signal }) => apiRequest<PosTable[]>('/api/v1/pos/tables', { signal }),
+    staleTime: 5 * 60_000,
+    refetchOnMount: false,
   });
   const quote = useQuery({
     queryKey: ['pos-order-quote', orderId],
     queryFn: ({ signal }) =>
       apiRequest<OrderQuote>(`/api/v1/pos/orders/${orderId}/quote`, { signal }),
-    enabled: !isNew,
+    enabled: !isNew && Boolean(orderId),
+    staleTime: 30_000,
+    refetchOnMount: false,
     refetchInterval: (query) =>
       query.state.data?.order.status === 'PAYMENT_PENDING' ? false : quotePollingInterval,
   });
@@ -3951,17 +4627,23 @@ function OrderEditor({
       }),
     enabled: !isNew && Boolean(quote.data?.order.hasCallHistory) && callHistoryOpen,
     staleTime: 30_000,
+    refetchOnMount: false,
   });
   const printSettings = useQuery({
     queryKey: ['pos-print-settings'],
     queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
     staleTime: Infinity,
+    refetchOnMount: false,
   });
   const staffContext = useQuery({
     queryKey: ['pos-context'],
     queryFn: () => apiRequest<StaffContext>('/api/v1/pos/context'),
     staleTime: Infinity,
+    refetchOnMount: false,
   });
+  const canManageCatalog =
+    auth.actor?.kind === 'OWNER' ||
+    (staffContext.data?.permissions ?? []).includes('catalog.manage');
 
   useEffect(() => {
     if (!quote.data) return;
@@ -4545,10 +5227,21 @@ function OrderEditor({
   };
 
   const completeCreatedOrderV1 = async (createdOrderId: string, checkoutAfterSave: boolean) => {
-    if (checkoutAfterSave) navigateToPayment(createdOrderId, true);
-    else {
+    void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
+    void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
+    void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
+    if (checkoutAfterSave) {
+      navigateToPayment(createdOrderId, true);
+    } else {
       messageApi.success('Lưu đơn hàng thành công.');
-      navigate(`/pos/orders/${createdOrderId}`, { replace: true });
+      if (orderType === 'TAKEAWAY') {
+        navigate('/pos/areas?tab=takeaway', {
+          replace: true,
+          state: { selectedArea: '__TAKEAWAY__' },
+        });
+      } else {
+        navigate('/pos/areas', { replace: true });
+      }
     }
   };
 
@@ -4628,6 +5321,9 @@ function OrderEditor({
     applyOrderMutationSnapshot(snapshot);
     clearOrderDraft();
     setManualPromotionIds(null);
+    void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
+    void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
+    void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
     if (checkoutAfterSave) {
       navigateToPayment(snapshot.order.id, true);
     } else {
@@ -4636,7 +5332,14 @@ function OrderEditor({
           ? `Đã lưu Đợt ${snapshot.callBatch.sequenceNo}.`
           : 'Lưu đơn hàng thành công.',
       );
-      navigate(`/pos/orders/${snapshot.order.id}`, { replace: true });
+      if (snapshot.order.orderType === 'TAKEAWAY' || orderType === 'TAKEAWAY') {
+        navigate('/pos/areas?tab=takeaway', {
+          replace: true,
+          state: { selectedArea: '__TAKEAWAY__' },
+        });
+      } else {
+        navigate('/pos/areas', { replace: true });
+      }
     }
   };
 
@@ -4740,6 +5443,14 @@ function OrderEditor({
         navigateToPayment(quote.data.order.id);
       } else {
         messageApi.success('Lưu đơn hàng thành công.');
+        if (orderType === 'TAKEAWAY' || quote.data.order.orderType === 'TAKEAWAY') {
+          navigate('/pos/areas?tab=takeaway', {
+            replace: true,
+            state: { selectedArea: '__TAKEAWAY__' },
+          });
+        } else {
+          navigate('/pos/areas', { replace: true });
+        }
       }
       return;
     }
@@ -4748,8 +5459,20 @@ function OrderEditor({
       if (!commandsV2Enabled) {
         await persistExistingOrderV1(quote.data.order.version);
         await refreshOrder();
+        void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
+        void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
+        void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
         messageApi.success('Lưu đơn hàng thành công.');
-        if (openPaymentAfterSave) navigateToPayment(quote.data.order.id);
+        if (openPaymentAfterSave) {
+          navigateToPayment(quote.data.order.id);
+        } else if (orderType === 'TAKEAWAY' || quote.data.order.orderType === 'TAKEAWAY') {
+          navigate('/pos/areas?tab=takeaway', {
+            replace: true,
+            state: { selectedArea: '__TAKEAWAY__' },
+          });
+        } else {
+          navigate('/pos/areas', { replace: true });
+        }
         return;
       }
       const snapshot = await jsonRequest<OrderMutationSnapshot>(
@@ -4768,6 +5491,9 @@ function OrderEditor({
       applyOrderMutationSnapshot(snapshot);
       clearOrderDraft();
       setManualPromotionIds(null);
+      void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
+      void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
+      void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
       messageApi.success(
         snapshot.callBatch
           ? `Đã lưu Đợt ${snapshot.callBatch.sequenceNo}.`
@@ -4775,6 +5501,13 @@ function OrderEditor({
       );
       if (openPaymentAfterSave) {
         navigateToPayment(snapshot.order.id);
+      } else if (snapshot.order.orderType === 'TAKEAWAY' || orderType === 'TAKEAWAY') {
+        navigate('/pos/areas?tab=takeaway', {
+          replace: true,
+          state: { selectedArea: '__TAKEAWAY__' },
+        });
+      } else {
+        navigate('/pos/areas', { replace: true });
       }
     } catch (error) {
       if (error instanceof ApiError && error.code === 'ORDER_VERSION_CONFLICT') {
@@ -5303,8 +6036,21 @@ function OrderEditor({
         { expectedOrderVersion: quote.data.order.version, reason: cancelReason.trim() },
         { headers: mutationHeaders(csrf) },
       );
+      setCancelOpen(false);
+      setCancelReason('');
+      messageApi.success('Đã hủy đơn hàng thành công.');
       await refreshOrder();
-      navigate('/pos/areas', { replace: true });
+      void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
+      void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
+      void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
+      if (orderType === 'TAKEAWAY' || quote.data.order.orderType === 'TAKEAWAY') {
+        navigate('/pos/areas?tab=takeaway', {
+          replace: true,
+          state: { selectedArea: '__TAKEAWAY__' },
+        });
+      } else {
+        navigate('/pos/areas', { replace: true });
+      }
     } catch (error) {
       messageApi.error(errorText(error));
     }
@@ -5826,16 +6572,25 @@ function OrderEditor({
               </button>
               <div className="staff-product-picker-mobile__title">{mobileHeaderTitle}</div>
               <div className="staff-product-picker-mobile__header-actions">
-                {auth.actor?.kind === 'OWNER' ||
-                (staffContext.data?.permissions ?? []).includes('catalog.manage') ? (
-                  <button
-                    type="button"
-                    className="staff-product-picker-mobile__action-btn"
-                    onClick={() => navigate('/pos/catalog')}
-                    title="Quản lý món"
-                  >
-                    <TagsOutlined />
-                  </button>
+                {canManageCatalog ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <button
+                      type="button"
+                      className="staff-product-picker-mobile__action-btn"
+                      onClick={() => setQuickAddOpen(true)}
+                      title="Thêm nhanh món mới"
+                    >
+                      <PlusOutlined />
+                    </button>
+                    <button
+                      type="button"
+                      className="staff-product-picker-mobile__action-btn"
+                      onClick={() => navigate('/pos/catalog')}
+                      title="Quản lý món"
+                    >
+                      <TagsOutlined />
+                    </button>
+                  </div>
                 ) : (
                   <div className="staff-product-picker-mobile__header-space" />
                 )}
@@ -5882,7 +6637,17 @@ function OrderEditor({
                   <Skeleton active paragraph={{ rows: 6 }} />
                 </div>
               ) : visibleCatalog.length === 0 ? (
-                <Empty description="Không tìm thấy sản phẩm" style={{ marginTop: 60 }} />
+                <Empty description="Không tìm thấy sản phẩm" style={{ marginTop: 60 }}>
+                  {canManageCatalog && (
+                    <Button
+                      type="primary"
+                      icon={<PlusOutlined />}
+                      onClick={() => setQuickAddOpen(true)}
+                    >
+                      Thêm nhanh mặt hàng
+                    </Button>
+                  )}
+                </Empty>
               ) : (
                 <div className="staff-product-compact-list">
                   {visibleCatalog.map((product) => {
@@ -6348,7 +7113,6 @@ function OrderEditor({
                   {committedDisplayItems.map((item) => {
                     const isDraftLine = draftLines.some((l) => l.id === item.id);
                     const catalogProd = catalog.data?.find((p) => p.productId === item.productId);
-                    const qtyInt = Math.round(Number(item.quantityMilli) / 1000);
 
                     const openItemEdit = () => {
                       if (item.promotionGift) return;
@@ -6474,90 +7238,19 @@ function OrderEditor({
                               </span>
 
                               {item.productType !== 'WEIGHT' && !item.promotionGift ? (
-                                <div
-                                  className="staff-order-mobile-stepper"
-                                  onClick={(e) => e.stopPropagation()}
+                                <span
+                                  className="staff-order-mobile-quantity-label"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openItemEdit();
+                                  }}
                                 >
-                                  <button
-                                    type="button"
-                                    className="staff-order-mobile-stepper__btn minus"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      if (isDraftLine || isNew) {
-                                        setDraftLines((prev) => {
-                                          const idx = prev.findIndex((l) => l.id === item.id);
-                                          if (idx === -1) return prev;
-                                          const target = prev[idx];
-                                          if (!target) return prev;
-                                          if (target.quantityMilli > 1000) {
-                                            const next = [...prev];
-                                            next[idx] = {
-                                              ...target,
-                                              quantityMilli: target.quantityMilli - 1000,
-                                            };
-                                            return next;
-                                          }
-                                          return prev.filter((_, i) => i !== idx);
-                                        });
-                                      } else {
-                                        const currentQty =
-                                          modifiedItemQuantities[item.id] ?? item.quantityMilli;
-                                        if (currentQty > 1000) {
-                                          setModifiedItemQuantities((prev) => ({
-                                            ...prev,
-                                            [item.id]: currentQty - 1000,
-                                          }));
-                                        } else {
-                                          setDeleteItemTarget({
-                                            id: item.id,
-                                            name: item.productName,
-                                            source: 'SAVED',
-                                          });
-                                          setDeleteItemReason('Khách đổi ý');
-                                          setDeleteItemModalOpen(true);
-                                        }
-                                      }
-                                    }}
-                                    aria-label="Giảm số lượng"
-                                  >
-                                    −
-                                  </button>
-                                  <span className="staff-order-mobile-stepper__count">
-                                    {qtyInt}
-                                  </span>
-                                  <button
-                                    type="button"
-                                    className="staff-order-mobile-stepper__btn plus"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      if (isDraftLine || isNew) {
-                                        setDraftLines((prev) => {
-                                          const idx = prev.findIndex((l) => l.id === item.id);
-                                          if (idx === -1) return prev;
-                                          const target = prev[idx];
-                                          if (!target) return prev;
-                                          const next = [...prev];
-                                          next[idx] = {
-                                            ...target,
-                                            quantityMilli: target.quantityMilli + 1000,
-                                          };
-                                          return next;
-                                        });
-                                      } else {
-                                        setModifiedItemQuantities((prev) => {
-                                          const currentQty = prev[item.id] ?? item.quantityMilli;
-                                          return {
-                                            ...prev,
-                                            [item.id]: currentQty + 1000,
-                                          };
-                                        });
-                                      }
-                                    }}
-                                    aria-label="Tăng số lượng"
-                                  >
-                                    +
-                                  </button>
-                                </div>
+                                  {formatItemQuantity(
+                                    item.productType,
+                                    item.quantityMilli,
+                                    item.unitName,
+                                  )}
+                                </span>
                               ) : item.productType === 'WEIGHT' ? (
                                 <span className="staff-order-mobile-weight-label">
                                   {formatItemQuantity(
@@ -6876,15 +7569,45 @@ function OrderEditor({
               ))}
             </aside>
             <section className="staff-product-picker">
-              <Typography.Title level={3}>
-                {selectedCategory === 'ALL'
-                  ? 'Tất cả sản phẩm'
-                  : categories.find((category) => category.id === selectedCategory)?.name}
-              </Typography.Title>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: 12,
+                }}
+              >
+                <Typography.Title level={3} style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>
+                  {selectedCategory === 'ALL'
+                    ? 'Tất cả sản phẩm'
+                    : categories.find((category) => category.id === selectedCategory)?.name}
+                </Typography.Title>
+                {canManageCatalog && (
+                  <Button
+                    size="small"
+                    type="dashed"
+                    icon={<PlusOutlined />}
+                    onClick={() => setQuickAddOpen(true)}
+                    style={{ borderColor: '#0975f7', color: '#0975f7', fontWeight: 600 }}
+                  >
+                    Thêm nhanh
+                  </Button>
+                )}
+              </div>
               {catalog.isLoading ? (
                 <Skeleton active />
               ) : visibleCatalog.length === 0 ? (
-                <Empty description="Không có sản phẩm phù hợp" />
+                <Empty description="Không có sản phẩm phù hợp">
+                  {canManageCatalog && (
+                    <Button
+                      type="primary"
+                      icon={<PlusOutlined />}
+                      onClick={() => setQuickAddOpen(true)}
+                    >
+                      Thêm nhanh mặt hàng
+                    </Button>
+                  )}
+                </Empty>
               ) : (
                 <div className="staff-product-grid">
                   {visibleCatalog.map((product) => {
@@ -7946,6 +8669,7 @@ function OrderEditor({
                     value={timeRangeDraft.startedAt}
                     onChange={(val) => setTimeRangeDraft((prev) => ({ ...prev, startedAt: val }))}
                     className="staff-time-field__datepicker"
+                    popupClassName="staff-time-picker-popup"
                     style={{ width: '100%' }}
                     needConfirm={false}
                   />
@@ -7974,6 +8698,7 @@ function OrderEditor({
                     value={timeRangeDraft.endedAt}
                     onChange={(val) => setTimeRangeDraft((prev) => ({ ...prev, endedAt: val }))}
                     className="staff-time-field__datepicker"
+                    popupClassName="staff-time-picker-popup"
                     style={{ width: '100%' }}
                     needConfirm={false}
                     allowClear
@@ -8409,7 +9134,14 @@ function OrderEditor({
               className="staff-confirm-discard-btn staff-confirm-discard-btn--confirm"
               onClick={() => {
                 setDiscardModalOpen(false);
-                navigate('/pos/areas');
+                void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
+                void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
+                void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
+                if (orderType === 'TAKEAWAY' || quote.data?.order.orderType === 'TAKEAWAY') {
+                  navigate('/pos/areas?tab=takeaway', { state: { selectedArea: '__TAKEAWAY__' } });
+                } else {
+                  navigate('/pos/areas');
+                }
               }}
             >
               Xác nhận
@@ -8682,6 +9414,17 @@ function OrderEditor({
           orderCode={tableQrData.orderCode}
         />
       )}
+
+      {canManageCatalog && (
+        <QuickAddProductModal
+          open={quickAddOpen}
+          auth={auth}
+          onClose={() => setQuickAddOpen(false)}
+          onCreated={(_productId, name) => {
+            messageApi.success(`Đã thêm mặt hàng "${name}" thành công.`);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -8702,10 +9445,14 @@ function InvoicePage() {
   const printSettings = useQuery({
     queryKey: ['pos-print-settings'],
     queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
+    staleTime: Infinity,
+    refetchOnMount: false,
   });
   const staffContext = useQuery({
     queryKey: ['pos-context'],
     queryFn: () => apiRequest<StaffContext>('/api/v1/pos/context'),
+    staleTime: Infinity,
+    refetchOnMount: false,
   });
   if (invoice.isLoading) return <Spin fullscreen description="Đang tạo hóa đơn" />;
   if (invoice.isError || !invoice.data) {
@@ -9096,6 +9843,8 @@ function PaymentPage({
     queryKey: ['pos-order-quote', orderId],
     queryFn: ({ signal }) =>
       apiRequest<OrderQuote>(`/api/v1/pos/orders/${orderId}/quote`, { signal }),
+    staleTime: 30_000,
+    refetchOnMount: false,
     refetchInterval: (query) =>
       query.state.data?.order.status === 'PAYMENT_PENDING' ? false : quotePollingInterval,
   });
@@ -9104,12 +9853,14 @@ function PaymentPage({
     queryKey: ['pos-print-settings'],
     queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
     staleTime: Infinity,
+    refetchOnMount: false,
   });
 
   const staffContext = useQuery({
     queryKey: ['pos-context'],
     queryFn: () => apiRequest<StaffContext>('/api/v1/pos/context'),
     staleTime: Infinity,
+    refetchOnMount: false,
   });
   const paymentSnapshotV2Enabled = staffContext.data?.capabilities?.posPaymentSnapshotV2 !== false;
 
@@ -9128,8 +9879,18 @@ function PaymentPage({
       clearPaymentPageActive(quote.data.order.id);
     }
     setPaymentSuccessData(null);
-    navigate('/pos/areas', { replace: true });
-  }, [quote.data?.order.id, navigate]);
+    void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
+    void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
+    void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
+    if (quote.data?.order.orderType === 'TAKEAWAY') {
+      navigate('/pos/areas?tab=takeaway', {
+        replace: true,
+        state: { selectedArea: '__TAKEAWAY__' },
+      });
+    } else {
+      navigate('/pos/areas', { replace: true });
+    }
+  }, [quote.data?.order.id, quote.data?.order.orderType, navigate, queryClient]);
 
   useEffect(() => {
     if (!paymentSuccessData) return;
@@ -10210,11 +10971,14 @@ export function StaffPosPortalPage() {
   const auth = useQuery({
     queryKey: ['auth-context'],
     queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
+    staleTime: 10 * 60_000,
+    refetchOnMount: false,
   });
   const posContext = useQuery({
     queryKey: ['pos-context'],
     queryFn: () => apiRequest<StaffContext>('/api/v1/pos/context'),
     staleTime: Infinity,
+    refetchOnMount: false,
   });
   useEffect(() => {
     const media = window.matchMedia('(min-width: 1200px)');

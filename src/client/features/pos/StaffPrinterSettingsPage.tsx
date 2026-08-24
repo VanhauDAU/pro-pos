@@ -85,6 +85,7 @@ export function StaffPrinterSettingsPage({
     queryKey: ['pos-print-settings'],
     queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
     staleTime: Infinity,
+    refetchOnMount: false,
   });
 
   useEffect(() => {

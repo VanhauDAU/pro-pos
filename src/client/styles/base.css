@@ -1599,8 +1599,8 @@ body,
 }
 
 .staff-compact-order-list {
-  max-height: 290px;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .staff-compact-order-row {

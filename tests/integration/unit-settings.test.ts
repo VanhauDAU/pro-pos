@@ -30,7 +30,6 @@ describe('Owner unit settings', () => {
     expect(res.insertedCount).toBe(0);
   });
 
-
   it('paginates units and returns active product usage counts', async () => {
     const category = await catalog.createNamed(storeId, 'categories', 'Đồ uống');
     await catalog.createProduct(storeId, {

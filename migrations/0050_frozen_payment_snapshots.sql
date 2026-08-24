@@ -30,7 +30,7 @@ CREATE TRIGGER trg_checkout_payment_snapshot_validate
 BEFORE INSERT ON checkout_commands
 WHEN NEW.payment_snapshot_id IS NOT NULL
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT RAISE(ABORT, 'PAYMENT_SNAPSHOT_INVALID') WHERE NOT EXISTS (
     SELECT 1 FROM payment_snapshots ps
     WHERE ps.id = NEW.payment_snapshot_id
       AND ps.store_id = NEW.store_id
@@ -38,14 +38,14 @@ BEGIN
       AND ps.order_type = 'DINE_IN'
       AND ps.order_version = NEW.expected_order_version
       AND ps.status = 'ACTIVE'
-  ) THEN RAISE(ABORT, 'PAYMENT_SNAPSHOT_INVALID') END;
+  );
 END;
 
 CREATE TRIGGER trg_takeaway_checkout_payment_snapshot_validate
 BEFORE INSERT ON takeaway_checkout_commands
 WHEN NEW.payment_snapshot_id IS NOT NULL
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT RAISE(ABORT, 'PAYMENT_SNAPSHOT_INVALID') WHERE NOT EXISTS (
     SELECT 1 FROM payment_snapshots ps
     WHERE ps.id = NEW.payment_snapshot_id
       AND ps.store_id = NEW.store_id
@@ -53,5 +53,5 @@ BEGIN
       AND ps.order_type = 'TAKEAWAY'
       AND ps.order_version = NEW.expected_order_version
       AND ps.status = 'ACTIVE'
-  ) THEN RAISE(ABORT, 'PAYMENT_SNAPSHOT_INVALID') END;
+  );
 END;

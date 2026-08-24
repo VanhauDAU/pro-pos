@@ -37,7 +37,6 @@ import { SAMPLE_UNIT_GROUPS } from '@contracts/catalog';
 
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 
-
 interface Unit {
   id: string;
   name: string;
@@ -271,10 +270,7 @@ export function OwnerUnitSettingsPage() {
             </Typography.Text>
             {SAMPLE_UNIT_GROUPS.map((group) => (
               <div key={group.category} style={{ marginBottom: 10 }}>
-                <Typography.Text
-                  strong
-                  style={{ fontSize: 12, display: 'block', marginBottom: 4 }}
-                >
+                <Typography.Text strong style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
                   {group.category}:
                 </Typography.Text>
                 <Space size={[4, 6]} wrap>

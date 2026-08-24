@@ -1,7 +1,6 @@
 import { DEFAULT_STORE_UNITS } from '@contracts/catalog';
 import type { StoreCapability } from '@contracts/platform';
 
-
 export class PlatformRepository {
   constructor(private readonly db: D1Database) {}
 

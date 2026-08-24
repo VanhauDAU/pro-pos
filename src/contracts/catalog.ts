@@ -59,7 +59,6 @@ export const DEFAULT_STORE_UNITS: readonly string[] = SAMPLE_UNIT_GROUPS.flatMap
   (group) => group.units,
 );
 
-
 const productVariantSchema = z.object({
   id: z.uuid().optional(),
   name: z.string().trim().min(1).max(120),

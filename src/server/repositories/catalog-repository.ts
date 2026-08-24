@@ -1,7 +1,6 @@
 import { DEFAULT_STORE_UNITS } from '@contracts/catalog';
 import type { PricingConfigSnapshot } from '@domain/pricing/types';
 
-
 type NamedTable = 'areas' | 'categories' | 'units';
 
 const namedSelects: Record<NamedTable, string> = {

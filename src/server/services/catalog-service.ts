@@ -118,7 +118,6 @@ export class CatalogService {
     return result;
   }
 
-
   async createNamed(
     storeId: string,
     table: 'areas' | 'categories' | 'units',

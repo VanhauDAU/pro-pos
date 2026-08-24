@@ -79,6 +79,7 @@ interface QuickPinInputProps {
   disabled?: boolean;
   hasError?: boolean;
   autoFocus?: boolean;
+  showNumpad?: boolean;
 }
 
 function QuickPinInput({
@@ -89,7 +90,8 @@ function QuickPinInput({
   onToggleShowPin,
   disabled = false,
   hasError = false,
-  autoFocus = true,
+  autoFocus = false,
+  showNumpad = true,
 }: QuickPinInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -107,13 +109,29 @@ function QuickPinInput({
     }
   };
 
+  const handleKeypadPress = (digit: string) => {
+    if (disabled || value.length >= 4) return;
+    const nextVal = (value + digit).slice(0, 4);
+    onChange(nextVal);
+    if (nextVal.length === 4) {
+      onComplete?.(nextVal);
+    }
+  };
+
+  const handleKeypadBackspace = () => {
+    if (disabled || value.length === 0) return;
+    onChange(value.slice(0, -1));
+  };
+
+  const handleKeypadClear = () => {
+    if (disabled || value.length === 0) return;
+    onChange('');
+  };
+
   return (
     <div className={`quick-pin-container ${hasError ? 'is-error shake' : ''}`}>
-      {/* 4 Visual PIN Slots with hidden overlay input for native numeric keyboard */}
-      <div
-        className="quick-pin-display-row"
-        onClick={() => inputRef.current?.focus({ preventScroll: true })}
-      >
+      {/* Visual PIN Slots with real direct-focus numeric input */}
+      <div className="quick-pin-display-row">
         <input
           ref={inputRef}
           type={showPin ? 'text' : 'password'}
@@ -129,7 +147,7 @@ function QuickPinInput({
           autoFocus={autoFocus}
         />
 
-        <div className="quick-pin-slots">
+        <div className="quick-pin-slots" aria-hidden="true">
           {[0, 1, 2, 3].map((index) => {
             const digit = value[index];
             const isFilled = digit !== undefined;
@@ -159,12 +177,55 @@ function QuickPinInput({
           onClick={(e) => {
             e.stopPropagation();
             onToggleShowPin();
-            inputRef.current?.focus({ preventScroll: true });
           }}
           title={showPin ? 'Ẩn mã PIN' : 'Xem mã PIN'}
           aria-label={showPin ? 'Ẩn mã PIN' : 'Xem mã PIN'}
         />
       </div>
+
+      {showNumpad ? (
+        <div className="quick-pin-numpad" role="group" aria-label="Bàn phím số PIN">
+          {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
+            <button
+              key={digit}
+              type="button"
+              className="quick-pin-key"
+              disabled={disabled}
+              onClick={() => handleKeypadPress(digit)}
+            >
+              {digit}
+            </button>
+          ))}
+          <button
+            type="button"
+            className="quick-pin-key quick-pin-key--action"
+            disabled={disabled || value.length === 0}
+            onClick={handleKeypadClear}
+            title="Xóa hết"
+            aria-label="Xóa hết"
+          >
+            C
+          </button>
+          <button
+            type="button"
+            className="quick-pin-key"
+            disabled={disabled}
+            onClick={() => handleKeypadPress('0')}
+          >
+            0
+          </button>
+          <button
+            type="button"
+            className="quick-pin-key quick-pin-key--action"
+            disabled={disabled || value.length === 0}
+            onClick={handleKeypadBackspace}
+            title="Xóa lùi"
+            aria-label="Xóa lùi"
+          >
+            ⌫
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -211,6 +272,7 @@ export function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const loginInFlightRef = useRef(false);
   const [ownerRetryAfterSeconds, setOwnerRetryAfterSeconds] = useState(0);
+  const [employeeRetryAfterSeconds, setEmployeeRetryAfterSeconds] = useState(0);
   const [showPin, setShowPin] = useState(false);
   const [pinValue, setPinValue] = useState('');
   const [pinError, setPinError] = useState(false);
@@ -241,12 +303,27 @@ export function LoginPage() {
   const deviceIsActive = context.data?.device?.status === 'ACTIVE';
 
   useEffect(() => {
+    // If device is not active and no explicit tab param in URL, default to owner tab
+    if (!searchParams.get('tab') && context.data && !deviceIsActive) {
+      setActiveTab('owner');
+    }
+  }, [context.data, deviceIsActive, searchParams]);
+
+  useEffect(() => {
     if (ownerRetryAfterSeconds <= 0) return;
     const timer = window.setTimeout(() => {
       setOwnerRetryAfterSeconds((seconds) => Math.max(0, seconds - 1));
     }, 1000);
     return () => window.clearTimeout(timer);
   }, [ownerRetryAfterSeconds]);
+
+  useEffect(() => {
+    if (employeeRetryAfterSeconds <= 0) return;
+    const timer = window.setTimeout(() => {
+      setEmployeeRetryAfterSeconds((seconds) => Math.max(0, seconds - 1));
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [employeeRetryAfterSeconds]);
 
   const switchTab = (key: string) => {
     setActiveTab(key);
@@ -294,7 +371,13 @@ export function LoginPage() {
   };
 
   const executeEmployeeLogin = async (username: string, pin: string) => {
-    if (loginInFlightRef.current || !username.trim() || pin.length !== 4) return;
+    if (
+      loginInFlightRef.current ||
+      employeeRetryAfterSeconds > 0 ||
+      !username.trim() ||
+      pin.length !== 4
+    )
+      return;
     loginInFlightRef.current = true;
     setSubmitting(true);
     setError(null);
@@ -313,7 +396,13 @@ export function LoginPage() {
       await queryClient.invalidateQueries({ queryKey: ['auth-context'] });
       navigate('/pos', { replace: true });
     } catch (loginError) {
-      setError(errorMessage(loginError));
+      const retryAfter = retryAfterSeconds(loginError);
+      setEmployeeRetryAfterSeconds(retryAfter);
+      setError(
+        retryAfter > 0
+          ? `Thiết bị đang tạm khóa đăng nhập PIN. Vui lòng thử lại sau ${formatRetryDelay(retryAfter)}.`
+          : errorMessage(loginError),
+      );
       setPinError(true);
       setPinValue('');
     } finally {
@@ -429,7 +518,6 @@ export function LoginPage() {
             }}
             autoComplete="username"
             disabled={submitting}
-            autoFocus={!ownerUsername}
           />
         </div>
 
@@ -445,7 +533,6 @@ export function LoginPage() {
             }}
             autoComplete="current-password"
             disabled={submitting}
-            autoFocus={Boolean(ownerUsername)}
           />
         </div>
 
@@ -542,14 +629,13 @@ export function LoginPage() {
             onChange={(val) => {
               setPinValue(val);
               if (pinError) setPinError(false);
-              if (error) setError(null);
+              if (error && employeeRetryAfterSeconds <= 0) setError(null);
             }}
             onComplete={handleQuickPinComplete}
             showPin={showPin}
             onToggleShowPin={() => setShowPin((prev) => !prev)}
             disabled={submitting}
             hasError={pinError}
-            autoFocus
           />
 
           <Button
@@ -558,10 +644,12 @@ export function LoginPage() {
             block
             className="employee-login-submit-btn"
             loading={submitting}
-            disabled={pinValue.length < 4}
+            disabled={pinValue.length < 4 || employeeRetryAfterSeconds > 0}
             onClick={() => void executeEmployeeLogin(rememberedEmployee.username, pinValue)}
           >
-            Đăng nhập
+            {employeeRetryAfterSeconds > 0
+              ? `Thử lại sau ${formatRetryDelay(employeeRetryAfterSeconds)}`
+              : 'Đăng nhập'}
           </Button>
 
           {renderDeviceBar()}
@@ -605,7 +693,6 @@ export function LoginPage() {
             autoComplete="username"
             prefix={<UserOutlined />}
             placeholder="Tên đăng nhập"
-            autoFocus={!rememberedEmployee}
           />
         </Form.Item>
 
@@ -618,13 +705,12 @@ export function LoginPage() {
             onChange={(val) => {
               setPinValue(val);
               if (pinError) setPinError(false);
-              if (error) setError(null);
+              if (error && employeeRetryAfterSeconds <= 0) setError(null);
             }}
             showPin={showPin}
             onToggleShowPin={() => setShowPin((prev) => !prev)}
-            disabled={submitting}
+            disabled={submitting || employeeRetryAfterSeconds > 0}
             hasError={pinError}
-            autoFocus={Boolean(rememberedEmployee)}
           />
         </Form.Item>
 
@@ -635,9 +721,11 @@ export function LoginPage() {
           block
           className="employee-login-submit-btn"
           loading={submitting}
-          disabled={pinValue.length < 4}
+          disabled={pinValue.length < 4 || employeeRetryAfterSeconds > 0}
         >
-          Đăng nhập
+          {employeeRetryAfterSeconds > 0
+            ? `Thử lại sau ${formatRetryDelay(employeeRetryAfterSeconds)}`
+            : 'Đăng nhập'}
         </Button>
 
         {renderDeviceBar()}

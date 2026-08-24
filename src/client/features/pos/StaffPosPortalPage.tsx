@@ -90,6 +90,7 @@ import {
   buildPrintDataFromQuote,
   printReceipt,
 } from '@client/lib/pos-receipt-printer';
+import logoBlack from '@client/assets/logo-black.svg?url';
 import { OrderDetailPage } from './OrderDetailPage';
 import { StaffOnboarding } from './StaffOnboarding';
 import { StaffPrinterSettingsPage } from './StaffPrinterSettingsPage';
@@ -906,9 +907,8 @@ function StaffHeader({
     <header className="staff-pos-header">
       {holder}
       <div className="staff-pos-header__left">
-        <div className="staff-pos-brand">
-          <span className="staff-pos-brand__mark">P</span>
-          <strong>Pro POS</strong>
+        <div className="staff-pos-brand" title="Pro POS">
+          <img src={logoBlack} alt="Pro POS" className="staff-pos-brand__logo" />
         </div>
         {searchSlot ? <div className="staff-pos-header__search">{searchSlot}</div> : null}
       </div>

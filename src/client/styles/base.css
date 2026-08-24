@@ -2329,6 +2329,83 @@ body,
   }
 }
 
+/* Mobile DateTime Picker Popup Responsive */
+@media (max-width: 640px) {
+  .ant-picker-dropdown,
+  .staff-time-picker-popup {
+    max-width: calc(100vw - 16px) !important;
+    left: 8px !important;
+    right: 8px !important;
+    z-index: 2100 !important;
+  }
+
+  .ant-picker-dropdown .ant-picker-panel-container,
+  .staff-time-picker-popup .ant-picker-panel-container {
+    max-width: 100% !important;
+    overflow: hidden !important;
+    border-radius: 14px !important;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.18) !important;
+  }
+
+  .ant-picker-dropdown .ant-picker-datetime-panel,
+  .staff-time-picker-popup .ant-picker-datetime-panel {
+    display: flex !important;
+    flex-direction: column !important;
+    max-width: 100% !important;
+  }
+
+  .ant-picker-dropdown .ant-picker-datetime-panel .ant-picker-date-panel,
+  .staff-time-picker-popup .ant-picker-datetime-panel .ant-picker-date-panel {
+    width: 100% !important;
+  }
+
+  .ant-picker-dropdown .ant-picker-datetime-panel .ant-picker-time-panel,
+  .staff-time-picker-popup .ant-picker-datetime-panel .ant-picker-time-panel {
+    width: 100% !important;
+    border-left: none !important;
+    border-top: 1px solid #f1f5f9 !important;
+    max-height: 130px !important;
+    background: #f8fafc !important;
+  }
+
+  .ant-picker-dropdown .ant-picker-datetime-panel .ant-picker-time-panel-column,
+  .staff-time-picker-popup .ant-picker-datetime-panel .ant-picker-time-panel-column {
+    flex: 1 !important;
+    width: auto !important;
+    text-align: center !important;
+  }
+
+  .ant-picker-dropdown .ant-picker-body,
+  .staff-time-picker-popup .ant-picker-body {
+    padding: 6px 8px !important;
+  }
+
+  .ant-picker-dropdown .ant-picker-content,
+  .staff-time-picker-popup .ant-picker-content {
+    width: 100% !important;
+  }
+
+  .ant-picker-dropdown .ant-picker-cell,
+  .staff-time-picker-popup .ant-picker-cell {
+    padding: 2px 0 !important;
+  }
+
+  .ant-picker-dropdown .ant-picker-cell .ant-picker-cell-inner,
+  .staff-time-picker-popup .ant-picker-cell .ant-picker-cell-inner {
+    min-width: 28px !important;
+    height: 28px !important;
+    line-height: 28px !important;
+    font-size: 13px !important;
+  }
+
+  .ant-picker-dropdown .ant-picker-time-panel-cell .ant-picker-time-panel-cell-inner,
+  .staff-time-picker-popup .ant-picker-time-panel-cell .ant-picker-time-panel-cell-inner {
+    height: 28px !important;
+    line-height: 28px !important;
+    font-size: 13px !important;
+  }
+}
+
 .staff-payment-page {
   height: 100dvh;
   max-height: 100dvh;
@@ -6356,26 +6433,57 @@ body {
 
 @media (max-width: 980px) {
   .auth-page {
-    padding: 24px;
+    padding: 32px 20px;
+    min-height: 100dvh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background:
+      radial-gradient(circle at 50% 20%, rgba(13, 124, 255, 0.08), transparent 45%), #f1f7ff;
   }
 
   .auth-grid {
-    max-width: 560px;
-    grid-template-columns: 1fr;
+    max-width: 440px;
+    width: 100%;
+    min-height: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    margin: 0 auto;
   }
 
   .brand-panel {
-    min-height: auto;
-    padding: 26px 30px;
-  }
-
-  .billiards-visual {
     display: none;
   }
 
-  .brand-panel__copy h1 {
-    margin-top: 22px;
-    font-size: 26px;
+  .auth-card {
+    width: 100%;
+    max-width: 440px;
+    min-height: auto;
+    margin: 0 auto;
+    padding: 36px 32px 28px;
+    border-radius: 24px;
+    box-shadow: 0 20px 60px rgba(13, 124, 255, 0.12);
+    border: 1px solid rgba(13, 124, 255, 0.08);
+  }
+
+  .auth-card__logo {
+    display: block;
+    width: 150px;
+    height: auto;
+    margin: 0 auto 16px;
+  }
+
+  .auth-tab-bar {
+    max-width: 320px;
+    margin: 0 auto 16px;
+  }
+
+  .auth-tab-content {
+    max-width: 320px;
+    margin: 0 auto;
   }
 }
 
@@ -13519,7 +13627,7 @@ body {
   position: fixed;
   right: 16px;
   bottom: calc(125px + env(safe-area-inset-bottom, 0px));
-  z-index: 25;
+  z-index: 99;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -13566,7 +13674,7 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
-  z-index: 20;
+  z-index: 100;
   background: #ffffff;
   border-top: 1px solid #e2e8f0;
   box-shadow: 0 -4px 16px rgba(15, 23, 42, 0.08);
@@ -20768,15 +20876,15 @@ body {
 
 /* 4. POS View Transitions & Interactive Feedback */
 .staff-areas-page {
-  animation: posPageFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: posFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 .staff-order-editor {
-  animation: posPageSlideIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: posFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 .staff-payment-page {
-  animation: posPageSlideIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: posFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 .staff-table-card {

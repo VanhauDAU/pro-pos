@@ -1235,6 +1235,8 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 
 function AreasPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const [now, setNow] = useState(() => Date.now());
   const pollingInterval = usePosPollingInterval(20_000);
@@ -1255,6 +1257,7 @@ function AreasPage() {
         serverNowMs: number;
       }>('/api/v1/pos/overview', { signal }),
     refetchInterval: pollingInterval,
+    refetchOnMount: 'always',
   });
   const tables = {
     data: overview.data?.tables,
@@ -1296,8 +1299,23 @@ function AreasPage() {
     return [...map.values()];
   }, [tables.data]);
 
-  const [selectedArea, setSelectedArea] = useState<string | null>(null);
+  const initialArea =
+    searchParams.get('tab') === 'takeaway' ||
+    (location.state as { selectedArea?: string } | null)?.selectedArea === '__TAKEAWAY__'
+      ? '__TAKEAWAY__'
+      : ((location.state as { selectedArea?: string } | null)?.selectedArea ?? null);
+
+  const [selectedArea, setSelectedArea] = useState<string | null>(initialArea);
   const [status, setStatus] = useState<'ALL' | 'OCCUPIED' | 'AVAILABLE'>('ALL');
+
+  useEffect(() => {
+    const stateArea = (location.state as { selectedArea?: string } | null)?.selectedArea;
+    if (searchParams.get('tab') === 'takeaway' || stateArea === '__TAKEAWAY__') {
+      setSelectedArea('__TAKEAWAY__');
+    } else if (stateArea) {
+      setSelectedArea(stateArea);
+    }
+  }, [searchParams, location.state]);
 
   const isTakeaway = selectedArea === '__TAKEAWAY__';
   const effectiveAreaId = isTakeaway ? '__TAKEAWAY__' : (selectedArea ?? areas[0]?.id ?? null);
@@ -1330,7 +1348,10 @@ function AreasPage() {
             <button
               type="button"
               className={`staff-area-pill staff-area-pill--takeaway ${isTakeaway ? 'is-active' : ''}`}
-              onClick={() => setSelectedArea('__TAKEAWAY__')}
+              onClick={() => {
+                setSelectedArea('__TAKEAWAY__');
+                setSearchParams({ tab: 'takeaway' }, { replace: true });
+              }}
             >
               <ShoppingOutlined /> Mang về
             </button>
@@ -1339,7 +1360,10 @@ function AreasPage() {
                 key={item.id}
                 type="button"
                 className={`staff-area-pill ${!isTakeaway && item.id === currentArea?.id ? 'is-active' : ''}`}
-                onClick={() => setSelectedArea(item.id)}
+                onClick={() => {
+                  setSelectedArea(item.id);
+                  setSearchParams({}, { replace: true });
+                }}
               >
                 {item.name}
               </button>
@@ -1353,7 +1377,10 @@ function AreasPage() {
         <button
           type="button"
           className={`staff-area-sidebar__item staff-area-sidebar__item--takeaway ${isTakeaway ? 'is-active' : ''}`}
-          onClick={() => setSelectedArea('__TAKEAWAY__')}
+          onClick={() => {
+            setSelectedArea('__TAKEAWAY__');
+            setSearchParams({ tab: 'takeaway' }, { replace: true });
+          }}
         >
           <ShoppingOutlined /> <span>Mang về</span>
         </button>
@@ -1363,7 +1390,10 @@ function AreasPage() {
             key={item.id}
             type="button"
             className={`staff-area-sidebar__item ${!isTakeaway && item.id === currentArea?.id ? 'is-active' : ''}`}
-            onClick={() => setSelectedArea(item.id)}
+            onClick={() => {
+              setSelectedArea(item.id);
+              setSearchParams({}, { replace: true });
+            }}
           >
             {item.name}
           </button>
@@ -3839,6 +3869,9 @@ function OrderEditor({
       const changed = new Map(snapshot.tableSummaries.map((table) => [table.id, table]));
       return cached.map((table) => changed.get(table.id) ?? table);
     });
+    void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
+    void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
+    void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
     if (snapshot.callBatch) {
       queryClient.setQueryData<OrderCallBatchPageDto>(
         ['pos-order-call-batches', snapshot.order.id],
@@ -3908,8 +3941,13 @@ function OrderEditor({
   };
 
   const handleExit = () => {
+    void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
+    void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
+    void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
     if (draftLines.length > 0 || hasPendingSavedItemChanges()) {
       setDiscardModalOpen(true);
+    } else if (orderType === 'TAKEAWAY' || quote.data?.order.orderType === 'TAKEAWAY') {
+      navigate('/pos/areas?tab=takeaway', { state: { selectedArea: '__TAKEAWAY__' } });
     } else {
       navigate('/pos/areas');
     }
@@ -4545,10 +4583,21 @@ function OrderEditor({
   };
 
   const completeCreatedOrderV1 = async (createdOrderId: string, checkoutAfterSave: boolean) => {
-    if (checkoutAfterSave) navigateToPayment(createdOrderId, true);
-    else {
+    void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
+    void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
+    void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
+    if (checkoutAfterSave) {
+      navigateToPayment(createdOrderId, true);
+    } else {
       messageApi.success('Lưu đơn hàng thành công.');
-      navigate(`/pos/orders/${createdOrderId}`, { replace: true });
+      if (orderType === 'TAKEAWAY') {
+        navigate('/pos/areas?tab=takeaway', {
+          replace: true,
+          state: { selectedArea: '__TAKEAWAY__' },
+        });
+      } else {
+        navigate('/pos/areas', { replace: true });
+      }
     }
   };
 
@@ -4628,6 +4677,9 @@ function OrderEditor({
     applyOrderMutationSnapshot(snapshot);
     clearOrderDraft();
     setManualPromotionIds(null);
+    void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
+    void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
+    void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
     if (checkoutAfterSave) {
       navigateToPayment(snapshot.order.id, true);
     } else {
@@ -4636,7 +4688,14 @@ function OrderEditor({
           ? `Đã lưu Đợt ${snapshot.callBatch.sequenceNo}.`
           : 'Lưu đơn hàng thành công.',
       );
-      navigate(`/pos/orders/${snapshot.order.id}`, { replace: true });
+      if (snapshot.order.orderType === 'TAKEAWAY' || orderType === 'TAKEAWAY') {
+        navigate('/pos/areas?tab=takeaway', {
+          replace: true,
+          state: { selectedArea: '__TAKEAWAY__' },
+        });
+      } else {
+        navigate('/pos/areas', { replace: true });
+      }
     }
   };
 
@@ -4740,6 +4799,14 @@ function OrderEditor({
         navigateToPayment(quote.data.order.id);
       } else {
         messageApi.success('Lưu đơn hàng thành công.');
+        if (orderType === 'TAKEAWAY' || quote.data.order.orderType === 'TAKEAWAY') {
+          navigate('/pos/areas?tab=takeaway', {
+            replace: true,
+            state: { selectedArea: '__TAKEAWAY__' },
+          });
+        } else {
+          navigate('/pos/areas', { replace: true });
+        }
       }
       return;
     }
@@ -4748,8 +4815,20 @@ function OrderEditor({
       if (!commandsV2Enabled) {
         await persistExistingOrderV1(quote.data.order.version);
         await refreshOrder();
+        void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
+        void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
+        void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
         messageApi.success('Lưu đơn hàng thành công.');
-        if (openPaymentAfterSave) navigateToPayment(quote.data.order.id);
+        if (openPaymentAfterSave) {
+          navigateToPayment(quote.data.order.id);
+        } else if (orderType === 'TAKEAWAY' || quote.data.order.orderType === 'TAKEAWAY') {
+          navigate('/pos/areas?tab=takeaway', {
+            replace: true,
+            state: { selectedArea: '__TAKEAWAY__' },
+          });
+        } else {
+          navigate('/pos/areas', { replace: true });
+        }
         return;
       }
       const snapshot = await jsonRequest<OrderMutationSnapshot>(
@@ -4768,6 +4847,9 @@ function OrderEditor({
       applyOrderMutationSnapshot(snapshot);
       clearOrderDraft();
       setManualPromotionIds(null);
+      void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
+      void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
+      void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
       messageApi.success(
         snapshot.callBatch
           ? `Đã lưu Đợt ${snapshot.callBatch.sequenceNo}.`
@@ -4775,6 +4857,13 @@ function OrderEditor({
       );
       if (openPaymentAfterSave) {
         navigateToPayment(snapshot.order.id);
+      } else if (snapshot.order.orderType === 'TAKEAWAY' || orderType === 'TAKEAWAY') {
+        navigate('/pos/areas?tab=takeaway', {
+          replace: true,
+          state: { selectedArea: '__TAKEAWAY__' },
+        });
+      } else {
+        navigate('/pos/areas', { replace: true });
       }
     } catch (error) {
       if (error instanceof ApiError && error.code === 'ORDER_VERSION_CONFLICT') {
@@ -5304,7 +5393,17 @@ function OrderEditor({
         { headers: mutationHeaders(csrf) },
       );
       await refreshOrder();
-      navigate('/pos/areas', { replace: true });
+      void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
+      void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
+      void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
+      if (orderType === 'TAKEAWAY' || quote.data.order.orderType === 'TAKEAWAY') {
+        navigate('/pos/areas?tab=takeaway', {
+          replace: true,
+          state: { selectedArea: '__TAKEAWAY__' },
+        });
+      } else {
+        navigate('/pos/areas', { replace: true });
+      }
     } catch (error) {
       messageApi.error(errorText(error));
     }
@@ -7946,6 +8045,7 @@ function OrderEditor({
                     value={timeRangeDraft.startedAt}
                     onChange={(val) => setTimeRangeDraft((prev) => ({ ...prev, startedAt: val }))}
                     className="staff-time-field__datepicker"
+                    popupClassName="staff-time-picker-popup"
                     style={{ width: '100%' }}
                     needConfirm={false}
                   />
@@ -7974,6 +8074,7 @@ function OrderEditor({
                     value={timeRangeDraft.endedAt}
                     onChange={(val) => setTimeRangeDraft((prev) => ({ ...prev, endedAt: val }))}
                     className="staff-time-field__datepicker"
+                    popupClassName="staff-time-picker-popup"
                     style={{ width: '100%' }}
                     needConfirm={false}
                     allowClear
@@ -8409,7 +8510,14 @@ function OrderEditor({
               className="staff-confirm-discard-btn staff-confirm-discard-btn--confirm"
               onClick={() => {
                 setDiscardModalOpen(false);
-                navigate('/pos/areas');
+                void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
+                void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
+                void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
+                if (orderType === 'TAKEAWAY' || quote.data?.order.orderType === 'TAKEAWAY') {
+                  navigate('/pos/areas?tab=takeaway', { state: { selectedArea: '__TAKEAWAY__' } });
+                } else {
+                  navigate('/pos/areas');
+                }
               }}
             >
               Xác nhận
@@ -9128,8 +9236,18 @@ function PaymentPage({
       clearPaymentPageActive(quote.data.order.id);
     }
     setPaymentSuccessData(null);
-    navigate('/pos/areas', { replace: true });
-  }, [quote.data?.order.id, navigate]);
+    void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
+    void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
+    void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
+    if (quote.data?.order.orderType === 'TAKEAWAY') {
+      navigate('/pos/areas?tab=takeaway', {
+        replace: true,
+        state: { selectedArea: '__TAKEAWAY__' },
+      });
+    } else {
+      navigate('/pos/areas', { replace: true });
+    }
+  }, [quote.data?.order.id, quote.data?.order.orderType, navigate, queryClient]);
 
   useEffect(() => {
     if (!paymentSuccessData) return;

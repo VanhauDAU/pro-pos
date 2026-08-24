@@ -169,11 +169,10 @@ export class PosService {
     return Promise.all(
       result.results.map(async (table) => {
         if (!table.activeOrderId || table.status !== 'OCCUPIED') {
-          return {
-            ...table,
+          return Object.assign({}, table, {
             totalVnd: 0,
             itemCount: 0,
-          };
+          });
         }
         try {
           const quote = await this.quote(storeId, table.activeOrderId, now);
@@ -182,19 +181,17 @@ export class PosService {
               sum + (item.productType === 'TIME' ? 0 : Number(item.quantityMilli) / 1000),
             0,
           );
-          return {
-            ...table,
+          return Object.assign({}, table, {
             totalVnd: quote.totalVnd,
             itemCount,
             guestCount: quote.order?.guestCount ?? table.guestCount ?? 1,
             timeSessionStatus: quote.time?.status ?? table.timeSessionStatus ?? null,
-          };
+          });
         } catch {
-          return {
-            ...table,
+          return Object.assign({}, table, {
             totalVnd: 0,
             itemCount: 0,
-          };
+          });
         }
       }),
     );
@@ -204,22 +201,43 @@ export class PosService {
     const result = await this.repository.listActiveOrders(storeId);
     return Promise.all(
       result.results.map(async (order) => {
-        const quote = await this.quote(storeId, order.id, now);
-        return {
-          id: order.id,
-          displayCode: order.display_code,
-          orderType: order.order_type,
-          status: order.status,
-          version: order.version,
-          openedAt: order.opened_at,
-          tableId: order.table_id,
-          tableName: order.table_name,
-          areaId: order.area_id,
-          areaName: order.area_name,
-          itemCount: quote.items.reduce((sum, item) => sum + Number(item.quantityMilli) / 1000, 0),
-          totalVnd: quote.totalVnd,
-          timeStatus: quote.time?.status ?? null,
-        };
+        try {
+          const quote = await this.quote(storeId, order.id, now);
+          return {
+            id: order.id,
+            displayCode: order.display_code,
+            orderType: order.order_type,
+            status: order.status,
+            version: order.version,
+            openedAt: order.opened_at,
+            tableId: order.table_id,
+            tableName: order.table_name,
+            areaId: order.area_id,
+            areaName: order.area_name,
+            itemCount: quote.items.reduce(
+              (sum, item) => sum + Number(item.quantityMilli) / 1000,
+              0,
+            ),
+            totalVnd: quote.totalVnd,
+            timeStatus: quote.time?.status ?? null,
+          };
+        } catch {
+          return {
+            id: order.id,
+            displayCode: order.display_code,
+            orderType: order.order_type,
+            status: order.status,
+            version: order.version,
+            openedAt: order.opened_at,
+            tableId: order.table_id,
+            tableName: order.table_name,
+            areaId: order.area_id,
+            areaName: order.area_name,
+            itemCount: 0,
+            totalVnd: 0,
+            timeStatus: null,
+          };
+        }
       }),
     );
   }
@@ -230,13 +248,17 @@ export class PosService {
       this.repository.listActiveOrders(storeId),
     ]);
     const quoteEntries = await Promise.all(
-      orderRows.results.map(
-        async (order) => [order.id, await this.quote(storeId, order.id, now)] as const,
-      ),
+      orderRows.results.map(async (order) => {
+        try {
+          return [order.id, await this.quote(storeId, order.id, now)] as const;
+        } catch {
+          return [order.id, null] as const;
+        }
+      }),
     );
     const quotes = new Map(quoteEntries);
     const orders = orderRows.results.map((order) => {
-      const quote = quotes.get(order.id)!;
+      const quote = quotes.get(order.id);
       return {
         id: order.id,
         displayCode: order.display_code,
@@ -248,20 +270,21 @@ export class PosService {
         tableName: order.table_name,
         areaId: order.area_id,
         areaName: order.area_name,
-        itemCount: quote.items.reduce(
-          (sum, item) =>
-            sum + (item.productType === 'TIME' ? 0 : Number(item.quantityMilli) / 1000),
-          0,
-        ),
-        totalVnd: quote.totalVnd,
-        timeStatus: quote.time?.status ?? null,
+        itemCount: quote
+          ? quote.items.reduce(
+              (sum, item) =>
+                sum + (item.productType === 'TIME' ? 0 : Number(item.quantityMilli) / 1000),
+              0,
+            )
+          : 0,
+        totalVnd: quote?.totalVnd ?? 0,
+        timeStatus: quote?.time?.status ?? null,
       };
     });
     const tables = tableRows.results.map((table) => {
       const quote = table.activeOrderId ? quotes.get(table.activeOrderId) : null;
-      if (!quote) return { ...table, totalVnd: 0, itemCount: 0 };
-      return {
-        ...table,
+      if (!quote) return Object.assign({}, table, { totalVnd: 0, itemCount: 0 });
+      return Object.assign({}, table, {
         totalVnd: quote.totalVnd,
         itemCount: quote.items.reduce(
           (sum, item) =>
@@ -270,7 +293,7 @@ export class PosService {
         ),
         guestCount: quote.order.guestCount ?? table.guestCount ?? 1,
         timeSessionStatus: quote.time?.status ?? table.timeSessionStatus ?? null,
-      };
+      });
     });
     return { tables, orders, serverNowMs: now };
   }

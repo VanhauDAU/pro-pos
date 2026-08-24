@@ -517,7 +517,7 @@ posRoutes.get('/catalog', requirePermission('order.manage'), async (c) =>
   success(c, await new PosService(c.env).listCatalog(c.get('actor').storeId!)),
 );
 
-posRoutes.get('/orders', requirePermission('order.manage'), async (c) =>
+posRoutes.get('/orders', requirePermission('table.view'), async (c) =>
   success(c, await new PosService(c.env).listOrders(c.get('actor').storeId!)),
 );
 

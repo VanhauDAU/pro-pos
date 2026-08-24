@@ -32,12 +32,12 @@ import {
   SearchOutlined,
   ShopOutlined,
   ShoppingCartOutlined,
+  ShoppingOutlined,
   StopOutlined,
   SwapOutlined,
   SyncOutlined,
   TagsOutlined,
   TeamOutlined,
-  UnorderedListOutlined,
   UnlockOutlined,
   UpOutlined,
   UserOutlined,
@@ -59,7 +59,6 @@ import {
   Modal,
   Radio,
   Result,
-  Segmented,
   Select,
   Skeleton,
   Spin,
@@ -140,22 +139,6 @@ interface StaffContext {
   capabilities?: { posRealtime: boolean };
 }
 
-interface PosOrder {
-  id: string;
-  displayCode: string | null;
-  orderType: 'DINE_IN' | 'TAKEAWAY';
-  status: 'OPEN' | 'PAYMENT_PENDING';
-  version: number;
-  openedAt: number;
-  tableId: string | null;
-  tableName: string | null;
-  areaId: string | null;
-  areaName: string | null;
-  itemCount: number;
-  totalVnd: number;
-  timeStatus?: 'RUNNING' | 'PAUSED' | 'ENDED' | null;
-}
-
 interface PosTable {
   id: string;
   name: string;
@@ -172,6 +155,9 @@ interface PosTable {
   activeOrderId: string | null;
   occupiedSince: number | null;
   timeSessionStatus?: 'RUNNING' | 'PAUSED' | 'ENDED' | null;
+  totalVnd?: number;
+  itemCount?: number;
+  guestCount?: number | null;
 }
 
 interface CatalogVariant {
@@ -639,15 +625,6 @@ function formatPriceRate(priceVnd: number, durationSeconds: number) {
   return `${formatMoney(priceVnd)}/${duration}`;
 }
 
-function formatDuration(openedAt: number) {
-  const seconds = Math.max(0, Math.floor((Date.now() - openedAt) / 1000));
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  return hours > 0
-    ? `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
-    : `${minutes} phút`;
-}
-
 function formatElapsed(totalSeconds: number) {
   const seconds = Math.max(0, Math.floor(totalSeconds));
   const hours = Math.floor(seconds / 3600);
@@ -1006,10 +983,9 @@ function StaffHeader({
 }
 
 const navItems = [
-  { key: 'orders', label: 'Đơn hàng', icon: <UnorderedListOutlined />, path: '/pos' },
   { key: 'areas', label: 'Khu vực', icon: <AppstoreOutlined />, path: '/pos/areas' },
   { key: 'qr', label: 'QR Order', icon: <QrcodeOutlined />, path: '/pos/qr-order' },
-  { key: 'more', label: 'Thêm', icon: <ShopOutlined />, path: '/pos/more' },
+  { key: 'more', label: 'Thêm', icon: <EllipsisOutlined />, path: '/pos/more' },
 ] as const;
 
 function StaffBottomNav({ active }: { active: (typeof navItems)[number]['key'] }) {
@@ -1065,143 +1041,67 @@ function StaffBottomNav({ active }: { active: (typeof navItems)[number]['key'] }
   );
 }
 
-function OrdersPage({ search }: { search: string }) {
-  const navigate = useNavigate();
-  const [filter, setFilter] = useState<'ALL' | 'DINE_IN' | 'TAKEAWAY'>('ALL');
-  const pollingInterval = usePosPollingInterval(30_000);
-  const orders = useQuery({
-    queryKey: ['pos-orders'],
-    queryFn: () => apiRequest<PosOrder[]>('/api/v1/pos/orders'),
-    refetchInterval: pollingInterval,
-  });
-  const filtered = useMemo(() => {
-    const term = search.trim().toLocaleLowerCase('vi-VN');
-    return (orders.data ?? []).filter((order) => {
-      const matchesType = filter === 'ALL' || order.orderType === filter;
-      const label = `${order.displayCode ?? ''} ${order.areaName ?? ''} ${order.tableName ?? ''}`;
-      return matchesType && label.toLocaleLowerCase('vi-VN').includes(term);
-    });
-  }, [filter, orders.data, search]);
-  const counts = {
-    ALL: orders.data?.length ?? 0,
-    DINE_IN: orders.data?.filter((order) => order.orderType === 'DINE_IN').length ?? 0,
-    TAKEAWAY: orders.data?.filter((order) => order.orderType === 'TAKEAWAY').length ?? 0,
-  };
+const STATUS_OPTIONS: Array<{ key: 'ALL' | 'OCCUPIED' | 'AVAILABLE'; label: string }> = [
+  { key: 'ALL', label: 'Tất cả' },
+  { key: 'OCCUPIED', label: 'Sử dụng' },
+  { key: 'AVAILABLE', label: 'Còn trống' },
+];
 
-  return (
-    <div className="staff-orders-page">
-      <div className="staff-orders-layout">
-        <aside className="staff-order-filters">
-          {(
-            [
-              ['ALL', 'Tất cả', <AppstoreOutlined key="all" />],
-              ['DINE_IN', 'Tại chỗ', <ShopOutlined key="dine" />],
-              ['TAKEAWAY', 'Mang đi', <ShoppingCartOutlined key="take" />],
-            ] as const
-          ).map(([key, label, icon]) => (
-            <button
-              key={key}
-              type="button"
-              className={filter === key ? 'is-active' : ''}
-              onClick={() => setFilter(key)}
-            >
-              {icon}
-              <span>{label}</span>
-              {counts[key] > 0 ? <b>{counts[key]}</b> : null}
-            </button>
-          ))}
-        </aside>
-        <main className="staff-order-results">
-          <div className="staff-mobile-segmented">
-            <Segmented
-              block
-              value={filter}
-              options={[
-                { value: 'ALL', label: counts.ALL > 0 ? `Tất cả (${counts.ALL})` : 'Tất cả' },
-                {
-                  value: 'DINE_IN',
-                  label: counts.DINE_IN > 0 ? `Tại chỗ (${counts.DINE_IN})` : 'Tại chỗ',
-                },
-                {
-                  value: 'TAKEAWAY',
-                  label: counts.TAKEAWAY > 0 ? `Mang đi (${counts.TAKEAWAY})` : 'Mang đi',
-                },
-              ]}
-              onChange={(value) => setFilter(value as typeof filter)}
-            />
-          </div>
-          {orders.isLoading ? (
-            <div className="staff-order-grid">
-              <Skeleton active />
-              <Skeleton active />
-            </div>
-          ) : orders.isError ? (
-            <Alert type="error" showIcon title="Chưa tải được danh sách đơn" />
-          ) : filtered.length === 0 ? (
-            <Empty description="Chưa có đơn hàng đang mở" />
-          ) : (
-            <div className="staff-order-grid">
-              {filtered.map((order) => (
-                <button
-                  type="button"
-                  className="staff-order-card"
-                  key={order.id}
-                  onClick={() => navigate(`/pos/orders/${order.id}`)}
-                >
-                  <div className="staff-order-card__title">
-                    {order.orderType === 'DINE_IN' ? <ShopOutlined /> : <ShoppingCartOutlined />}
-                    <strong>
-                      {order.orderType === 'DINE_IN'
-                        ? [order.areaName, order.tableName].filter(Boolean).join(' - ')
-                        : order.displayCode}
-                    </strong>
-                  </div>
-                  <div className="staff-order-card__meta">
-                    {order.timeStatus === 'PAUSED' ? (
-                      <Tag color="warning" icon={<PauseCircleOutlined />} style={{ margin: 0 }}>
-                        Tạm dừng
-                      </Tag>
-                    ) : (
-                      <span>
-                        <ClockCircleOutlined /> {formatDuration(order.openedAt)}
-                      </span>
-                    )}
-                    <span>SL: {order.itemCount}</span>
-                  </div>
-                  <b className="staff-order-card__total">{formatMoney(order.totalVnd)}</b>
-                </button>
-              ))}
-            </div>
-          )}
-        </main>
-      </div>
-      <Button
-        type="primary"
-        size="large"
-        icon={<PlusOutlined />}
-        className="staff-create-order-button"
-        onClick={() => {
-          if (filter === 'TAKEAWAY') {
-            navigate('/pos/orders/new?type=TAKEAWAY');
-          } else {
-            navigate('/pos/orders/new');
-          }
-        }}
-      >
-        Tạo đơn mới
-      </Button>
-    </div>
-  );
+function formatTableShortDuration(occupiedSince: number | null, now: number) {
+  if (!occupiedSince) return '0p';
+  const totalSecs = Math.max(0, Math.floor((now - occupiedSince) / 1000));
+  const hours = Math.floor(totalSecs / 3600);
+  const minutes = Math.floor((totalSecs % 3600) / 60);
+  if (hours > 0) {
+    return `${hours}g ${minutes}p`;
+  }
+  return `${minutes}p`;
 }
 
 function AreasPage() {
   const navigate = useNavigate();
+  const [now, setNow] = useState(() => Date.now());
   const pollingInterval = usePosPollingInterval(20_000);
   const tables = useQuery({
     queryKey: ['pos-tables'],
     queryFn: () => apiRequest<PosTable[]>('/api/v1/pos/tables'),
     refetchInterval: pollingInterval,
   });
+
+  const posOrders = useQuery({
+    queryKey: ['pos-orders-list'],
+    queryFn: () =>
+      apiRequest<
+        Array<{
+          id: string;
+          displayCode: string;
+          orderType: 'DINE_IN' | 'TAKEAWAY';
+          status: string;
+          openedAt: number;
+          itemCount: number;
+          totalVnd: number;
+        }>
+      >('/api/v1/pos/orders'),
+    refetchInterval: pollingInterval,
+  });
+
+  const activeTakeaways = useMemo(() => {
+    return (posOrders.data ?? [])
+      .filter(
+        (o) =>
+          o.orderType === 'TAKEAWAY' && (o.status === 'OPEN' || o.status === 'PAYMENT_PENDING'),
+      )
+      .toSorted((a, b) => a.openedAt - b.openedAt);
+  }, [posOrders.data]);
+
+  useEffect(() => {
+    const hasOccupied =
+      tables.data?.some((t) => t.status === 'OCCUPIED') || activeTakeaways.length > 0;
+    if (!hasOccupied) return undefined;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [tables.data, activeTakeaways.length]);
+
   const areas = useMemo(() => {
     const map = new Map<string, { id: string; name: string; tables: PosTable[] }>();
     for (const table of tables.data ?? []) {
@@ -1211,85 +1111,214 @@ function AreasPage() {
     }
     return [...map.values()];
   }, [tables.data]);
+
   const [selectedArea, setSelectedArea] = useState<string | null>(null);
   const [status, setStatus] = useState<'ALL' | 'OCCUPIED' | 'AVAILABLE'>('ALL');
-  const area = areas.find((item) => item.id === selectedArea) ?? areas[0];
+
+  const isTakeaway = selectedArea === '__TAKEAWAY__';
+  const effectiveAreaId = isTakeaway ? '__TAKEAWAY__' : (selectedArea ?? areas[0]?.id ?? null);
+  const currentArea = areas.find((item) => item.id === effectiveAreaId) ?? areas[0];
+
   const visibleTables =
-    area?.tables.filter((table) => status === 'ALL' || table.status === status) ?? [];
-  const available = area?.tables.filter((table) => table.status === 'AVAILABLE').length ?? 0;
+    currentArea?.tables.filter((table) => status === 'ALL' || table.status === status) ?? [];
 
   return (
     <div className="staff-areas-page">
       {tables.isLoading ? <Spin fullscreen description="Đang tải khu vực" /> : null}
       {tables.isError ? <Alert type="error" showIcon title="Chưa tải được khu vực và bàn" /> : null}
-      <aside className="staff-area-list">
+
+      {/* Mobile/iPad Top Bar: Status tabs on top, Area pills + Takeaway below */}
+      <div className="staff-areas-mobile-header">
+        <div className="staff-status-bar">
+          {STATUS_OPTIONS.map((opt) => (
+            <button
+              key={opt.key}
+              type="button"
+              className={`staff-status-tab ${status === opt.key ? 'is-active' : ''}`}
+              onClick={() => setStatus(opt.key)}
+            >
+              <span className="staff-status-tab__label">{opt.label}</span>
+            </button>
+          ))}
+        </div>
+        <div className="staff-area-pill-bar">
+          <div className="staff-area-pill-list">
+            <button
+              type="button"
+              className={`staff-area-pill staff-area-pill--takeaway ${isTakeaway ? 'is-active' : ''}`}
+              onClick={() => setSelectedArea('__TAKEAWAY__')}
+            >
+              <ShoppingOutlined /> Mang về
+            </button>
+            {areas.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`staff-area-pill ${!isTakeaway && item.id === currentArea?.id ? 'is-active' : ''}`}
+                onClick={() => setSelectedArea(item.id)}
+              >
+                {item.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Desktop Sidebar with Mang về card at the top */}
+      <aside className="staff-area-sidebar staff-area-list">
+        <button
+          type="button"
+          className={`staff-area-sidebar__item staff-area-sidebar__item--takeaway ${isTakeaway ? 'is-active' : ''}`}
+          onClick={() => setSelectedArea('__TAKEAWAY__')}
+        >
+          <ShoppingOutlined /> <span>Mang về</span>
+        </button>
+        <div className="staff-area-sidebar__divider" />
         {areas.map((item) => (
           <button
             key={item.id}
             type="button"
-            className={item.id === area?.id ? 'is-active' : ''}
+            className={`staff-area-sidebar__item ${!isTakeaway && item.id === currentArea?.id ? 'is-active' : ''}`}
             onClick={() => setSelectedArea(item.id)}
           >
             {item.name}
           </button>
         ))}
       </aside>
+
+      {/* Main Content Area */}
       <main className="staff-area-content">
-        <Segmented
-          size="large"
-          value={status}
-          options={[
-            { value: 'ALL', label: 'Tất cả' },
-            { value: 'OCCUPIED', label: 'Có khách' },
-            { value: 'AVAILABLE', label: 'Trống' },
-          ]}
-          onChange={(value) => setStatus(value as typeof status)}
-        />
-        <Typography.Title level={4} className="staff-area-summary">
-          Bàn trống: {available}/{area?.tables.length ?? 0}
-        </Typography.Title>
-        {visibleTables.length === 0 ? (
-          <Empty description="Khu vực chưa có bàn phù hợp" />
+        {/* Desktop Status Bar */}
+        <div className="staff-desktop-status-bar">
+          <div className="staff-status-bar">
+            {STATUS_OPTIONS.map((opt) => (
+              <button
+                key={opt.key}
+                type="button"
+                className={`staff-status-tab ${status === opt.key ? 'is-active' : ''}`}
+                onClick={() => setStatus(opt.key)}
+              >
+                <span className="staff-status-tab__label">{opt.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {isTakeaway ? (
+          <div className="staff-table-grid">
+            {/* Card Tạo đơn mang về mới (luôn hiển thị, giống mẫu ảnh) */}
+            {status !== 'OCCUPIED' ? (
+              <button
+                type="button"
+                className="staff-table-card staff-table-card--takeaway-create"
+                onClick={() => navigate('/pos/orders/new?type=TAKEAWAY')}
+              >
+                <div className="staff-takeaway-create-header">
+                  <svg
+                    className="staff-takeaway-create-icon"
+                    width="26"
+                    height="26"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <path
+                      d="M19 7H16.73L14.71 2.96C14.53 2.6 14.16 2.37 13.76 2.37H10.24C9.84 2.37 9.47 2.6 9.29 2.96L7.27 7H5C3.9 7 3 7.9 3 9V20C3 21.1 3.9 22 5 22H19C20.1 22 21 21.1 21 20V9C21 7.9 20.1 7 19 7ZM10.5 4.37H13.5L14.82 7H9.18L10.5 4.37ZM19 20H5V9H19V20Z"
+                      fill="#0975f7"
+                    />
+                    <path
+                      d="M8 12H10V17H8V12ZM14 12H16V17H14V12ZM11 12H13V17H11V12Z"
+                      fill="#0975f7"
+                    />
+                  </svg>
+                  <strong className="staff-takeaway-create-title">Mang về</strong>
+                </div>
+              </button>
+            ) : null}
+
+            {/* Các đơn mang về đang hoạt động ("Mang về 01", "Mang về 02", ...) */}
+            {status !== 'AVAILABLE'
+              ? activeTakeaways.map((takeawayOrder, index) => {
+                  const label = `Mang về ${String(index + 1).padStart(2, '0')}`;
+                  return (
+                    <button
+                      type="button"
+                      key={takeawayOrder.id}
+                      className="staff-table-card staff-table-card--occupied"
+                      onClick={() => navigate(`/pos/orders/${takeawayOrder.id}`)}
+                    >
+                      <div className="staff-table-card__header">
+                        <strong className="staff-table-card__name">{label}</strong>
+                      </div>
+                      <div className="staff-table-card__body">
+                        <div className="staff-table-card__meta">
+                          <span>{formatTableShortDuration(takeawayOrder.openedAt, now)}</span>
+                          <span className="staff-table-card__dot">•</span>
+                          <span>{takeawayOrder.itemCount ?? 0} món</span>
+                        </div>
+                        <div className="staff-table-card__total">
+                          {formatMoney(takeawayOrder.totalVnd ?? 0)}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })
+              : null}
+          </div>
+        ) : visibleTables.length === 0 ? (
+          <Empty description="Khu vực chưa có bàn phù hợp" style={{ padding: '60px 0' }} />
         ) : (
           <div className="staff-table-grid">
             {visibleTables.map((table) => {
+              const isOccupied = table.status === 'OCCUPIED';
+              const isPaused = table.timeSessionStatus === 'PAUSED';
+
               return (
                 <button
                   type="button"
                   key={table.id}
                   disabled={table.status === 'DISABLED'}
-                  className={`staff-table-card staff-table-card--${table.status.toLocaleLowerCase()}`}
+                  className={[
+                    'staff-table-card',
+                    `staff-table-card--${table.status.toLowerCase()}`,
+                    isPaused && 'staff-table-card--paused',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
                   onClick={() => {
                     if (table.activeOrderId) navigate(`/pos/orders/${table.activeOrderId}`);
                     else navigate(`/pos/orders/new?tableId=${table.id}`);
                   }}
                 >
-                  <strong>{table.name}</strong>
-                  {table.status === 'DISABLED' ? (
-                    <span>Tạm ngưng phục vụ</span>
-                  ) : table.occupiedSince ? (
-                    <span>
-                      <ClockCircleOutlined /> {formatDuration(table.occupiedSince)}
-                    </span>
-                  ) : (
-                    <span>Trống · Chạm để tạo đơn</span>
-                  )}
+                  <div className="staff-table-card__header">
+                    <strong className="staff-table-card__name">{table.name}</strong>
+                    {isOccupied && isPaused && (
+                      <span className="staff-table-card__paused-badge">
+                        <PauseCircleOutlined /> Tạm dừng
+                      </span>
+                    )}
+                  </div>
+                  {isOccupied ? (
+                    <div className="staff-table-card__body">
+                      <div className="staff-table-card__meta">
+                        <span>{formatTableShortDuration(table.occupiedSince, now)}</span>
+                        <span className="staff-table-card__dot">•</span>
+                        <span>
+                          {table.guestCount && table.guestCount > 0
+                            ? `${table.guestCount} khách`
+                            : `${table.itemCount ?? 0} món`}
+                        </span>
+                      </div>
+                      <div className="staff-table-card__total">
+                        {formatMoney(table.totalVnd ?? 0)}
+                      </div>
+                    </div>
+                  ) : null}
                 </button>
               );
             })}
           </div>
         )}
-        <div className="staff-table-legend">
-          <span>
-            <i className="is-available" /> Trống
-          </span>
-          <span>
-            <i className="is-occupied" /> Bàn có khách
-          </span>
-          <span>
-            <i className="is-disabled" /> Tạm ngưng
-          </span>
-        </div>
       </main>
     </div>
   );
@@ -1519,7 +1548,6 @@ function QrOrderPage() {
       queryClient.invalidateQueries({ queryKey: ['guest-order-requests'] }),
       queryClient.invalidateQueries({ queryKey: ['service-requests'] }),
       queryClient.invalidateQueries({ queryKey: ['table-open-requests'] }),
-      queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
       queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
       queryClient.invalidateQueries({ queryKey: ['staff-notification-audit'] }),
     ]);
@@ -2971,8 +2999,9 @@ function SwipeableOrderItemRow({
           </button>
         </div>
       ) : null}
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
         className={`staff-compact-order-row staff-compact-order-row--editable ${className}`}
         style={{
           transform: `translateX(${offsetX}px)`,
@@ -2982,9 +3011,14 @@ function SwipeableOrderItemRow({
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
         onClick={handleClick}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            handleClick();
+          }
+        }}
       >
         {children}
-      </button>
+      </div>
     </div>
   );
 }
@@ -3517,6 +3551,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     return 'DINE_IN';
   });
   const [draftLines, setDraftLines] = useState<DraftLine[]>([]);
+  const [modifiedItemQuantities, setModifiedItemQuantities] = useState<Record<string, number>>({});
   const [tableModalOpen, setTableModalOpen] = useState(false);
   const [tableAction, setTableAction] = useState<'SELECT' | 'SAVE' | 'CHECKOUT'>('SELECT');
   const [saving, setSaving] = useState(false);
@@ -3641,12 +3676,21 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   };
 
   const handleExit = () => {
-    if (draftLines.length > 0) {
+    const hasModifiedQty = Object.entries(modifiedItemQuantities).some(([id, qty]) => {
+      const it = quote.data?.items.find((x) => x.id === id);
+      return it && it.quantityMilli !== qty;
+    });
+    if (draftLines.length > 0 || hasModifiedQty) {
       setDiscardModalOpen(true);
     } else {
-      navigate('/pos');
+      navigate('/pos/areas');
     }
   };
+
+  useEffect(() => {
+    setModifiedItemQuantities({});
+    setDraftLines([]);
+  }, [orderId]);
 
   const catalog = useQuery({
     queryKey: ['pos-catalog'],
@@ -3722,7 +3766,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           { method: 'PATCH', headers: mutationHeaders(csrf) },
         );
         void queryClient.invalidateQueries({ queryKey: ['pos-order-quote', orderId] });
-        void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
       } catch (err) {
         messageApi.error(errorText(err));
       }
@@ -3749,7 +3792,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           { method: 'PATCH', headers: mutationHeaders(csrf) },
         );
         void queryClient.invalidateQueries({ queryKey: ['pos-order-quote', orderId] });
-        void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
         messageApi.success(customer ? 'Đã chọn khách hàng.' : 'Đã bỏ chọn khách hàng.');
       } catch (err) {
         messageApi.error(errorText(err));
@@ -3843,6 +3885,21 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       });
       return;
     }
+    if (!isNew && quote.data?.items) {
+      const existingSaved = quote.data.items.find(
+        (it) =>
+          it.productId === product.productId &&
+          (it.variantId ?? null) === (effectiveVariant.id ?? null) &&
+          !it.promotionGift,
+      );
+      if (existingSaved) {
+        setModifiedItemQuantities((prev) => {
+          const current = prev[existingSaved.id] ?? existingSaved.quantityMilli;
+          return { ...prev, [existingSaved.id]: current + 1000 };
+        });
+        return;
+      }
+    }
     setDraftLines((lines) => {
       const found = lines.find(
         (line) =>
@@ -3923,12 +3980,14 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const refreshOrder = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['pos-order-quote', orderId] }),
-      queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
       queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
     ]);
   };
 
   const chooseProduct = (product: CatalogProduct, event?: React.MouseEvent) => {
+    if (event) {
+      event.stopPropagation();
+    }
     if (product.variants.length > 1) {
       setVariantProduct(product);
       return;
@@ -4046,13 +4105,12 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
 
   const completeCreatedOrder = async (createdOrderId: string, checkoutAfterSave: boolean) => {
     await refreshOrder();
-    await queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
     await queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
     if (checkoutAfterSave) {
       navigate(`/pos/orders/${createdOrderId}?checkout=1`, { replace: true });
     } else {
       messageApi.success('Lưu đơn hàng thành công.');
-      navigate('/pos', { replace: true });
+      navigate('/pos/areas', { replace: true });
     }
   };
 
@@ -4161,20 +4219,60 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     return { orderId: created.orderId, version };
   };
 
+  const persistModifiedItems = async (
+    targetOrderId: string,
+    startingVersion: number,
+  ): Promise<number> => {
+    let currentVersion = startingVersion;
+    const entries = Object.entries(modifiedItemQuantities);
+    for (const [itemId, qtyMilli] of entries) {
+      const existingItem = quote.data?.items.find((it) => it.id === itemId);
+      if (!existingItem || existingItem.quantityMilli === qtyMilli) continue;
+      await jsonRequest(
+        `/api/v1/pos/orders/${targetOrderId}/items/${itemId}`,
+        {
+          expectedOrderVersion: currentVersion,
+          quantityMilli: qtyMilli,
+          variantId: existingItem.variantId,
+          discount:
+            existingItem.discountType && typeof existingItem.discountInputValue === 'number'
+              ? {
+                  type: existingItem.discountType,
+                  value: existingItem.discountInputValue,
+                  reason: existingItem.discountReason || '',
+                }
+              : undefined,
+          note: existingItem.note ?? null,
+        },
+        { method: 'PATCH', headers: mutationHeaders(csrf) },
+      );
+      currentVersion += 1;
+    }
+    setModifiedItemQuantities({});
+    return currentVersion;
+  };
+
   const saveAdditionalItems = async (openPaymentAfterSave = false) => {
     if (!quote.data) return;
-    if (draftLines.length === 0 && manualPromotionIds === null) {
+    const hasModifiedQty = Object.entries(modifiedItemQuantities).some(([id, qty]) => {
+      const it = quote.data?.items.find((x) => x.id === id);
+      return it && it.quantityMilli !== qty;
+    });
+    if (draftLines.length === 0 && !hasModifiedQty && manualPromotionIds === null) {
       if (openPaymentAfterSave) {
         navigateToPayment(quote.data.order.id);
       } else {
         messageApi.success('Lưu đơn hàng thành công.');
-        navigate('/pos', { replace: true });
+        navigate('/pos/areas', { replace: true });
       }
       return;
     }
     setSaving(true);
     try {
       let currentVersion = quote.data.order.version;
+      if (hasModifiedQty) {
+        currentVersion = await persistModifiedItems(quote.data.order.id, currentVersion);
+      }
       if (draftLines.length > 0) {
         currentVersion = await persistLines(quote.data.order.id, currentVersion);
         setDraftLines([]);
@@ -4189,13 +4287,12 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       }
       setManualPromotionIds(null);
       await refreshOrder();
-      await queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
       await queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
       messageApi.success('Lưu đơn hàng thành công.');
       if (openPaymentAfterSave) {
         navigateToPayment(quote.data.order.id);
       } else {
-        navigate('/pos', { replace: true });
+        navigate('/pos/areas', { replace: true });
       }
     } catch (error) {
       messageApi.error(errorText(error));
@@ -4238,7 +4335,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
             !cached || refreshed.order.version >= cached.order.version ? refreshed : cached,
           );
           clearPaymentPageActive(frozenQuote.order.id);
-          void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
           void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
           setResumeModalOpen(false);
           return true;
@@ -4263,7 +4359,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       );
       clearPaymentPageActive(frozenQuote.order.id);
       void queryClient.invalidateQueries({ queryKey: ['pos-order-quote', orderId] });
-      void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
       void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
       messageApi.success(`Đã tiếp tục tính giờ cho ${frozenQuote.order.tableName}`);
       setResumeModalOpen(false);
@@ -4362,6 +4457,13 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         setStoppingTime(true);
         try {
           let currentVersion = quote.data.order.version;
+          const hasModifiedQty = Object.entries(modifiedItemQuantities).some(([id, qty]) => {
+            const it = quote.data?.items.find((x) => x.id === id);
+            return it && it.quantityMilli !== qty;
+          });
+          if (hasModifiedQty) {
+            currentVersion = await persistModifiedItems(quote.data.order.id, currentVersion);
+          }
           if (draftLines.length > 0) {
             currentVersion = await persistLines(quote.data.order.id, currentVersion);
             setDraftLines([]);
@@ -4388,7 +4490,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
             (cached) =>
               !cached || pendingQuote.order.version >= cached.order.version ? pendingQuote : cached,
           );
-          void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
           void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
           navigateToPayment(quote.data.order.id);
         } catch (error) {
@@ -4443,6 +4544,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         { method: 'PATCH', headers: mutationHeaders(csrf) },
       );
       setEditingItem(null);
+      setModifiedItemQuantities((prev) => {
+        const next = { ...prev };
+        delete next[input.id];
+        return next;
+      });
       await refreshOrder();
     } catch (error) {
       messageApi.error(errorText(error));
@@ -4476,6 +4582,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           { expectedOrderVersion: quote.data.order.version, reason: deleteItemReason.trim() },
           { method: 'DELETE', headers: mutationHeaders(csrf) },
         );
+        setModifiedItemQuantities((prev) => {
+          const next = { ...prev };
+          delete next[deleteItemTarget.id];
+          return next;
+        });
         setDeleteItemModalOpen(false);
         setDeleteItemTarget(null);
         setDeleteItemReason('');
@@ -4550,7 +4661,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       setTimeDetailOpen(false);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['pos-order-quote', currentOrderId] }),
-        queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
         queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
       ]);
     } catch (error) {
@@ -4574,7 +4684,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       setTimeDetailOpen(false);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['pos-order-quote', currentOrderId] }),
-        queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
         queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
       ]);
     } catch (error) {
@@ -4602,7 +4711,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       setTimeDetailOpen(false);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['pos-order-quote', currentOrderId] }),
-        queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
         queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
       ]);
     } catch (error) {
@@ -4668,7 +4776,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       );
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['pos-order-quote', currentOrderId] }),
-        queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
         queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
       ]);
       setTimeDetailOpen(false);
@@ -4701,7 +4808,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       await Promise.all([
         refreshOrder(),
         queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
-        queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
       ]);
     } catch (error) {
       messageApi.error(errorText(error));
@@ -4718,7 +4824,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         { headers: mutationHeaders(csrf) },
       );
       await refreshOrder();
-      navigate('/pos', { replace: true });
+      navigate('/pos/areas', { replace: true });
     } catch (error) {
       messageApi.error(errorText(error));
     }
@@ -4767,6 +4873,10 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     if (!isNew && quote.data?.items) {
       for (const item of quote.data.items) {
         if (item.promotionGift) continue;
+        const qtyMilli = modifiedItemQuantities[item.id] ?? item.quantityMilli;
+        const gross = calculateLineTotal(item.unitPriceVnd, qtyMilli);
+        const discount = calculateDiscountAmount(gross, item.discountType, item.discountInputValue);
+        const net = gross - discount;
         list.push({
           productId: item.productId,
           variantId: item.variantId ?? null,
@@ -4774,9 +4884,9 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           productName: item.productName,
           variantName: item.variantName ?? null,
           unitPriceVnd: item.unitPriceVnd,
-          quantityMilli: item.quantityMilli,
-          grossLineTotalVnd: item.grossLineTotalVnd,
-          netLineTotalVnd: item.netLineTotalVnd,
+          quantityMilli: qtyMilli,
+          grossLineTotalVnd: gross,
+          netLineTotalVnd: net,
         });
       }
     }
@@ -4796,7 +4906,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     }
 
     return list;
-  }, [isNew, quote.data?.items, draftDisplayItems]);
+  }, [isNew, quote.data?.items, modifiedItemQuantities, draftDisplayItems]);
 
   // 2. Tiền giờ (phiên tính giờ của bàn)
   const totalTimeGross = quote.data?.time ? quote.data.time.amountAfterRoundingVnd : 0;
@@ -4903,11 +5013,63 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     if (isNew) {
       return [...draftDisplayItems, ...previewGiftDisplayItems];
     }
-    const savedNonGift = (quote.data?.items ?? []).filter((it) => !it.promotionGift);
+    const savedNonGift = (quote.data?.items ?? [])
+      .filter((it) => !it.promotionGift)
+      .map((it) => {
+        const qtyMilli = modifiedItemQuantities[it.id] ?? it.quantityMilli;
+        const gross = calculateLineTotal(it.unitPriceVnd, qtyMilli);
+        const discount = calculateDiscountAmount(gross, it.discountType, it.discountInputValue);
+        const net = gross - discount;
+        return {
+          ...it,
+          quantityMilli: qtyMilli,
+          grossLineTotalVnd: gross,
+          discountAmountVnd: discount,
+          netLineTotalVnd: net,
+        };
+      });
     return [...savedNonGift, ...draftDisplayItems, ...previewGiftDisplayItems];
-  }, [isNew, quote.data?.items, draftDisplayItems, previewGiftDisplayItems]);
+  }, [
+    isNew,
+    quote.data?.items,
+    modifiedItemQuantities,
+    draftDisplayItems,
+    previewGiftDisplayItems,
+  ]);
+
+  const mobileHeaderTitle = useMemo(() => {
+    const tName = quote.data?.order.tableName ?? selectedTable?.name;
+    const aName = quote.data?.order.areaName ?? selectedTable?.areaName;
+    if (tName) {
+      return aName ? `${tName} / ${aName}` : tName;
+    }
+    if (orderType === 'TAKEAWAY') {
+      return 'Đơn mang về';
+    }
+    return (
+      quote.data?.order.displayCode || (orderId ? `Đơn ${orderId.slice(0, 6)}` : 'Chọn mặt hàng')
+    );
+  }, [
+    quote.data?.order.tableName,
+    quote.data?.order.areaName,
+    quote.data?.order.displayCode,
+    selectedTable,
+    orderType,
+    orderId,
+  ]);
 
   const displayedItems = allCurrentItems;
+
+  const hasUnsavedChanges = useMemo(() => {
+    if (isNew) {
+      return draftLines.length > 0;
+    }
+    const hasModifiedQty = Object.entries(modifiedItemQuantities).some(([id, qty]) => {
+      const it = quote.data?.items.find((x) => x.id === id);
+      return it && it.quantityMilli !== qty;
+    });
+    return draftLines.length > 0 || hasModifiedQty || manualPromotionIds !== null;
+  }, [isNew, draftLines.length, modifiedItemQuantities, quote.data?.items, manualPromotionIds]);
 
   // 1. Tiền hàng (mặt hàng số lượng và trọng lượng)
   const regularProductGross = allCurrentItems
@@ -4995,122 +5157,188 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
               >
                 <CloseOutlined />
               </button>
-              <div className="staff-product-picker-mobile__title">Chọn mặt hàng</div>
-              <div className="staff-product-picker-mobile__header-space" />
+              <div className="staff-product-picker-mobile__title">{mobileHeaderTitle}</div>
+              <div className="staff-product-picker-mobile__header-actions">
+                {auth.actor?.kind === 'OWNER' ||
+                (staffContext.data?.permissions ?? []).includes('catalog.manage') ? (
+                  <button
+                    type="button"
+                    className="staff-product-picker-mobile__action-btn"
+                    onClick={() => navigate('/pos/catalog')}
+                    title="Quản lý món"
+                  >
+                    <TagsOutlined />
+                  </button>
+                ) : (
+                  <div className="staff-product-picker-mobile__header-space" />
+                )}
+              </div>
             </header>
 
             {/* Search Bar */}
             <div className="staff-product-picker-mobile__search">
               <Input
-                size="large"
+                size="middle"
                 allowClear
-                prefix={<SearchOutlined />}
-                placeholder="Tìm kiếm mặt hàng"
+                prefix={<SearchOutlined style={{ color: '#94a3b8' }} />}
+                placeholder="Tìm kiếm mặt hàng..."
                 value={catalogSearch}
                 onChange={(e) => setCatalogSearch(e.target.value)}
               />
             </div>
 
-            {/* Categories & Products Layout */}
-            <div className="staff-product-picker-mobile__body-split">
-              <aside className="staff-product-picker-mobile__cats-col">
+            {/* Categories Horizontal Scroll Bar */}
+            <div className="staff-product-picker-mobile__cat-bar">
+              <button
+                type="button"
+                className={`staff-product-picker-cat-pill ${selectedCategory === 'ALL' ? 'is-active' : ''}`}
+                onClick={() => setSelectedCategory('ALL')}
+              >
+                Tất cả
+              </button>
+              {categories.map((cat) => (
                 <button
                   type="button"
-                  className={`staff-product-picker-cat-btn ${selectedCategory === 'ALL' ? 'is-active' : ''}`}
-                  onClick={() => setSelectedCategory('ALL')}
+                  key={cat.id}
+                  className={`staff-product-picker-cat-pill ${selectedCategory === cat.id ? 'is-active' : ''}`}
+                  onClick={() => setSelectedCategory(cat.id)}
                 >
-                  <AppstoreOutlined className="staff-product-picker-cat-btn__icon" />
-                  <span>Tất cả</span>
+                  {cat.name}
                 </button>
-                {categories.map((cat) => (
-                  <button
-                    type="button"
-                    key={cat.id}
-                    className={`staff-product-picker-cat-btn ${selectedCategory === cat.id ? 'is-active' : ''}`}
-                    onClick={() => setSelectedCategory(cat.id)}
-                  >
-                    <ShopOutlined className="staff-product-picker-cat-btn__icon" />
-                    <span>{cat.name}</span>
-                  </button>
-                ))}
-              </aside>
-
-              <main className="staff-product-picker-mobile__products-col">
-                <div className="staff-product-picker-mobile__section-heading">
-                  <span>
-                    {selectedCategory === 'ALL'
-                      ? 'Tất cả'
-                      : (categories.find((c) => c.id === selectedCategory)?.name ?? 'Danh sách')}
-                  </span>
-                  {auth.actor?.kind === 'OWNER' ||
-                  (staffContext.data?.permissions ?? []).includes('catalog.manage') ? (
-                    <Button
-                      type="link"
-                      size="small"
-                      icon={<TagsOutlined />}
-                      onClick={() => navigate('/pos/catalog')}
-                    >
-                      Quản lý món
-                    </Button>
-                  ) : null}
-                </div>
-                {catalog.isLoading ? (
-                  <Skeleton active />
-                ) : visibleCatalog.length === 0 ? (
-                  <Empty description="Không tìm thấy sản phẩm" style={{ marginTop: 40 }} />
-                ) : (
-                  <div className="staff-product-picker-mobile__grid">
-                    {visibleCatalog.map((product) => {
-                      const prices = product.variants
-                        .map((v) => v.salePriceVnd)
-                        .filter((p): p is number => p !== null);
-                      const minPrice = prices.length > 0 ? Math.min(...prices) : null;
-                      const maxPrice = prices.length > 0 ? Math.max(...prices) : null;
-                      return (
-                        <button
-                          type="button"
-                          key={product.productId}
-                          className="staff-product-mobile-card"
-                          onClick={(e) => chooseProduct(product, e)}
-                        >
-                          <div
-                            className={`staff-product-mobile-card__visual ${product.avatarType === 'IMAGE' && product.mediaId ? 'has-image' : 'has-color'} ${product.avatarColor ? 'has-custom-color' : ''}`}
-                            style={{
-                              background: product.avatarColor || '#f8fafc',
-                            }}
-                          >
-                            {product.avatarType === 'IMAGE' && product.mediaId ? (
-                              <img src={`/api/v1/media/${product.mediaId}`} alt="" />
-                            ) : (
-                              getProductInitials(product.productName)
-                            )}
-                          </div>
-                          <div className="staff-product-mobile-card__info">
-                            <strong className="staff-product-mobile-card__name">
-                              {product.productName}
-                            </strong>
-                            <div className="staff-product-mobile-card__meta">
-                              {product.variants.length > 1 ? (
-                                <small className="staff-product-mobile-card__variant">
-                                  {product.variants.length} phiên bản
-                                </small>
-                              ) : null}
-                            </div>
-                            <b className="staff-product-mobile-card__price">
-                              {minPrice === null
-                                ? 'Nhập giá'
-                                : minPrice === maxPrice
-                                  ? `${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`
-                                  : `Từ ${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`}
-                            </b>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </main>
+              ))}
             </div>
+
+            {/* Products Compact Row List */}
+            <main className="staff-product-picker-mobile__products-list">
+              {catalog.isLoading ? (
+                <div style={{ padding: '20px 16px' }}>
+                  <Skeleton active paragraph={{ rows: 6 }} />
+                </div>
+              ) : visibleCatalog.length === 0 ? (
+                <Empty description="Không tìm thấy sản phẩm" style={{ marginTop: 60 }} />
+              ) : (
+                <div className="staff-product-compact-list">
+                  {visibleCatalog.map((product) => {
+                    const prices = product.variants
+                      .map((v) => v.salePriceVnd)
+                      .filter((p): p is number => p !== null);
+                    const minPrice = prices.length > 0 ? Math.min(...prices) : null;
+                    const maxPrice = prices.length > 0 ? Math.max(...prices) : null;
+                    const countInCart = pickingCart
+                      .filter((l) => l.product.productId === product.productId)
+                      .reduce((sum, l) => sum + Math.round(Number(l.quantityMilli) / 1000), 0);
+
+                    return (
+                      <div
+                        key={product.productId}
+                        className={`staff-product-compact-row ${countInCart > 0 ? 'is-selected' : ''}`}
+                        onClick={(e) => chooseProduct(product, e)}
+                      >
+                        <div
+                          className={`staff-product-compact-row__visual ${product.avatarType === 'IMAGE' && product.mediaId ? 'has-image' : 'has-color'} ${product.avatarColor ? 'has-custom-color' : ''}`}
+                          style={{
+                            background: product.avatarColor || '#f8fafc',
+                          }}
+                        >
+                          {product.avatarType === 'IMAGE' && product.mediaId ? (
+                            <img src={`/api/v1/media/${product.mediaId}`} alt="" loading="lazy" />
+                          ) : (
+                            getProductInitials(product.productName)
+                          )}
+                        </div>
+
+                        <div className="staff-product-compact-row__info">
+                          <strong className="staff-product-compact-row__name">
+                            {product.productName}
+                          </strong>
+                          <div className="staff-product-compact-row__meta">
+                            {product.variants.length > 1 ? (
+                              <span className="staff-product-compact-row__variant-badge">
+                                {product.variants.length} phiên bản
+                              </span>
+                            ) : product.unitName ? (
+                              <span className="staff-product-compact-row__unit">
+                                {product.unitName}
+                              </span>
+                            ) : null}
+                          </div>
+                          <b className="staff-product-compact-row__price">
+                            {minPrice === null
+                              ? 'Nhập giá'
+                              : minPrice === maxPrice
+                                ? `${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`
+                                : `Từ ${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`}
+                          </b>
+                        </div>
+
+                        <div className="staff-product-compact-row__action">
+                          {countInCart > 0 ? (
+                            <div
+                              className="staff-product-compact-stepper"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <button
+                                type="button"
+                                className="staff-product-compact-stepper__btn minus"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setPickingCart((prev) => {
+                                    const idx = prev.findLastIndex(
+                                      (l) => l.product.productId === product.productId,
+                                    );
+                                    if (idx === -1) return prev;
+                                    const target = prev[idx];
+                                    if (!target) return prev;
+                                    if (target.quantityMilli > 1000) {
+                                      const next = [...prev];
+                                      next[idx] = {
+                                        ...target,
+                                        quantityMilli: target.quantityMilli - 1000,
+                                      };
+                                      return next;
+                                    }
+                                    return prev.filter((_, i) => i !== idx);
+                                  });
+                                }}
+                                aria-label="Giảm"
+                              >
+                                −
+                              </button>
+                              <span className="staff-product-compact-stepper__count">
+                                {countInCart}
+                              </span>
+                              <button
+                                type="button"
+                                className="staff-product-compact-stepper__btn plus"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  chooseProduct(product, e);
+                                }}
+                                aria-label="Tăng"
+                              >
+                                +
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              className="staff-product-compact-add-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                chooseProduct(product, e);
+                              }}
+                              aria-label={`Thêm ${product.productName}`}
+                            >
+                              <PlusOutlined />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </main>
 
             {/* Bottom Bar: [ 🛒 6 ] | 370,000đ | [ Tiếp tục ] */}
             <div className="staff-product-picker-mobile__bottom-bar">
@@ -5141,20 +5369,35 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       messageApi.warning('Vui lòng chọn ít nhất một món vào giỏ hàng.');
                       return;
                     }
-                    // Xác nhận thêm các món từ pickingCart vào đơn hàng (draftLines)
+                    // Xác nhận thêm các món từ pickingCart vào đơn hàng (draftLines / modifiedItemQuantities)
                     setDraftLines((prev) => {
                       const next = [...prev];
                       for (const line of pickingCart) {
-                        const found = next.find(
-                          (l) =>
-                            l.variant.id === line.variant.id &&
-                            l.variant.salePriceVnd === line.variant.salePriceVnd &&
-                            l.note === line.note,
-                        );
-                        if (found && line.product.productType !== 'WEIGHT') {
-                          found.quantityMilli += line.quantityMilli;
+                        const savedMatch =
+                          !isNew &&
+                          quote.data?.items?.find(
+                            (it) =>
+                              it.productId === line.product.productId &&
+                              (it.variantId ?? null) === (line.variant.id ?? null) &&
+                              !it.promotionGift,
+                          );
+                        if (savedMatch && line.product.productType !== 'WEIGHT' && !line.note) {
+                          setModifiedItemQuantities((prevMod) => {
+                            const cur = prevMod[savedMatch.id] ?? savedMatch.quantityMilli;
+                            return { ...prevMod, [savedMatch.id]: cur + line.quantityMilli };
+                          });
                         } else {
-                          next.push(line);
+                          const found = next.find(
+                            (l) =>
+                              l.variant.id === line.variant.id &&
+                              l.variant.salePriceVnd === line.variant.salePriceVnd &&
+                              l.note === line.note,
+                          );
+                          if (found && line.product.productType !== 'WEIGHT') {
+                            found.quantityMilli += line.quantityMilli;
+                          } else {
+                            next.push(line);
+                          }
                         }
                       }
                       return next;
@@ -5173,119 +5416,131 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           </div>
         ) : (
           <div className="staff-order-mobile-view">
-            {/* Mobile Header */}
-            <header className="staff-order-mobile-header">
-              <button
-                type="button"
-                className="staff-order-mobile-back-btn"
-                onClick={handleExit}
-                aria-label="Quay lại danh sách"
-              >
-                <LeftOutlined />
-              </button>
-              <div className="staff-order-mobile-title-wrap">
-                <div className="staff-order-mobile-code">
-                  {isNew
-                    ? orderType === 'DINE_IN' && selectedTable
-                      ? selectedTable.name
-                      : 'Tạo đơn mới'
-                    : quote.data?.order.displayCode ||
-                      (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
-                </div>
-                <div className="staff-order-mobile-sub">
-                  <span className="staff-order-mobile-type-icon">
-                    <ShopOutlined />
-                  </span>
-                  <span>
-                    {orderType === 'DINE_IN' ? 'Tại chỗ' : 'Mang đi'} -{' '}
-                    {formatDateTime(isNew ? clockNow : (quote.data?.order.openedAt ?? clockNow))}
-                  </span>
-                </div>
-              </div>
-              <button
-                type="button"
-                className="staff-order-mobile-dots-btn"
-                onClick={() => setMobileActionsOpen(true)}
-                aria-label="Thao tác khác"
-              >
-                <EllipsisOutlined />
-              </button>
-            </header>
-
-            {/* Mobile Quick Pills Row: Order Type, Area/Table & Guest Count */}
-            <div className="staff-order-mobile-pills">
-              <Select
-                size="middle"
-                value={isNew ? orderType : quote.data?.order.orderType}
-                options={[
-                  { value: 'DINE_IN', label: 'Tại chỗ' },
-                  { value: 'TAKEAWAY', label: 'Mang đi' },
-                ]}
-                disabled={!isNew}
-                onChange={(value) => {
-                  const nextType = value as 'DINE_IN' | 'TAKEAWAY';
-                  setOrderType(nextType);
-                  if (nextType === 'TAKEAWAY') {
-                    setSearchParams(
-                      (prev) => {
-                        const next = new URLSearchParams(prev);
-                        next.delete('tableId');
-                        return next;
-                      },
-                      { replace: true },
-                    );
-                  }
-                }}
-                className="staff-order-mobile-type-select"
-                aria-label="Loại đơn"
-              />
-
-              {orderType === 'DINE_IN' && (
+            {/* Sticky Top Bar: Header & Chips Bar */}
+            <div className="staff-order-mobile-top-bar">
+              {/* Mobile Header */}
+              <header className="staff-order-mobile-header">
                 <button
                   type="button"
-                  className="staff-order-pill"
+                  className="staff-order-mobile-back-btn"
+                  onClick={handleExit}
+                  aria-label="Quay lại danh sách"
+                >
+                  <LeftOutlined />
+                </button>
+                <div className="staff-order-mobile-title-wrap">
+                  <div className="staff-order-mobile-code">
+                    {isNew
+                      ? orderType === 'DINE_IN' && selectedTable
+                        ? selectedTable.name
+                        : 'Tạo đơn mới'
+                      : quote.data?.order.displayCode ||
+                        (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
+                  </div>
+                  <div className="staff-order-mobile-sub">
+                    <span className="staff-order-mobile-type-icon">
+                      <ShopOutlined />
+                    </span>
+                    <span>
+                      {orderType === 'DINE_IN' ? 'Tại chỗ' : 'Mang về'} -{' '}
+                      {formatDateTime(isNew ? clockNow : (quote.data?.order.openedAt ?? clockNow))}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="staff-order-mobile-dots-btn"
+                  onClick={() => setMobileActionsOpen(true)}
+                  aria-label="Thao tác khác"
+                >
+                  <EllipsisOutlined />
+                </button>
+              </header>
+
+              {/* Mobile Chips Horizontal Scroll Bar: Khách hàng -> Ghi chú -> Loại đơn -> Khu vực -> Số khách */}
+              <div className="staff-order-mobile-chips-bar">
+                {/* 1. Khách hàng */}
+                <button
+                  type="button"
+                  className={`staff-order-chip ${customerName ? 'staff-order-chip--active' : ''}`}
+                  onClick={() => setCustomerModalOpen(true)}
+                >
+                  <UserOutlined className="staff-order-chip__icon" />
+                  <span className="staff-order-chip__text">{customerName || 'Khách lẻ'}</span>
+                </button>
+
+                {/* 2. Ghi chú */}
+                <button
+                  type="button"
+                  className={`staff-order-chip ${orderNote ? 'staff-order-chip--active' : ''}`}
+                  onClick={() => setOrderNoteOpen(true)}
+                >
+                  <EditOutlined className="staff-order-chip__icon" />
+                  <span className="staff-order-chip__text">{orderNote || 'Ghi chú'}</span>
+                </button>
+
+                {/* 3. Loại đơn */}
+                <button
+                  type="button"
+                  className="staff-order-chip"
                   onClick={() => {
-                    if (isNew) {
-                      setTableAction('SELECT');
-                      setTableModalOpen(true);
+                    if (!isNew) {
+                      messageApi.info('Không thể đổi loại đơn cho đơn hàng đã lưu.');
+                      return;
+                    }
+                    const nextType = orderType === 'DINE_IN' ? 'TAKEAWAY' : 'DINE_IN';
+                    setOrderType(nextType);
+                    if (nextType === 'TAKEAWAY') {
+                      setSearchParams(
+                        (prev) => {
+                          const next = new URLSearchParams(prev);
+                          next.delete('tableId');
+                          return next;
+                        },
+                        { replace: true },
+                      );
                     }
                   }}
                 >
-                  <span className="staff-order-pill__label">
-                    {quote.data?.order.tableName
-                      ? `${quote.data.order.areaName ? `${quote.data.order.areaName} - ` : ''}${quote.data.order.tableName}`
-                      : selectedTable
-                        ? `${selectedTable.areaName ? `${selectedTable.areaName} - ` : ''}${selectedTable.name}`
-                        : 'Chọn bàn / khu vực'}
+                  <ShopOutlined className="staff-order-chip__icon" />
+                  <span className="staff-order-chip__text">
+                    {orderType === 'DINE_IN' ? 'Tại chỗ' : 'Mang về'}
                   </span>
-                  <span className="staff-order-pill__tag">+1</span>
-                  <DownOutlined className="staff-order-pill__arrow" />
                 </button>
-              )}
 
-              <button
-                type="button"
-                className="staff-order-pill staff-order-pill--guest"
-                onClick={() => setGuestModalOpen(true)}
-              >
-                <span>{guestCount} khách</span>
-                <DownOutlined className="staff-order-pill__arrow" />
-              </button>
-            </div>
-
-            {/* Mobile Customer Row */}
-            <div className="staff-order-mobile-customer" onClick={() => setCustomerModalOpen(true)}>
-              <div className="staff-order-mobile-customer__info">
-                {customerName ? (
-                  <>
-                    <strong>{customerName}</strong>
-                    {customerPhone && <small>{customerPhone}</small>}
-                  </>
-                ) : (
-                  <span>Thêm khách hàng</span>
+                {/* 4. Khu vực / Bàn (nếu Tại chỗ) */}
+                {orderType === 'DINE_IN' && (
+                  <button
+                    type="button"
+                    className="staff-order-chip"
+                    onClick={() => {
+                      if (isNew) {
+                        setTableAction('SELECT');
+                        setTableModalOpen(true);
+                      }
+                    }}
+                  >
+                    <AppstoreOutlined className="staff-order-chip__icon" />
+                    <span className="staff-order-chip__text">
+                      {quote.data?.order.tableName
+                        ? `${quote.data.order.areaName ? `${quote.data.order.areaName} - ` : ''}${quote.data.order.tableName}`
+                        : selectedTable
+                          ? `${selectedTable.areaName ? `${selectedTable.areaName} - ` : ''}${selectedTable.name}`
+                          : 'Chọn bàn'}
+                    </span>
+                  </button>
                 )}
+
+                {/* 5. Số khách */}
+                <button
+                  type="button"
+                  className="staff-order-chip"
+                  onClick={() => setGuestModalOpen(true)}
+                >
+                  <TeamOutlined className="staff-order-chip__icon" />
+                  <span className="staff-order-chip__text">{guestCount}</span>
+                </button>
               </div>
-              <PlusCircleOutlined className="staff-order-mobile-customer__icon" />
             </div>
 
             {/* Mobile Ordered Items Section */}
@@ -5361,14 +5616,13 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       onClick={openTimeDetails}
                     >
                       <div className="staff-order-mobile-item__top">
-                        <span className="staff-order-mobile-qty-badge">1 x</span>
                         <span className="staff-order-mobile-item__name">
-                          <strong>
+                          <span>
                             {quote.data.time.tableSegments &&
                             quote.data.time.tableSegments.length > 1
                               ? 'Tiền giờ (Chuyển bàn)'
                               : 'Giờ'}
-                          </strong>
+                          </span>
                           {quote.data.time.status === 'PAUSED' ? (
                             <Tag
                               color="warning"
@@ -5425,9 +5679,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       }}
                     >
                       <div className="staff-order-mobile-item__top">
-                        <span className="staff-order-mobile-qty-badge">1 x</span>
                         <span className="staff-order-mobile-item__name">
-                          <strong>Giờ</strong>
+                          <span>Giờ</span>
                         </span>
                         <span className="staff-order-mobile-item__price">0 đ</span>
                       </div>
@@ -5443,9 +5696,8 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       onClick={openTimeDetails}
                     >
                       <div className="staff-order-mobile-item__top">
-                        <span className="staff-order-mobile-qty-badge">1 x</span>
                         <span className="staff-order-mobile-item__name">
-                          <strong>Giờ</strong>
+                          <span>Giờ</span>
                         </span>
                         <span className="staff-order-mobile-item__price">0 đ</span>
                       </div>
@@ -5460,66 +5712,230 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   {/* 2. Order items (Draft, Saved, and Realtime Gift items) */}
                   {displayedItems.map((item) => {
                     const isDraftLine = draftLines.some((l) => l.id === item.id);
+                    const catalogProd = catalog.data?.find((p) => p.productId === item.productId);
+                    const qtyInt = Math.round(Number(item.quantityMilli) / 1000);
+
+                    const openItemEdit = () => {
+                      if (item.promotionGift) return;
+                      setEditingItem({
+                        source: isDraftLine ? 'DRAFT' : 'SAVED',
+                        id: item.id,
+                        productId: item.productId,
+                        variantId: item.variantId,
+                        productType: item.productType,
+                        productName: item.productName,
+                        variantName: item.variantName,
+                        unitName: item.unitName,
+                        unitPriceVnd: item.unitPriceVnd,
+                        quantityMilli: item.quantityMilli,
+                        note: item.note ?? '',
+                        grossLineTotalVnd: item.grossLineTotalVnd,
+                        discountAmountVnd: item.discountAmountVnd,
+                        discountType: item.discountType,
+                        discountInputValue: item.discountInputValue,
+                        discountReason: item.discountReason,
+                        netLineTotalVnd: item.netLineTotalVnd,
+                      });
+                    };
+
                     return (
-                      <div
+                      <SwipeableOrderItemRow
                         key={item.id}
-                        className={`staff-order-mobile-item${isDraftLine ? ' staff-order-mobile-item--draft' : ''}${item.promotionGift ? ' staff-order-mobile-item--gift' : ''}`}
-                        onClick={() => {
+                        locked={Boolean(item.promotionGift)}
+                        onClick={openItemEdit}
+                        onDelete={() => {
                           if (item.promotionGift) return;
-                          setEditingItem({
-                            source: isDraftLine ? 'DRAFT' : 'SAVED',
-                            id: item.id,
-                            productId: item.productId,
-                            variantId: item.variantId,
-                            productType: item.productType,
-                            productName: item.productName,
-                            variantName: item.variantName,
-                            unitName: item.unitName,
-                            unitPriceVnd: item.unitPriceVnd,
-                            quantityMilli: item.quantityMilli,
-                            note: item.note ?? '',
-                            grossLineTotalVnd: item.grossLineTotalVnd,
-                            discountAmountVnd: item.discountAmountVnd,
-                            discountType: item.discountType,
-                            discountInputValue: item.discountInputValue,
-                            discountReason: item.discountReason,
-                            netLineTotalVnd: item.netLineTotalVnd,
-                          });
+                          if (isNew || isDraftLine) {
+                            setDraftLines((lines) => lines.filter((line) => line.id !== item.id));
+                            messageApi.success('Đã xóa món khỏi đơn.');
+                          } else {
+                            setDeleteItemTarget({
+                              id: item.id,
+                              name: item.productName,
+                              source: 'SAVED',
+                            });
+                            setDeleteItemReason('Khách đổi ý');
+                            setDeleteItemModalOpen(true);
+                          }
                         }}
+                        className="staff-order-mobile-swipe-card"
                       >
-                        <div className="staff-order-mobile-item__top">
-                          <span className="staff-order-mobile-qty-badge">
-                            {formatItemQuantity(
-                              item.productType,
-                              item.quantityMilli,
-                              item.unitName,
-                            )}
-                          </span>
-                          <span className="staff-order-mobile-item__name">
-                            <strong>{item.productName}</strong>
-                            {item.variantName && item.variantName !== 'Mặc định' && (
-                              <small> · {item.variantName}</small>
+                        <div
+                          className={`staff-order-mobile-card-row ${isDraftLine ? 'is-draft' : ''}`}
+                        >
+                          {/* Left: Thumbnail image */}
+                          <div
+                            className={`staff-order-mobile-card-row__visual ${catalogProd?.avatarType === 'IMAGE' && catalogProd.mediaId ? 'has-image' : 'has-color'}`}
+                            style={{
+                              background: catalogProd?.avatarColor || '#f8fafc',
+                            }}
+                          >
+                            {catalogProd?.avatarType === 'IMAGE' && catalogProd.mediaId ? (
+                              <img
+                                src={`/api/v1/media/${catalogProd.mediaId}`}
+                                alt=""
+                                loading="lazy"
+                              />
+                            ) : (
+                              getProductInitials(item.productName)
                             )}
                             {isDraftLine && (
-                              <span className="staff-order-mobile-draft-tag">Mới gọi</span>
+                              <div className="staff-order-mobile-draft-ribbon">
+                                <span>Mới</span>
+                              </div>
                             )}
+                          </div>
+
+                          {/* Right: Content details */}
+                          <div className="staff-order-mobile-card-row__content">
+                            {/* Top row: Name + Ellipsis Dots */}
+                            <div className="staff-order-mobile-card-row__top">
+                              <span className="staff-order-mobile-card-row__name">
+                                <strong>{item.productName}</strong>
+                                {item.variantName && item.variantName !== 'Mặc định' && (
+                                  <small className="staff-order-mobile-card-row__variant">
+                                    {' '}
+                                    · {item.variantName}
+                                  </small>
+                                )}
+                                {item.promotionGift ? (
+                                  <Tag color="success" style={{ marginLeft: 4 }}>
+                                    Quà tặng
+                                  </Tag>
+                                ) : null}
+                              </span>
+
+                              {!item.promotionGift && (
+                                <button
+                                  type="button"
+                                  className="staff-order-mobile-card-row__dots-btn"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openItemEdit();
+                                  }}
+                                  aria-label="Tùy chỉnh món"
+                                >
+                                  <EllipsisOutlined />
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Optional: Note and Discount details */}
                             {item.note && (
-                              <div className="staff-order-mobile-item__note">
+                              <div className="staff-order-mobile-card-row__note">
                                 Ghi chú: {item.note}
                               </div>
                             )}
-                            {item.promotionGift ? <Tag color="success">Quà tặng</Tag> : null}
                             <ItemDiscountDetail
                               amount={item.discountAmountVnd}
                               reason={item.discountReason}
                               promotionGift={item.promotionGift}
                             />
-                          </span>
-                          <span className="staff-order-mobile-item__price">
-                            {formatMoney(item.netLineTotalVnd)}
-                          </span>
+
+                            {/* Bottom row: Price + Quantity Stepper */}
+                            <div className="staff-order-mobile-card-row__bottom">
+                              <span className="staff-order-mobile-card-row__price">
+                                {formatMoney(item.netLineTotalVnd)}
+                              </span>
+
+                              {item.productType !== 'WEIGHT' && !item.promotionGift ? (
+                                <div
+                                  className="staff-order-mobile-stepper"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <button
+                                    type="button"
+                                    className="staff-order-mobile-stepper__btn minus"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (isDraftLine || isNew) {
+                                        setDraftLines((prev) => {
+                                          const idx = prev.findIndex((l) => l.id === item.id);
+                                          if (idx === -1) return prev;
+                                          const target = prev[idx];
+                                          if (!target) return prev;
+                                          if (target.quantityMilli > 1000) {
+                                            const next = [...prev];
+                                            next[idx] = {
+                                              ...target,
+                                              quantityMilli: target.quantityMilli - 1000,
+                                            };
+                                            return next;
+                                          }
+                                          return prev.filter((_, i) => i !== idx);
+                                        });
+                                      } else {
+                                        const currentQty =
+                                          modifiedItemQuantities[item.id] ?? item.quantityMilli;
+                                        if (currentQty > 1000) {
+                                          setModifiedItemQuantities((prev) => ({
+                                            ...prev,
+                                            [item.id]: currentQty - 1000,
+                                          }));
+                                        } else {
+                                          setDeleteItemTarget({
+                                            id: item.id,
+                                            name: item.productName,
+                                            source: 'SAVED',
+                                          });
+                                          setDeleteItemReason('Khách đổi ý');
+                                          setDeleteItemModalOpen(true);
+                                        }
+                                      }
+                                    }}
+                                    aria-label="Giảm số lượng"
+                                  >
+                                    −
+                                  </button>
+                                  <span className="staff-order-mobile-stepper__count">
+                                    {qtyInt}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    className="staff-order-mobile-stepper__btn plus"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (isDraftLine || isNew) {
+                                        setDraftLines((prev) => {
+                                          const idx = prev.findIndex((l) => l.id === item.id);
+                                          if (idx === -1) return prev;
+                                          const target = prev[idx];
+                                          if (!target) return prev;
+                                          const next = [...prev];
+                                          next[idx] = {
+                                            ...target,
+                                            quantityMilli: target.quantityMilli + 1000,
+                                          };
+                                          return next;
+                                        });
+                                      } else {
+                                        setModifiedItemQuantities((prev) => {
+                                          const currentQty = prev[item.id] ?? item.quantityMilli;
+                                          return {
+                                            ...prev,
+                                            [item.id]: currentQty + 1000,
+                                          };
+                                        });
+                                      }
+                                    }}
+                                    aria-label="Tăng số lượng"
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                              ) : item.productType === 'WEIGHT' ? (
+                                <span className="staff-order-mobile-weight-label">
+                                  {formatItemQuantity(
+                                    item.productType,
+                                    item.quantityMilli,
+                                    item.unitName,
+                                  )}
+                                </span>
+                              ) : null}
+                            </div>
+                          </div>
                         </div>
-                      </div>
+                      </SwipeableOrderItemRow>
                     );
                   })}
 
@@ -5549,17 +5965,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                     )}
                 </div>
               )}
-            </div>
-
-            {/* Mobile Order Note Row */}
-            <div className="staff-order-mobile-note" onClick={() => setOrderNoteOpen(true)}>
-              <div className="staff-order-mobile-note__content">
-                <strong>Ghi chú đơn hàng</strong>
-                {orderNote ? (
-                  <div className="staff-order-mobile-note__text">{orderNote}</div>
-                ) : null}
-              </div>
-              <EditOutlined className="staff-order-mobile-note__icon" />
             </div>
 
             {/* Mobile Order Financial Summary Details (In-Flow / Non-Sticky) */}
@@ -5611,7 +6016,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
               ) : null}
               <div className="staff-order-mobile-divider" />
               <div className="staff-order-mobile-summary__total-row">
-                <strong>Khách phải trả</strong>
+                <strong>Tổng tiền</strong>
                 <strong>{formatMoney(displayedTotal)}</strong>
               </div>
             </div>
@@ -5630,24 +6035,36 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
               <span>Thêm món</span>
             </button>
 
-            {/* Sticky Bottom Billing Summary & Actions (Only Khách phải trả) */}
+            {/* Sticky Bottom Billing Summary & Actions */}
             <div className="staff-order-mobile-footer">
               <div className="staff-order-mobile-summary-compact">
                 <div className="staff-order-mobile-summary__total-row">
-                  <strong>Khách phải trả</strong>
+                  <strong>Tổng tiền</strong>
                   <strong>{formatMoney(displayedTotal)}</strong>
                 </div>
               </div>
 
-              <div className="staff-order-mobile-actions">
+              <div className="staff-order-mobile-actions staff-order-mobile-actions--grid">
                 {isPaymentPending ? (
                   <>
+                    <button
+                      type="button"
+                      className="staff-order-mobile-btn staff-order-mobile-btn--provisional"
+                      onClick={() => {
+                        if (quote.data) setProvisionalBillOpen(true);
+                        else messageApi.info('Vui lòng lưu đơn trước khi xem tạm tính.');
+                      }}
+                      title="Xem tạm tính"
+                    >
+                      <PrinterOutlined className="staff-order-mobile-btn__icon" />
+                      <span className="staff-order-mobile-btn__label">Tạm tính</span>
+                    </button>
                     <Button
                       size="large"
                       icon={<PlayCircleOutlined />}
                       loading={resuming}
                       onClick={() => setResumeModalOpen(true)}
-                      className="staff-order-mobile-btn-resume"
+                      className="staff-order-mobile-btn staff-order-mobile-btn--save"
                     >
                       Tiếp tục chơi
                     </Button>
@@ -5655,19 +6072,35 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       type="primary"
                       size="large"
                       onClick={() => navigateToPayment(quote.data!.order.id)}
-                      className="staff-order-mobile-btn-pay"
+                      className="staff-order-mobile-btn staff-order-mobile-btn--pay"
                     >
                       Thanh toán
                     </Button>
                   </>
                 ) : (
                   <>
+                    <button
+                      type="button"
+                      className="staff-order-mobile-btn staff-order-mobile-btn--provisional"
+                      onClick={() => {
+                        if (quote.data) setProvisionalBillOpen(true);
+                        else messageApi.info('Vui lòng lưu đơn trước khi xem tạm tính.');
+                      }}
+                      title="Xem tạm tính"
+                    >
+                      <PrinterOutlined className="staff-order-mobile-btn__icon" />
+                      <span className="staff-order-mobile-btn__label">Tạm tính</span>
+                    </button>
                     <Button
                       size="large"
-                      disabled={isNew && orderType === 'TAKEAWAY' && draftLines.length === 0}
+                      disabled={
+                        isNew
+                          ? orderType === 'TAKEAWAY' && draftLines.length === 0
+                          : !hasUnsavedChanges
+                      }
                       loading={saving}
                       onClick={isNew ? saveOrder : () => void saveAdditionalItems(false)}
-                      className="staff-order-mobile-btn-save"
+                      className="staff-order-mobile-btn staff-order-mobile-btn--save"
                     >
                       Lưu đơn
                     </Button>
@@ -5681,7 +6114,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                       }
                       loading={saving || stoppingTime}
                       onClick={() => void beginCheckout()}
-                      className="staff-order-mobile-btn-pay"
+                      className="staff-order-mobile-btn staff-order-mobile-btn--pay"
                     >
                       Thanh toán
                     </Button>
@@ -6515,7 +6948,11 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                   <>
                     <Button
                       size="large"
-                      disabled={isNew && orderType === 'TAKEAWAY' && draftLines.length === 0}
+                      disabled={
+                        isNew
+                          ? orderType === 'TAKEAWAY' && draftLines.length === 0
+                          : !hasUnsavedChanges
+                      }
                       loading={saving}
                       onClick={isNew ? saveOrder : () => void saveAdditionalItems(false)}
                     >
@@ -7081,14 +7518,15 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         title={
           <div className="staff-provisional-modal-header">
             <FileTextOutlined />
-            <span>Xem trước phiếu tạm tính · {quote.data?.order.tableName}</span>
+            <span>Xem trước phiếu tạm tính · {quote.data?.order.tableName || 'Đơn mang về'}</span>
           </div>
         }
-        width={500}
+        width={540}
         centered
+        className="pos-receipt-preview-modal staff-provisional-modal"
         onCancel={() => setProvisionalBillOpen(false)}
         footer={[
-          <Button key="close" onClick={() => setProvisionalBillOpen(false)}>
+          <Button key="close" type="primary" onClick={() => setProvisionalBillOpen(false)}>
             Đóng
           </Button>,
         ]}
@@ -7323,7 +7761,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
               className="staff-confirm-discard-btn staff-confirm-discard-btn--confirm"
               onClick={() => {
                 setDiscardModalOpen(false);
-                navigate('/pos');
+                navigate('/pos/areas');
               }}
             >
               Xác nhận
@@ -7815,7 +8253,7 @@ function InvoicePage() {
       <Result
         status="error"
         title="Không tải được hóa đơn"
-        extra={<Button onClick={() => navigate('/pos')}>Về danh sách đơn</Button>}
+        extra={<Button onClick={() => navigate('/pos/areas')}>Về khu vực</Button>}
       />
     );
   }
@@ -8053,8 +8491,8 @@ function InvoicePage() {
         </footer>
       </section>
       <div className="staff-invoice-actions">
-        <Button size="large" onClick={() => navigate('/pos')}>
-          Về danh sách đơn
+        <Button size="large" onClick={() => navigate('/pos/areas')}>
+          Về khu vực
         </Button>
         <Button size="large" icon={<FileTextOutlined />} onClick={() => setPrintPreviewOpen(true)}>
           Xem trước hóa đơn
@@ -8231,7 +8669,6 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
     clearPaymentPageActive(frozenQuote.order.id);
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['pos-order-quote', orderId] }),
-      queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
       queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
     ]);
     if (notify) {
@@ -8295,10 +8732,7 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
           clearPaymentPageActive(result.quote.order.id);
           navigate(`/pos/orders/${result.quote.order.id}`, { replace: true });
         }
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
-          queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
-        ]);
+        await queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
       })
       .catch(async (error) => {
         // A concurrent order update can make the version stale. Refetching lets
@@ -8470,7 +8904,6 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
         { headers: mutationHeaders(csrf) },
       );
       playPosSound('PAYMENT_SUCCESS');
-      void queryClient.invalidateQueries({ queryKey: ['pos-orders'] });
       void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
 
       if (andPrint) {
@@ -8506,7 +8939,7 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
 
       // Return directly to POS home
       clearPaymentPageActive(quote.data.order.id);
-      navigate('/pos', { replace: true });
+      navigate('/pos/areas', { replace: true });
     } catch (error) {
       messageApi.error(errorText(error));
     } finally {
@@ -8557,8 +8990,8 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
             title="Không thể tải thông tin đơn hàng"
             description="Đơn hàng không tồn tại hoặc đã kết thúc."
             action={
-              <Button type="primary" onClick={() => navigate('/pos')}>
-                Về danh sách đơn
+              <Button type="primary" onClick={() => navigate('/pos/areas')}>
+                Về khu vực
               </Button>
             }
           />
@@ -9159,7 +9592,6 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
 export function StaffPosPortalPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [ordersSearch, setOrdersSearch] = useState('');
   const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
   const [onboardingRestartToken, setOnboardingRestartToken] = useState(0);
   const auth = useQuery({
@@ -9251,18 +9683,16 @@ export function StaffPosPortalPage() {
     isPrinterSettings ||
     isCustomer ||
     isStaff;
-  const active = location.pathname.startsWith('/pos/areas')
-    ? 'areas'
-    : location.pathname.startsWith('/pos/qr-order')
-      ? 'qr'
-      : location.pathname.startsWith('/pos/more') ||
-          isInvoicesList ||
-          isCatalog ||
-          isPrinterSettings ||
-          isCustomer ||
-          isStaff
-        ? 'more'
-        : 'orders';
+  const active = location.pathname.startsWith('/pos/qr-order')
+    ? 'qr'
+    : location.pathname.startsWith('/pos/more') ||
+        isInvoicesList ||
+        isCatalog ||
+        isPrinterSettings ||
+        isCustomer ||
+        isStaff
+      ? 'more'
+      : 'areas';
 
   const detailOrderId = isDetail ? location.pathname.split('/')[3] : undefined;
   const paymentOrderId = isPayment ? location.pathname.split('/')[3] : undefined;
@@ -9277,18 +9707,6 @@ export function StaffPosPortalPage() {
             <StaffHeader
               context={auth.data}
               onOpenNotifications={() => setNotificationCenterOpen(true)}
-              searchSlot={
-                active === 'orders' ? (
-                  <Input
-                    size="large"
-                    allowClear
-                    prefix={<SearchOutlined style={{ color: '#8c8c8c' }} />}
-                    placeholder="Tìm kiếm đơn hàng..."
-                    value={ordersSearch}
-                    onChange={(event) => setOrdersSearch(event.target.value)}
-                  />
-                ) : null
-              }
             />
           ) : null}
           <div className="staff-pos-main">
@@ -9494,8 +9912,6 @@ export function StaffPosPortalPage() {
               <PaymentPage orderId={paymentOrderId} auth={auth.data} />
             ) : isEditor ? (
               <OrderEditor auth={auth.data} />
-            ) : active === 'areas' ? (
-              <AreasPage />
             ) : active === 'qr' ? (
               <QrOrderPage />
             ) : active === 'more' ? (
@@ -9504,7 +9920,7 @@ export function StaffPosPortalPage() {
                 onStartOnboarding={() => setOnboardingRestartToken((value) => value + 1)}
               />
             ) : (
-              <OrdersPage search={ordersSearch} />
+              <AreasPage />
             )}
           </div>
           {!isFullScreen ? <StaffBottomNav active={active} /> : null}

@@ -79,6 +79,7 @@ interface QuickPinInputProps {
   disabled?: boolean;
   hasError?: boolean;
   autoFocus?: boolean;
+  showNumpad?: boolean;
 }
 
 function QuickPinInput({
@@ -89,7 +90,8 @@ function QuickPinInput({
   onToggleShowPin,
   disabled = false,
   hasError = false,
-  autoFocus = true,
+  autoFocus = false,
+  showNumpad = true,
 }: QuickPinInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -107,13 +109,29 @@ function QuickPinInput({
     }
   };
 
+  const handleKeypadPress = (digit: string) => {
+    if (disabled || value.length >= 4) return;
+    const nextVal = (value + digit).slice(0, 4);
+    onChange(nextVal);
+    if (nextVal.length === 4) {
+      onComplete?.(nextVal);
+    }
+  };
+
+  const handleKeypadBackspace = () => {
+    if (disabled || value.length === 0) return;
+    onChange(value.slice(0, -1));
+  };
+
+  const handleKeypadClear = () => {
+    if (disabled || value.length === 0) return;
+    onChange('');
+  };
+
   return (
     <div className={`quick-pin-container ${hasError ? 'is-error shake' : ''}`}>
-      {/* 4 Visual PIN Slots with hidden overlay input for native numeric keyboard */}
-      <div
-        className="quick-pin-display-row"
-        onClick={() => inputRef.current?.focus({ preventScroll: true })}
-      >
+      {/* Visual PIN Slots with real direct-focus numeric input */}
+      <div className="quick-pin-display-row">
         <input
           ref={inputRef}
           type={showPin ? 'text' : 'password'}
@@ -129,7 +147,7 @@ function QuickPinInput({
           autoFocus={autoFocus}
         />
 
-        <div className="quick-pin-slots">
+        <div className="quick-pin-slots" aria-hidden="true">
           {[0, 1, 2, 3].map((index) => {
             const digit = value[index];
             const isFilled = digit !== undefined;
@@ -159,12 +177,55 @@ function QuickPinInput({
           onClick={(e) => {
             e.stopPropagation();
             onToggleShowPin();
-            inputRef.current?.focus({ preventScroll: true });
           }}
           title={showPin ? 'Ẩn mã PIN' : 'Xem mã PIN'}
           aria-label={showPin ? 'Ẩn mã PIN' : 'Xem mã PIN'}
         />
       </div>
+
+      {showNumpad ? (
+        <div className="quick-pin-numpad" role="group" aria-label="Bàn phím số PIN">
+          {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
+            <button
+              key={digit}
+              type="button"
+              className="quick-pin-key"
+              disabled={disabled}
+              onClick={() => handleKeypadPress(digit)}
+            >
+              {digit}
+            </button>
+          ))}
+          <button
+            type="button"
+            className="quick-pin-key quick-pin-key--action"
+            disabled={disabled || value.length === 0}
+            onClick={handleKeypadClear}
+            title="Xóa hết"
+            aria-label="Xóa hết"
+          >
+            C
+          </button>
+          <button
+            type="button"
+            className="quick-pin-key"
+            disabled={disabled}
+            onClick={() => handleKeypadPress('0')}
+          >
+            0
+          </button>
+          <button
+            type="button"
+            className="quick-pin-key quick-pin-key--action"
+            disabled={disabled || value.length === 0}
+            onClick={handleKeypadBackspace}
+            title="Xóa lùi"
+            aria-label="Xóa lùi"
+          >
+            ⌫
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -239,6 +300,13 @@ export function LoginPage() {
   });
 
   const deviceIsActive = context.data?.device?.status === 'ACTIVE';
+
+  useEffect(() => {
+    // If device is not active and no explicit tab param in URL, default to owner tab
+    if (!searchParams.get('tab') && context.data && !deviceIsActive) {
+      setActiveTab('owner');
+    }
+  }, [context.data, deviceIsActive, searchParams]);
 
   useEffect(() => {
     if (ownerRetryAfterSeconds <= 0) return;
@@ -429,7 +497,6 @@ export function LoginPage() {
             }}
             autoComplete="username"
             disabled={submitting}
-            autoFocus={!ownerUsername}
           />
         </div>
 
@@ -445,7 +512,6 @@ export function LoginPage() {
             }}
             autoComplete="current-password"
             disabled={submitting}
-            autoFocus={Boolean(ownerUsername)}
           />
         </div>
 
@@ -549,7 +615,6 @@ export function LoginPage() {
             onToggleShowPin={() => setShowPin((prev) => !prev)}
             disabled={submitting}
             hasError={pinError}
-            autoFocus
           />
 
           <Button
@@ -605,7 +670,6 @@ export function LoginPage() {
             autoComplete="username"
             prefix={<UserOutlined />}
             placeholder="Tên đăng nhập"
-            autoFocus={!rememberedEmployee}
           />
         </Form.Item>
 
@@ -624,7 +688,6 @@ export function LoginPage() {
             onToggleShowPin={() => setShowPin((prev) => !prev)}
             disabled={submitting}
             hasError={pinError}
-            autoFocus={Boolean(rememberedEmployee)}
           />
         </Form.Item>
 

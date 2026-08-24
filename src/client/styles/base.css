@@ -4681,8 +4681,12 @@ body {
   width: 100% !important;
   min-height: 48px !important;
   border-radius: 12px !important;
-  font-size: 14.5px !important;
+  font-size: 16px !important;
   box-sizing: border-box !important;
+}
+
+.auth-card .ant-input-affix-wrapper input {
+  font-size: 16px !important;
 }
 
 .owner-login-clean,
@@ -4816,8 +4820,18 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  margin: 4px 0;
+  gap: 10px;
+  margin: 2px 0;
+}
+
+.quick-pin-display-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  width: 100%;
 }
 
 .quick-pin-hidden-input {
@@ -4826,48 +4840,39 @@ body {
   width: 100%;
   height: 100%;
   opacity: 0;
-  pointer-events: auto;
   z-index: 2;
   cursor: pointer;
   border: none;
   background: transparent;
   outline: none;
+  font-size: 20px !important;
   color: transparent;
   caret-color: transparent;
-}
-
-.quick-pin-display-row {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  cursor: pointer;
-  user-select: none;
+  touch-action: manipulation;
 }
 
 .quick-pin-slots {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 8px;
+  pointer-events: none;
 }
 
 .quick-pin-slot {
-  width: 44px;
-  height: 48px;
-  border-radius: 10px;
+  width: 46px;
+  height: 50px;
+  border-radius: 12px;
   background: #f8fafc;
   border: 1.5px solid #cbd5e1;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 700;
   color: #0f172a;
   transition: all 0.16s cubic-bezier(0.4, 0, 0.2, 1);
-  user-select: none;
-  -webkit-user-select: none;
+  box-sizing: border-box;
 }
 
 .quick-pin-slot.is-active {
@@ -4885,25 +4890,81 @@ body {
 .quick-pin-toggle-btn {
   position: relative;
   z-index: 3;
-  height: 48px;
-  width: 40px;
+  height: 50px;
+  width: 42px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   color: #64748b;
   font-size: 16px;
-  border-radius: 10px;
+  border-radius: 12px;
   border: 1.5px solid #cbd5e1;
   background: #f8fafc;
   flex-shrink: 0;
   margin-left: 2px;
   transition: all 0.2s ease;
+  touch-action: manipulation;
 }
 
 .quick-pin-toggle-btn:hover {
   color: #0975f7;
   border-color: #0975f7;
   background: #eff6ff;
+}
+
+.quick-pin-numpad {
+  width: 100%;
+  max-width: 270px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 4px auto 2px;
+}
+
+.quick-pin-key {
+  height: 48px;
+  border-radius: 12px;
+  border: 1.5px solid #e2e8f0;
+  background: #ffffff;
+  color: #1e293b;
+  font-size: 20px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: all 0.12s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+
+.quick-pin-key:hover:not(:disabled) {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+.quick-pin-key:active:not(:disabled) {
+  background: #e2e8f0;
+  transform: scale(0.96);
+}
+
+.quick-pin-key:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.quick-pin-key--action {
+  font-size: 16px;
+  font-weight: 700;
+  color: #64748b;
+  background: #f8fafc;
+}
+
+.quick-pin-key--action:hover:not(:disabled) {
+  color: #0f172a;
 }
 
 .quick-pin-bullet {
@@ -5770,8 +5831,12 @@ body {
   .auth-card .ant-input-affix-wrapper,
   .auth-card .ant-input {
     min-height: 48px;
-    font-size: 14.5px;
+    font-size: 16px !important;
     border-radius: 12px;
+  }
+
+  .auth-card .ant-input-affix-wrapper input {
+    font-size: 16px !important;
   }
 
   .employee-quick-login {
@@ -5780,11 +5845,11 @@ body {
 
   .quick-pin-container {
     gap: 10px;
-    margin: 4px 0;
+    margin: 2px 0;
   }
 
   .quick-pin-slots {
-    gap: 7px;
+    gap: 8px;
   }
 
   .quick-pin-slot {
@@ -5799,6 +5864,18 @@ body {
     height: 48px;
     border-radius: 10px;
     font-size: 15px;
+  }
+
+  .quick-pin-numpad {
+    max-width: 260px;
+    gap: 7px;
+    margin: 2px auto 0;
+  }
+
+  .quick-pin-key {
+    height: 46px;
+    font-size: 19px;
+    border-radius: 10px;
   }
 
   .auth-card__footer {

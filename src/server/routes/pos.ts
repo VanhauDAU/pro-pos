@@ -623,15 +623,14 @@ posRoutes.post('/tables/open', requirePermission('table.open'), async (c) => {
   );
 });
 
-posRoutes.post('/tables/:tableId/qr-code', requirePermission('table.view'), async (c) =>
+posRoutes.get('/tables/:tableId/qr-code', requirePermission('table.view'), async (c) =>
   success(
     c,
-    await new QrOrderService(c.env).rotateQrCode(
+    await new QrOrderService(c.env).getOrCreateQrCode(
       c.get('actor').storeId!,
       c.req.param('tableId'),
       c.get('actor').id,
     ),
-    201,
   ),
 );
 

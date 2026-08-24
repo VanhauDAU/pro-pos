@@ -25,7 +25,11 @@ ownerCatalogRoutes.use('*', requireActor('OWNER', 'EMPLOYEE'));
 ownerCatalogRoutes.get('/tables/:tableId/qr-code', requirePermission('table.manage'), async (c) =>
   success(
     c,
-    await new QrOrderService(c.env).getQrCode(c.get('actor').storeId!, c.req.param('tableId')),
+    await new QrOrderService(c.env).getOrCreateQrCode(
+      c.get('actor').storeId!,
+      c.req.param('tableId'),
+      c.get('actor').id,
+    ),
   ),
 );
 

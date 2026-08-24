@@ -198,11 +198,7 @@ export async function generateStandeeDataUrl({
   ctx.textAlign = 'center';
   ctx.fillStyle = '#94a3b8';
   ctx.font = 'italic 20px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-  ctx.fillText(
-    '✨ Chúc quý khách chơi vui và có những phút giây thư giãn tuyệt vời! ✨',
-    450,
-    1210,
-  );
+  ctx.fillText('✨ Chúc quý khách có những phút giây thư giãn tuyệt vời! ✨', 450, 1210);
 
   return canvas.toDataURL('image/png');
 }
@@ -417,7 +413,7 @@ export function TableQrModal({
 
           {/* Footer note */}
           <div className="table-qr-standee-footer">
-            <span>✨ Chúc quý khách chơi vui và có những phút giây thư giãn tuyệt vời! ✨</span>
+            <span>✨ Chúc quý khách có những phút giây thư giãn tuyệt vời! ✨</span>
           </div>
         </div>
 

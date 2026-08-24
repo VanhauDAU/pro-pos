@@ -1296,8 +1296,7 @@ function AreasPage() {
         serverNowMs: number;
       }>('/api/v1/pos/overview', { signal }),
     refetchInterval: pollingInterval,
-    staleTime: 20_000,
-    refetchOnMount: false,
+    refetchOnMount: 'always',
   });
   const tables = {
     data: overview.data?.tables,
@@ -1817,6 +1816,9 @@ function QrOrderPage() {
     Promise.all([
       queryClient.invalidateQueries({ queryKey: ['pos-notification-summary'] }),
       queryClient.invalidateQueries({ queryKey: ['pos-overview'] }),
+      queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
+      queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] }),
+      queryClient.invalidateQueries({ queryKey: ['pos-staff-all-qr-orders'] }),
     ]);
   const accept = useMutation({
     mutationFn: (request: GuestOrderRequestDto) =>
@@ -5633,12 +5635,8 @@ function OrderEditor({
     }
     setTableQrLoading(true);
     try {
-      const result = await apiRequest<{ token: string; path: string }>(
+      const result = await apiRequest<{ path: string; version: number; enabled: boolean }>(
         `/api/v1/pos/tables/${tableId}/qr-code`,
-        {
-          method: 'POST',
-          headers: { 'X-CSRF-Token': csrf ?? '' },
-        },
       );
       const url = new URL(result.path, window.location.origin).toString();
       const { default: QRCode } = await import('qrcode');
@@ -5662,7 +5660,7 @@ function OrderEditor({
       });
       setTableQrModalOpen(true);
     } catch (error) {
-      messageApi.error(errorText(error) || 'Không thể tạo mã QR Order của bàn.');
+      messageApi.error(errorText(error) || 'Không thể lấy mã QR Order của bàn.');
     } finally {
       setTableQrLoading(false);
     }

@@ -991,11 +991,17 @@ export class QrOrderRepository {
   findQrCode(storeId: string, tableId: string) {
     return this.db
       .prepare(
-        `SELECT id, version, enabled, rotated_at AS rotatedAt
+        `SELECT id, version, enabled, rotated_at AS rotatedAt, public_token AS publicToken
          FROM table_qr_codes WHERE store_id = ? AND table_id = ? LIMIT 1`,
       )
       .bind(storeId, tableId)
-      .first<{ id: string; version: number; enabled: 0 | 1; rotatedAt: number }>();
+      .first<{
+        id: string;
+        version: number;
+        enabled: 0 | 1;
+        rotatedAt: number;
+        publicToken: string | null;
+      }>();
   }
 
   findTable(storeId: string, tableId: string) {
@@ -1010,27 +1016,40 @@ export class QrOrderRepository {
     storeId: string;
     tableId: string;
     tokenHash: string;
+    publicToken: string;
     actorId: string;
     now: number;
   }) {
     return this.db
       .prepare(
         `INSERT INTO table_qr_codes (
-          id, store_id, table_id, token_hash, version, enabled, created_by, created_at, rotated_at
-        ) VALUES (?, ?, ?, ?, 1, 1, ?, ?, ?)
+          id, store_id, table_id, token_hash, public_token, version, enabled,
+          created_by, created_at, rotated_at
+        ) VALUES (?, ?, ?, ?, ?, 1, 1, ?, ?, ?)
         ON CONFLICT(store_id, table_id) DO UPDATE SET
-          token_hash = excluded.token_hash, version = version + 1,
-          enabled = 1, rotated_at = excluded.rotated_at`,
+          token_hash = excluded.token_hash, public_token = excluded.public_token,
+          version = version + 1, enabled = 1, rotated_at = excluded.rotated_at`,
       )
       .bind(
         input.id,
         input.storeId,
         input.tableId,
         input.tokenHash,
+        input.publicToken,
         input.actorId,
         input.now,
         input.now,
       )
+      .run();
+  }
+
+  revokeGuestSessionsByTable(storeId: string, tableId: string, now: number) {
+    return this.db
+      .prepare(
+        `UPDATE guest_order_sessions SET status = 'REVOKED'
+         WHERE store_id = ? AND table_id = ? AND status = 'ACTIVE'`,
+      )
+      .bind(storeId, tableId)
       .run();
   }
 }

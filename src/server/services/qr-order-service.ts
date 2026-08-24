@@ -1098,17 +1098,27 @@ export class QrOrderService {
     return current
       ? {
           exists: true,
+          path: current.publicToken ? `/q/${current.publicToken}` : null,
           version: current.version,
           enabled: current.enabled === 1,
           rotatedAt: current.rotatedAt,
         }
-      : { exists: false, version: 0, enabled: false, rotatedAt: null };
+      : { exists: false, path: null, version: 0, enabled: false, rotatedAt: null };
   }
 
-  async rotateQrCode(storeId: string, tableId: string, actorId: string) {
+  async getOrCreateQrCode(storeId: string, tableId: string, actorId: string) {
     if (!(await this.repository.findTable(storeId, tableId))) {
       throw new AppError('TABLE_NOT_FOUND', 'Không tìm thấy bàn trong cửa hàng.', 404);
     }
+    const existing = await this.repository.findQrCode(storeId, tableId);
+    if (existing?.publicToken) {
+      return {
+        path: `/q/${existing.publicToken}`,
+        version: existing.version,
+        enabled: existing.enabled === 1,
+      };
+    }
+    // No QR yet or legacy row without public_token — initialize once
     const rawToken = randomOpaqueToken(24);
     try {
       await this.repository.rotateQrCode({
@@ -1116,6 +1126,7 @@ export class QrOrderService {
         storeId,
         tableId,
         tokenHash: await hashOpaqueToken(rawToken, this.pepper),
+        publicToken: rawToken,
         actorId,
         now: Date.now(),
       });
@@ -1125,6 +1136,38 @@ export class QrOrderService {
       }
       throw error;
     }
+    const created = await this.repository.findQrCode(storeId, tableId);
+    return {
+      path: `/q/${rawToken}`,
+      version: created?.version ?? 1,
+      enabled: created ? created.enabled === 1 : true,
+    };
+  }
+
+  async rotateQrCode(storeId: string, tableId: string, actorId: string) {
+    if (!(await this.repository.findTable(storeId, tableId))) {
+      throw new AppError('TABLE_NOT_FOUND', 'Không tìm thấy bàn trong cửa hàng.', 404);
+    }
+    const rawToken = randomOpaqueToken(24);
+    const now = Date.now();
+    try {
+      await this.repository.rotateQrCode({
+        id: crypto.randomUUID(),
+        storeId,
+        tableId,
+        tokenHash: await hashOpaqueToken(rawToken, this.pepper),
+        publicToken: rawToken,
+        actorId,
+        now,
+      });
+    } catch (error) {
+      if (String(error).includes('FOREIGN KEY')) {
+        throw new AppError('TABLE_NOT_FOUND', 'Không tìm thấy bàn trong cửa hàng.', 404);
+      }
+      throw error;
+    }
+    // Security: revoke all active guest sessions for this table
+    await this.repository.revokeGuestSessionsByTable(storeId, tableId, now);
     return { token: rawToken, path: `/q/${rawToken}` };
   }
 }

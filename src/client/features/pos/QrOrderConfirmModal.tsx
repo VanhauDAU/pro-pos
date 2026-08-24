@@ -196,6 +196,8 @@ export function QrOrderConfirmModal({ open, onClose, areas }: QrOrderConfirmModa
       void queryClient.invalidateQueries({ queryKey: ['pos-staff-all-qr-orders'] });
       void queryClient.invalidateQueries({ queryKey: ['pos-notification-summary'] });
       void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
+      void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
+      void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
     },
     onError: (err) => {
       messageApi.error(err instanceof Error ? err.message : 'Không thể xác nhận món.');
@@ -216,6 +218,8 @@ export function QrOrderConfirmModal({ open, onClose, areas }: QrOrderConfirmModa
       void queryClient.invalidateQueries({ queryKey: ['pos-staff-all-qr-orders'] });
       void queryClient.invalidateQueries({ queryKey: ['pos-notification-summary'] });
       void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
+      void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
+      void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
     },
     onError: (err) => {
       messageApi.error(err instanceof Error ? err.message : 'Không thể từ chối đơn.');

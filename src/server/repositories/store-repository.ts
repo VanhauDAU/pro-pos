@@ -25,12 +25,38 @@ export class StoreRepository {
           ss.bank_name AS bankName, ss.bank_account_number AS bankAccountNumber,
           ss.bank_account_name AS bankAccountName, ss.bank_qr_media_id AS bankQrMediaId,
           ss.province_code AS provinceCode, ss.province_name AS provinceName,
-          ss.ward_code AS wardCode, ss.ward_name AS wardName
+          ss.ward_code AS wardCode, ss.ward_name AS wardName,
+          ss.location_verification_enabled AS locationVerificationEnabled,
+          ss.latitude AS latitude, ss.longitude AS longitude,
+          ss.allowed_radius_meters AS allowedRadiusMeters,
+          ss.max_accuracy_meters AS maxAccuracyMeters
          FROM stores s JOIN store_settings ss ON ss.store_id = s.id
          WHERE s.id = ? LIMIT 1`,
       )
       .bind(storeId)
-      .first();
+      .first<{
+        id: string;
+        name: string;
+        status: 'ACTIVE' | 'LOCKED';
+        timezone: string;
+        phone: string | null;
+        address: string | null;
+        currency: string;
+        businessDayCutoffMinutes: number;
+        bankName: string | null;
+        bankAccountNumber: string | null;
+        bankAccountName: string | null;
+        bankQrMediaId: string | null;
+        provinceCode: number | null;
+        provinceName: string | null;
+        wardCode: number | null;
+        wardName: string | null;
+        locationVerificationEnabled: number;
+        latitude: number | null;
+        longitude: number | null;
+        allowedRadiusMeters: number;
+        maxAccuracyMeters: number;
+      }>();
   }
 
   listBankAccounts(storeId: string, includeArchived = false) {
@@ -215,6 +241,11 @@ export class StoreRepository {
     provinceName: string | null;
     wardCode: number | null;
     wardName: string | null;
+    locationVerificationEnabled: boolean;
+    latitude: number | null;
+    longitude: number | null;
+    allowedRadiusMeters: number;
+    maxAccuracyMeters: number;
     now: number;
   }) {
     return this.db.batch([
@@ -227,7 +258,10 @@ export class StoreRepository {
            SET phone = ?, address = ?, business_day_cutoff_minutes = ?,
                bank_name = ?, bank_account_number = ?, bank_account_name = ?,
                bank_qr_media_id = ?, province_code = ?, province_name = ?,
-               ward_code = ?, ward_name = ?, updated_at = ?
+               ward_code = ?, ward_name = ?,
+               location_verification_enabled = ?, latitude = ?, longitude = ?,
+               allowed_radius_meters = ?, max_accuracy_meters = ?,
+               updated_at = ?
            WHERE store_id = ?`,
         )
         .bind(
@@ -242,6 +276,11 @@ export class StoreRepository {
           input.provinceName,
           input.wardCode,
           input.wardName,
+          input.locationVerificationEnabled ? 1 : 0,
+          input.latitude,
+          input.longitude,
+          input.allowedRadiusMeters,
+          input.maxAccuracyMeters,
           input.now,
           input.storeId,
         ),

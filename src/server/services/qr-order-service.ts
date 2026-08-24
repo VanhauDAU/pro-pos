@@ -1,12 +1,16 @@
 import type { SubmitGuestOrderInput } from './qr-order-types';
 import type {
+  GuestActiveOrderDto,
   GuestOrderContext,
   StaffNotificationAuditDto,
   StaffNotificationEventType,
+  VerifyGuestLocationInput,
+  VerifyGuestLocationResponse,
 } from '@contracts/qr-order';
 import { AppError } from '@server/lib/app-error';
 import { hashOpaqueToken, randomOpaqueToken } from '@server/lib/crypto';
 import { requireSecret } from '@server/lib/env';
+import { verifyLocationCoordinates } from '@server/lib/location';
 import {
   QrOrderRepository,
   type GuestSessionRow,
@@ -220,7 +224,126 @@ export class QrOrderService {
     return session;
   }
 
+  async getActiveOrder(
+    storeId: string,
+    orderId: string,
+    now = Date.now(),
+  ): Promise<GuestActiveOrderDto | null> {
+    try {
+      const posService = new PosService(this.env);
+      const quote = await posService.quote(storeId, orderId, now);
+      if (!quote) return null;
+      return {
+        id: quote.order.id,
+        displayCode: quote.order.displayCode ?? quote.order.id.slice(0, 8).toUpperCase(),
+        openedAt: quote.order.openedAt,
+        items: quote.items.map((item) => {
+          const promoGift =
+            'promotionGift' in item
+              ? (item.promotionGift as
+                  { promotionId: string; promotionName: string } | null | undefined)
+              : null;
+          return {
+            id: item.id,
+            productName: item.productName,
+            variantName: item.variantName ?? null,
+            unitName: item.unitName ?? null,
+            quantityMilli: item.quantityMilli,
+            unitPriceVnd: item.unitPriceVnd,
+            grossLineTotalVnd: item.grossLineTotalVnd,
+            discountAmountVnd: item.discountAmountVnd,
+            netLineTotalVnd: item.netLineTotalVnd,
+            note: item.note ?? null,
+            productType: item.productType,
+            promotionGift: promoGift ?? null,
+          };
+        }),
+        time: quote.time
+          ? {
+              status: quote.time.status,
+              startedAtMs: quote.time.startedAtMs,
+              endedAtMs: quote.time.endedAtMs,
+              pausedAtMs: quote.time.pausedAtMs,
+              elapsedSeconds: quote.time.elapsedSeconds,
+              basePriceVnd: quote.time.pricingConfig.basePriceVnd,
+              amountAfterRoundingVnd: quote.time.amountAfterRoundingVnd,
+            }
+          : null,
+        subtotalVnd: quote.subtotalVnd,
+        discountTotalVnd: quote.discountTotalVnd,
+        totalVnd: Math.max(0, quote.subtotalVnd - quote.discountTotalVnd),
+        calculatedAt: now,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  async getActiveOrderBySession(rawGuest: string) {
+    const session = await this.contextFromSession(rawGuest);
+    const order = await this.getActiveOrder(session.storeId, session.orderId);
+    if (!order) {
+      throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn hàng của bàn.', 404);
+    }
+    return order;
+  }
+
+  async getActiveOrderByQr(rawQrToken: string) {
+    const tokenHash = await hashOpaqueToken(rawQrToken, this.pepper);
+    const context = await this.repository.findActiveQrContext(tokenHash);
+    if (!context) {
+      throw new AppError('QR_TABLE_SESSION_INVALID', 'Bàn hiện chưa có đơn hàng đang mở.', 404);
+    }
+    const order = await this.getActiveOrder(context.storeId, context.orderId);
+    if (!order) {
+      throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn hàng của bàn.', 404);
+    }
+    return order;
+  }
+
+  private assertLocationVerified(session: GuestSessionRow, now = Date.now()) {
+    if (session.locationVerificationEnabled !== 1) return;
+    if (
+      session.latitude === null ||
+      session.latitude === undefined ||
+      session.longitude === null ||
+      session.longitude === undefined
+    ) {
+      throw new AppError(
+        'STORE_LOCATION_NOT_CONFIGURED',
+        'Cửa hàng đang bật xác minh vị trí nhưng chưa cấu hình tọa độ vị trí quán.',
+        409,
+      );
+    }
+    if (!session.locationExpiresAt || session.locationExpiresAt <= now) {
+      throw new AppError(
+        'LOCATION_VERIFICATION_REQUIRED',
+        'Vui lòng xác minh vị trí tại quán để thực hiện thao tác này.',
+        403,
+        {
+          required: true,
+          configured: true,
+          allowedRadiusMeters: session.allowedRadiusMeters,
+          maxAccuracyMeters: session.maxAccuracyMeters,
+        },
+      );
+    }
+  }
+
   private async responseContext(session: GuestSessionRow): Promise<GuestOrderContext> {
+    const now = Date.now();
+    const isLocationRequired = session.locationVerificationEnabled === 1;
+    const isLocationConfigured =
+      session.latitude !== null &&
+      session.latitude !== undefined &&
+      session.longitude !== null &&
+      session.longitude !== undefined;
+    const isLocationVerified =
+      !isLocationRequired ||
+      Boolean(
+        session.locationExpiresAt && session.locationExpiresAt > now && session.locationVerifiedAt,
+      );
+
     return {
       tableStatus: 'OPEN',
       storeName: session.storeName,
@@ -233,6 +356,16 @@ export class QrOrderService {
       },
       sessionExpiresAt: session.expiresAt,
       openRequest: null,
+      locationRequirement: {
+        required: isLocationRequired,
+        configured: isLocationConfigured,
+        allowedRadiusMeters: session.allowedRadiusMeters,
+        maxAccuracyMeters: session.maxAccuracyMeters,
+        isVerified: isLocationVerified,
+        verifiedExpiresAt: session.locationExpiresAt ?? null,
+        distanceMeters: session.locationDistanceMeters ?? null,
+      },
+      activeOrder: await this.getActiveOrder(session.storeId, session.orderId, now),
       menu: await this.repository.listMenu(session.storeId),
     };
   }
@@ -263,6 +396,13 @@ export class QrOrderService {
         tableContext.storeId,
         tableContext.tableId,
       );
+      const isLocationRequired = tableContext.locationVerificationEnabled === 1;
+      const isLocationConfigured =
+        tableContext.latitude !== null &&
+        tableContext.latitude !== undefined &&
+        tableContext.longitude !== null &&
+        tableContext.longitude !== undefined;
+
       return {
         rawGuest: '',
         context: {
@@ -277,6 +417,14 @@ export class QrOrderService {
           },
           sessionExpiresAt: null,
           openRequest,
+          locationRequirement: {
+            required: isLocationRequired,
+            configured: isLocationConfigured,
+            allowedRadiusMeters: tableContext.allowedRadiusMeters,
+            maxAccuracyMeters: tableContext.maxAccuracyMeters,
+            isVerified: !isLocationRequired,
+            verifiedExpiresAt: null,
+          },
           menu: await this.repository.listMenu(tableContext.storeId),
         },
       };
@@ -314,16 +462,54 @@ export class QrOrderService {
     });
     return {
       rawGuest,
-      context: await this.responseContext({ ...context, guestSessionId, expiresAt }),
+      context: await this.responseContext({
+        ...context,
+        guestSessionId,
+        expiresAt,
+        locationVerifiedAt: null,
+        locationDistanceMeters: null,
+        locationAccuracyMeters: null,
+        locationExpiresAt: null,
+      }),
     };
   }
 
-  async requestTableOpen(rawQrToken: string, ip: string | null) {
+  async requestTableOpen(
+    rawQrToken: string,
+    ip: string | null,
+    location?: VerifyGuestLocationInput | null,
+  ) {
     const context = await this.repository.findQrTableContext(
       await hashOpaqueToken(rawQrToken, this.pepper),
     );
     if (!context || context.tableStatus === 'DISABLED') {
       throw new AppError('QR_TABLE_NOT_ACTIVE', 'Mã QR không còn hiệu lực.', 409);
+    }
+    if (context.locationVerificationEnabled === 1) {
+      if (!location) {
+        throw new AppError(
+          'LOCATION_VERIFICATION_REQUIRED',
+          'Vui lòng xác minh vị trí tại quán để gửi yêu cầu mở bàn.',
+          403,
+          {
+            required: true,
+            configured: context.latitude !== null && context.longitude !== null,
+            allowedRadiusMeters: context.allowedRadiusMeters,
+            maxAccuracyMeters: context.maxAccuracyMeters,
+          },
+        );
+      }
+      verifyLocationCoordinates({
+        storeSettings: {
+          locationVerificationEnabled: true,
+          latitude: context.latitude,
+          longitude: context.longitude,
+          allowedRadiusMeters: context.allowedRadiusMeters,
+          maxAccuracyMeters: context.maxAccuracyMeters,
+        },
+        input: location,
+        serverNow: Date.now(),
+      });
     }
     if (context.tableStatus === 'OCCUPIED') {
       return {
@@ -466,12 +652,76 @@ export class QrOrderService {
     return new MediaService(this.env).get(context.storeId, mediaId);
   }
 
+  async verifyLocation(
+    rawGuest: string,
+    input: VerifyGuestLocationInput,
+  ): Promise<VerifyGuestLocationResponse> {
+    const session = await this.contextFromSession(rawGuest);
+    const now = Date.now();
+    const result = verifyLocationCoordinates({
+      storeSettings: {
+        locationVerificationEnabled: session.locationVerificationEnabled === 1,
+        latitude: session.latitude,
+        longitude: session.longitude,
+        allowedRadiusMeters: session.allowedRadiusMeters,
+        maxAccuracyMeters: session.maxAccuracyMeters,
+      },
+      input,
+      serverNow: now,
+      sessionTtlMs: 15 * 60_000,
+    });
+    await this.repository.updateGuestLocationVerification({
+      guestSessionId: session.guestSessionId,
+      verifiedAt: result.verifiedAt,
+      distanceMeters: result.distanceMeters,
+      accuracyMeters: result.accuracyMeters,
+      expiresAt: result.expiresAt,
+    });
+    return {
+      verified: true,
+      distanceMeters: result.distanceMeters,
+      allowedRadiusMeters: result.allowedRadiusMeters,
+      expiresAt: result.expiresAt,
+    };
+  }
+
+  async verifyLocationByToken(
+    rawQrToken: string,
+    input: VerifyGuestLocationInput,
+  ): Promise<VerifyGuestLocationResponse> {
+    const tokenHash = await hashOpaqueToken(rawQrToken, this.pepper);
+    const tableContext = await this.repository.findQrTableContext(tokenHash);
+    if (!tableContext || tableContext.tableStatus === 'DISABLED') {
+      throw new AppError('QR_TABLE_NOT_ACTIVE', 'Mã QR đã bị thay đổi hoặc không hoạt động.', 409);
+    }
+    const now = Date.now();
+    const result = verifyLocationCoordinates({
+      storeSettings: {
+        locationVerificationEnabled: tableContext.locationVerificationEnabled === 1,
+        latitude: tableContext.latitude,
+        longitude: tableContext.longitude,
+        allowedRadiusMeters: tableContext.allowedRadiusMeters,
+        maxAccuracyMeters: tableContext.maxAccuracyMeters,
+      },
+      input,
+      serverNow: now,
+      sessionTtlMs: 15 * 60_000,
+    });
+    return {
+      verified: true,
+      distanceMeters: result.distanceMeters,
+      allowedRadiusMeters: result.allowedRadiusMeters,
+      expiresAt: result.expiresAt,
+    };
+  }
+
   async submitOrder(
     rawGuest: string,
     input: SubmitGuestOrderInput,
     ip: string | null,
   ): Promise<SubmitOrderResult> {
     const session = await this.contextFromSession(rawGuest);
+    this.assertLocationVerified(session);
     const replay = await this.repository.findRequestByClient(
       session.guestSessionId,
       input.clientRequestId,
@@ -578,18 +828,27 @@ export class QrOrderService {
 
   async createServiceRequest(rawGuest: string, type: 'CALL_STAFF' | 'CHECKOUT_REQUEST') {
     const session = await this.contextFromSession(rawGuest);
+    this.assertLocationVerified(session);
+    const now = Date.now();
     const existing = await this.repository.findOpenServiceRequest(
       session.timeSessionId,
       type,
-      Date.now() - 30_000,
+      now - 60_000,
     );
     if (existing) {
-      throw new AppError('REQUEST_ALREADY_OPEN', 'Yêu cầu này đang chờ nhân viên xử lý.', 409, {
-        requestId: existing.id,
-      });
+      const elapsedSec = existing.createdAt ? Math.floor((now - existing.createdAt) / 1000) : 0;
+      const remainingSec = Math.max(1, 60 - elapsedSec);
+      throw new AppError(
+        'REQUEST_COOLDOWN',
+        `Yêu cầu đã được gửi. Vui lòng chờ ${remainingSec}s trước khi gửi lại.`,
+        429,
+        {
+          requestId: existing.id,
+          retryAfterSeconds: remainingSec,
+        },
+      );
     }
     const id = crypto.randomUUID();
-    const now = Date.now();
     try {
       await this.repository.createServiceRequest({
         id,

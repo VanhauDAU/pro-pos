@@ -1,5 +1,6 @@
 import {
   AppstoreOutlined,
+  BellFilled,
   BellOutlined,
   CheckCircleOutlined,
   ClockCircleOutlined,
@@ -88,6 +89,7 @@ import type {
   StaffNotificationStatus,
   TableOpenRequestDto,
 } from '@contracts/qr-order';
+import { QrOrderConfirmModal } from './QrOrderConfirmModal';
 import type { BankAccountDto, StorePrintSettings } from '@contracts/store';
 import type { PricingConfigSnapshot } from '@domain/pricing/types';
 import {
@@ -1002,6 +1004,18 @@ function StaffHeader({
   const [modal, holder] = Modal.useModal();
   const [loggingOut, setLoggingOut] = useState(false);
   const notifications = usePosNotifications();
+  const allQrOrdersQuery = useQuery<GuestOrderRequestDto[]>({
+    queryKey: ['pos-staff-all-qr-orders'],
+    queryFn: () => apiRequest<GuestOrderRequestDto[]>('/api/v1/pos/qr-orders'),
+    refetchInterval: 10_000,
+  });
+  const pendingQrCount =
+    (notifications.data?.counts.guestOrders ?? 0) +
+    (notifications.data?.counts.tableOpenRequests ?? 0);
+  const totalQrOrdersCount = (allQrOrdersQuery.data ?? []).length;
+  const showQrBell = pendingQrCount > 0 || totalQrOrdersCount > 0;
+  const [qrConfirmModalOpen, setQrConfirmModalOpen] = useState(false);
+
   const pendingNotificationCount =
     (notifications.data?.counts.guestOrders ?? 0) +
     (notifications.data?.counts.serviceRequests ?? 0) +
@@ -1117,6 +1131,22 @@ function StaffHeader({
           </span>
         </div>
       </Tooltip>
+      {showQrBell ? (
+        <button
+          type="button"
+          className={`pos-qr-bell-btn pos-qr-bell-btn--header ${pendingQrCount > 0 ? 'pos-qr-bell-btn--shake' : ''}`}
+          onClick={() => setQrConfirmModalOpen(true)}
+          title="Xác nhận gọi món qua QR"
+        >
+          <span className="pos-qr-bell-btn__icon">
+            <BellFilled />
+          </span>
+          <span className="pos-qr-bell-btn__text">Gọi món qua QR</span>
+          {pendingQrCount > 0 ? (
+            <span className="pos-qr-bell-btn__badge">{pendingQrCount}</span>
+          ) : null}
+        </button>
+      ) : null}
       <Tooltip title="Trung tâm thông báo">
         <Button
           type="text"
@@ -1160,6 +1190,7 @@ function StaffHeader({
           <DownOutlined style={{ fontSize: 11, color: '#8c8c8c' }} />
         </Button>
       </Dropdown>
+      <QrOrderConfirmModal open={qrConfirmModalOpen} onClose={() => setQrConfirmModalOpen(false)} />
     </header>
   );
 }

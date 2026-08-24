@@ -193,6 +193,11 @@ export class StoreService {
     provinceName: string | null;
     wardCode: number | null;
     wardName: string | null;
+    locationVerificationEnabled?: boolean;
+    latitude?: number | null;
+    longitude?: number | null;
+    allowedRadiusMeters?: number;
+    maxAccuracyMeters?: number;
     auditContext?: AuditContext;
   }) {
     if (
@@ -203,7 +208,15 @@ export class StoreService {
     }
     const before = input.auditContext ? await this.repository.getSettings(input.storeId) : null;
     const now = Date.now();
-    await this.repository.updateSettings({ ...input, now });
+    await this.repository.updateSettings({
+      ...input,
+      locationVerificationEnabled: Boolean(input.locationVerificationEnabled),
+      latitude: input.latitude ?? null,
+      longitude: input.longitude ?? null,
+      allowedRadiusMeters: input.allowedRadiusMeters ?? 300,
+      maxAccuracyMeters: input.maxAccuracyMeters ?? 100,
+      now,
+    });
     if (input.auditContext) {
       const after = await this.repository.getSettings(input.storeId);
       await new AuditRepository(this.env.DB).record({

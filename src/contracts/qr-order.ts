@@ -52,6 +52,72 @@ export interface GuestMenuProduct {
   variants: GuestMenuVariant[];
 }
 
+export interface GuestActiveOrderItemDto {
+  id: string;
+  productName: string;
+  variantName: string | null;
+  unitName: string | null;
+  quantityMilli: number;
+  unitPriceVnd: number;
+  grossLineTotalVnd: number;
+  discountAmountVnd: number;
+  netLineTotalVnd: number;
+  note: string | null;
+  productType?: string;
+  promotionGift?: {
+    promotionId: string;
+    promotionName: string;
+  } | null;
+}
+
+export interface GuestActiveOrderTimeDto {
+  status: 'RUNNING' | 'PAUSED' | 'ENDED';
+  startedAtMs: number;
+  endedAtMs: number | null;
+  pausedAtMs: number | null;
+  elapsedSeconds: number;
+  basePriceVnd: number;
+  amountAfterRoundingVnd: number;
+}
+
+export interface GuestActiveOrderDto {
+  id: string;
+  displayCode: string;
+  openedAt: number;
+  items: GuestActiveOrderItemDto[];
+  time: GuestActiveOrderTimeDto | null;
+  subtotalVnd: number;
+  discountTotalVnd: number;
+  totalVnd: number;
+  calculatedAt: number;
+}
+
+export const verifyGuestLocationSchema = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  accuracyMeters: z.number().min(0).max(100000),
+  capturedAt: z.number().int().positive().optional(),
+});
+
+export type VerifyGuestLocationInput = z.infer<typeof verifyGuestLocationSchema>;
+
+export interface VerifyGuestLocationResponse {
+  verified: boolean;
+  distanceMeters: number;
+  allowedRadiusMeters: number;
+  expiresAt: number;
+}
+
+export interface GuestLocationRequirementDto {
+  required: boolean;
+  configured: boolean;
+  allowedRadiusMeters: number;
+  maxAccuracyMeters: number;
+  isVerified: boolean;
+  verifiedExpiresAt: number | null;
+  distanceMeters?: number | null;
+}
+
 export interface GuestOrderContext {
   tableStatus: 'OPEN' | 'AVAILABLE' | 'OPEN_REQUESTED';
   storeName: string;
@@ -68,6 +134,8 @@ export interface GuestOrderContext {
     status: 'OPEN';
     createdAt: number;
   } | null;
+  locationRequirement: GuestLocationRequirementDto;
+  activeOrder?: GuestActiveOrderDto | null;
   menu: GuestMenuProduct[];
 }
 

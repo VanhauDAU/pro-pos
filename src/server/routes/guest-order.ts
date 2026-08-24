@@ -1,6 +1,11 @@
 import { Hono } from 'hono';
+import { z } from 'zod';
 
-import { createServiceRequestSchema, submitGuestOrderSchema } from '@contracts/qr-order';
+import {
+  createServiceRequestSchema,
+  submitGuestOrderSchema,
+  verifyGuestLocationSchema,
+} from '@contracts/qr-order';
 import { AppError } from '@server/lib/app-error';
 import { readCredentialCookie, setCredentialCookie } from '@server/lib/cookies';
 import { success } from '@server/lib/response';
@@ -52,9 +57,21 @@ guestOrderRoutes.get('/resolve/:token', async (c) => {
 
 guestOrderRoutes.post('/resolve/:token/open-request', async (c) => {
   assertSameOrigin(c);
+  let location: z.infer<typeof verifyGuestLocationSchema> | undefined;
+  if (c.req.header('content-type')?.includes('application/json')) {
+    const rawBody = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+    if (rawBody && typeof rawBody === 'object') {
+      const locData = 'location' in rawBody ? rawBody.location : rawBody;
+      const parsed = verifyGuestLocationSchema.safeParse(locData);
+      if (parsed.success) {
+        location = parsed.data;
+      }
+    }
+  }
   const result = await new QrOrderService(c.env).requestTableOpen(
     c.req.param('token'),
     clientIp(c),
+    location,
   );
   if (!result.alreadyOpen && !result.replayed && result.requestId && result.createdAt) {
     c.executionCtx.waitUntil(
@@ -81,8 +98,30 @@ guestOrderRoutes.post('/resolve/:token/open-request', async (c) => {
   return success(c, { requestId: result.requestId, alreadyOpen: result.alreadyOpen }, 201);
 });
 
+guestOrderRoutes.post('/location/verify', async (c) => {
+  assertSameOrigin(c);
+  const body = await parseJson(c.req.raw, verifyGuestLocationSchema);
+  const result = await new QrOrderService(c.env).verifyLocation(guestCredential(c), body);
+  return success(c, result);
+});
+
+guestOrderRoutes.post('/resolve/:token/location/verify', async (c) => {
+  assertSameOrigin(c);
+  const body = await parseJson(c.req.raw, verifyGuestLocationSchema);
+  const result = await new QrOrderService(c.env).verifyLocationByToken(c.req.param('token'), body);
+  return success(c, result);
+});
+
 guestOrderRoutes.get('/context', async (c) =>
   success(c, await new QrOrderService(c.env).getContext(guestCredential(c))),
+);
+
+guestOrderRoutes.get('/active-order', async (c) =>
+  success(c, await new QrOrderService(c.env).getActiveOrderBySession(guestCredential(c))),
+);
+
+guestOrderRoutes.get('/resolve/:token/active-order', async (c) =>
+  success(c, await new QrOrderService(c.env).getActiveOrderByQr(c.req.param('token'))),
 );
 
 guestOrderRoutes.get('/resolve/:token/media/:mediaId', async (c) => {

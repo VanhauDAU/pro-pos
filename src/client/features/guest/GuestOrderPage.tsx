@@ -263,7 +263,7 @@ export function GuestOrderPage() {
                 id: 'time-session',
                 name: 'Tiền giờ',
                 quantity: 1,
-                unitPrice: order.time.amountAfterRoundingVnd,
+                unitPrice: order.time.basePriceVnd ?? order.time.amountAfterRoundingVnd,
                 totalPrice: order.time.amountAfterRoundingVnd,
                 isTime: true,
                 timeStartedAtMs: order.time.startedAtMs,
@@ -644,6 +644,28 @@ export function GuestOrderPage() {
       await queryClient.invalidateQueries({ queryKey: ['guest-order-context', token] });
     },
     onError: (error) => {
+      const isLocErr =
+        (error as { code?: string })?.code === 'LOCATION_VERIFICATION_REQUIRED' ||
+        (error instanceof Error && error.message.includes('xác minh vị trí'));
+      if (isLocErr) {
+        setLocalLocationVerified(false);
+        setVerifiedLocationData(null);
+        lastVerifiedCoords.current = null;
+        setLocationError(
+          error instanceof Error ? error.message : 'Vui lòng xác minh vị trí tại quán.',
+        );
+        setLocationModalOpen(true);
+        setPendingAction(
+          () =>
+            (coords?: {
+              latitude: number;
+              longitude: number;
+              accuracyMeters: number;
+              capturedAt?: number;
+            }) =>
+              requestTableOpen.mutate(coords),
+        );
+      }
       showAssistantFeedback(
         'error',
         error instanceof Error ? error.message : 'Không thể gửi yêu cầu mở bàn.',
@@ -1213,6 +1235,7 @@ export function GuestOrderPage() {
           placement="bottom"
           height="auto"
           open={cartDrawerOpen}
+          zIndex={1000}
           onClose={() => {
             setCartDrawerOpen(false);
             setEditingNoteVariantId(null);
@@ -1483,6 +1506,32 @@ export function GuestOrderPage() {
                 />
               </div>
 
+              {/* Location Verification Warning Banner inside cart */}
+              {context.data?.locationRequirement?.required && !isLocationVerified ? (
+                <div
+                  className="qr-cart-location-notice"
+                  onClick={() => {
+                    setLocationError(null);
+                    setLocationModalOpen(true);
+                  }}
+                  role="button"
+                  tabIndex={0}
+                >
+                  <div className="qr-cart-location-notice__icon">
+                    <AimOutlined />
+                  </div>
+                  <div className="qr-cart-location-notice__content">
+                    <div className="qr-cart-location-notice__title">
+                      Chưa xác minh vị trí tại quán
+                    </div>
+                    <div className="qr-cart-location-notice__desc">
+                      Chạm để xác nhận GPS tại quán trước khi gửi gọi món.
+                    </div>
+                  </div>
+                  <span className="qr-cart-location-notice__action">Xác nhận</span>
+                </div>
+              ) : null}
+
               {/* Summary Breakdown */}
               <div className="qr-cart-summary-card">
                 <div className="qr-cart-summary-row">
@@ -1521,7 +1570,9 @@ export function GuestOrderPage() {
                       {submitOrder.isPending
                         ? 'Đang gửi yêu cầu...'
                         : isTableOpen
-                          ? 'Gửi yêu cầu gọi món'
+                          ? context.data?.locationRequirement?.required && !isLocationVerified
+                            ? 'Xác minh vị trí & Gọi món'
+                            : 'Gửi yêu cầu gọi món'
                           : 'Chờ nhân viên mở bàn'}
                     </span>
                     <span className="qr-cart-submit-btn__badge">{formatVnd(totalAmount)}</span>
@@ -1542,6 +1593,7 @@ export function GuestOrderPage() {
           title={customizingProduct?.name}
           footer={null}
           centered
+          zIndex={1100}
           onCancel={() => setCustomizingProduct(null)}
           styles={{ body: { padding: '12px 4px 4px' } }}
         >
@@ -1665,6 +1717,7 @@ export function GuestOrderPage() {
           placement="bottom"
           height="80vh"
           open={historyDrawerOpen}
+          zIndex={1000}
           onClose={() => setHistoryDrawerOpen(false)}
           styles={{ body: { padding: '14px 16px', background: '#f8fafc' } }}
         >
@@ -1809,6 +1862,7 @@ export function GuestOrderPage() {
           placement="bottom"
           height="88vh"
           open={activeOrderDrawerOpen}
+          zIndex={1000}
           onClose={() => setActiveOrderDrawerOpen(false)}
           styles={{ body: { padding: '12px 8px 24px', background: '#f1f5f9' } }}
         >
@@ -1839,6 +1893,7 @@ export function GuestOrderPage() {
           cancelText="Hủy"
           confirmLoading={submitService.isPending}
           centered
+          zIndex={1500}
           onOk={() => submitService.mutate({ type: serviceConfirm.type })}
           onCancel={() => setServiceConfirm({ open: false, type: 'CALL_STAFF' })}
         >
@@ -1864,6 +1919,7 @@ export function GuestOrderPage() {
           footer={null}
           centered
           closable={false}
+          zIndex={1500}
           className="qr-order-success-modal"
           styles={{ body: { padding: '28px 20px 24px', textAlign: 'center' } }}
         >
@@ -1912,6 +1968,7 @@ export function GuestOrderPage() {
             </Space>
           }
           centered
+          zIndex={1500}
           onCancel={() => {
             if (!isVerifyingLocation) {
               setLocationModalOpen(false);

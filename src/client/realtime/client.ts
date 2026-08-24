@@ -304,6 +304,10 @@ export class PosRealtimeClient {
   private fullSync() {
     return this.queryClient.invalidateQueries({
       predicate: (query) => {
+        // Do not immediately invalidate fresh queries that were loaded within the last 10s on initial mount
+        if (Date.now() - query.state.dataUpdatedAt < 10_000) {
+          return false;
+        }
         const root = query.queryKey[0];
         return (
           root === 'pos-tables' ||
@@ -317,6 +321,7 @@ export class PosRealtimeClient {
           root === 'staff-notification-audit'
         );
       },
+      refetchType: 'active',
     });
   }
 

@@ -8,7 +8,6 @@ import {
   type RealtimeSyncResponse,
 } from '@contracts/realtime';
 import { apiRequest } from '@client/lib/api';
-import { playPosSound } from '@client/lib/sound';
 
 export type RealtimeConnectionStatus = 'DISABLED' | 'CONNECTING' | 'CONNECTED' | 'RECONNECTING';
 
@@ -21,6 +20,9 @@ export class PosRealtimeClient {
   private reconnectTimer: number | null = null;
   private reauthTimer: number | null = null;
   private pingTimer: number | null = null;
+  private invalidationTimer: number | null = null;
+  private readonly pendingTopics = new Set<string>();
+  private readonly pendingOrderIds = new Set<string>();
   private syncing = false;
   private eventQueue: Promise<void> = Promise.resolve();
   private bufferedEvents: RealtimeEventV1[] = [];
@@ -34,6 +36,7 @@ export class PosRealtimeClient {
     private readonly queryClient: QueryClient,
     private readonly onStatus: (status: RealtimeConnectionStatus) => void,
     private readonly onServerTime: (offsetMs: number) => void,
+    private readonly onEvents?: (events: RealtimeEventV1[]) => void,
   ) {
     const stored = sessionStorage.getItem(this.cursorKey);
     const parsed = stored === null ? null : Number(stored);
@@ -61,9 +64,11 @@ export class PosRealtimeClient {
     if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer);
     if (this.reauthTimer !== null) window.clearTimeout(this.reauthTimer);
     if (this.pingTimer !== null) window.clearInterval(this.pingTimer);
+    if (this.invalidationTimer !== null) window.clearTimeout(this.invalidationTimer);
     this.reconnectTimer = null;
     this.reauthTimer = null;
     this.pingTimer = null;
+    this.invalidationTimer = null;
   }
 
   private connect(reconnecting: boolean) {
@@ -75,6 +80,7 @@ export class PosRealtimeClient {
     const url = new URL('/api/v1/pos/realtime/stream', window.location.origin);
     url.protocol = protocol;
     url.searchParams.set('clientVersion', 'web-v1');
+    if (this.cursor !== null) url.searchParams.set('after', String(this.cursor));
     const socket = new WebSocket(url, REALTIME_SUBPROTOCOL);
     this.socket = socket;
 
@@ -98,7 +104,7 @@ export class PosRealtimeClient {
         this.pingTimer = window.setInterval(() => {
           if (socket.readyState === WebSocket.OPEN) socket.send('{"type":"ping"}');
         }, 25_000);
-        void this.synchronize();
+        void this.synchronize(frame.sync);
         return;
       }
       if (frame.type === 'events') this.enqueueEvents(frame.events, socket);
@@ -113,11 +119,16 @@ export class PosRealtimeClient {
   }
 
   private enqueueEvents(events: RealtimeEventV1[], socket: WebSocket) {
+    this.onEvents?.(events);
     this.eventQueue = this.eventQueue
       .then(() => this.receiveEvents(events))
       .catch(() => {
         if (this.socket === socket) socket.close(1012, 'Realtime event processing failed');
       });
+  }
+
+  receiveBroadcastEvents(events: RealtimeEventV1[]) {
+    this.eventQueue = this.eventQueue.then(() => this.receiveEvents(events)).catch(() => undefined);
   }
 
   private scheduleReconnect(delayOverride?: number) {
@@ -153,19 +164,22 @@ export class PosRealtimeClient {
         await this.synchronize();
         return;
       }
-      await this.routeEvent(event, true);
+      this.routeEvent(event, true);
       this.advanceCursor(event.sequence, event.eventId);
       return processAt(index + 1);
     };
     await processAt(0);
   }
 
-  private async synchronize() {
+  private async synchronize(initialResponse?: RealtimeSyncResponse) {
     if (this.syncing || this.stopped) return;
     this.syncing = true;
     try {
-      const query = this.cursor === null ? '' : `?after=${this.cursor}`;
-      const response = await apiRequest<RealtimeSyncResponse>(`/api/v1/pos/realtime/sync${query}`);
+      const response =
+        initialResponse ??
+        (await apiRequest<RealtimeSyncResponse>(
+          `/api/v1/pos/realtime/sync${this.cursor === null ? '' : `?after=${this.cursor}`}`,
+        ));
       this.serverTimeOffset = response.serverNowMs - Date.now();
       this.onServerTime(this.serverTimeOffset);
       if (response.mode === 'FULL_SYNC') {
@@ -195,73 +209,96 @@ export class PosRealtimeClient {
       if (!event) return;
       if (this.seenEventIds.has(event.eventId)) return processAt(index + 1);
       const isRecent = Date.now() + this.serverTimeOffset - event.occurredAtMs < 20_000;
-      await this.routeEvent(event, isRecent);
+      this.routeEvent(event, isRecent);
       this.advanceCursor(event.sequence, event.eventId);
       return processAt(index + 1);
     };
     await processAt(0);
   }
 
-  private async routeEvent(event: RealtimeEventV1, isLive: boolean) {
-    if (isLive) {
-      if (event.data.reason === 'GUEST_ORDER_CREATED') {
-        playPosSound(
-          'NEW_QR_ORDER',
-          event.data.guestRequestId ? `qr-order:${event.data.guestRequestId}` : event.eventId,
-        );
-      } else if (event.data.reason === 'SERVICE_REQUEST_CREATED') {
-        const dedupeKey = event.data.serviceRequestId
-          ? `service-request:${event.data.serviceRequestId}`
-          : event.eventId;
-        if (event.data.serviceRequestType === 'CALL_STAFF') {
-          playPosSound('NEW_QR_ORDER', dedupeKey);
-        } else {
-          playPosSound('CHECKOUT_REQUEST', dedupeKey);
-        }
-      } else if (event.data.reason === 'TABLE_OPEN_REQUEST_CREATED') {
-        playPosSound(
-          'TABLE_OPEN_REQUEST',
-          event.data.tableOpenRequestId
-            ? `table-open-request:${event.data.tableOpenRequestId}`
-            : event.eventId,
-        );
-      } else if (event.data.reason === 'CHECKOUT_COMPLETED') {
-        playPosSound('PAYMENT_SUCCESS', event.eventId);
-      }
+  private isOwnMutation(event: RealtimeEventV1) {
+    if (!event.clientMutationId) return false;
+    try {
+      const recent = JSON.parse(
+        sessionStorage.getItem('propos:recent-mutations') ?? '[]',
+      ) as Array<{
+        id: string;
+        at: number;
+      }>;
+      const now = Date.now();
+      return recent.some(
+        (item) =>
+          now - item.at < 60_000 &&
+          (event.clientMutationId === item.id || event.clientMutationId!.startsWith(`${item.id}:`)),
+      );
+    } catch {
+      return false;
     }
+  }
 
-    const invalidations: Array<Promise<unknown>> = [];
-    if (event.topics.includes('pos.tables')) {
-      invalidations.push(this.queryClient.invalidateQueries({ queryKey: ['pos-tables'] }));
-    }
-    if (event.topics.includes('guest.orders')) {
-      invalidations.push(
-        this.queryClient.invalidateQueries({ queryKey: ['guest-order-requests'] }),
-      );
-    }
-    if (event.topics.includes('guest.services')) {
-      invalidations.push(this.queryClient.invalidateQueries({ queryKey: ['service-requests'] }));
-    }
-    if (event.topics.includes('guest.table-open-requests')) {
-      invalidations.push(this.queryClient.invalidateQueries({ queryKey: ['table-open-requests'] }));
-    }
-    if (
-      event.topics.includes('pos.orders') ||
-      event.topics.includes('guest.orders') ||
-      event.topics.includes('guest.services') ||
-      event.topics.includes('guest.table-open-requests')
-    ) {
-      invalidations.push(
-        this.queryClient.invalidateQueries({ queryKey: ['staff-notification-audit'] }),
-      );
-    }
+  private routeEvent(event: RealtimeEventV1, _isLive: boolean) {
+    if (this.isOwnMutation(event)) return;
+    for (const topic of event.topics) this.pendingTopics.add(topic);
     if (event.topics.includes(`pos.order:${event.aggregate.id}`)) {
-      invalidations.push(
-        this.queryClient.invalidateQueries({ queryKey: ['pos-order-quote', event.aggregate.id] }),
-        this.queryClient.invalidateQueries({ queryKey: ['pos-order-detail', event.aggregate.id] }),
-      );
+      this.pendingOrderIds.add(event.aggregate.id);
     }
-    await Promise.all(invalidations);
+    this.scheduleInvalidationFlush();
+  }
+
+  private scheduleInvalidationFlush() {
+    if (this.invalidationTimer !== null) return;
+    this.invalidationTimer = window.setTimeout(() => {
+      this.invalidationTimer = null;
+      const topics = new Set(this.pendingTopics);
+      const orderIds = [...this.pendingOrderIds];
+      this.pendingTopics.clear();
+      this.pendingOrderIds.clear();
+      const invalidations: Array<Promise<unknown>> = [];
+      if (topics.has('pos.tables') || topics.has('pos.orders')) {
+        invalidations.push(
+          this.queryClient.invalidateQueries({ queryKey: ['pos-overview'], refetchType: 'active' }),
+          this.queryClient.invalidateQueries({ queryKey: ['pos-tables'], refetchType: 'active' }),
+        );
+      }
+      if (
+        topics.has('guest.orders') ||
+        topics.has('guest.services') ||
+        topics.has('guest.table-open-requests')
+      ) {
+        invalidations.push(
+          this.queryClient.invalidateQueries({
+            queryKey: ['pos-notification-summary'],
+            refetchType: 'active',
+          }),
+        );
+      }
+      if (
+        topics.has('pos.orders') ||
+        topics.has('guest.orders') ||
+        topics.has('guest.services') ||
+        topics.has('guest.table-open-requests')
+      ) {
+        invalidations.push(
+          this.queryClient.invalidateQueries({
+            queryKey: ['staff-notification-audit'],
+            refetchType: 'active',
+          }),
+        );
+      }
+      for (const orderId of orderIds) {
+        invalidations.push(
+          this.queryClient.invalidateQueries({
+            queryKey: ['pos-order-quote', orderId],
+            refetchType: 'active',
+          }),
+          this.queryClient.invalidateQueries({
+            queryKey: ['pos-order-detail', orderId],
+            refetchType: 'active',
+          }),
+        );
+      }
+      void Promise.all(invalidations);
+    }, 75);
   }
 
   private fullSync() {
@@ -270,6 +307,8 @@ export class PosRealtimeClient {
         const root = query.queryKey[0];
         return (
           root === 'pos-tables' ||
+          root === 'pos-overview' ||
+          root === 'pos-notification-summary' ||
           root === 'pos-order-quote' ||
           root === 'pos-order-detail' ||
           root === 'guest-order-requests' ||

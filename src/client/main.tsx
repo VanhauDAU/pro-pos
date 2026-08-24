@@ -8,12 +8,19 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router';
 
 import { App } from './App';
+import { ApiError } from './lib/api';
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      retry: 1,
+      retry: (failureCount, error) => {
+        if (error instanceof ApiError && [401, 403, 409, 422].includes(error.status)) {
+          return false;
+        }
+        return failureCount < 1;
+      },
       staleTime: 15_000,
+      refetchOnWindowFocus: false,
     },
   },
 });

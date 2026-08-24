@@ -193,6 +193,139 @@ describe('online POS vertical slice', () => {
     ).rejects.toMatchObject({ code: 'TABLE_NOT_AVAILABLE' });
   });
 
+  it('opens and saves a multi-item order atomically with idempotent replay', async () => {
+    const catalog = new CatalogService(env);
+    const table = await catalog.createTable({
+      storeId,
+      areaId,
+      timeProductId,
+      name: 'Bàn batch command',
+      sortOrder: 11,
+    });
+    const pos = new PosService(env);
+    const values = {
+      orderType: 'DINE_IN' as const,
+      tableId: table.id,
+      expectedTableVersion: 1,
+      items: Array.from({ length: 6 }, () => ({
+        productId,
+        variantId,
+        quantityMilli: 1_000,
+        note: null,
+        discount: null,
+      })),
+      note: 'Lưu một command',
+    };
+    const first = await pos.openOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-batch-open',
+      idempotencyKey: 'batch-open-command-001',
+      values,
+    });
+    expect(first.order.version).toBe(8);
+    expect(first.items).toHaveLength(6);
+    expect(first.items.every((item) => item.quantityMilli === 1_000)).toBe(true);
+    expect(first.totals.totalVnd).toBe(120_000);
+    const [auditCount, eventCount] = await env.DB.batch([
+      env.DB.prepare(
+        'SELECT COUNT(*) AS total FROM audit_logs WHERE store_id = ? AND request_id = ?',
+      ).bind(storeId, 'request-batch-open'),
+      env.DB.prepare(
+        `SELECT COUNT(*) AS total FROM realtime_events
+         WHERE store_id = ? AND client_mutation_id = ?`,
+      ).bind(storeId, 'batch-open-command-001'),
+    ]);
+    expect((auditCount!.results[0] as { total: number }).total).toBe(1);
+    expect((eventCount!.results[0] as { total: number }).total).toBe(1);
+
+    const replay = await pos.openOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-batch-open-replay',
+      idempotencyKey: 'batch-open-command-001',
+      values,
+    });
+    expect(replay).toEqual(first);
+    const commandCount = await env.DB.prepare(
+      'SELECT COUNT(*) AS total FROM pos_save_commands WHERE store_id = ? AND id = ?',
+    )
+      .bind(storeId, 'batch-open-command-001')
+      .first<{ total: number }>();
+    expect(commandCount?.total).toBe(1);
+  });
+
+  it('does not occupy a table when batch validation fails', async () => {
+    const catalog = new CatalogService(env);
+    const table = await catalog.createTable({
+      storeId,
+      areaId,
+      timeProductId,
+      name: 'Bàn batch rollback',
+      sortOrder: 12,
+    });
+    await expect(
+      new PosService(env).openOrderCommand({
+        storeId,
+        actorId: ownerUserId,
+        requestId: 'request-batch-invalid',
+        idempotencyKey: 'batch-open-invalid-001',
+        values: {
+          orderType: 'DINE_IN',
+          tableId: table.id,
+          expectedTableVersion: 1,
+          items: [
+            {
+              productId: crypto.randomUUID(),
+              variantId: null,
+              quantityMilli: 1_000,
+              note: null,
+              discount: null,
+            },
+          ],
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'PRODUCT_NOT_AVAILABLE' });
+    const after = await env.DB.prepare('SELECT status, version FROM service_tables WHERE id = ?')
+      .bind(table.id)
+      .first<{ status: string; version: number }>();
+    expect(after).toEqual({ status: 'AVAILABLE', version: 1 });
+  });
+
+  it('freezes a payment snapshot and consumes it exactly once at checkout', async () => {
+    const pos = new PosService(env);
+    const opened = await openFreshTable('Bàn frozen payment', 'frozen-payment-open-001');
+    const stopped = await pos.stopTimeForCheckout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-frozen-stop',
+      idempotencyKey: 'frozen-payment-stop-001',
+      orderId: opened.orderId,
+      expectedOrderVersion: 1,
+      now: Date.now() + 1_000,
+    });
+    expect(stopped.paymentSnapshotId).toBeTruthy();
+    expect(stopped.quote.order.status).toBe('PAYMENT_PENDING');
+    const checkout = await pos.checkout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-frozen-checkout',
+      idempotencyKey: 'frozen-payment-checkout-001',
+      orderId: opened.orderId,
+      expectedOrderVersion: stopped.orderVersion,
+      paymentSnapshotId: stopped.paymentSnapshotId,
+      method: 'CASH',
+      cashReceivedVnd: stopped.quote.totalVnd,
+    });
+    expect(checkout.total).toBe(stopped.quote.totalVnd);
+    const snapshot = await env.DB.prepare(
+      'SELECT status FROM payment_snapshots WHERE store_id = ? AND id = ?',
+    )
+      .bind(storeId, stopped.paymentSnapshotId)
+      .first<{ status: string }>();
+    expect(snapshot?.status).toBe('CONSUMED');
+  });
+
   it('creates, selects, prices, and snapshots an invoice promotion', async () => {
     const pos = new PosService(env);
     const order = await pos.createTakeaway({

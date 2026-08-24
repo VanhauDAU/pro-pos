@@ -15,6 +15,7 @@ export type PosRealtimeReason =
   | 'ITEM_ADDED'
   | 'ITEM_UPDATED'
   | 'ITEM_REMOVED'
+  | 'BATCH_SAVED'
   | 'NOTE_UPDATED'
   | 'GUEST_UPDATED'
   | 'TIME_PAUSED'
@@ -84,6 +85,7 @@ export type RealtimeServerFrame =
       serverNowMs: number;
       reauthAtMs: number;
       schemaVersion: typeof REALTIME_SCHEMA_VERSION;
+      sync?: RealtimeSyncResponse;
     }
   | { type: 'events'; events: RealtimeEventV1[] }
   | { type: 'error'; code: string; message: string };

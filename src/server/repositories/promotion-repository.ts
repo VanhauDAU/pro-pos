@@ -58,6 +58,93 @@ export class PromotionRepository {
       .all<PromotionRow>();
   }
 
+  async loadActiveRelations(storeId: string) {
+    const [targets, gifts, groups] = await Promise.all([
+      this.db
+        .prepare(
+          `SELECT pt.promotion_id AS promotionId, pt.target_type AS targetType,
+                  pt.target_id AS targetId,
+                  CASE WHEN pt.variant_id = '' THEN NULL ELSE pt.variant_id END AS variantId,
+                  pt.required_quantity AS requiredQuantity,
+                  p.name AS productName, pv.name AS variantName, c.name AS categoryName
+           FROM promotion_targets pt
+           LEFT JOIN products p
+             ON p.store_id = pt.store_id AND p.id = pt.target_id
+           LEFT JOIN product_variants pv
+             ON pv.store_id = pt.store_id AND pv.id = NULLIF(pt.variant_id, '')
+           LEFT JOIN categories c
+             ON c.store_id = pt.store_id AND c.id = pt.target_id
+           JOIN promotions promotion
+             ON promotion.store_id = pt.store_id AND promotion.id = pt.promotion_id
+            AND promotion.status = 'ACTIVE'
+           WHERE pt.store_id = ?
+           ORDER BY pt.promotion_id, pt.target_type, pt.target_id, pt.variant_id`,
+        )
+        .bind(storeId)
+        .all<{
+          promotionId: string;
+          targetType: 'CATEGORY' | 'PRODUCT' | 'GIFT_PRODUCT';
+          targetId: string;
+          variantId: string | null;
+          requiredQuantity: number;
+          productName: string | null;
+          variantName: string | null;
+          categoryName: string | null;
+        }>(),
+      this.db
+        .prepare(
+          `SELECT pt.promotion_id AS promotionId, p.id AS productId, pv.id AS variantId,
+                  p.name AS productName, pv.name AS variantName, u.name AS unitName,
+                  COALESCE(pv.sale_price, 0) AS unitPriceVnd
+           FROM promotion_targets pt
+           JOIN promotions promotion
+             ON promotion.store_id = pt.store_id AND promotion.id = pt.promotion_id
+            AND promotion.status = 'ACTIVE'
+           JOIN products p
+             ON p.store_id = pt.store_id AND p.id = pt.target_id
+            AND p.status = 'ACTIVE' AND p.product_type = 'QUANTITY'
+           JOIN product_variants pv
+             ON pv.store_id = p.store_id AND pv.product_id = p.id
+            AND pv.id = CASE
+              WHEN pt.variant_id <> '' THEN pt.variant_id
+              ELSE (
+                SELECT fallback.id FROM product_variants fallback
+                WHERE fallback.store_id = p.store_id AND fallback.product_id = p.id
+                  AND fallback.status = 'ACTIVE'
+                ORDER BY fallback.created_at, fallback.id LIMIT 1
+              )
+            END
+            AND pv.status = 'ACTIVE'
+           LEFT JOIN units u ON u.store_id = p.store_id AND u.id = p.unit_id
+           WHERE pt.store_id = ? AND pt.target_type = 'GIFT_PRODUCT'
+           ORDER BY pt.promotion_id, p.name COLLATE NOCASE, pv.name COLLATE NOCASE`,
+        )
+        .bind(storeId)
+        .all<{
+          promotionId: string;
+          productId: string;
+          variantId: string;
+          productName: string;
+          variantName: string | null;
+          unitName: string | null;
+          unitPriceVnd: number;
+        }>(),
+      this.db
+        .prepare(
+          `SELECT pcg.promotion_id AS promotionId, pcg.customer_group_id AS groupId
+           FROM promotion_customer_groups pcg
+           JOIN promotions promotion
+             ON promotion.store_id = pcg.store_id AND promotion.id = pcg.promotion_id
+            AND promotion.status = 'ACTIVE'
+           WHERE pcg.store_id = ?
+           ORDER BY pcg.promotion_id, pcg.customer_group_id`,
+        )
+        .bind(storeId)
+        .all<{ promotionId: string; groupId: string }>(),
+    ]);
+    return { targets: targets.results, gifts: gifts.results, groups: groups.results };
+  }
+
   find(storeId: string, id: string) {
     return this.db
       .prepare(`${PROMOTION_SELECT} WHERE store_id = ? AND id = ? LIMIT 1`)
@@ -500,6 +587,20 @@ export class PromotionRepository {
       .first<{ version: number }>();
     if (!order || order.version !== input.expectedVersion)
       throw new Error('ORDER_VERSION_CONFLICT');
+    await this.db.batch(this.buildSetOrderPromotionStatements(input));
+  }
+
+  buildSetOrderPromotionStatements(input: {
+    storeId: string;
+    orderId: string;
+    orderType: 'DINE_IN' | 'TAKEAWAY';
+    promotionIds: string[];
+    suppressedPromotionIds: string[];
+    actorId: string;
+    expectedVersion: number;
+    now: number;
+  }) {
+    const table = input.orderType === 'TAKEAWAY' ? 'takeaway_orders' : 'orders';
     const statements: D1PreparedStatement[] = [
       this.db
         .prepare('DELETE FROM order_promotions WHERE store_id = ? AND order_id = ?')
@@ -558,10 +659,24 @@ export class PromotionRepository {
           input.expectedVersion,
         ),
     );
-    await this.db.batch(statements);
+    return statements;
   }
 
   saveInvoicePromotion(input: {
+    storeId: string;
+    invoiceId: string;
+    orderType: 'DINE_IN' | 'TAKEAWAY';
+    promotionId: string;
+    promotionName: string;
+    promotionType: string;
+    discountAmountVnd: number;
+    snapshotJson: string;
+    now: number;
+  }) {
+    return this.buildSaveInvoicePromotionStatement(input).run();
+  }
+
+  buildSaveInvoicePromotionStatement(input: {
     storeId: string;
     invoiceId: string;
     orderType: 'DINE_IN' | 'TAKEAWAY';
@@ -589,7 +704,6 @@ export class PromotionRepository {
         input.discountAmountVnd,
         input.snapshotJson,
         input.now,
-      )
-      .run();
+      );
   }
 }

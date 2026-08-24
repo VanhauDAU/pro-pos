@@ -3,7 +3,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button, message, Modal, Tooltip } from 'antd';
 
 import { apiRequest, jsonRequest } from '@client/lib/api';
-import { playPosSound, unlockPosAudio } from '@client/lib/sound';
+
+let subscriptionSyncPromise: Promise<PushSubscription> | null = null;
 
 function vapidKeyToBytes(value: string) {
   const padding = '='.repeat((4 - (value.length % 4)) % 4);
@@ -62,18 +63,33 @@ export function PushNotificationControl({
   );
 
   const ensureSubscription = useCallback(async () => {
-    const [{ publicKey }, registration] = await Promise.all([
-      apiRequest<{ publicKey: string }>('/api/v1/pos/push/public-key'),
-      navigator.serviceWorker.ready,
-    ]);
-    const existing = await registration.pushManager.getSubscription();
-    const subscription =
-      existing ??
-      (await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: vapidKeyToBytes(publicKey),
-      }));
-    await persistSubscription(subscription);
+    if (!subscriptionSyncPromise) {
+      subscriptionSyncPromise = (async () => {
+        const registration = await navigator.serviceWorker.ready;
+        const existing = await registration.pushManager.getSubscription();
+        const subscription = existing
+          ? existing
+          : await (async () => {
+              const { publicKey } = await apiRequest<{ publicKey: string }>(
+                '/api/v1/pos/push/public-key',
+              );
+              return registration.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: vapidKeyToBytes(publicKey),
+              });
+            })();
+        const syncKey = `propos:push-synced:${subscription.endpoint}`;
+        if (sessionStorage.getItem(syncKey) !== '1') {
+          await persistSubscription(subscription);
+          sessionStorage.setItem(syncKey, '1');
+        }
+        return subscription;
+      })().catch((error) => {
+        subscriptionSyncPromise = null;
+        throw error;
+      });
+    }
+    await subscriptionSyncPromise;
     setSubscriptionActive(true);
   }, [persistSubscription]);
 
@@ -93,7 +109,6 @@ export function PushNotificationControl({
       messageApi.warning('Trình duyệt này chưa hỗ trợ push notification.');
       return;
     }
-    unlockPosAudio();
     setLoading(true);
     try {
       const nextPermission = await Notification.requestPermission();
@@ -105,8 +120,7 @@ export function PushNotificationControl({
         return;
       }
       await ensureSubscription();
-      playPosSound('NEW_QR_ORDER', `push-sound-test:${Date.now()}`);
-      messageApi.success('Đã đồng bộ thông báo và phát thử âm QR Order.');
+      messageApi.success('Đã đồng bộ thông báo trên thiết bị.');
     } catch (error) {
       messageApi.error(error instanceof Error ? error.message : 'Không thể bật thông báo.');
     } finally {
@@ -120,7 +134,7 @@ export function PushNotificationControl({
       <Tooltip
         title={
           enabled
-            ? 'Thông báo đã bật · Chạm để đồng bộ lại và thử âm thanh'
+            ? 'Thông báo đã bật · Chạm để đồng bộ lại'
             : permission === 'granted'
               ? 'Đang kiểm tra đăng ký thông báo trên thiết bị'
               : 'Bật thông báo QR Order'

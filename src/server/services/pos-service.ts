@@ -16,6 +16,7 @@ import { AuthorizationRepository } from '@server/repositories/authorization-repo
 import { CustomerService } from '@server/services/customer-service';
 import { PromotionService } from '@server/services/promotion-service';
 import { PromotionRepository } from '@server/repositories/promotion-repository';
+import type { OpenOrderCommandInput, SaveExistingOrderCommandInput } from '@contracts/pos';
 
 function checkedMoneyFromMilli(unitPriceVnd: number, quantityMilli: number) {
   const amount = (BigInt(unitPriceVnd) * BigInt(quantityMilli) + 500n) / 1000n;
@@ -27,6 +28,30 @@ function checkedMoneyFromMilli(unitPriceVnd: number, quantityMilli: number) {
 
 function checkedPercentAmount(amountVnd: number, percent: number) {
   return Number((BigInt(amountVnd) * BigInt(percent) + 50n) / 100n);
+}
+
+type SaveOrderItemInput = OpenOrderCommandInput['items'][number];
+type PromotionPreviewItem = Parameters<PromotionService['previewForOrder']>[0]['items'][number];
+
+interface PreparedSaveItem {
+  itemId: string;
+  productId: string;
+  variantId: string | null;
+  productType: 'QUANTITY' | 'WEIGHT' | 'TIME';
+  productName: string;
+  variantName: string | null;
+  unitName: string | null;
+  unitPriceVnd: number;
+  quantityMilli: number;
+  timeStartedAtMs: number | null;
+  timeEndedAtMs: number | null;
+  note: string | null;
+  discountType: 'FIXED' | 'PERCENT' | null;
+  discountInputValue: number | null;
+  discountAmountVnd: number;
+  discountReason: string | null;
+  grossLineTotalVnd: number;
+  netLineTotalVnd: number;
 }
 
 function mapDatabaseError(error: unknown): never {
@@ -60,6 +85,13 @@ function mapDatabaseError(error: unknown): never {
   if (message.includes('INSUFFICIENT_CASH')) {
     throw new AppError('INSUFFICIENT_CASH', 'Tiền khách đưa không đủ.', 422);
   }
+  if (message.includes('PAYMENT_SNAPSHOT_INVALID')) {
+    throw new AppError(
+      'PAYMENT_SNAPSHOT_INVALID',
+      'Bản chốt thanh toán không còn hiệu lực. Vui lòng mở lại màn thanh toán.',
+      409,
+    );
+  }
   if (message.includes('TIME_NOT_RUNNING')) {
     throw new AppError('TIME_NOT_RUNNING', 'Phiên thời gian không ở trạng thái đang chạy.', 409);
   }
@@ -77,9 +109,11 @@ function mapDatabaseError(error: unknown): never {
 
 export class PosService {
   private readonly repository: PosRepository;
+  private readonly promotions: PromotionService;
 
   constructor(private readonly env: CloudflareBindings) {
     this.repository = new PosRepository(env.DB);
+    this.promotions = new PromotionService(env);
   }
 
   private async businessDay(storeId: string, now: number) {
@@ -155,6 +189,57 @@ export class PosService {
     );
   }
 
+  async overview(storeId: string, now = Date.now()) {
+    const [tableRows, orderRows] = await Promise.all([
+      this.repository.listTables(storeId),
+      this.repository.listActiveOrders(storeId),
+    ]);
+    const quoteEntries = await Promise.all(
+      orderRows.results.map(
+        async (order) => [order.id, await this.quote(storeId, order.id, now)] as const,
+      ),
+    );
+    const quotes = new Map(quoteEntries);
+    const orders = orderRows.results.map((order) => {
+      const quote = quotes.get(order.id)!;
+      return {
+        id: order.id,
+        displayCode: order.display_code,
+        orderType: order.order_type,
+        status: order.status,
+        version: order.version,
+        openedAt: order.opened_at,
+        tableId: order.table_id,
+        tableName: order.table_name,
+        areaId: order.area_id,
+        areaName: order.area_name,
+        itemCount: quote.items.reduce(
+          (sum, item) =>
+            sum + (item.productType === 'TIME' ? 0 : Number(item.quantityMilli) / 1000),
+          0,
+        ),
+        totalVnd: quote.totalVnd,
+        timeStatus: quote.time?.status ?? null,
+      };
+    });
+    const tables = tableRows.results.map((table) => {
+      const quote = table.activeOrderId ? quotes.get(table.activeOrderId) : null;
+      if (!quote) return { ...table, totalVnd: 0, itemCount: 0 };
+      return {
+        ...table,
+        totalVnd: quote.totalVnd,
+        itemCount: quote.items.reduce(
+          (sum, item) =>
+            sum + (item.productType === 'TIME' ? 0 : Number(item.quantityMilli) / 1000),
+          0,
+        ),
+        guestCount: quote.order.guestCount ?? table.guestCount ?? 1,
+        timeSessionStatus: quote.time?.status ?? table.timeSessionStatus ?? null,
+      };
+    });
+    return { tables, orders, serverNowMs: now };
+  }
+
   async createTakeaway(input: {
     storeId: string;
     actorId: string;
@@ -181,6 +266,685 @@ export class PosService {
       issuedAt,
     });
     return (await this.repository.findCreateTakeawayCommand(input.storeId, input.idempotencyKey))!;
+  }
+
+  private async commandPayloadHash(payload: unknown) {
+    const digest = await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(JSON.stringify(payload)),
+    );
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  }
+
+  private async replaySaveCommand(
+    storeId: string,
+    commandId: string,
+    payloadHash: string,
+  ): Promise<Awaited<ReturnType<PosService['orderMutationSnapshot']>> | null> {
+    const replay = await this.repository.findSaveCommand(storeId, commandId);
+    if (!replay) return null;
+    if (replay.payloadHash !== payloadHash) {
+      throw new AppError(
+        'IDEMPOTENCY_PAYLOAD_MISMATCH',
+        'Idempotency-Key đã được dùng cho một nội dung khác.',
+        409,
+      );
+    }
+    if (replay.responseJson) {
+      return JSON.parse(replay.responseJson) as Awaited<
+        ReturnType<PosService['orderMutationSnapshot']>
+      >;
+    }
+    return this.orderMutationSnapshot(storeId, replay.orderId, commandId);
+  }
+
+  private async prepareSaveItems(
+    storeId: string,
+    items: SaveOrderItemInput[],
+    takeaway: boolean,
+    now: number,
+  ): Promise<PreparedSaveItem[]> {
+    return Promise.all(
+      items.map(async (input) => {
+        const product = await this.repository.findSaleVariant(
+          storeId,
+          input.productId,
+          input.variantId,
+        );
+        if (
+          !product ||
+          product.product_status !== 'ACTIVE' ||
+          (product.product_type !== 'TIME' && product.variant_status !== 'ACTIVE') ||
+          (product.prompt_price !== 1 && product.sale_price === null)
+        ) {
+          throw new AppError('PRODUCT_NOT_AVAILABLE', 'Mặt hàng không khả dụng.', 422);
+        }
+        if (takeaway && product.product_type === 'TIME') {
+          throw new AppError(
+            'TIME_ITEM_DINE_IN_ONLY',
+            'Mặt hàng tính giờ chỉ dùng cho đơn tại chỗ.',
+            422,
+          );
+        }
+        if (product.product_type === 'QUANTITY' && input.quantityMilli % 1000 !== 0) {
+          throw new AppError(
+            'QUANTITY_MUST_BE_WHOLE',
+            'Mặt hàng theo số lượng phải là số nguyên.',
+            422,
+          );
+        }
+        if (product.prompt_price === 1 && input.enteredUnitPriceVnd === undefined) {
+          throw new AppError('ENTERED_UNIT_PRICE_REQUIRED', 'Mặt hàng yêu cầu nhập giá bán.', 422);
+        }
+        let unitPriceVnd =
+          product.prompt_price === 1 ? input.enteredUnitPriceVnd! : product.sale_price!;
+        let quantityMilli = input.quantityMilli;
+        const timeStartedAtMs =
+          product.product_type === 'TIME' ? (input.timeStartedAtMs ?? now) : null;
+        const timeEndedAtMs =
+          product.product_type === 'TIME' ? (input.timeEndedAtMs ?? null) : null;
+        let grossLineTotalVnd = checkedMoneyFromMilli(unitPriceVnd, quantityMilli);
+        if (product.product_type === 'TIME') {
+          const effectiveStartedAtMs = timeStartedAtMs!;
+          if (timeEndedAtMs !== null && timeEndedAtMs <= effectiveStartedAtMs) {
+            throw new AppError('TIME_RANGE_INVALID', 'Giờ ra phải sau giờ vào.', 422);
+          }
+          const config = await this.productPricingSnapshot(storeId, product.product_id);
+          if (config) {
+            unitPriceVnd = config.basePriceVnd;
+            const result = calculateTimePrice({
+              startedAtMs: effectiveStartedAtMs,
+              endedAtMs: Math.max(effectiveStartedAtMs + 1_000, timeEndedAtMs ?? now),
+              config,
+            });
+            quantityMilli = Math.max(1, Math.round((result.elapsedSeconds / 3600) * 1000));
+            grossLineTotalVnd = result.amountAfterRoundingVnd;
+          }
+        }
+        let discountAmountVnd = 0;
+        if (input.discount?.type === 'PERCENT') {
+          if (input.discount.value > 100) {
+            throw new AppError('DISCOUNT_INVALID', 'Phần trăm giảm giá không hợp lệ.', 422);
+          }
+          discountAmountVnd = checkedPercentAmount(grossLineTotalVnd, input.discount.value);
+        } else if (input.discount?.type === 'FIXED') {
+          discountAmountVnd = input.discount.value;
+        }
+        discountAmountVnd = Math.min(grossLineTotalVnd, discountAmountVnd);
+        return {
+          itemId: crypto.randomUUID(),
+          productId: product.product_id,
+          variantId: product.product_type === 'TIME' ? null : product.variant_id,
+          productType: product.product_type,
+          productName: product.product_name,
+          variantName: product.variant_name,
+          unitName: product.unit_name,
+          unitPriceVnd,
+          quantityMilli,
+          timeStartedAtMs,
+          timeEndedAtMs,
+          note: input.note?.trim() || null,
+          discountType: input.discount?.type ?? null,
+          discountInputValue: input.discount?.value ?? null,
+          discountAmountVnd,
+          discountReason: input.discount?.reason.trim() || null,
+          grossLineTotalVnd,
+          netLineTotalVnd: grossLineTotalVnd - discountAmountVnd,
+        };
+      }),
+    );
+  }
+
+  private async resolveGuest(
+    storeId: string,
+    guest: OpenOrderCommandInput['guest'] | SaveExistingOrderCommandInput['guest'],
+  ) {
+    if (!guest) return null;
+    if (!guest.customerId) {
+      return {
+        guestCount: guest.guestCount,
+        customerId: null,
+        customerName: guest.customerName?.trim() || null,
+        customerPhone: guest.customerPhone?.trim() || null,
+      };
+    }
+    const customer = await new CustomerService(this.env).detail(storeId, guest.customerId);
+    if (customer.status !== 'ACTIVE') {
+      throw new AppError('CUSTOMER_ARCHIVED', 'Khách hàng đã được lưu trữ.', 409);
+    }
+    return {
+      guestCount: guest.guestCount,
+      customerId: customer.id,
+      customerName: customer.name,
+      customerPhone: customer.phone,
+    };
+  }
+
+  private async promotionStatements(input: {
+    storeId: string;
+    orderId: string | null;
+    orderType: 'DINE_IN' | 'TAKEAWAY';
+    promotionIds: string[] | undefined;
+    customerId: string | null;
+    items: PromotionPreviewItem[];
+    subtotalVnd: number;
+    expectedVersion: number;
+    actorId: string;
+    now: number;
+  }) {
+    if (input.promotionIds === undefined) return [];
+    const preview = await this.promotions.previewForOrder({
+      storeId: input.storeId,
+      orderId: input.orderId,
+      customerId: input.customerId,
+      subtotalVnd: input.subtotalVnd,
+      promotionIds: input.promotionIds,
+      items: input.items,
+      now: input.now,
+    });
+    for (const promotionId of input.promotionIds) {
+      const option = preview.options.find((item) => item.id === promotionId);
+      if (!option) {
+        throw new AppError('PROMOTION_NOT_FOUND', 'Không tìm thấy chương trình khuyến mại.', 404);
+      }
+      if (!option.eligible) {
+        throw new AppError(
+          'PROMOTION_NOT_ELIGIBLE',
+          option.reason ?? 'Chương trình chưa đủ điều kiện áp dụng.',
+          422,
+        );
+      }
+    }
+    const selected = new Set(input.promotionIds);
+    const suppressedPromotionIds = preview.options
+      .filter((item) => item.autoApply && item.eligible && !selected.has(item.id))
+      .map((item) => item.id);
+    return new PromotionRepository(this.env.DB).buildSetOrderPromotionStatements({
+      storeId: input.storeId,
+      orderId: input.orderId!,
+      orderType: input.orderType,
+      promotionIds: input.promotionIds,
+      suppressedPromotionIds,
+      actorId: input.actorId,
+      expectedVersion: input.expectedVersion,
+      now: input.now,
+    });
+  }
+
+  private async orderMutationSnapshot(
+    storeId: string,
+    orderId: string,
+    clientMutationId: string,
+    now = Date.now(),
+  ) {
+    const quote = await this.quote(storeId, orderId, now);
+    const rawTables = await this.repository.listTables(storeId);
+    const table = quote.order.tableId
+      ? rawTables.results.find((candidate) => candidate.id === quote.order.tableId)
+      : null;
+    return {
+      clientMutationId,
+      quote,
+      order: quote.order,
+      items: quote.items,
+      totals: {
+        subtotalVnd: quote.subtotalVnd,
+        discountTotalVnd: quote.discountTotalVnd,
+        totalVnd: quote.totalVnd,
+      },
+      tableSummaries: table
+        ? [
+            {
+              ...table,
+              totalVnd: quote.totalVnd,
+              itemCount: quote.items.reduce(
+                (sum, item) => sum + (item.productType === 'TIME' ? 0 : item.quantityMilli / 1000),
+                0,
+              ),
+              guestCount: quote.order.guestCount,
+              timeSessionStatus: quote.time?.status ?? null,
+            },
+          ]
+        : [],
+      orderVersion: quote.order.version,
+      serverNowMs: now,
+    };
+  }
+
+  async openOrderCommand(input: {
+    storeId: string;
+    actorId: string;
+    requestId: string;
+    idempotencyKey: string;
+    values: OpenOrderCommandInput;
+  }) {
+    const payloadHash = await this.commandPayloadHash(input.values);
+    const replay = await this.replaySaveCommand(input.storeId, input.idempotencyKey, payloadHash);
+    if (replay) return replay;
+    const now = Date.now();
+    const orderId = crypto.randomUUID();
+    const takeaway = input.values.orderType === 'TAKEAWAY';
+    const [preparedItems, guest, businessDay] = await Promise.all([
+      this.prepareSaveItems(input.storeId, input.values.items, takeaway, now),
+      this.resolveGuest(input.storeId, input.values.guest),
+      this.businessDay(input.storeId, now),
+    ]);
+    const statements: D1PreparedStatement[] = [
+      this.repository.prepareSaveCommand({
+        commandId: input.idempotencyKey,
+        storeId: input.storeId,
+        orderId,
+        payloadHash,
+        now,
+      }),
+      this.repository.buildBeginRealtimeBatchStatement({
+        storeId: input.storeId,
+        commandId: input.idempotencyKey,
+        orderId,
+        now,
+      }),
+    ];
+    if (takeaway) {
+      statements.push(
+        this.repository.buildCreateTakeawayStatement({
+          commandId: `${input.idempotencyKey}:create`,
+          storeId: input.storeId,
+          orderId,
+          businessDay,
+          note: input.values.note?.trim() || null,
+          actorId: input.actorId,
+          requestId: input.requestId,
+          issuedAt: now,
+        }),
+      );
+    } else {
+      const pricing = await this.pricingSnapshot(input.storeId, input.values.tableId!);
+      statements.push(
+        this.repository.buildOpenTableStatement({
+          commandId: `${input.idempotencyKey}:open`,
+          storeId: input.storeId,
+          tableId: input.values.tableId!,
+          expectedTableVersion: input.values.expectedTableVersion!,
+          orderId,
+          timeSessionId: crypto.randomUUID(),
+          businessDay,
+          pricingSnapshotJson: JSON.stringify(pricing.config),
+          pricingVersion: pricing.config.version,
+          actorId: input.actorId,
+          requestId: input.requestId,
+          issuedAt: now,
+        }),
+      );
+    }
+    let version = 1;
+    for (const [index, item] of preparedItems.entries()) {
+      const command = {
+        commandId: `${input.idempotencyKey}:item:${index}`,
+        storeId: input.storeId,
+        orderId,
+        expectedOrderVersion: version,
+        ...item,
+        actorId: input.actorId,
+        requestId: input.requestId,
+        issuedAt: now,
+      };
+      statements.push(
+        takeaway
+          ? this.repository.buildAddTakeawayItemStatement(command)
+          : this.repository.buildAddItemStatement(command),
+        this.repository.buildSetOrderItemDiscountReasonStatement({
+          storeId: input.storeId,
+          orderType: input.values.orderType,
+          orderId,
+          itemId: item.itemId,
+          reason: item.discountReason,
+        }),
+      );
+      version += 1;
+    }
+    if (!takeaway && input.values.note !== undefined) {
+      statements.push(
+        this.repository.buildUpdateNoteStatement({
+          commandId: `${input.idempotencyKey}:note`,
+          storeId: input.storeId,
+          orderType: input.values.orderType,
+          orderId,
+          expectedOrderVersion: version,
+          note: input.values.note?.trim() || null,
+          actorId: input.actorId,
+          requestId: input.requestId,
+          issuedAt: now,
+        }),
+      );
+      version += 1;
+    }
+    if (guest) {
+      statements.push(
+        this.repository.buildUpdateGuestStatement({
+          commandId: `${input.idempotencyKey}:guest`,
+          storeId: input.storeId,
+          orderType: input.values.orderType,
+          orderId,
+          expectedOrderVersion: version,
+          ...guest,
+          actorId: input.actorId,
+          requestId: input.requestId,
+          issuedAt: now,
+        }),
+      );
+      version += 1;
+    }
+    const promotionItems = preparedItems.map((item) => ({
+      productId: item.productId,
+      variantId: item.variantId,
+      productType: item.productType,
+      productName: item.productName,
+      variantName: item.variantName,
+      unitPriceVnd: item.unitPriceVnd,
+      quantityMilli: item.quantityMilli,
+      grossLineTotalVnd: item.grossLineTotalVnd,
+      netLineTotalVnd: item.netLineTotalVnd,
+    }));
+    statements.push(
+      ...(await this.promotionStatements({
+        storeId: input.storeId,
+        orderId,
+        orderType: input.values.orderType,
+        promotionIds: input.values.promotionIds,
+        customerId: guest?.customerId ?? null,
+        items: promotionItems,
+        subtotalVnd: promotionItems.reduce((sum, item) => sum + item.netLineTotalVnd, 0),
+        expectedVersion: version,
+        actorId: input.actorId,
+        now,
+      })),
+      ...this.repository.buildConsolidateSaveAuditStatements({
+        storeId: input.storeId,
+        orderId,
+        actorId: input.actorId,
+        requestId: input.requestId,
+        addedCount: preparedItems.length,
+        updatedCount: 0,
+        now,
+      }),
+      ...this.repository.buildCompleteRealtimeBatchStatements({
+        storeId: input.storeId,
+        commandId: input.idempotencyKey,
+        orderId,
+        orderVersion: version + (input.values.promotionIds === undefined ? 0 : 1),
+        actorId: input.actorId,
+        requestId: input.requestId,
+        created: true,
+        affectedTableIds: input.values.tableId ? [input.values.tableId] : [],
+        now,
+      }),
+    );
+    try {
+      await this.repository.executeAtomic(statements);
+    } catch (error) {
+      const concurrent = await this.replaySaveCommand(
+        input.storeId,
+        input.idempotencyKey,
+        payloadHash,
+      );
+      if (concurrent) return concurrent;
+      mapDatabaseError(error);
+    }
+    const snapshot = await this.orderMutationSnapshot(
+      input.storeId,
+      orderId,
+      input.idempotencyKey,
+      now,
+    );
+    await this.repository.completeSaveCommand(
+      input.storeId,
+      input.idempotencyKey,
+      JSON.stringify(snapshot),
+      Date.now(),
+    );
+    return snapshot;
+  }
+
+  async saveOrderCommand(input: {
+    storeId: string;
+    actorId: string;
+    requestId: string;
+    idempotencyKey: string;
+    orderId: string;
+    values: SaveExistingOrderCommandInput;
+  }) {
+    const payloadHash = await this.commandPayloadHash(input.values);
+    const replay = await this.replaySaveCommand(input.storeId, input.idempotencyKey, payloadHash);
+    if (replay) return replay;
+    const now = Date.now();
+    const current = await this.quote(input.storeId, input.orderId, now);
+    if (
+      current.order.status !== 'OPEN' ||
+      current.order.version !== input.values.expectedOrderVersion
+    ) {
+      throw new AppError('ORDER_VERSION_CONFLICT', 'Đơn hàng đã thay đổi. Vui lòng tải lại.', 409);
+    }
+    const takeaway = current.order.orderType === 'TAKEAWAY';
+    const [preparedItems, guest] = await Promise.all([
+      this.prepareSaveItems(input.storeId, input.values.addedItems, takeaway, now),
+      this.resolveGuest(input.storeId, input.values.guest),
+    ]);
+    const statements: D1PreparedStatement[] = [
+      this.repository.prepareSaveCommand({
+        commandId: input.idempotencyKey,
+        storeId: input.storeId,
+        orderId: input.orderId,
+        payloadHash,
+        now,
+      }),
+      this.repository.buildBeginRealtimeBatchStatement({
+        storeId: input.storeId,
+        commandId: input.idempotencyKey,
+        orderId: input.orderId,
+        now,
+      }),
+    ];
+    let version = input.values.expectedOrderVersion;
+    const updatedQuantities = new Map(
+      input.values.updatedItems.map((item) => [item.itemId, item.quantityMilli]),
+    );
+    for (const [index, update] of input.values.updatedItems.entries()) {
+      const item = current.items.find(
+        (candidate) =>
+          candidate.id === update.itemId &&
+          !('promotionGift' in candidate && candidate.promotionGift),
+      );
+      if (!item) throw new AppError('ORDER_ITEM_NOT_FOUND', 'Không tìm thấy mặt hàng.', 404);
+      if (item.productType === 'QUANTITY' && update.quantityMilli % 1000 !== 0) {
+        throw new AppError('QUANTITY_MUST_BE_WHOLE', 'Số lượng phải là số nguyên.', 422);
+      }
+      const gross = checkedMoneyFromMilli(item.unitPriceVnd, update.quantityMilli);
+      const discount =
+        item.discountType === 'PERCENT'
+          ? checkedPercentAmount(gross, item.discountInputValue ?? 0)
+          : item.discountType === 'FIXED'
+            ? Math.min(gross, item.discountInputValue ?? 0)
+            : 0;
+      statements.push(
+        this.repository.buildUpdateItemStatement({
+          commandId: `${input.idempotencyKey}:update:${index}`,
+          storeId: input.storeId,
+          orderType: current.order.orderType,
+          orderId: input.orderId,
+          itemId: item.id,
+          expectedOrderVersion: version,
+          quantityMilli: update.quantityMilli,
+          variantId: item.variantId,
+          variantName: item.variantName,
+          unitPriceVnd: item.unitPriceVnd,
+          discountType: item.discountType,
+          discountInputValue: item.discountInputValue,
+          discountAmountVnd: discount,
+          grossLineTotalVnd: gross,
+          netLineTotalVnd: gross - discount,
+          timeStartedAtMs: item.timeStartedAtMs,
+          timeEndedAtMs: item.timeEndedAtMs,
+          note: item.note,
+          actorId: input.actorId,
+          requestId: input.requestId,
+          issuedAt: now,
+        }),
+      );
+      version += 1;
+    }
+    for (const [index, item] of preparedItems.entries()) {
+      const command = {
+        commandId: `${input.idempotencyKey}:item:${index}`,
+        storeId: input.storeId,
+        orderId: input.orderId,
+        expectedOrderVersion: version,
+        ...item,
+        actorId: input.actorId,
+        requestId: input.requestId,
+        issuedAt: now,
+      };
+      statements.push(
+        takeaway
+          ? this.repository.buildAddTakeawayItemStatement(command)
+          : this.repository.buildAddItemStatement(command),
+        this.repository.buildSetOrderItemDiscountReasonStatement({
+          storeId: input.storeId,
+          orderType: current.order.orderType,
+          orderId: input.orderId,
+          itemId: item.itemId,
+          reason: item.discountReason,
+        }),
+      );
+      version += 1;
+    }
+    if (input.values.note !== undefined) {
+      statements.push(
+        this.repository.buildUpdateNoteStatement({
+          commandId: `${input.idempotencyKey}:note`,
+          storeId: input.storeId,
+          orderType: current.order.orderType,
+          orderId: input.orderId,
+          expectedOrderVersion: version,
+          note: input.values.note?.trim() || null,
+          actorId: input.actorId,
+          requestId: input.requestId,
+          issuedAt: now,
+        }),
+      );
+      version += 1;
+    }
+    if (guest) {
+      statements.push(
+        this.repository.buildUpdateGuestStatement({
+          commandId: `${input.idempotencyKey}:guest`,
+          storeId: input.storeId,
+          orderType: current.order.orderType,
+          orderId: input.orderId,
+          expectedOrderVersion: version,
+          ...guest,
+          actorId: input.actorId,
+          requestId: input.requestId,
+          issuedAt: now,
+        }),
+      );
+      version += 1;
+    }
+    const finalItems: PromotionPreviewItem[] = current.items
+      .filter((item) => !('promotionGift' in item && item.promotionGift))
+      .map((item) => {
+        const quantityMilli = updatedQuantities.get(item.id) ?? item.quantityMilli;
+        const grossLineTotalVnd = checkedMoneyFromMilli(item.unitPriceVnd, quantityMilli);
+        const discountAmountVnd =
+          item.discountType === 'PERCENT'
+            ? checkedPercentAmount(grossLineTotalVnd, item.discountInputValue ?? 0)
+            : item.discountType === 'FIXED'
+              ? Math.min(grossLineTotalVnd, item.discountInputValue ?? 0)
+              : 0;
+        return {
+          productId: item.productId,
+          variantId: item.variantId,
+          productType: item.productType,
+          productName: item.productName,
+          variantName: item.variantName,
+          unitPriceVnd: item.unitPriceVnd,
+          quantityMilli,
+          grossLineTotalVnd,
+          netLineTotalVnd: grossLineTotalVnd - discountAmountVnd,
+        };
+      });
+    finalItems.push(
+      ...preparedItems.map((item) => ({
+        productId: item.productId,
+        variantId: item.variantId,
+        productType: item.productType,
+        productName: item.productName,
+        variantName: item.variantName,
+        unitPriceVnd: item.unitPriceVnd,
+        quantityMilli: item.quantityMilli,
+        grossLineTotalVnd: item.grossLineTotalVnd,
+        netLineTotalVnd: item.netLineTotalVnd,
+      })),
+    );
+    statements.push(
+      ...(await this.promotionStatements({
+        storeId: input.storeId,
+        orderId: input.orderId,
+        orderType: current.order.orderType,
+        promotionIds: input.values.promotionIds,
+        customerId: guest?.customerId ?? current.order.customerId,
+        items: finalItems,
+        subtotalVnd:
+          finalItems.reduce((sum, item) => sum + item.netLineTotalVnd, 0) +
+          (current.time?.amountAfterRoundingVnd ?? 0),
+        expectedVersion: version,
+        actorId: input.actorId,
+        now,
+      })),
+      ...this.repository.buildConsolidateSaveAuditStatements({
+        storeId: input.storeId,
+        orderId: input.orderId,
+        actorId: input.actorId,
+        requestId: input.requestId,
+        addedCount: preparedItems.length,
+        updatedCount: input.values.updatedItems.length,
+        now,
+      }),
+      ...this.repository.buildCompleteRealtimeBatchStatements({
+        storeId: input.storeId,
+        commandId: input.idempotencyKey,
+        orderId: input.orderId,
+        orderVersion: version + (input.values.promotionIds === undefined ? 0 : 1),
+        actorId: input.actorId,
+        requestId: input.requestId,
+        created: false,
+        affectedTableIds: current.order.tableId ? [current.order.tableId] : [],
+        now,
+      }),
+    );
+    try {
+      await this.repository.executeAtomic(statements);
+    } catch (error) {
+      const concurrent = await this.replaySaveCommand(
+        input.storeId,
+        input.idempotencyKey,
+        payloadHash,
+      );
+      if (concurrent) return concurrent;
+      mapDatabaseError(error);
+    }
+    const snapshot = await this.orderMutationSnapshot(
+      input.storeId,
+      input.orderId,
+      input.idempotencyKey,
+      now,
+    );
+    await this.repository.completeSaveCommand(
+      input.storeId,
+      input.idempotencyKey,
+      JSON.stringify(snapshot),
+      Date.now(),
+    );
+    return snapshot;
   }
 
   async listCatalog(storeId: string) {
@@ -230,11 +994,22 @@ export class PosService {
       storeId,
       actorId,
     );
-    const { posRealtimeEnabled, ...staffContext } = context;
+    const {
+      posRealtimeEnabled,
+      posCommandsV2Enabled,
+      posPaymentSnapshotV2Enabled,
+      posRealtimeDeltasV2Enabled,
+      ...staffContext
+    } = context;
     return {
       ...staffContext,
       permissions,
-      capabilities: { posRealtime: posRealtimeEnabled === 1 },
+      capabilities: {
+        posRealtime: posRealtimeEnabled === 1,
+        posCommandsV2: posCommandsV2Enabled === 1,
+        posPaymentSnapshotV2: posPaymentSnapshotV2Enabled === 1,
+        posRealtimeDeltasV2: posRealtimeDeltasV2Enabled === 1,
+      },
     };
   }
 
@@ -362,7 +1137,13 @@ export class PosService {
     const replay =
       (await this.repository.findAddItemCommand(input.storeId, input.idempotencyKey)) ??
       (await this.repository.findAddTakeawayItemCommand(input.storeId, input.idempotencyKey));
-    if (replay) return replay;
+    if (replay) {
+      return {
+        ...(await this.orderMutationSnapshot(input.storeId, replay.orderId, input.idempotencyKey)),
+        itemId: replay.itemId,
+        orderId: replay.orderId,
+      };
+    }
     const now = input.now ?? Date.now();
     const takeawayOrder = await this.repository.findTakeawayOrder(input.storeId, input.orderId);
     const product = await this.repository.findSaleVariant(
@@ -548,7 +1329,16 @@ export class PosService {
       },
       now,
     });
-    return { itemId, orderId: input.orderId };
+    return {
+      ...(await this.orderMutationSnapshot(
+        input.storeId,
+        input.orderId,
+        input.idempotencyKey,
+        now,
+      )),
+      itemId,
+      orderId: input.orderId,
+    };
   }
 
   async updateItem(input: {
@@ -568,7 +1358,13 @@ export class PosService {
     now?: number;
   }) {
     const replay = await this.repository.findUpdateItemCommand(input.storeId, input.idempotencyKey);
-    if (replay) return replay;
+    if (replay) {
+      return {
+        ...(await this.orderMutationSnapshot(input.storeId, replay.orderId, input.idempotencyKey)),
+        itemId: replay.itemId,
+        orderId: replay.orderId,
+      };
+    }
     const now = input.now ?? Date.now();
     const order =
       (await this.repository.findOrder(input.storeId, input.orderId)) ??
@@ -733,7 +1529,16 @@ export class PosService {
     } catch (error) {
       mapDatabaseError(error);
     }
-    return { orderId: input.orderId, itemId: input.itemId };
+    return {
+      ...(await this.orderMutationSnapshot(
+        input.storeId,
+        input.orderId,
+        input.idempotencyKey,
+        now,
+      )),
+      itemId: input.itemId,
+      orderId: input.orderId,
+    };
   }
 
   async removeItem(input: {
@@ -747,11 +1552,19 @@ export class PosService {
     reason?: string | undefined;
   }) {
     const replay = await this.repository.findRemoveItemCommand(input.storeId, input.idempotencyKey);
-    if (replay) return replay;
+    if (replay) {
+      return {
+        ...(await this.orderMutationSnapshot(input.storeId, replay.orderId, input.idempotencyKey)),
+        itemId: replay.itemId,
+        orderId: replay.orderId,
+        removed: true,
+      };
+    }
     const order =
       (await this.repository.findOrder(input.storeId, input.orderId)) ??
       (await this.repository.findTakeawayOrder(input.storeId, input.orderId));
     if (!order) throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn.', 404);
+    const now = Date.now();
     try {
       await this.repository.removeOrderItem({
         commandId: input.idempotencyKey,
@@ -762,7 +1575,7 @@ export class PosService {
         expectedOrderVersion: input.expectedOrderVersion,
         actorId: input.actorId,
         requestId: input.requestId,
-        issuedAt: Date.now(),
+        issuedAt: now,
       });
     } catch (error) {
       mapDatabaseError(error);
@@ -775,7 +1588,12 @@ export class PosService {
         requestId: input.requestId,
       });
     }
-    return { orderId: input.orderId, itemId: input.itemId, removed: true };
+    return {
+      ...(await this.orderMutationSnapshot(input.storeId, input.orderId, input.idempotencyKey)),
+      itemId: input.itemId,
+      orderId: input.orderId,
+      removed: true,
+    };
   }
 
   async removeTimeSession(input: {
@@ -806,6 +1624,7 @@ export class PosService {
     if (!session) {
       return { orderId: input.orderId, removed: true };
     }
+    const now = Date.now();
     try {
       await this.repository.removeTimeSession({
         commandId: input.idempotencyKey,
@@ -818,7 +1637,7 @@ export class PosService {
         actorSessionId: input.actorSessionId ?? null,
         deviceId: input.deviceId ?? null,
         requestId: input.requestId,
-        issuedAt: Date.now(),
+        issuedAt: now,
       });
     } catch (error) {
       mapDatabaseError(error);
@@ -839,11 +1658,17 @@ export class PosService {
       input.storeId,
       input.idempotencyKey,
     );
-    if (replay) return replay;
+    if (replay) {
+      return {
+        ...(await this.orderMutationSnapshot(input.storeId, replay.orderId, input.idempotencyKey)),
+        orderId: replay.orderId,
+      };
+    }
     const order =
       (await this.repository.findOrder(input.storeId, input.orderId)) ??
       (await this.repository.findTakeawayOrder(input.storeId, input.orderId));
     if (!order) throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn.', 404);
+    const now = Date.now();
     try {
       await this.repository.updateOrderNote({
         commandId: input.idempotencyKey,
@@ -854,12 +1679,20 @@ export class PosService {
         note: input.note?.trim() || null,
         actorId: input.actorId,
         requestId: input.requestId,
-        issuedAt: Date.now(),
+        issuedAt: now,
       });
     } catch (error) {
       mapDatabaseError(error);
     }
-    return { orderId: input.orderId };
+    return {
+      ...(await this.orderMutationSnapshot(
+        input.storeId,
+        input.orderId,
+        input.idempotencyKey,
+        now,
+      )),
+      orderId: input.orderId,
+    };
   }
 
   async updateGuest(input: {
@@ -878,7 +1711,12 @@ export class PosService {
       input.storeId,
       input.idempotencyKey,
     );
-    if (replay) return replay;
+    if (replay) {
+      return {
+        ...(await this.orderMutationSnapshot(input.storeId, replay.orderId, input.idempotencyKey)),
+        orderId: replay.orderId,
+      };
+    }
     const order =
       (await this.repository.findOrder(input.storeId, input.orderId)) ??
       (await this.repository.findTakeawayOrder(input.storeId, input.orderId));
@@ -892,6 +1730,7 @@ export class PosService {
       customerName = customer.name;
       customerPhone = customer.phone;
     }
+    const now = Date.now();
     try {
       await this.repository.updateOrderGuest({
         commandId: input.idempotencyKey,
@@ -905,12 +1744,20 @@ export class PosService {
         customerId: input.customerId ?? null,
         actorId: input.actorId,
         requestId: input.requestId,
-        issuedAt: Date.now(),
+        issuedAt: now,
       });
     } catch (error) {
       mapDatabaseError(error);
     }
-    return { orderId: input.orderId };
+    return {
+      ...(await this.orderMutationSnapshot(
+        input.storeId,
+        input.orderId,
+        input.idempotencyKey,
+        now,
+      )),
+      orderId: input.orderId,
+    };
   }
 
   async quote(storeId: string, orderId: string, now = Date.now()) {
@@ -1048,17 +1895,26 @@ export class PosService {
         ? await this.repository.listTakeawayOrderItems(storeId, orderId)
         : await this.repository.listOrderItems(storeId, orderId);
 
+    const productPricing = new Map<string, Promise<PricingConfigSnapshot | null>>();
+    const pricingForProduct = (productId: string) => {
+      let cached = productPricing.get(productId);
+      if (!cached) {
+        cached = this.productPricingSnapshot(storeId, productId);
+        productPricing.set(productId, cached);
+      }
+      return cached;
+    };
     const processedItems = await Promise.all(
       items.results.map(async (item) => {
         if (item.productType === 'TIME' && item.timeStartedAtMs) {
-          const productPricing = await this.productPricingSnapshot(storeId, item.productId);
-          if (productPricing) {
+          const itemPricing = await pricingForProduct(item.productId);
+          if (itemPricing) {
             const startedAt = item.timeStartedAtMs;
             const endedAt = item.timeEndedAtMs ?? now;
             const timeCalc = calculateTimePrice({
               startedAtMs: startedAt,
               endedAtMs: Math.max(startedAt + 1000, endedAt),
-              config: productPricing,
+              config: itemPricing,
             });
             const durationMilli = Math.max(1, Math.round((timeCalc.elapsedSeconds / 3600) * 1000));
             const gross = timeCalc.amountAfterRoundingVnd;
@@ -1076,7 +1932,7 @@ export class PosService {
               netLineTotalVnd: net,
               timePricing: {
                 ...timeCalc,
-                pricingConfig: productPricing,
+                pricingConfig: itemPricing,
               },
             });
           }
@@ -1094,7 +1950,7 @@ export class PosService {
     );
     const bankSettings = await this.repository.findStoreBankSettings(storeId);
     const subtotal = productGross + (pricing?.amountAfterRoundingVnd ?? 0);
-    const promotions = await new PromotionService(this.env).optionsForOrder({
+    const promotions = await this.promotions.optionsForOrder({
       storeId,
       orderId,
       subtotalVnd: Math.max(0, subtotal - discountTotal),
@@ -1184,25 +2040,47 @@ export class PosService {
     actorId: string;
   }) {
     const quote = await this.quote(input.storeId, input.orderId);
-    return new PromotionService(this.env).applyToOrder({
-      ...input,
-      orderType: quote.order.orderType,
-      subtotalVnd: Math.max(0, quote.subtotalVnd - quote.itemDiscountTotalVnd),
-      customerId: quote.order.customerId,
-      items: quote.items
-        .filter((item) => !('promotionGift' in item))
-        .map((item) => ({
-          productId: item.productId,
-          variantId: item.variantId,
-          productType: item.productType,
-          productName: item.productName,
-          variantName: item.variantName,
-          unitPriceVnd: Number(item.unitPriceVnd),
-          quantityMilli: Number(item.quantityMilli),
-          grossLineTotalVnd: Number(item.grossLineTotalVnd),
-          netLineTotalVnd: Number(item.netLineTotalVnd),
-        })),
-    });
+    const promotionIds = [...new Set(input.promotionIds)];
+    for (const promotionId of promotionIds) {
+      const option = quote.promotionOptions.find((item) => item.id === promotionId);
+      if (!option) {
+        throw new AppError('PROMOTION_NOT_FOUND', 'Không tìm thấy chương trình khuyến mại.', 404);
+      }
+      if (!option.eligible) {
+        throw new AppError(
+          'PROMOTION_NOT_ELIGIBLE',
+          option.reason ?? 'Chương trình chưa đủ điều kiện áp dụng.',
+          422,
+        );
+      }
+    }
+    const selected = new Set(promotionIds);
+    const suppressedPromotionIds = quote.promotionOptions
+      .filter((item) => item.autoApply && item.eligible && !selected.has(item.id))
+      .map((item) => item.id);
+    try {
+      await new PromotionRepository(this.env.DB).setOrderPromotions({
+        storeId: input.storeId,
+        orderId: input.orderId,
+        orderType: quote.order.orderType,
+        actorId: input.actorId,
+        promotionIds,
+        suppressedPromotionIds,
+        expectedVersion: input.expectedOrderVersion,
+        now: Date.now(),
+      });
+    } catch (error) {
+      mapDatabaseError(error);
+    }
+    return {
+      ...(await this.orderMutationSnapshot(
+        input.storeId,
+        input.orderId,
+        `promotion:${input.orderId}`,
+      )),
+      promotionIds,
+      orderId: input.orderId,
+    };
   }
 
   async pause(input: {
@@ -1217,12 +2095,13 @@ export class PosService {
   }) {
     const replay = await this.repository.findPauseCommand(input.storeId, input.idempotencyKey);
     if (replay) return { ...replay, paused: true };
+    const now = Date.now();
     try {
       await this.repository.pauseTime({
         commandId: input.idempotencyKey,
         pauseId: crypto.randomUUID(),
         ...input,
-        now: Date.now(),
+        now,
         actorSessionId: input.actorSessionId ?? null,
         deviceId: input.deviceId ?? null,
       });
@@ -1244,11 +2123,12 @@ export class PosService {
   }) {
     const replay = await this.repository.findResumeCommand(input.storeId, input.idempotencyKey);
     if (replay) return { ...replay, resumed: true };
+    const now = Date.now();
     try {
       await this.repository.resumeTime({
         commandId: input.idempotencyKey,
         ...input,
-        now: Date.now(),
+        now,
         actorSessionId: input.actorSessionId ?? null,
         deviceId: input.deviceId ?? null,
       });
@@ -1356,6 +2236,42 @@ export class PosService {
     };
   }
 
+  private async paymentSnapshotResponse(snapshot: {
+    storeId: string;
+    id: string;
+    orderId: string;
+    orderVersion: number;
+    quoteJson: string;
+    createdAt: number;
+  }) {
+    const quote = JSON.parse(snapshot.quoteJson) as Awaited<ReturnType<PosService['quote']>>;
+    const tables = await this.repository.listTables(snapshot.storeId);
+    const table = quote.order.tableId
+      ? tables.results.find((candidate) => candidate.id === quote.order.tableId)
+      : null;
+    return {
+      paymentSnapshotId: snapshot.id,
+      frozenAt: snapshot.createdAt,
+      orderVersion: snapshot.orderVersion,
+      orderId: snapshot.orderId,
+      status: 'PAYMENT_PENDING' as const,
+      stoppedAt: quote.time?.endedAtMs ?? snapshot.createdAt,
+      quote,
+      tableSummary: table
+        ? {
+            ...table,
+            totalVnd: quote.totalVnd,
+            itemCount: quote.items.reduce(
+              (sum, item) => sum + (item.productType === 'TIME' ? 0 : item.quantityMilli / 1000),
+              0,
+            ),
+            guestCount: quote.order.guestCount,
+            timeSessionStatus: quote.time?.status ?? null,
+          }
+        : null,
+    };
+  }
+
   async stopTimeForCheckout(input: {
     storeId: string;
     actorId: string;
@@ -1368,28 +2284,64 @@ export class PosService {
     now?: number;
   }) {
     const now = input.now ?? Date.now();
+    const frozenReplay = await this.repository.findPaymentSnapshotByCommand(
+      input.storeId,
+      input.idempotencyKey,
+    );
+    if (frozenReplay)
+      return this.paymentSnapshotResponse({ storeId: input.storeId, ...frozenReplay });
     const replay = await this.repository.findStopTimeCommand(input.storeId, input.idempotencyKey);
     if (replay) {
+      const active = await this.repository.findActivePaymentSnapshot(input.storeId, input.orderId);
+      if (active) return this.paymentSnapshotResponse({ storeId: input.storeId, ...active });
       const quote = await this.quote(input.storeId, input.orderId, now);
-      return {
+      const snapshotId = crypto.randomUUID();
+      await this.repository.createPaymentSnapshot({
+        id: snapshotId,
+        storeId: input.storeId,
         orderId: input.orderId,
-        status: 'PAYMENT_PENDING' as const,
-        stoppedAt: replay.stoppedAt,
-        quote,
-      };
+        orderType: quote.order.orderType,
+        orderVersion: quote.order.version,
+        commandId: input.idempotencyKey,
+        quoteJson: JSON.stringify(quote),
+        createdAt: replay.stoppedAt,
+      });
+      return this.paymentSnapshotResponse({
+        storeId: input.storeId,
+        id: snapshotId,
+        orderId: input.orderId,
+        orderVersion: quote.order.version,
+        quoteJson: JSON.stringify(quote),
+        createdAt: replay.stoppedAt,
+      });
     }
 
     const order = await this.repository.findOrder(input.storeId, input.orderId);
     if (!order) throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn.', 404);
 
     if (order.status === 'PAYMENT_PENDING') {
+      const active = await this.repository.findActivePaymentSnapshot(input.storeId, input.orderId);
+      if (active) return this.paymentSnapshotResponse({ storeId: input.storeId, ...active });
       const quote = await this.quote(input.storeId, input.orderId, now);
-      return {
+      const snapshotId = crypto.randomUUID();
+      await this.repository.createPaymentSnapshot({
+        id: snapshotId,
+        storeId: input.storeId,
         orderId: input.orderId,
-        status: 'PAYMENT_PENDING' as const,
-        stoppedAt: quote.time?.endedAtMs ?? now,
-        quote,
-      };
+        orderType: quote.order.orderType,
+        orderVersion: quote.order.version,
+        commandId: input.idempotencyKey,
+        quoteJson: JSON.stringify(quote),
+        createdAt: quote.time?.endedAtMs ?? now,
+      });
+      return this.paymentSnapshotResponse({
+        storeId: input.storeId,
+        id: snapshotId,
+        orderId: input.orderId,
+        orderVersion: quote.order.version,
+        quoteJson: JSON.stringify(quote),
+        createdAt: quote.time?.endedAtMs ?? now,
+      });
     }
 
     if (order.status !== 'OPEN') {
@@ -1399,28 +2351,13 @@ export class PosService {
       throw new AppError('ORDER_VERSION_CONFLICT', 'Đơn hàng đã thay đổi. Vui lòng tải lại.', 409);
     }
 
-    try {
-      await this.repository.stopTimeForCheckout({
-        commandId: input.idempotencyKey,
-        storeId: input.storeId,
-        orderId: input.orderId,
-        expectedOrderVersion: input.expectedOrderVersion,
-        actorId: input.actorId,
-        actorSessionId: input.actorSessionId ?? null,
-        deviceId: input.deviceId ?? null,
-        requestId: input.requestId,
-        issuedAt: now,
-      });
-    } catch (error) {
-      mapDatabaseError(error);
-    }
-
     const quote = await this.quote(input.storeId, input.orderId, now);
     const consistentQuote = {
       ...quote,
       order: {
         ...quote.order,
         status: 'PAYMENT_PENDING' as const,
+        version: input.expectedOrderVersion + 1,
       },
       time: quote.time
         ? {
@@ -1430,12 +2367,34 @@ export class PosService {
           }
         : null,
     };
-    return {
+    const snapshotId = crypto.randomUUID();
+    try {
+      await this.repository.stopTimeForCheckoutWithSnapshot({
+        commandId: input.idempotencyKey,
+        storeId: input.storeId,
+        orderId: input.orderId,
+        expectedOrderVersion: input.expectedOrderVersion,
+        actorId: input.actorId,
+        actorSessionId: input.actorSessionId ?? null,
+        deviceId: input.deviceId ?? null,
+        requestId: input.requestId,
+        issuedAt: now,
+        snapshotId,
+        orderType: quote.order.orderType,
+        quoteJson: JSON.stringify(consistentQuote),
+      });
+    } catch (error) {
+      mapDatabaseError(error);
+    }
+
+    return this.paymentSnapshotResponse({
+      storeId: input.storeId,
+      id: snapshotId,
       orderId: input.orderId,
-      status: 'PAYMENT_PENDING' as const,
-      stoppedAt: now,
-      quote: consistentQuote,
-    };
+      orderVersion: input.expectedOrderVersion + 1,
+      quoteJson: JSON.stringify(consistentQuote),
+      createdAt: now,
+    });
   }
 
   async resumeCheckout(input: {
@@ -1513,6 +2472,184 @@ export class PosService {
     };
   }
 
+  private async checkoutAdditionalStatements(input: {
+    storeId: string;
+    actorId: string;
+    invoiceId: string;
+    quote: Awaited<ReturnType<PosService['quote']>>;
+    allocations: Array<{
+      method: 'CASH' | 'BANK_TRANSFER';
+      amountVnd: number;
+      tenderedVnd?: number | undefined;
+    }>;
+    debtAmountVnd: number;
+    now: number;
+  }) {
+    const statements = input.quote.promotions.map((promotion) =>
+      new PromotionRepository(this.env.DB).buildSaveInvoicePromotionStatement({
+        storeId: input.storeId,
+        invoiceId: input.invoiceId,
+        orderType: input.quote.order.orderType,
+        promotionId: promotion.id,
+        promotionName: promotion.name,
+        promotionType: promotion.type,
+        discountAmountVnd: promotion.type === 'FLAT_PRICE' ? 0 : promotion.discountAmountVnd,
+        snapshotJson: JSON.stringify(promotion),
+        now: input.now,
+      }),
+    );
+    for (const allocation of input.allocations) {
+      statements.push(
+        this.env.DB.prepare(
+          `INSERT INTO invoice_payment_allocations
+           (id, store_id, invoice_id, method, amount_vnd, tendered_vnd, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(
+          crypto.randomUUID(),
+          input.storeId,
+          input.invoiceId,
+          allocation.method,
+          allocation.amountVnd,
+          allocation.tenderedVnd ?? null,
+          input.now,
+        ),
+      );
+    }
+    if (!input.quote.order.customerId) return statements;
+
+    const settings = await new CustomerService(this.env).loyaltySettings(input.storeId);
+    const points = settings.enabled ? Math.floor(input.quote.totalVnd / settings.vndPerPoint) : 0;
+    statements.push(
+      this.env.DB.prepare(
+        `UPDATE customers SET invoice_count = invoice_count + 1,
+         total_spent_vnd = total_spent_vnd + ?, loyalty_points = loyalty_points + ?,
+         debt_balance_vnd = debt_balance_vnd + ?, last_order_at = ?, updated_at = ?
+         WHERE store_id = ? AND id = ?`,
+      ).bind(
+        input.quote.totalVnd,
+        points,
+        input.debtAmountVnd,
+        input.now,
+        input.now,
+        input.storeId,
+        input.quote.order.customerId,
+      ),
+    );
+    const invoiceTable =
+      input.quote.order.orderType === 'TAKEAWAY' ? 'takeaway_invoices' : 'invoices';
+    statements.push(
+      this.env.DB.prepare(
+        `UPDATE ${invoiceTable} SET customer_id = ? WHERE store_id = ? AND id = ?`,
+      ).bind(input.quote.order.customerId, input.storeId, input.invoiceId),
+    );
+    if (input.debtAmountVnd > 0) {
+      statements.push(
+        this.env.DB.prepare(
+          `INSERT INTO invoice_payment_allocations
+           (id, store_id, invoice_id, method, amount_vnd, created_at)
+           VALUES (?, ?, ?, 'DEBT', ?, ?)`,
+        ).bind(crypto.randomUUID(), input.storeId, input.invoiceId, input.debtAmountVnd, input.now),
+        this.env.DB.prepare(
+          `INSERT INTO customer_debt_entries
+           (id, store_id, customer_id, invoice_id, entry_type, amount_vnd,
+            reference, actor_user_id, idempotency_key, created_at)
+           VALUES (?, ?, ?, ?, 'CHARGE', ?, ?, ?, ?, ?)`,
+        ).bind(
+          crypto.randomUUID(),
+          input.storeId,
+          input.quote.order.customerId,
+          input.invoiceId,
+          input.debtAmountVnd,
+          input.quote.order.displayCode ?? null,
+          input.actorId,
+          `checkout-debt:${input.invoiceId}`,
+          input.now,
+        ),
+      );
+    }
+    if (points > 0) {
+      statements.push(
+        this.env.DB.prepare(
+          `INSERT INTO customer_loyalty_entries
+           (id, store_id, customer_id, invoice_id, entry_type, points,
+            balance_after, note, actor_user_id, created_at)
+           SELECT ?, ?, ?, ?, 'EARN', ?, loyalty_points,
+             'Tích điểm từ hóa đơn', ?, ?
+           FROM customers WHERE store_id = ? AND id = ?`,
+        ).bind(
+          crypto.randomUUID(),
+          input.storeId,
+          input.quote.order.customerId,
+          input.invoiceId,
+          points,
+          input.actorId,
+          input.now,
+          input.storeId,
+          input.quote.order.customerId,
+        ),
+      );
+    }
+    return statements;
+  }
+
+  private async checkoutReplayResponse(
+    storeId: string,
+    replay: {
+      invoiceId: string;
+      paymentId: string;
+      orderId: string;
+      displayCode: string;
+      total: number;
+      method: 'CASH' | 'BANK_TRANSFER';
+    },
+  ) {
+    const [{ invoice }, order, takeaway, tables] = await Promise.all([
+      this.repository.getInvoice(storeId, replay.invoiceId),
+      this.repository.findOrder(storeId, replay.orderId),
+      this.repository.findTakeawayOrder(storeId, replay.orderId),
+      this.repository.listTables(storeId),
+    ]);
+    if (!invoice || (!order && !takeaway)) return replay;
+    const invoiceData = invoice;
+    const resolved = order ?? takeaway!;
+    const tableSummaries = resolved.table_id
+      ? tables.results.filter((table) => table.id === resolved.table_id)
+      : [];
+    return {
+      ...replay,
+      invoice: {
+        id: invoiceData.id,
+        displayCode: invoiceData.displayCode,
+        subtotalVnd: invoiceData.subtotal,
+        discountTotalVnd: invoiceData.discountTotal,
+        totalVnd: invoiceData.total,
+        issuedAt: invoiceData.issuedAt,
+      },
+      order: {
+        id: resolved.id,
+        displayCode: resolved.display_code,
+        orderType: resolved.order_type,
+        tableId: resolved.table_id,
+        tableName: resolved.table_name,
+        areaName: resolved.area_name,
+        version: resolved.version,
+        openedAt: resolved.opened_at,
+        status: resolved.status,
+        note: resolved.note,
+        guestCount: resolved.guest_count,
+        customerName: resolved.customer_name,
+        customerPhone: resolved.customer_phone,
+        customerId: resolved.customer_id,
+      },
+      totals: {
+        subtotalVnd: invoiceData.subtotal,
+        discountTotalVnd: invoiceData.discountTotal,
+        totalVnd: invoiceData.total,
+      },
+      tableSummaries,
+    };
+  }
+
   async checkout(input: {
     storeId: string;
     actorId: string;
@@ -1520,6 +2657,7 @@ export class PosService {
     idempotencyKey: string;
     orderId: string;
     expectedOrderVersion: number;
+    paymentSnapshotId?: string | null;
     method: 'CASH' | 'BANK_TRANSFER';
     cashReceivedVnd: number | null;
     allocations?: Array<{
@@ -1535,9 +2673,30 @@ export class PosService {
     const replay =
       (await this.repository.findCheckoutCommand(input.storeId, input.idempotencyKey)) ??
       (await this.repository.findTakeawayCheckoutCommand(input.storeId, input.idempotencyKey));
-    if (replay) return replay;
+    if (replay) return this.checkoutReplayResponse(input.storeId, replay);
     const now = input.now ?? Date.now();
-    const quote = await this.quote(input.storeId, input.orderId, now);
+    let quote: Awaited<ReturnType<PosService['quote']>>;
+    if (input.paymentSnapshotId) {
+      const snapshot = await this.repository.findPaymentSnapshot(
+        input.storeId,
+        input.orderId,
+        input.paymentSnapshotId,
+      );
+      if (
+        !snapshot ||
+        snapshot.status !== 'ACTIVE' ||
+        snapshot.orderVersion !== input.expectedOrderVersion
+      ) {
+        throw new AppError(
+          'PAYMENT_SNAPSHOT_INVALID',
+          'Bản chốt thanh toán không còn hiệu lực. Vui lòng mở lại màn thanh toán.',
+          409,
+        );
+      }
+      quote = JSON.parse(snapshot.quoteJson) as Awaited<ReturnType<PosService['quote']>>;
+    } else {
+      quote = await this.quote(input.storeId, input.orderId, now);
+    }
     if (quote.order.status !== 'OPEN' && quote.order.status !== 'PAYMENT_PENDING') {
       throw new AppError('ORDER_NOT_ACTIVE', 'Đơn hàng không ở trạng thái có thể thanh toán.', 409);
     }
@@ -1641,6 +2800,24 @@ export class PosService {
         },
       ];
     });
+    const resolvedAllocations = usingAllocations
+      ? allocationsInput
+      : [
+          {
+            method: input.method,
+            amountVnd: quote.totalVnd,
+            ...(cashReceived === null ? {} : { tenderedVnd: cashReceived }),
+          },
+        ];
+    const additionalStatements = await this.checkoutAdditionalStatements({
+      storeId: input.storeId,
+      actorId: input.actorId,
+      invoiceId,
+      quote,
+      allocations: resolvedAllocations,
+      debtAmountVnd,
+      now,
+    });
     try {
       if (quote.order.orderType === 'TAKEAWAY') {
         await this.repository.executeTakeawayCheckout({
@@ -1662,6 +2839,8 @@ export class PosService {
           actorId: input.actorId,
           requestId: input.requestId,
           issuedAt: now,
+          paymentSnapshotId: input.paymentSnapshotId ?? null,
+          additionalStatements,
         });
       } else {
         await this.repository.executeCheckout({
@@ -1688,120 +2867,12 @@ export class PosService {
           actorId: input.actorId,
           requestId: input.requestId,
           issuedAt: now,
+          paymentSnapshotId: input.paymentSnapshotId ?? null,
+          additionalStatements,
         });
       }
     } catch (error) {
       mapDatabaseError(error);
-    }
-    await Promise.all(
-      quote.promotions.map((promotion) =>
-        new PromotionRepository(this.env.DB).saveInvoicePromotion({
-          storeId: input.storeId,
-          invoiceId,
-          orderType: quote.order.orderType,
-          promotionId: promotion.id,
-          promotionName: promotion.name,
-          promotionType: promotion.type,
-          // Đồng giá is a price adjustment, not promotional discount value in reports.
-          discountAmountVnd: promotion.type === 'FLAT_PRICE' ? 0 : promotion.discountAmountVnd,
-          snapshotJson: JSON.stringify(promotion),
-          now,
-        }),
-      ),
-    );
-    if (quote.order.customerId) {
-      const settings = await new CustomerService(this.env).loyaltySettings(input.storeId);
-      const points = settings.enabled ? Math.floor(quote.totalVnd / settings.vndPerPoint) : 0;
-      const statements: D1PreparedStatement[] = [
-        this.env.DB.prepare(
-          `UPDATE customers SET invoice_count = invoice_count + 1,
-          total_spent_vnd = total_spent_vnd + ?, loyalty_points = loyalty_points + ?,
-          debt_balance_vnd = debt_balance_vnd + ?, last_order_at = ?, updated_at = ?
-          WHERE store_id = ? AND id = ?`,
-        ).bind(
-          quote.totalVnd,
-          points,
-          debtAmountVnd,
-          now,
-          now,
-          input.storeId,
-          quote.order.customerId,
-        ),
-      ];
-      const invoiceTable = quote.order.orderType === 'TAKEAWAY' ? 'takeaway_invoices' : 'invoices';
-      statements.push(
-        this.env.DB.prepare(
-          `UPDATE ${invoiceTable} SET customer_id = ? WHERE store_id = ? AND id = ?`,
-        ).bind(quote.order.customerId, input.storeId, invoiceId),
-      );
-      const allocations = usingAllocations
-        ? allocationsInput
-        : [
-            {
-              method: input.method,
-              amountVnd: quote.totalVnd,
-              ...(cashReceived === null ? {} : { tenderedVnd: cashReceived }),
-            },
-          ];
-      for (const allocation of allocations)
-        statements.push(
-          this.env.DB.prepare(
-            `INSERT INTO invoice_payment_allocations
-        (id, store_id, invoice_id, method, amount_vnd, tendered_vnd, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          ).bind(
-            crypto.randomUUID(),
-            input.storeId,
-            invoiceId,
-            allocation.method,
-            allocation.amountVnd,
-            allocation.tenderedVnd ?? null,
-            now,
-          ),
-        );
-      if (debtAmountVnd > 0) {
-        statements.push(
-          this.env.DB.prepare(
-            `INSERT INTO invoice_payment_allocations
-          (id, store_id, invoice_id, method, amount_vnd, created_at) VALUES (?, ?, ?, 'DEBT', ?, ?)`,
-          ).bind(crypto.randomUUID(), input.storeId, invoiceId, debtAmountVnd, now),
-        );
-        statements.push(
-          this.env.DB.prepare(
-            `INSERT INTO customer_debt_entries
-          (id, store_id, customer_id, invoice_id, entry_type, amount_vnd, reference, actor_user_id, idempotency_key, created_at)
-          VALUES (?, ?, ?, ?, 'CHARGE', ?, ?, ?, ?, ?)`,
-          ).bind(
-            crypto.randomUUID(),
-            input.storeId,
-            quote.order.customerId,
-            invoiceId,
-            debtAmountVnd,
-            quote.order.displayCode ?? null,
-            input.actorId,
-            `checkout-debt:${invoiceId}`,
-            now,
-          ),
-        );
-      }
-      if (points > 0)
-        statements.push(
-          this.env.DB.prepare(
-            `INSERT INTO customer_loyalty_entries
-        (id, store_id, customer_id, invoice_id, entry_type, points, balance_after, note, actor_user_id, created_at)
-        SELECT ?, ?, ?, ?, 'EARN', ?, loyalty_points, 'Tích điểm từ hóa đơn', ?, ? FROM customers WHERE store_id = ? AND id = ?`,
-          ).bind(
-            crypto.randomUUID(),
-            input.storeId,
-            quote.order.customerId,
-            invoiceId,
-            points,
-            input.actorId,
-            now,
-            input.storeId,
-            quote.order.customerId,
-          ),
-        );
-      await this.env.DB.batch(statements);
     }
     await new AuditRepository(this.env.DB).enrichByRequest(input.storeId, input.requestId, {
       actorUserId: input.actorId,
@@ -1812,6 +2883,10 @@ export class PosService {
     const completed =
       (await this.repository.findCheckoutCommand(input.storeId, input.idempotencyKey)) ??
       (await this.repository.findTakeawayCheckoutCommand(input.storeId, input.idempotencyKey));
+    const tableRows = await this.repository.listTables(input.storeId);
+    const tableSummaries = quote.order.tableId
+      ? tableRows.results.filter((table) => table.id === quote.order.tableId)
+      : [];
     return {
       invoiceId,
       paymentId,
@@ -1819,6 +2894,25 @@ export class PosService {
       displayCode: completed!.displayCode,
       total: quote.totalVnd,
       method: legacyMethod,
+      invoice: {
+        id: invoiceId,
+        displayCode: completed!.displayCode,
+        subtotalVnd: quote.subtotalVnd,
+        discountTotalVnd: quote.discountTotalVnd,
+        totalVnd: quote.totalVnd,
+        issuedAt: now,
+      },
+      order: {
+        ...quote.order,
+        status: 'PAID' as const,
+        version: quote.order.version + 1,
+      },
+      totals: {
+        subtotalVnd: quote.subtotalVnd,
+        discountTotalVnd: quote.discountTotalVnd,
+        totalVnd: quote.totalVnd,
+      },
+      tableSummaries,
     };
   }
 
@@ -2418,7 +3512,7 @@ export class PosService {
       }
     } else {
       try {
-        const promoResult = await new PromotionService(this.env).optionsForOrder({
+        const promoResult = await this.promotions.optionsForOrder({
           storeId,
           orderId,
           subtotalVnd: Math.max(0, timeAmountVnd + itemGrossAmountVnd - itemDiscountAmountVnd),

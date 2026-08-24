@@ -40,7 +40,6 @@ import {
 } from 'antd';
 import type { TableColumnsType } from 'antd';
 import { useMemo, useState } from 'react';
-import * as XLSX from 'xlsx';
 
 import type { AuthContextResponse } from '@contracts/auth';
 import { apiRequest } from '@client/lib/api';
@@ -442,7 +441,7 @@ export function OwnerInvoicesPage({
   }, [visibleKeys]);
 
   // ── Excel export ─────────────────────────────────────────────────────────
-  const handleExport = () => {
+  const handleExport = async () => {
     if (!data?.results.length) {
       void messageApi.warning('Không có dữ liệu để xuất.');
       return;
@@ -462,6 +461,7 @@ export function OwnerInvoicesPage({
       'Tiền nhận': inv.cashReceived ?? '',
       'Tiền thối': inv.cashChange ?? '',
     }));
+    const XLSX = await import('xlsx');
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Hóa đơn');
@@ -553,7 +553,7 @@ export function OwnerInvoicesPage({
           <Button
             type="primary"
             icon={<DownloadOutlined />}
-            onClick={handleExport}
+            onClick={() => void handleExport()}
             disabled={!data?.results.length}
             className="owner-invoices-export-btn"
           >

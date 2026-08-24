@@ -38,7 +38,7 @@ import {
   message,
 } from 'antd';
 import type { MenuProps } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router';
 
@@ -60,8 +60,6 @@ import {
   OwnerProductListPage,
 } from './OwnerCatalogPages';
 import { OwnerInvoicesPage } from './OwnerInvoicesPage';
-import { OwnerPrintSettingsPage } from './OwnerPrintSettingsPage';
-import { OwnerPrintTemplateEditPage } from './OwnerPrintTemplateEditPage';
 import { OwnerDashboardPage } from './OwnerDashboardPage';
 import {
   OwnerCustomerDetailPage,
@@ -71,6 +69,16 @@ import {
   OwnerCustomerListPage,
 } from './OwnerCustomerPages';
 import { OwnerPromotionFormPage, OwnerPromotionListPage } from './OwnerPromotionPages';
+
+const OwnerPrintSettingsPage = lazy(async () => {
+  const module = await import('./OwnerPrintSettingsPage');
+  return { default: module.OwnerPrintSettingsPage };
+});
+
+const OwnerPrintTemplateEditPage = lazy(async () => {
+  const module = await import('./OwnerPrintTemplateEditPage');
+  return { default: module.OwnerPrintTemplateEditPage };
+});
 
 const BRAND = '#0975F7';
 

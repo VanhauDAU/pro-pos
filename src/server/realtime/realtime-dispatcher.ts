@@ -37,6 +37,8 @@ export class RealtimeDispatcher {
     } catch (error) {
       const message = errorText(error);
       await this.repository.markPublishFailed(storeId, eventIds, message);
+      const room = this.env.STORE_REALTIME.getByName(storeId);
+      await room.scheduleRetry(storeId);
       console.error(
         JSON.stringify({
           level: 'error',

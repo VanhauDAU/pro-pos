@@ -29,7 +29,6 @@ import {
 } from 'antd';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
-import QRCode from 'qrcode';
 
 import type { AuthContextResponse } from '@contracts/auth';
 import { TableQrModal } from '@client/components/TableQrModal';
@@ -177,6 +176,7 @@ export function OwnerAreaSettingsPage() {
         },
       );
       const url = new URL(result.path, window.location.origin).toString();
+      const { default: QRCode } = await import('qrcode');
       setQrPreview({
         tableName: table.name,
         url,

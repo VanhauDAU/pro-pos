@@ -164,16 +164,19 @@ ownerStaffRoutes.delete('/:userId', async (c) =>
   ),
 );
 
-ownerStaffRoutes.post('/:userId/sessions/revoke', async (c) =>
-  success(
-    c,
-    await new StaffService(c.env).terminateSessions(
-      c.get('actor').storeId!,
-      c.req.param('userId'),
-      auditContext(c),
-    ),
-  ),
-);
+ownerStaffRoutes.post('/:userId/sessions/revoke', async (c) => {
+  const storeId = c.get('actor').storeId!;
+  const result = await new StaffService(c.env).terminateSessions(
+    storeId,
+    c.req.param('userId'),
+    auditContext(c),
+  );
+  const room = c.env.STORE_REALTIME.getByName(storeId);
+  for (const sessionId of result.sessionIds) {
+    c.executionCtx.waitUntil(room.disconnectSession(storeId, sessionId).catch(() => 0));
+  }
+  return success(c, result);
+});
 
 ownerStaffRoutes.patch('/:userId/status', async (c) => {
   const actor = c.get('actor');

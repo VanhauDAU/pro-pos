@@ -42,12 +42,7 @@ import type {
 } from '@contracts/qr-order';
 import { apiRequest, jsonRequest } from '@client/lib/api';
 import { GuestRobotAssistant } from './GuestRobotAssistant';
-import {
-  getGuestAssistantVoiceUrl,
-  guestAssistantVoiceUrl,
-  type GuestAssistantAction,
-  type GuestAssistantFeedback,
-} from './guest-assistant';
+import { type GuestAssistantAction, type GuestAssistantFeedback } from './guest-assistant';
 
 interface CartLine {
   id: string; // variantId
@@ -77,6 +72,7 @@ export function GuestOrderPage() {
   const queryClient = useQueryClient();
   const [messageApi, holder] = message.useMessage();
   const assistantFeedbackId = useRef(0);
+  const guestPollingStartedAt = useRef(Date.now());
   const menuAnchorRef = useRef<HTMLDivElement>(null);
 
   // State
@@ -108,13 +104,12 @@ export function GuestOrderPage() {
   const [assistantFeedback, setAssistantFeedback] = useState<GuestAssistantFeedback | null>(null);
 
   const showAssistantFeedback = useCallback(
-    (tone: GuestAssistantFeedback['tone'], feedbackMessage: string, audioSrc?: string) => {
+    (tone: GuestAssistantFeedback['tone'], feedbackMessage: string) => {
       assistantFeedbackId.current += 1;
       setAssistantFeedback({
         id: assistantFeedbackId.current,
         tone,
         message: feedbackMessage,
-        ...(audioSrc ? { audioSrc } : {}),
       });
     },
     [],
@@ -126,15 +121,28 @@ export function GuestOrderPage() {
     queryFn: () => apiRequest<GuestOrderContext>(`/api/v1/guest-order/resolve/${token}`),
     enabled: Boolean(token),
     retry: false,
-    refetchInterval: (query) =>
-      query.state.data?.tableStatus === 'OPEN_REQUESTED' ? 3_000 : false,
+    refetchInterval: (query) => {
+      if (
+        query.state.data?.tableStatus !== 'OPEN_REQUESTED' ||
+        document.visibilityState === 'hidden' ||
+        !navigator.onLine
+      ) {
+        return false;
+      }
+      const elapsed = Date.now() - guestPollingStartedAt.current;
+      return elapsed < 30_000 ? 5_000 : elapsed < 120_000 ? 15_000 : 30_000;
+    },
   });
 
   const requests = useQuery({
-    queryKey: ['guest-order-own-requests'],
+    queryKey: ['guest-order-own-requests', token],
     queryFn: () => apiRequest<GuestOrderRequestDto[]>('/api/v1/guest-order/requests'),
     enabled: context.data?.tableStatus === 'OPEN',
-    refetchInterval: 5_000,
+    refetchInterval: () => {
+      if (document.visibilityState === 'hidden' || !navigator.onLine) return false;
+      const elapsed = Date.now() - guestPollingStartedAt.current;
+      return elapsed < 30_000 ? 5_000 : elapsed < 120_000 ? 15_000 : 30_000;
+    },
   });
 
   // Calculations
@@ -332,7 +340,6 @@ export function GuestOrderPage() {
       showAssistantFeedback(
         'success',
         'Đã gửi gọi món thành công. Quán đang chuẩn bị món cho bạn.',
-        guestAssistantVoiceUrl('guest_order_sent.ogg'),
       );
       messageApi.success('Đã gửi gọi món thành công! Quán đang chuẩn bị món cho bạn.');
       await queryClient.invalidateQueries({ queryKey: ['guest-order-own-requests'] });
@@ -362,9 +369,6 @@ export function GuestOrderPage() {
         type === 'CALL_STAFF'
           ? 'Đã gọi nhân viên. Bạn vui lòng chờ trong giây lát.'
           : 'Đã gửi yêu cầu thanh toán. Nhân viên sẽ mang hóa đơn tới bàn.',
-        guestAssistantVoiceUrl(
-          type === 'CALL_STAFF' ? 'guest_call_staff_sent.ogg' : 'guest_checkout_request_sent.ogg',
-        ),
       );
       void queryClient.invalidateQueries({ queryKey: ['guest-order-own-requests'] });
     },
@@ -395,7 +399,6 @@ export function GuestOrderPage() {
         result.alreadyOpen
           ? 'Bàn đã sẵn sàng. Bạn có thể gọi món ngay.'
           : 'Đã gửi yêu cầu mở bàn. Nhân viên sẽ hỗ trợ bạn ngay.',
-        guestAssistantVoiceUrl('guest_open_request_sent.ogg'),
       );
       await context.refetch();
     },
@@ -520,7 +523,6 @@ export function GuestOrderPage() {
           hasCart={totalItemCount > 0}
           actionPending={requestTableOpen.isPending || submitService.isPending}
           feedback={assistantFeedback}
-          audioSrc={getGuestAssistantVoiceUrl(context.data.tableStatus)}
           onAction={handleAssistantAction}
         />
 

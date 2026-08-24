@@ -20,7 +20,6 @@ import {
 } from './guest-assistant';
 
 const FALLBACK_SPEECH_DURATION_MS = 2_400;
-const AUDIO_SAFETY_TIMEOUT_MS = 15_000;
 const FEEDBACK_DURATION_MS = 4_200;
 
 interface GuestRobotAssistantProps {
@@ -29,7 +28,6 @@ interface GuestRobotAssistantProps {
   hasCart: boolean;
   actionPending?: boolean;
   feedback: GuestAssistantFeedback | null;
-  audioSrc?: string;
   onAction: (action: GuestAssistantAction) => void;
 }
 
@@ -176,7 +174,6 @@ export function GuestRobotAssistant({
   hasCart,
   actionPending = false,
   feedback,
-  audioSrc,
   onAction,
 }: GuestRobotAssistantProps) {
   const introWasSeen = useMemo(() => wasIntroSeen(token), [token]);
@@ -208,31 +205,9 @@ export function GuestRobotAssistant({
       setIntroSpeaking(false);
       return;
     }
-    let audio: HTMLAudioElement | null = null;
-    let timer = window.setTimeout(
-      () => setIntroSpeaking(false),
-      audioSrc ? AUDIO_SAFETY_TIMEOUT_MS : FALLBACK_SPEECH_DURATION_MS,
-    );
-    const stopSpeaking = () => {
-      window.clearTimeout(timer);
-      setIntroSpeaking(false);
-    };
-    if (audioSrc) {
-      audio = new Audio(audioSrc);
-      audio.addEventListener('ended', stopSpeaking, { once: true });
-      void audio.play().catch(() => {
-        window.clearTimeout(timer);
-        timer = window.setTimeout(() => setIntroSpeaking(false), FALLBACK_SPEECH_DURATION_MS);
-      });
-    }
-    return () => {
-      window.clearTimeout(timer);
-      if (audio) {
-        audio.pause();
-        audio.removeEventListener('ended', stopSpeaking);
-      }
-    };
-  }, [audioSrc, introActive, introSpeaking]);
+    const timer = window.setTimeout(() => setIntroSpeaking(false), FALLBACK_SPEECH_DURATION_MS);
+    return () => window.clearTimeout(timer);
+  }, [introActive, introSpeaking]);
 
   useEffect(() => {
     if (!introActive) return;
@@ -251,53 +226,16 @@ export function GuestRobotAssistant({
       return;
     }
 
-    let audio: HTMLAudioElement | null = null;
-    let timer = window.setTimeout(
-      finishSpeech,
-      audioSrc ? AUDIO_SAFETY_TIMEOUT_MS : FALLBACK_SPEECH_DURATION_MS,
-    );
-    const handleAudioEnded = () => {
-      window.clearTimeout(timer);
-      finishSpeech();
-    };
-    if (audioSrc) {
-      audio = new Audio(audioSrc);
-      audio.addEventListener('ended', handleAudioEnded, { once: true });
-      void audio.play().catch(() => {
-        window.clearTimeout(timer);
-        timer = window.setTimeout(finishSpeech, FALLBACK_SPEECH_DURATION_MS);
-      });
-    }
-
-    return () => {
-      window.clearTimeout(timer);
-      if (audio) {
-        audio.pause();
-        audio.removeEventListener('ended', handleAudioEnded);
-      }
-    };
-  }, [audioSrc, finishSpeech, phase]);
+    const timer = window.setTimeout(finishSpeech, FALLBACK_SPEECH_DURATION_MS);
+    return () => window.clearTimeout(timer);
+  }, [finishSpeech, phase]);
 
   useEffect(() => {
     if (!feedback) return;
     setMessage(feedback.message);
     setPhase('FEEDBACK');
     setPanelOpen(true);
-    let audio: HTMLAudioElement | null = null;
-    let audioTimer: number | null = null;
-    const stopFeedbackAudio = () => {
-      setFeedbackSpeaking(false);
-      if (audioTimer !== null) window.clearTimeout(audioTimer);
-    };
-    if (feedback.audioSrc) {
-      setFeedbackSpeaking(true);
-      audio = new Audio(feedback.audioSrc);
-      audio.addEventListener('ended', stopFeedbackAudio, { once: true });
-      audioTimer = window.setTimeout(stopFeedbackAudio, AUDIO_SAFETY_TIMEOUT_MS);
-      void audio.play().catch(stopFeedbackAudio);
-    } else {
-      setFeedbackSpeaking(false);
-    }
+    setFeedbackSpeaking(false);
     const timer = window.setTimeout(() => {
       if (feedback.tone === 'error') {
         setPhase('CHOOSING');
@@ -309,11 +247,6 @@ export function GuestRobotAssistant({
     }, FEEDBACK_DURATION_MS);
     return () => {
       window.clearTimeout(timer);
-      if (audioTimer !== null) window.clearTimeout(audioTimer);
-      if (audio) {
-        audio.pause();
-        audio.removeEventListener('ended', stopFeedbackAudio);
-      }
     };
   }, [feedback]);
 

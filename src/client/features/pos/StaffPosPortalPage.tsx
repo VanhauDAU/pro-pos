@@ -15,6 +15,7 @@ import {
   EllipsisOutlined,
   FileTextOutlined,
   FullscreenOutlined,
+  GiftOutlined,
   HistoryOutlined,
   LeftOutlined,
   LogoutOutlined,
@@ -70,9 +71,8 @@ import {
 } from 'antd';
 import type { MenuProps } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, lazy, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router';
-import QRCode from 'qrcode';
 
 import type { AuthContextResponse } from '@contracts/auth';
 import type {
@@ -93,7 +93,6 @@ import {
 import logoBlack from '@client/assets/logo-black.svg?url';
 import { OrderDetailPage } from './OrderDetailPage';
 import { StaffOnboarding } from './StaffOnboarding';
-import { StaffPrinterSettingsPage } from './StaffPrinterSettingsPage';
 import { PosCustomerSelector } from './PosCustomerSelector';
 import { ReceiptPreviewModal, ReceiptPreviewPaper } from './ReceiptPreviewModal';
 import { TableQrModal } from '@client/components/TableQrModal';
@@ -116,8 +115,12 @@ import {
 } from '@client/features/owner/OwnerCustomerPages';
 import { OwnerEmployeeFormPage, OwnerStaffListPage } from '@client/features/owner/OwnerStaffPages';
 
+const StaffPrinterSettingsPage = lazy(async () => {
+  const module = await import('./StaffPrinterSettingsPage');
+  return { default: module.StaffPrinterSettingsPage };
+});
+
 import { apiRequest, jsonRequest } from '@client/lib/api';
-import { playPosSound } from '@client/lib/sound';
 import {
   RealtimeProvider,
   usePosPollingInterval,
@@ -137,7 +140,12 @@ interface StaffContext {
   bankAccountNumber?: string | null;
   bankAccountName?: string | null;
   permissions?: string[];
-  capabilities?: { posRealtime: boolean };
+  capabilities?: {
+    posRealtime: boolean;
+    posCommandsV2: boolean;
+    posPaymentSnapshotV2: boolean;
+    posRealtimeDeltasV2: boolean;
+  };
 }
 
 interface PosTable {
@@ -266,6 +274,32 @@ interface OrderQuote {
   } | null;
 }
 
+interface OrderMutationSnapshot {
+  clientMutationId: string;
+  quote: OrderQuote;
+  order: OrderQuote['order'];
+  items: OrderQuote['items'];
+  totals: {
+    subtotalVnd: number;
+    discountTotalVnd: number;
+    totalVnd: number;
+  };
+  tableSummaries: PosTable[];
+  orderVersion: number;
+  serverNowMs: number;
+}
+
+interface PaymentSnapshotResult {
+  paymentSnapshotId: string;
+  frozenAt: number;
+  orderVersion: number;
+  orderId: string;
+  status: 'PAYMENT_PENDING';
+  stoppedAt: number;
+  quote: OrderQuote;
+  tableSummary: PosTable | null;
+}
+
 const promotionTypeCopy: Record<PosPromotionOption['type'], string> = {
   FIXED_AMOUNT: 'Giảm theo số tiền',
   PERCENT: 'Giảm theo phần trăm',
@@ -380,76 +414,164 @@ function PosPromotionModal({
 }) {
   const [selected, setSelected] = useState<string[]>(appliedIds);
   const wasOpenRef = useRef(false);
+
   useEffect(() => {
     if (open && !wasOpenRef.current) setSelected(appliedIds);
     wasOpenRef.current = open;
   }, [appliedIds, open]);
+
+  const eligibleCount = useMemo(() => options.filter((o) => o.eligible).length, [options]);
+
   return (
     <Modal
       open={open}
-      width={760}
-      title="Giảm giá"
+      centered
+      width={680}
+      title={
+        <div className="staff-promotion-modal-title">
+          <GiftOutlined className="staff-promotion-modal-title__icon" />
+          <span>Khuyến mại & Giảm giá</span>
+        </div>
+      }
       onCancel={onClose}
       className="staff-promotion-modal"
-      footer={[
-        <Button
-          key="remove"
-          danger
-          disabled={selected.length === 0 || loading}
-          onClick={() => onApply([])}
-        >
-          Bỏ tất cả khuyến mại
-        </Button>,
-        <Button key="save" type="primary" loading={loading} onClick={() => onApply(selected)}>
-          Lưu
-        </Button>,
-      ]}
+      footer={
+        <div className="staff-promotion-modal-footer">
+          <div className="staff-promotion-modal-footer__left">
+            {appliedIds.length > 0 || selected.length > 0 ? (
+              <Button
+                danger
+                type="text"
+                disabled={loading}
+                onClick={() => {
+                  setSelected([]);
+                  onApply([]);
+                }}
+                className="staff-promotion-clear-btn"
+              >
+                Bỏ tất cả khuyến mại
+              </Button>
+            ) : null}
+          </div>
+          <div className="staff-promotion-modal-footer__right">
+            <Button disabled={loading} onClick={onClose} className="staff-promotion-cancel-btn">
+              Đóng
+            </Button>
+            <Button
+              type="primary"
+              loading={loading}
+              onClick={() => onApply(selected)}
+              className="staff-promotion-apply-btn"
+            >
+              {selected.length > 0 ? `Áp dụng (${selected.length})` : 'Áp dụng'}
+            </Button>
+          </div>
+        </div>
+      }
     >
-      <div className="staff-promotion-modal__tab">
-        <strong>Chương trình khuyến mại · Đã chọn {selected.length}</strong>
-        <small>Có thể chọn đồng thời nhiều chương trình đủ điều kiện</small>
+      <div className="staff-promotion-modal__header-bar">
+        <div className="staff-promotion-modal__stats">
+          <strong>
+            {options.length > 0
+              ? `Khả dụng: ${eligibleCount}/${options.length} chương trình`
+              : 'Chương trình khuyến mại'}
+          </strong>
+          <span>Đã chọn {selected.length} chương trình</span>
+        </div>
+        <small className="staff-promotion-modal__hint">
+          Có thể chọn đồng thời nhiều chương trình đủ điều kiện
+        </small>
       </div>
+
       <div className="staff-promotion-modal__list">
         {options.length === 0 ? (
-          <Empty description="Không có chương trình đang hoạt động" />
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description="Hiện không có chương trình khuyến mại nào"
+            style={{ padding: '36px 0' }}
+          />
         ) : (
-          options.map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              className={`staff-promotion-option${selected.includes(option.id) ? ' staff-promotion-option--selected' : ''}`}
-              disabled={!option.eligible}
-              onClick={() =>
-                setSelected((current) =>
-                  current.includes(option.id)
-                    ? current.filter((id) => id !== option.id)
-                    : [...current, option.id],
-                )
-              }
-            >
-              <Checkbox checked={selected.includes(option.id)} disabled={!option.eligible} />
-              <span className="staff-promotion-option__copy">
-                <strong>{option.name}</strong>
-                <small>
-                  {promotionTypeCopy[option.type]}
-                  {option.minimumOrderVnd > 0
-                    ? ` · Hóa đơn tối thiểu ${formatMoney(option.minimumOrderVnd)}`
-                    : ''}
-                </small>
-                {option.type === 'GIFT' && option.giftProductNames.length > 0 ? (
-                  <small>Tặng: {option.giftProductNames.join(', ')}</small>
-                ) : null}
-                <PromotionOptionDetails option={option} />
-                {!option.eligible ? (
-                  <em>
-                    <CloseCircleFilled /> ! Không đủ điều kiện
-                    {option.reason ? ` · ${option.reason}` : ''}
-                  </em>
-                ) : null}
-              </span>
-              <b>{promotionBenefitCopy(option)}</b>
-            </button>
-          ))
+          options.map((option) => {
+            const isSelected = selected.includes(option.id);
+            return (
+              <div
+                key={option.id}
+                role="button"
+                tabIndex={option.eligible ? 0 : -1}
+                className={`staff-promotion-option ${isSelected ? 'is-selected' : ''} ${!option.eligible ? 'is-disabled' : ''}`}
+                onClick={() => {
+                  if (!option.eligible) return;
+                  setSelected((current) =>
+                    current.includes(option.id)
+                      ? current.filter((id) => id !== option.id)
+                      : [...current, option.id],
+                  );
+                }}
+                onKeyDown={(e) => {
+                  if ((e.key === 'Enter' || e.key === ' ') && option.eligible) {
+                    e.preventDefault();
+                    setSelected((current) =>
+                      current.includes(option.id)
+                        ? current.filter((id) => id !== option.id)
+                        : [...current, option.id],
+                    );
+                  }
+                }}
+              >
+                <div className="staff-promotion-option__check">
+                  <Checkbox
+                    checked={isSelected}
+                    disabled={!option.eligible}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      setSelected((current) =>
+                        e.target.checked
+                          ? [...current, option.id]
+                          : current.filter((id) => id !== option.id),
+                      );
+                    }}
+                  />
+                </div>
+
+                <div className="staff-promotion-option__main">
+                  <div className="staff-promotion-option__title-row">
+                    <strong className="staff-promotion-option__name">{option.name}</strong>
+                    <span
+                      className={`staff-promotion-option__type-tag staff-promotion-option__type-tag--${option.type.toLowerCase()}`}
+                    >
+                      {promotionTypeCopy[option.type]}
+                    </span>
+                  </div>
+
+                  <div className="staff-promotion-option__conditions">
+                    {option.minimumOrderVnd > 0 ? (
+                      <span className="staff-promotion-condition-badge">
+                        Đơn tối thiểu: {formatMoney(option.minimumOrderVnd)}
+                      </span>
+                    ) : null}
+                    {option.type === 'GIFT' && option.giftProductNames.length > 0 ? (
+                      <span className="staff-promotion-gift-badge">
+                        Tặng: {option.giftProductNames.join(', ')}
+                      </span>
+                    ) : null}
+                  </div>
+
+                  <PromotionOptionDetails option={option} />
+
+                  {!option.eligible ? (
+                    <div className="staff-promotion-option__ineligible">
+                      <CloseCircleFilled className="staff-promotion-ineligible-icon" />
+                      <span>Chưa đủ điều kiện{option.reason ? `: ${option.reason}` : ''}</span>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="staff-promotion-option__benefit">
+                  <b>{promotionBenefitCopy(option)}</b>
+                </div>
+              </div>
+            );
+          })
         )}
       </div>
     </Modal>
@@ -789,6 +911,57 @@ function isReturningFromPayment(orderId: string, pendingVersion: number) {
   return Date.now() - marker.enteredAt < 120_000;
 }
 
+interface PosNotificationSummary {
+  guestOrders: GuestOrderRequestDto[];
+  serviceRequests: ServiceRequestDto[];
+  tableOpenRequests: TableOpenRequestDto[];
+  counts: {
+    guestOrders: number;
+    serviceRequests: number;
+    tableOpenRequests: number;
+  };
+  serverNowMs: number;
+}
+
+interface PosNotificationsContextValue {
+  data: PosNotificationSummary | undefined;
+  isLoading: boolean;
+  isError: boolean;
+  isFetching: boolean;
+  refetch: () => Promise<unknown>;
+}
+
+const PosNotificationsContext = createContext<PosNotificationsContextValue | null>(null);
+
+function PosNotificationsProvider({ children }: { children: React.ReactNode }) {
+  const pollingInterval = usePosPollingInterval(15_000);
+  const summary = useQuery({
+    queryKey: ['pos-notification-summary'],
+    queryFn: ({ signal }) =>
+      apiRequest<PosNotificationSummary>('/api/v1/pos/qr-orders/summary', { signal }),
+    refetchInterval: pollingInterval,
+  });
+  const value = useMemo<PosNotificationsContextValue>(
+    () => ({
+      data: summary.data,
+      isLoading: summary.isLoading,
+      isError: summary.isError,
+      isFetching: summary.isFetching,
+      refetch: summary.refetch,
+    }),
+    [summary.data, summary.isError, summary.isFetching, summary.isLoading, summary.refetch],
+  );
+  return (
+    <PosNotificationsContext.Provider value={value}>{children}</PosNotificationsContext.Provider>
+  );
+}
+
+function usePosNotifications() {
+  const value = useContext(PosNotificationsContext);
+  if (!value) throw new Error('Missing PosNotificationsProvider');
+  return value;
+}
+
 function StaffHeader({
   context,
   searchSlot,
@@ -803,27 +976,11 @@ function StaffHeader({
   const queryClient = useQueryClient();
   const [modal, holder] = Modal.useModal();
   const [loggingOut, setLoggingOut] = useState(false);
-  const pollingInterval = usePosPollingInterval(15_000);
-  const guestRequests = useQuery({
-    queryKey: ['guest-order-requests'],
-    queryFn: () => apiRequest<GuestOrderRequestDto[]>('/api/v1/pos/qr-orders?status=PENDING'),
-    refetchInterval: pollingInterval,
-  });
-  const serviceRequests = useQuery({
-    queryKey: ['service-requests'],
-    queryFn: () => apiRequest<ServiceRequestDto[]>('/api/v1/pos/qr-orders/service-requests/list'),
-    refetchInterval: pollingInterval,
-  });
-  const tableOpenRequests = useQuery({
-    queryKey: ['table-open-requests'],
-    queryFn: () =>
-      apiRequest<TableOpenRequestDto[]>('/api/v1/pos/qr-orders/table-open-requests/list'),
-    refetchInterval: pollingInterval,
-  });
+  const notifications = usePosNotifications();
   const pendingNotificationCount =
-    (guestRequests.data?.length ?? 0) +
-    (serviceRequests.data?.filter((request) => request.status === 'OPEN').length ?? 0) +
-    (tableOpenRequests.data?.length ?? 0);
+    (notifications.data?.counts.guestOrders ?? 0) +
+    (notifications.data?.counts.serviceRequests ?? 0) +
+    (notifications.data?.counts.tableOpenRequests ?? 0);
 
   const logout = () => {
     modal.confirm({
@@ -990,27 +1147,11 @@ const navItems = [
 
 function StaffBottomNav({ active }: { active: (typeof navItems)[number]['key'] }) {
   const navigate = useNavigate();
-  const pollingInterval = usePosPollingInterval(15_000);
-  const guestRequests = useQuery({
-    queryKey: ['guest-order-requests'],
-    queryFn: () => apiRequest<GuestOrderRequestDto[]>('/api/v1/pos/qr-orders?status=PENDING'),
-    refetchInterval: pollingInterval,
-  });
-  const serviceRequests = useQuery({
-    queryKey: ['service-requests'],
-    queryFn: () => apiRequest<ServiceRequestDto[]>('/api/v1/pos/qr-orders/service-requests/list'),
-    refetchInterval: pollingInterval,
-  });
-  const tableOpenRequests = useQuery({
-    queryKey: ['table-open-requests'],
-    queryFn: () =>
-      apiRequest<TableOpenRequestDto[]>('/api/v1/pos/qr-orders/table-open-requests/list'),
-    refetchInterval: pollingInterval,
-  });
+  const notifications = usePosNotifications();
   const pendingNotificationCount =
-    (guestRequests.data?.length ?? 0) +
-    (serviceRequests.data?.filter((request) => request.status === 'OPEN').length ?? 0) +
-    (tableOpenRequests.data?.length ?? 0);
+    (notifications.data?.counts.guestOrders ?? 0) +
+    (notifications.data?.counts.serviceRequests ?? 0) +
+    (notifications.data?.counts.tableOpenRequests ?? 0);
   return (
     <nav className="staff-pos-bottom-nav" aria-label="Điều hướng POS nhân viên">
       {navItems.map((item) => (
@@ -1058,21 +1199,26 @@ function formatTableShortDuration(occupiedSince: number | null, now: number) {
   return `${minutes}p`;
 }
 
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(timer);
+  }, [delayMs, value]);
+  return debounced;
+}
+
 function AreasPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [now, setNow] = useState(() => Date.now());
   const pollingInterval = usePosPollingInterval(20_000);
-  const tables = useQuery({
-    queryKey: ['pos-tables'],
-    queryFn: () => apiRequest<PosTable[]>('/api/v1/pos/tables'),
-    refetchInterval: pollingInterval,
-  });
-
-  const posOrders = useQuery({
-    queryKey: ['pos-orders-list'],
-    queryFn: () =>
-      apiRequest<
-        Array<{
+  const overview = useQuery({
+    queryKey: ['pos-overview'],
+    queryFn: ({ signal }) =>
+      apiRequest<{
+        tables: PosTable[];
+        orders: Array<{
           id: string;
           displayCode: string;
           orderType: 'DINE_IN' | 'TAKEAWAY';
@@ -1080,10 +1226,23 @@ function AreasPage() {
           openedAt: number;
           itemCount: number;
           totalVnd: number;
-        }>
-      >('/api/v1/pos/orders'),
+        }>;
+        serverNowMs: number;
+      }>('/api/v1/pos/overview', { signal }),
     refetchInterval: pollingInterval,
   });
+  const tables = {
+    data: overview.data?.tables,
+    isLoading: overview.isLoading,
+    isError: overview.isError,
+  };
+  const posOrders = { data: overview.data?.orders };
+
+  useEffect(() => {
+    if (!overview.data) return;
+    queryClient.setQueryData(['pos-tables'], overview.data.tables);
+    queryClient.setQueryData(['pos-orders-list'], overview.data.orders);
+  }, [overview.data, queryClient]);
 
   const activeTakeaways = useMemo(() => {
     return (posOrders.data ?? [])
@@ -1331,7 +1490,8 @@ function StaffNotificationCenter({ open, onClose }: { open: boolean; onClose: ()
     queryKey: ['staff-notification-audit'],
     queryFn: () =>
       apiRequest<StaffNotificationAuditResponse>('/api/v1/pos/qr-orders/audit?limit=50'),
-    refetchInterval: pollingInterval,
+    enabled: open,
+    refetchInterval: open ? pollingInterval : false,
   });
   const retentionDays = notificationAudit.data?.retentionDays ?? 3;
 
@@ -1445,35 +1605,33 @@ function QrOrderPage() {
   const [messageApi, holder] = message.useMessage();
   const [modal, modalHolder] = Modal.useModal();
   const realtime = useRealtime();
-  const pollingInterval = usePosPollingInterval(15_000);
+  const notifications = usePosNotifications();
   const now = useServerNow(realtime.serverTimeOffsetMs);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [updatingServiceId, setUpdatingServiceId] = useState<string | null>(null);
   const [updatingTableOpenId, setUpdatingTableOpenId] = useState<string | null>(null);
-  const previousPendingCount = useRef<number | null>(null);
-  const previousCallStaffRequestCount = useRef<number | null>(null);
-  const previousCheckoutRequestCount = useRef<number | null>(null);
-  const previousTableOpenRequestCount = useRef<number | null>(null);
   const auth = useQuery({
     queryKey: ['auth-context'],
     queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
   });
-  const requests = useQuery({
-    queryKey: ['guest-order-requests'],
-    queryFn: () => apiRequest<GuestOrderRequestDto[]>('/api/v1/pos/qr-orders?status=PENDING'),
-    refetchInterval: pollingInterval,
-  });
-  const serviceRequests = useQuery({
-    queryKey: ['service-requests'],
-    queryFn: () => apiRequest<ServiceRequestDto[]>('/api/v1/pos/qr-orders/service-requests/list'),
-    refetchInterval: pollingInterval,
-  });
-  const tableOpenRequests = useQuery({
-    queryKey: ['table-open-requests'],
-    queryFn: () =>
-      apiRequest<TableOpenRequestDto[]>('/api/v1/pos/qr-orders/table-open-requests/list'),
-    refetchInterval: pollingInterval,
-  });
+  const requests = {
+    data: notifications.data?.guestOrders,
+    isLoading: notifications.isLoading,
+    isError: notifications.isError,
+    isFetching: notifications.isFetching,
+  };
+  const serviceRequests = {
+    data: notifications.data?.serviceRequests,
+    isLoading: notifications.isLoading,
+    isError: notifications.isError,
+    isFetching: notifications.isFetching,
+  };
+  const tableOpenRequests = {
+    data: notifications.data?.tableOpenRequests,
+    isLoading: notifications.isLoading,
+    isError: notifications.isError,
+    isFetching: notifications.isFetching,
+  };
 
   const pendingRequests = useMemo(
     () => (requests.data ?? []).toSorted((a, b) => a.createdAt - b.createdAt),
@@ -1493,63 +1651,10 @@ function QrOrderPage() {
     0,
   );
 
-  useEffect(() => {
-    const count = requests.data?.length;
-    if (count === undefined) return;
-    if (
-      realtime.status !== 'CONNECTED' &&
-      previousPendingCount.current !== null &&
-      count > previousPendingCount.current
-    ) {
-      playPosSound('NEW_QR_ORDER');
-    }
-    previousPendingCount.current = count;
-  }, [realtime.status, requests.data?.length]);
-
-  useEffect(() => {
-    const callStaffCount = serviceRequests.data?.filter(
-      (sr) => sr.type === 'CALL_STAFF' && sr.status === 'OPEN',
-    ).length;
-    const checkoutCount = serviceRequests.data?.filter(
-      (sr) => sr.type === 'CHECKOUT_REQUEST' && sr.status === 'OPEN',
-    ).length;
-    if (callStaffCount === undefined || checkoutCount === undefined) return;
-    if (
-      realtime.status !== 'CONNECTED' &&
-      previousCallStaffRequestCount.current !== null &&
-      callStaffCount > previousCallStaffRequestCount.current
-    ) {
-      playPosSound('NEW_QR_ORDER');
-    }
-    if (
-      realtime.status !== 'CONNECTED' &&
-      previousCheckoutRequestCount.current !== null &&
-      checkoutCount > previousCheckoutRequestCount.current
-    ) {
-      playPosSound('CHECKOUT_REQUEST');
-    }
-    previousCallStaffRequestCount.current = callStaffCount;
-    previousCheckoutRequestCount.current = checkoutCount;
-  }, [realtime.status, serviceRequests.data]);
-  useEffect(() => {
-    const count = tableOpenRequests.data?.length;
-    if (count === undefined) return;
-    if (
-      realtime.status !== 'CONNECTED' &&
-      previousTableOpenRequestCount.current !== null &&
-      count > previousTableOpenRequestCount.current
-    ) {
-      playPosSound('TABLE_OPEN_REQUEST');
-    }
-    previousTableOpenRequestCount.current = count;
-  }, [realtime.status, tableOpenRequests.data?.length]);
   const refresh = () =>
     Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['guest-order-requests'] }),
-      queryClient.invalidateQueries({ queryKey: ['service-requests'] }),
-      queryClient.invalidateQueries({ queryKey: ['table-open-requests'] }),
-      queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
-      queryClient.invalidateQueries({ queryKey: ['staff-notification-audit'] }),
+      queryClient.invalidateQueries({ queryKey: ['pos-notification-summary'] }),
+      queryClient.invalidateQueries({ queryKey: ['pos-overview'] }),
     ]);
   const accept = useMutation({
     mutationFn: (request: GuestOrderRequestDto) =>
@@ -2021,6 +2126,7 @@ function MorePage({
   const context = useQuery({
     queryKey: ['pos-context'],
     queryFn: () => apiRequest<StaffContext>('/api/v1/pos/context'),
+    staleTime: Infinity,
   });
 
   const permissions = context.data?.permissions ?? [];
@@ -2987,7 +3093,14 @@ function SwipeableOrderItemRow({
   return (
     <div className={`staff-swipeable-item-wrapper${locked ? ' is-locked' : ''}`}>
       {!locked ? (
-        <div className="staff-swipeable-delete-action">
+        <div
+          className="staff-swipeable-delete-action"
+          style={{
+            opacity: offsetX < 0 ? 1 : 0,
+            visibility: offsetX < 0 ? 'visible' : 'hidden',
+            pointerEvents: offsetX < -30 ? 'auto' : 'none',
+          }}
+        >
           <button
             type="button"
             className="staff-swipeable-delete-btn"
@@ -3004,7 +3117,7 @@ function SwipeableOrderItemRow({
         tabIndex={0}
         className={`staff-compact-order-row staff-compact-order-row--editable ${className}`}
         style={{
-          transform: `translateX(${offsetX}px)`,
+          transform: offsetX !== 0 ? `translateX(${offsetX}px)` : undefined,
           transition: isSwiping ? 'none' : 'transform 0.22s cubic-bezier(0.2, 0.9, 0.4, 1)',
         }}
         onTouchStart={handleTouchStart}
@@ -3635,6 +3748,33 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const [isResizing, setIsResizing] = useState(false);
   const csrf = auth.csrfToken!;
 
+  const draftItemsPayload = () =>
+    draftLines.map((line) => ({
+      productId: line.product.productId,
+      variantId: line.variant.id,
+      enteredUnitPriceVnd:
+        line.variant.promptPrice === 1 ? (line.variant.salePriceVnd ?? undefined) : undefined,
+      quantityMilli: line.quantityMilli,
+      note: line.note,
+      discount:
+        line.discountType && line.discountInputValue !== null
+          ? {
+              type: line.discountType,
+              value: line.discountInputValue,
+              reason: line.discountReason ?? '',
+            }
+          : null,
+    }));
+
+  const applyOrderMutationSnapshot = (snapshot: OrderMutationSnapshot) => {
+    queryClient.setQueryData<OrderQuote>(['pos-order-quote', snapshot.order.id], snapshot.quote);
+    queryClient.setQueryData<PosTable[]>(['pos-tables'], (cached) => {
+      if (!cached || snapshot.tableSummaries.length === 0) return cached;
+      const changed = new Map(snapshot.tableSummaries.map((table) => [table.id, table]));
+      return cached.map((table) => changed.get(table.id) ?? table);
+    });
+  };
+
   const navigateToPayment = (targetOrderId: string, replace = false) => {
     markPaymentNavigationStarted(targetOrderId);
     navigate(`/pos/orders/${targetOrderId}/payment`, replace ? { replace: true } : undefined);
@@ -3694,26 +3834,32 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
 
   const catalog = useQuery({
     queryKey: ['pos-catalog'],
-    queryFn: () => apiRequest<CatalogProduct[]>('/api/v1/pos/catalog'),
+    queryFn: ({ signal }) => apiRequest<CatalogProduct[]>('/api/v1/pos/catalog', { signal }),
+    staleTime: 15 * 60_000,
   });
   const tables = useQuery({
     queryKey: ['pos-tables'],
-    queryFn: () => apiRequest<PosTable[]>('/api/v1/pos/tables'),
+    queryFn: ({ signal }) => apiRequest<PosTable[]>('/api/v1/pos/tables', { signal }),
   });
   const quote = useQuery({
     queryKey: ['pos-order-quote', orderId],
-    queryFn: () => apiRequest<OrderQuote>(`/api/v1/pos/orders/${orderId}/quote`),
+    queryFn: ({ signal }) =>
+      apiRequest<OrderQuote>(`/api/v1/pos/orders/${orderId}/quote`, { signal }),
     enabled: !isNew,
-    refetchInterval: quotePollingInterval,
+    refetchInterval: (query) =>
+      query.state.data?.order.status === 'PAYMENT_PENDING' ? false : quotePollingInterval,
   });
   const printSettings = useQuery({
     queryKey: ['pos-print-settings'],
     queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
+    staleTime: Infinity,
   });
   const staffContext = useQuery({
     queryKey: ['pos-context'],
     queryFn: () => apiRequest<StaffContext>('/api/v1/pos/context'),
+    staleTime: Infinity,
   });
+  const paymentSnapshotV2Enabled = staffContext.data?.capabilities?.posPaymentSnapshotV2 !== false;
 
   const selectedTable = useMemo(
     () => tables.data?.find((item) => item.id === preselectedTableId),
@@ -3754,7 +3900,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     setGuestCount(count);
     if (!isNew && orderId && quote.data) {
       try {
-        await jsonRequest(
+        const snapshot = await jsonRequest<OrderMutationSnapshot>(
           `/api/v1/pos/orders/${orderId}/guest`,
           {
             expectedOrderVersion: quote.data.order.version,
@@ -3765,7 +3911,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           },
           { method: 'PATCH', headers: mutationHeaders(csrf) },
         );
-        void queryClient.invalidateQueries({ queryKey: ['pos-order-quote', orderId] });
+        applyOrderMutationSnapshot(snapshot);
       } catch (err) {
         messageApi.error(errorText(err));
       }
@@ -3780,7 +3926,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     setCustomerPhone(phone);
     if (!isNew && orderId && quote.data) {
       try {
-        await jsonRequest(
+        const snapshot = await jsonRequest<OrderMutationSnapshot>(
           `/api/v1/pos/orders/${orderId}/guest`,
           {
             expectedOrderVersion: quote.data.order.version,
@@ -3791,7 +3937,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           },
           { method: 'PATCH', headers: mutationHeaders(csrf) },
         );
-        void queryClient.invalidateQueries({ queryKey: ['pos-order-quote', orderId] });
+        applyOrderMutationSnapshot(snapshot);
         messageApi.success(customer ? 'Đã chọn khách hàng.' : 'Đã bỏ chọn khách hàng.');
       } catch (err) {
         messageApi.error(errorText(err));
@@ -4072,13 +4218,15 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     setPromptPrice(null);
   };
 
-  const persistLines = async (createdOrderId: string, startingVersion: number) => {
+  const commandsV2Enabled = staffContext.data?.capabilities?.posCommandsV2 !== false;
+
+  const persistLinesV1 = async (targetOrderId: string, startingVersion: number) => {
     let version = startingVersion;
     for (const line of draftLines) {
-      // Items are intentionally sequential because each command advances the order version.
+      // V1 advances the aggregate version after every item and must stay sequential.
       // eslint-disable-next-line no-await-in-loop
       await jsonRequest(
-        `/api/v1/pos/orders/${createdOrderId}/items`,
+        `/api/v1/pos/orders/${targetOrderId}/items`,
         {
           productId: line.product.productId,
           variantId: line.variant.id,
@@ -4103,11 +4251,150 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     return version;
   };
 
-  const completeCreatedOrder = async (createdOrderId: string, checkoutAfterSave: boolean) => {
+  const persistModifiedItemsV1 = async (targetOrderId: string, startingVersion: number) => {
+    let version = startingVersion;
+    for (const [itemId, quantityMilli] of Object.entries(modifiedItemQuantities)) {
+      const item = quote.data?.items.find((candidate) => candidate.id === itemId);
+      if (!item || item.quantityMilli === quantityMilli) continue;
+      // V1 advances the aggregate version after every item and must stay sequential.
+      // eslint-disable-next-line no-await-in-loop
+      await jsonRequest(
+        `/api/v1/pos/orders/${targetOrderId}/items/${itemId}`,
+        {
+          expectedOrderVersion: version,
+          quantityMilli,
+          variantId: item.variantId,
+          discount:
+            item.discountType && typeof item.discountInputValue === 'number'
+              ? {
+                  type: item.discountType,
+                  value: item.discountInputValue,
+                  reason: item.discountReason || '',
+                }
+              : undefined,
+          note: item.note ?? null,
+        },
+        { method: 'PATCH', headers: mutationHeaders(csrf) },
+      );
+      version += 1;
+    }
+    return version;
+  };
+
+  const persistExistingOrderV1 = async (startingVersion: number) => {
+    if (!quote.data) throw new Error('Không tìm thấy đơn hàng.');
+    let version = await persistModifiedItemsV1(quote.data.order.id, startingVersion);
+    if (draftLines.length > 0) version = await persistLinesV1(quote.data.order.id, version);
+    if (orderNote !== (quote.data.order.note ?? '')) {
+      await jsonRequest(
+        `/api/v1/pos/orders/${quote.data.order.id}/note`,
+        { expectedOrderVersion: version, note: orderNote.trim() || null },
+        { method: 'PATCH', headers: mutationHeaders(csrf) },
+      );
+      version += 1;
+    }
+    if (manualPromotionIds !== null) {
+      await jsonRequest(
+        `/api/v1/pos/orders/${quote.data.order.id}/promotion`,
+        { promotionIds: manualPromotionIds, expectedOrderVersion: version },
+        { method: 'PUT', headers: mutationHeaders(csrf) },
+      );
+      version += 1;
+    }
+    setDraftLines([]);
+    setModifiedItemQuantities({});
+    setManualPromotionIds(null);
+    return version;
+  };
+
+  const completeCreatedOrderV1 = async (createdOrderId: string, checkoutAfterSave: boolean) => {
     await refreshOrder();
-    await queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
+    if (checkoutAfterSave) navigateToPayment(createdOrderId, true);
+    else {
+      messageApi.success('Lưu đơn hàng thành công.');
+      navigate('/pos/areas', { replace: true });
+    }
+  };
+
+  const saveWithTableV1 = async (table: PosTable, checkoutAfterSave: boolean) => {
+    const opened = await jsonRequest<{ orderId: string }>(
+      '/api/v1/pos/tables/open',
+      { tableId: table.id, expectedTableVersion: table.version },
+      { headers: mutationHeaders(csrf) },
+    );
+    let version = await persistLinesV1(opened.orderId, 1);
+    if (orderNote.trim()) {
+      await jsonRequest(
+        `/api/v1/pos/orders/${opened.orderId}/note`,
+        { expectedOrderVersion: version, note: orderNote.trim() },
+        { method: 'PATCH', headers: mutationHeaders(csrf) },
+      );
+      version += 1;
+    }
+    if (guestCount > 1 || customerName.trim() || customerPhone.trim() || customerId) {
+      await jsonRequest(
+        `/api/v1/pos/orders/${opened.orderId}/guest`,
+        {
+          expectedOrderVersion: version,
+          guestCount: Math.max(1, guestCount),
+          customerName: customerName.trim() || null,
+          customerPhone: customerPhone.trim() || null,
+          customerId,
+        },
+        { method: 'PATCH', headers: mutationHeaders(csrf) },
+      );
+      version += 1;
+    }
+    if (manualPromotionIds !== null) {
+      await jsonRequest(
+        `/api/v1/pos/orders/${opened.orderId}/promotion`,
+        { promotionIds: manualPromotionIds, expectedOrderVersion: version },
+        { method: 'PUT', headers: mutationHeaders(csrf) },
+      );
+    }
+    setManualPromotionIds(null);
+    await completeCreatedOrderV1(opened.orderId, checkoutAfterSave);
+  };
+
+  const createTakeawayOrderV1 = async () => {
+    const created = await jsonRequest<{ orderId: string }>(
+      '/api/v1/pos/orders',
+      { note: orderNote.trim() || null },
+      { headers: mutationHeaders(csrf) },
+    );
+    let version = await persistLinesV1(created.orderId, 1);
+    if (guestCount > 1 || customerName.trim() || customerPhone.trim() || customerId) {
+      await jsonRequest(
+        `/api/v1/pos/orders/${created.orderId}/guest`,
+        {
+          expectedOrderVersion: version,
+          guestCount: Math.max(1, guestCount),
+          customerName: customerName.trim() || null,
+          customerPhone: customerPhone.trim() || null,
+          customerId,
+        },
+        { method: 'PATCH', headers: mutationHeaders(csrf) },
+      );
+      version += 1;
+    }
+    if (manualPromotionIds !== null) {
+      await jsonRequest(
+        `/api/v1/pos/orders/${created.orderId}/promotion`,
+        { promotionIds: manualPromotionIds, expectedOrderVersion: version },
+        { method: 'PUT', headers: mutationHeaders(csrf) },
+      );
+    }
+    setManualPromotionIds(null);
+    return created.orderId;
+  };
+
+  const completeCreatedOrder = (snapshot: OrderMutationSnapshot, checkoutAfterSave: boolean) => {
+    applyOrderMutationSnapshot(snapshot);
+    setDraftLines([]);
+    setModifiedItemQuantities({});
+    setManualPromotionIds(null);
     if (checkoutAfterSave) {
-      navigate(`/pos/orders/${createdOrderId}?checkout=1`, { replace: true });
+      navigateToPayment(snapshot.order.id, true);
     } else {
       messageApi.success('Lưu đơn hàng thành công.');
       navigate('/pos/areas', { replace: true });
@@ -4117,44 +4404,29 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   const saveWithTable = async (table: PosTable, checkoutAfterSave = false) => {
     setSaving(true);
     try {
-      const opened = await jsonRequest<{ orderId: string }>(
-        '/api/v1/pos/tables/open',
-        { tableId: table.id, expectedTableVersion: table.version },
-        { headers: mutationHeaders(csrf) },
-      );
-      let version = await persistLines(opened.orderId, 1);
-      if (orderNote.trim()) {
-        await jsonRequest(
-          `/api/v1/pos/orders/${opened.orderId}/note`,
-          { expectedOrderVersion: version, note: orderNote.trim() },
-          { method: 'PATCH', headers: mutationHeaders(csrf) },
-        );
-        version += 1;
+      if (!commandsV2Enabled) {
+        await saveWithTableV1(table, checkoutAfterSave);
+        return;
       }
-      if (guestCount > 1 || customerName.trim() || customerPhone.trim()) {
-        await jsonRequest(
-          `/api/v1/pos/orders/${opened.orderId}/guest`,
-          {
-            expectedOrderVersion: version,
+      const snapshot = await jsonRequest<OrderMutationSnapshot>(
+        '/api/v1/pos/orders/open',
+        {
+          orderType: 'DINE_IN',
+          tableId: table.id,
+          expectedTableVersion: table.version,
+          items: draftItemsPayload(),
+          note: orderNote.trim() || null,
+          guest: {
             guestCount: Math.max(1, guestCount),
             customerName: customerName.trim() || null,
             customerPhone: customerPhone.trim() || null,
             customerId,
           },
-          { method: 'PATCH', headers: mutationHeaders(csrf) },
-        );
-        version += 1;
-      }
-      if (manualPromotionIds !== null) {
-        await jsonRequest(
-          `/api/v1/pos/orders/${opened.orderId}/promotion`,
-          { promotionIds: manualPromotionIds, expectedOrderVersion: version },
-          { method: 'PUT', headers: mutationHeaders(csrf) },
-        );
-        version += 1;
-      }
-      setManualPromotionIds(null);
-      await completeCreatedOrder(opened.orderId, checkoutAfterSave);
+          ...(manualPromotionIds === null ? {} : { promotionIds: manualPromotionIds }),
+        },
+        { headers: mutationHeaders(csrf) },
+      );
+      completeCreatedOrder(snapshot, checkoutAfterSave);
     } catch (error) {
       messageApi.error(errorText(error));
     } finally {
@@ -4177,8 +4449,13 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     }
     setSaving(true);
     try {
+      if (!commandsV2Enabled) {
+        const createdOrderId = await createTakeawayOrderV1();
+        await completeCreatedOrderV1(createdOrderId, false);
+        return;
+      }
       const created = await createTakeawayOrderFromDraft();
-      await completeCreatedOrder(created.orderId, false);
+      completeCreatedOrder(created, false);
     } catch (error) {
       messageApi.error(errorText(error));
     } finally {
@@ -4187,69 +4464,22 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   };
 
   const createTakeawayOrderFromDraft = async () => {
-    const created = await jsonRequest<{ orderId: string }>(
-      '/api/v1/pos/orders',
-      { note: orderNote.trim() || null },
-      { headers: mutationHeaders(csrf) },
-    );
-    let version = await persistLines(created.orderId, 1);
-    if (guestCount > 1 || customerName.trim() || customerPhone.trim()) {
-      await jsonRequest(
-        `/api/v1/pos/orders/${created.orderId}/guest`,
-        {
-          expectedOrderVersion: version,
+    return jsonRequest<OrderMutationSnapshot>(
+      '/api/v1/pos/orders/open',
+      {
+        orderType: 'TAKEAWAY',
+        items: draftItemsPayload(),
+        note: orderNote.trim() || null,
+        guest: {
           guestCount: Math.max(1, guestCount),
           customerName: customerName.trim() || null,
           customerPhone: customerPhone.trim() || null,
           customerId,
         },
-        { method: 'PATCH', headers: mutationHeaders(csrf) },
-      );
-      version += 1;
-    }
-    if (manualPromotionIds !== null) {
-      await jsonRequest(
-        `/api/v1/pos/orders/${created.orderId}/promotion`,
-        { promotionIds: manualPromotionIds, expectedOrderVersion: version },
-        { method: 'PUT', headers: mutationHeaders(csrf) },
-      );
-      version += 1;
-    }
-    setManualPromotionIds(null);
-    return { orderId: created.orderId, version };
-  };
-
-  const persistModifiedItems = async (
-    targetOrderId: string,
-    startingVersion: number,
-  ): Promise<number> => {
-    let currentVersion = startingVersion;
-    const entries = Object.entries(modifiedItemQuantities);
-    for (const [itemId, qtyMilli] of entries) {
-      const existingItem = quote.data?.items.find((it) => it.id === itemId);
-      if (!existingItem || existingItem.quantityMilli === qtyMilli) continue;
-      await jsonRequest(
-        `/api/v1/pos/orders/${targetOrderId}/items/${itemId}`,
-        {
-          expectedOrderVersion: currentVersion,
-          quantityMilli: qtyMilli,
-          variantId: existingItem.variantId,
-          discount:
-            existingItem.discountType && typeof existingItem.discountInputValue === 'number'
-              ? {
-                  type: existingItem.discountType,
-                  value: existingItem.discountInputValue,
-                  reason: existingItem.discountReason || '',
-                }
-              : undefined,
-          note: existingItem.note ?? null,
-        },
-        { method: 'PATCH', headers: mutationHeaders(csrf) },
-      );
-      currentVersion += 1;
-    }
-    setModifiedItemQuantities({});
-    return currentVersion;
+        ...(manualPromotionIds === null ? {} : { promotionIds: manualPromotionIds }),
+      },
+      { headers: mutationHeaders(csrf) },
+    );
   };
 
   const saveAdditionalItems = async (openPaymentAfterSave = false) => {
@@ -4269,28 +4499,40 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     }
     setSaving(true);
     try {
-      let currentVersion = quote.data.order.version;
-      if (hasModifiedQty) {
-        currentVersion = await persistModifiedItems(quote.data.order.id, currentVersion);
+      if (!commandsV2Enabled) {
+        await persistExistingOrderV1(quote.data.order.version);
+        await refreshOrder();
+        messageApi.success('Lưu đơn hàng thành công.');
+        if (openPaymentAfterSave) navigateToPayment(quote.data.order.id);
+        else navigate('/pos/areas', { replace: true });
+        return;
       }
-      if (draftLines.length > 0) {
-        currentVersion = await persistLines(quote.data.order.id, currentVersion);
-        setDraftLines([]);
-      }
-      if (manualPromotionIds !== null) {
-        await jsonRequest(
-          `/api/v1/pos/orders/${quote.data.order.id}/promotion`,
-          { promotionIds: manualPromotionIds, expectedOrderVersion: currentVersion },
-          { method: 'PUT', headers: mutationHeaders(csrf) },
-        );
-        currentVersion += 1;
-      }
+      const snapshot = await jsonRequest<OrderMutationSnapshot>(
+        `/api/v1/pos/orders/${quote.data.order.id}/save`,
+        {
+          expectedOrderVersion: quote.data.order.version,
+          addedItems: draftItemsPayload(),
+          updatedItems: Object.entries(modifiedItemQuantities)
+            .filter(([id, quantityMilli]) =>
+              quote.data?.items.some(
+                (item) => item.id === id && item.quantityMilli !== quantityMilli,
+              ),
+            )
+            .map(([itemId, quantityMilli]) => ({ itemId, quantityMilli })),
+          ...(orderNote !== (quote.data.order.note ?? '')
+            ? { note: orderNote.trim() || null }
+            : {}),
+          ...(manualPromotionIds === null ? {} : { promotionIds: manualPromotionIds }),
+        },
+        { headers: mutationHeaders(csrf) },
+      );
+      applyOrderMutationSnapshot(snapshot);
+      setDraftLines([]);
+      setModifiedItemQuantities({});
       setManualPromotionIds(null);
-      await refreshOrder();
-      await queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
       messageApi.success('Lưu đơn hàng thành công.');
       if (openPaymentAfterSave) {
-        navigateToPayment(quote.data.order.id);
+        navigateToPayment(snapshot.order.id);
       } else {
         navigate('/pos/areas', { replace: true });
       }
@@ -4417,6 +4659,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         },
       );
       const url = new URL(result.path, window.location.origin).toString();
+      const { default: QRCode } = await import('qrcode');
       const qrImage = await QRCode.toDataURL(url, {
         width: 640,
         margin: 2,
@@ -4456,26 +4699,45 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       if (quote.data?.time) {
         setStoppingTime(true);
         try {
-          let currentVersion = quote.data.order.version;
+          let currentQuote = quote.data;
           const hasModifiedQty = Object.entries(modifiedItemQuantities).some(([id, qty]) => {
             const it = quote.data?.items.find((x) => x.id === id);
             return it && it.quantityMilli !== qty;
           });
-          if (hasModifiedQty) {
-            currentVersion = await persistModifiedItems(quote.data.order.id, currentVersion);
+          if (hasModifiedQty || draftLines.length > 0 || manualPromotionIds !== null) {
+            if (commandsV2Enabled) {
+              const saved = await jsonRequest<OrderMutationSnapshot>(
+                `/api/v1/pos/orders/${quote.data.order.id}/save`,
+                {
+                  expectedOrderVersion: quote.data.order.version,
+                  addedItems: draftItemsPayload(),
+                  updatedItems: Object.entries(modifiedItemQuantities)
+                    .filter(([id, quantityMilli]) =>
+                      quote.data?.items.some(
+                        (item) => item.id === id && item.quantityMilli !== quantityMilli,
+                      ),
+                    )
+                    .map(([itemId, quantityMilli]) => ({ itemId, quantityMilli })),
+                  ...(manualPromotionIds === null ? {} : { promotionIds: manualPromotionIds }),
+                },
+                { headers: mutationHeaders(csrf) },
+              );
+              applyOrderMutationSnapshot(saved);
+              currentQuote = saved.quote;
+              setDraftLines([]);
+              setModifiedItemQuantities({});
+              setManualPromotionIds(null);
+            } else {
+              await persistExistingOrderV1(quote.data.order.version);
+              currentQuote = await apiRequest<OrderQuote>(
+                `/api/v1/pos/orders/${quote.data.order.id}/quote`,
+              );
+              queryClient.setQueryData(['pos-order-quote', quote.data.order.id], currentQuote);
+            }
           }
-          if (draftLines.length > 0) {
-            currentVersion = await persistLines(quote.data.order.id, currentVersion);
-            setDraftLines([]);
-          }
-          const result = await jsonRequest<{
-            orderId: string;
-            status: 'PAYMENT_PENDING';
-            stoppedAt: number;
-            quote: OrderQuote;
-          }>(
-            `/api/v1/pos/orders/${quote.data.order.id}/stop-time`,
-            { expectedOrderVersion: currentVersion },
+          const result = await jsonRequest<PaymentSnapshotResult>(
+            `/api/v1/pos/orders/${currentQuote.order.id}/stop-time`,
+            { expectedOrderVersion: currentQuote.order.version },
             { headers: mutationHeaders(csrf) },
           );
           const pendingQuote: OrderQuote = {
@@ -4490,8 +4752,10 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
             (cached) =>
               !cached || pendingQuote.order.version >= cached.order.version ? pendingQuote : cached,
           );
-          void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
-          navigateToPayment(quote.data.order.id);
+          if (paymentSnapshotV2Enabled) {
+            queryClient.setQueryData(['pos-payment-snapshot', currentQuote.order.id], result);
+          }
+          navigateToPayment(currentQuote.order.id);
         } catch (error) {
           messageApi.error(errorText(error));
         } finally {
@@ -4515,7 +4779,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     setSaving(true);
     try {
       const created = await createTakeawayOrderFromDraft();
-      await completeCreatedOrder(created.orderId, true);
+      completeCreatedOrder(created, true);
     } catch (error) {
       messageApi.error(errorText(error));
     } finally {
@@ -4532,7 +4796,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
   }) => {
     if (!quote.data) return;
     try {
-      await jsonRequest(
+      const snapshot = await jsonRequest<OrderMutationSnapshot>(
         `/api/v1/pos/orders/${quote.data.order.id}/items/${input.id}`,
         {
           expectedOrderVersion: quote.data.order.version,
@@ -4543,13 +4807,13 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         },
         { method: 'PATCH', headers: mutationHeaders(csrf) },
       );
+      applyOrderMutationSnapshot(snapshot);
       setEditingItem(null);
       setModifiedItemQuantities((prev) => {
         const next = { ...prev };
         delete next[input.id];
         return next;
       });
-      await refreshOrder();
     } catch (error) {
       messageApi.error(errorText(error));
     }
@@ -4577,11 +4841,12 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
           setDeleteItemReason('');
           return;
         }
-        await jsonRequest(
+        const snapshot = await jsonRequest<OrderMutationSnapshot>(
           `/api/v1/pos/orders/${quote.data.order.id}/items/${deleteItemTarget.id}`,
           { expectedOrderVersion: quote.data.order.version, reason: deleteItemReason.trim() },
           { method: 'DELETE', headers: mutationHeaders(csrf) },
         );
+        applyOrderMutationSnapshot(snapshot);
         setModifiedItemQuantities((prev) => {
           const next = { ...prev };
           delete next[deleteItemTarget.id];
@@ -4591,7 +4856,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         setDeleteItemTarget(null);
         setDeleteItemReason('');
         messageApi.success('Đã xóa mặt hàng khỏi đơn.');
-        await refreshOrder();
       }
     } catch (error) {
       messageApi.error(errorText(error));
@@ -4635,13 +4899,13 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       return;
     }
     try {
-      await jsonRequest(
+      const snapshot = await jsonRequest<OrderMutationSnapshot>(
         `/api/v1/pos/orders/${quote.data.order.id}/note`,
         { expectedOrderVersion: quote.data.order.version, note: orderNote.trim() || null },
         { method: 'PATCH', headers: mutationHeaders(csrf) },
       );
+      applyOrderMutationSnapshot(snapshot);
       setOrderNoteOpen(false);
-      await refreshOrder();
     } catch (error) {
       messageApi.error(errorText(error));
     }
@@ -4659,10 +4923,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       );
       messageApi.success('Đã tạm dừng tính giờ bàn.');
       setTimeDetailOpen(false);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['pos-order-quote', currentOrderId] }),
-        queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
-      ]);
+      await refreshOrder();
     } catch (error) {
       messageApi.error(errorText(error));
     } finally {
@@ -4682,10 +4943,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       );
       messageApi.success('Đã mở lại bàn / tiếp tục tính giờ.');
       setTimeDetailOpen(false);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['pos-order-quote', currentOrderId] }),
-        queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
-      ]);
+      await refreshOrder();
     } catch (error) {
       messageApi.error(errorText(error));
     } finally {
@@ -4709,10 +4967,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       );
       messageApi.success('Đã tiếp tục tính giờ bàn.');
       setTimeDetailOpen(false);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['pos-order-quote', currentOrderId] }),
-        queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
-      ]);
+      await refreshOrder();
     } catch (error) {
       messageApi.error(errorText(error));
     } finally {
@@ -4774,10 +5029,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
         },
         { method: 'PATCH', headers: mutationHeaders(csrf) },
       );
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['pos-order-quote', currentOrderId] }),
-        queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
-      ]);
+      await refreshOrder();
       setTimeDetailOpen(false);
       setTimeRestoringDraft(false);
       messageApi.success('Đã lưu thông tin tính giờ thành công.');
@@ -4805,10 +5057,7 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
       );
       setTransferOpen(false);
       messageApi.success(`Đã chuyển ${source.name} → ${table.name}`);
-      await Promise.all([
-        refreshOrder(),
-        queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
-      ]);
+      await refreshOrder();
     } catch (error) {
       messageApi.error(errorText(error));
       throw error;
@@ -4926,35 +5175,40 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     combinedProductGross + totalTimeGross - combinedItemManualDiscountTotal,
   );
 
-  const itemsQueryKey = useMemo(() => {
-    return combinedItemsForPromotion
-      .map((i) => `${i.productId}:${i.variantId}:${i.quantityMilli}:${i.netLineTotalVnd}`)
-      .join('|');
-  }, [combinedItemsForPromotion]);
-
+  const promotionPreviewInput = useMemo(
+    () => ({
+      orderId: isNew ? undefined : orderId,
+      customerId: customerId || null,
+      subtotalVnd: combinedSubtotal,
+      promotionIds: manualPromotionIds ?? undefined,
+      items: combinedItemsForPromotion,
+    }),
+    [combinedItemsForPromotion, combinedSubtotal, customerId, isNew, manualPromotionIds, orderId],
+  );
+  const debouncedPromotionPreviewInput = useDebouncedValue(promotionPreviewInput, 300);
+  const debouncedPromotionPreviewKey = useMemo(
+    () => JSON.stringify(debouncedPromotionPreviewInput),
+    [debouncedPromotionPreviewInput],
+  );
   const promotionPreview = useQuery({
     queryKey: [
       'pos-promotion-preview',
       orderId,
-      customerId,
-      manualPromotionIds,
-      itemsQueryKey,
-      combinedSubtotal,
+      promotionModalOpen ? debouncedPromotionPreviewKey : 'closed',
     ],
-    queryFn: async () => {
+    queryFn: ({ signal }) => {
       return jsonRequest<PromotionPreviewResult>(
         '/api/v1/pos/promotions/preview',
-        {
-          orderId: isNew ? undefined : orderId,
-          customerId: customerId || null,
-          subtotalVnd: combinedSubtotal,
-          promotionIds: manualPromotionIds ?? undefined,
-          items: combinedItemsForPromotion,
-        },
-        { skipMutationTracking: true },
+        debouncedPromotionPreviewInput,
+        { skipMutationTracking: true, signal },
       );
     },
-    staleTime: 0,
+    enabled:
+      promotionModalOpen &&
+      combinedItemsForPromotion.length > 0 &&
+      (staffContext.data?.permissions?.includes('promotion.apply') ?? false),
+    staleTime: 5_000,
+    retry: false,
   });
 
   const appliedPromotions: PosPromotionOption[] =
@@ -5102,12 +5356,12 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
     if (!isNew && quote.data && draftLines.length === 0) {
       setPromotionSaving(true);
       try {
-        await jsonRequest(
+        const snapshot = await jsonRequest<OrderMutationSnapshot>(
           `/api/v1/pos/orders/${quote.data.order.id}/promotion`,
           { promotionIds, expectedOrderVersion: quote.data.order.version },
           { method: 'PUT', headers: mutationHeaders(csrf) },
         );
-        await refreshOrder();
+        applyOrderMutationSnapshot(snapshot);
         messageApi.success(
           promotionIds.length > 0
             ? `Đã áp dụng ${promotionIds.length} chương trình khuyến mại.`
@@ -6032,7 +6286,6 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
               }}
             >
               <PlusOutlined />
-              <span>Thêm món</span>
             </button>
 
             {/* Sticky Bottom Billing Summary & Actions */}
@@ -6275,7 +6528,12 @@ function OrderEditor({ auth }: { auth: AuthContextResponse }) {
                           }}
                         >
                           {product.avatarType === 'IMAGE' && product.mediaId ? (
-                            <img src={`/api/v1/media/${product.mediaId}`} alt="" />
+                            <img
+                              src={`/api/v1/media/${product.mediaId}`}
+                              alt=""
+                              loading="lazy"
+                              decoding="async"
+                            />
                           ) : (
                             getProductInitials(product.productName)
                           )}
@@ -8601,25 +8859,37 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
   const [prepareCheckoutError, setPrepareCheckoutError] = useState<string | null>(null);
   const [returningToOrder, setReturningToOrder] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [paymentSnapshotId, setPaymentSnapshotId] = useState<string | null>(() => {
+    const cached = queryClient.getQueryData<PaymentSnapshotResult>([
+      'pos-payment-snapshot',
+      orderId,
+    ]);
+    return cached?.paymentSnapshotId ?? null;
+  });
   const checkoutPreparationStartedRef = useRef(false);
   const checkoutWasFrozenRef = useRef(false);
   const csrf = auth.csrfToken!;
 
   const quote = useQuery({
     queryKey: ['pos-order-quote', orderId],
-    queryFn: () => apiRequest<OrderQuote>(`/api/v1/pos/orders/${orderId}/quote`),
-    refetchInterval: quotePollingInterval,
+    queryFn: ({ signal }) =>
+      apiRequest<OrderQuote>(`/api/v1/pos/orders/${orderId}/quote`, { signal }),
+    refetchInterval: (query) =>
+      query.state.data?.order.status === 'PAYMENT_PENDING' ? false : quotePollingInterval,
   });
 
   const printSettings = useQuery({
     queryKey: ['pos-print-settings'],
     queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
+    staleTime: Infinity,
   });
 
   const staffContext = useQuery({
     queryKey: ['pos-context'],
     queryFn: () => apiRequest<StaffContext>('/api/v1/pos/context'),
+    staleTime: Infinity,
   });
+  const paymentSnapshotV2Enabled = staffContext.data?.capabilities?.posPaymentSnapshotV2 !== false;
 
   useEffect(() => {
     const currentQuote = quote.data;
@@ -8683,7 +8953,11 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
   // directly to this route, so the payment page is the final safety boundary.
   useEffect(() => {
     const currentQuote = quote.data;
-    if (currentQuote?.order.status === 'PAYMENT_PENDING') {
+    if (!staffContext.isSuccess) return;
+    if (
+      currentQuote?.order.status === 'PAYMENT_PENDING' &&
+      (!paymentSnapshotV2Enabled || paymentSnapshotId)
+    ) {
       checkoutPreparationStartedRef.current = true;
       checkoutWasFrozenRef.current = true;
       return;
@@ -8695,7 +8969,7 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
     }
     if (
       !currentQuote?.time ||
-      currentQuote.order.status !== 'OPEN' ||
+      (currentQuote.order.status !== 'OPEN' && currentQuote.order.status !== 'PAYMENT_PENDING') ||
       checkoutPreparationStartedRef.current
     ) {
       return;
@@ -8713,12 +8987,7 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
     setPreparingCheckout(true);
     setPrepareCheckoutError(null);
 
-    void jsonRequest<{
-      orderId: string;
-      status: 'PAYMENT_PENDING';
-      stoppedAt: number;
-      quote: OrderQuote;
-    }>(
+    void jsonRequest<PaymentSnapshotResult>(
       `/api/v1/pos/orders/${currentQuote.order.id}/stop-time`,
       { expectedOrderVersion: currentQuote.order.version },
       { headers: mutationHeaders(csrf) },
@@ -8732,7 +9001,17 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
           clearPaymentPageActive(result.quote.order.id);
           navigate(`/pos/orders/${result.quote.order.id}`, { replace: true });
         }
-        await queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
+        if (paymentSnapshotV2Enabled) {
+          setPaymentSnapshotId(result.paymentSnapshotId);
+          queryClient.setQueryData(['pos-payment-snapshot', orderId], result);
+        }
+        if (result.tableSummary) {
+          queryClient.setQueryData<PosTable[]>(['pos-tables'], (cached) =>
+            cached?.map((table) =>
+              table.id === result.tableSummary!.id ? result.tableSummary! : table,
+            ),
+          );
+        }
       })
       .catch(async (error) => {
         // A concurrent order update can make the version stale. Refetching lets
@@ -8746,7 +9025,18 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
         setPrepareCheckoutError(errorText(error));
       })
       .finally(() => setPreparingCheckout(false));
-  }, [csrf, navigate, orderId, prepareCheckoutError, preparingCheckout, queryClient, quote.data]);
+  }, [
+    csrf,
+    navigate,
+    orderId,
+    paymentSnapshotV2Enabled,
+    paymentSnapshotId,
+    prepareCheckoutError,
+    preparingCheckout,
+    queryClient,
+    quote.data,
+    staffContext.isSuccess,
+  ]);
 
   const handleCopy = (text: string, label: string) => {
     if (!text) return;
@@ -8873,10 +9163,12 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
       const result = await jsonRequest<{
         invoiceId: string;
         displayCode?: string;
+        tableSummaries?: PosTable[];
       }>(
         `/api/v1/pos/orders/${quote.data.order.id}/checkout`,
         {
           expectedOrderVersion: quote.data.order.version,
+          ...(paymentSnapshotV2Enabled && paymentSnapshotId ? { paymentSnapshotId } : {}),
           method: currentMethodItem.backendMethod,
           cashReceivedVnd: currentMethodItem.backendMethod === 'CASH' ? cashReceived : null,
           allocations: isMultiMethod
@@ -8903,8 +9195,13 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
         },
         { headers: mutationHeaders(csrf) },
       );
-      playPosSound('PAYMENT_SUCCESS');
-      void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
+      if (result.tableSummaries && result.tableSummaries.length > 0) {
+        queryClient.setQueryData<PosTable[]>(['pos-tables'], (cached) => {
+          if (!cached) return result.tableSummaries;
+          const changed = new Map(result.tableSummaries!.map((table) => [table.id, table]));
+          return cached.map((table) => changed.get(table.id) ?? table);
+        });
+      }
 
       if (andPrint) {
         const printData = buildCurrentPaymentPrintData()!;
@@ -9026,24 +9323,31 @@ function PaymentPage({ orderId, auth }: { orderId: string; auth: AuthContextResp
           <div className="staff-payment-page__left">
             <section className="staff-payment-page__section">
               <div className="staff-payment-page__section-title">Khách hàng</div>
-              <PosCustomerSelector
-                customerId={quote.data.order.customerId ?? null}
-                csrfToken={csrf}
-                allowCreate
-                variant="compact"
-                onSelect={async (customer) => {
-                  await jsonRequest(
-                    `/api/v1/pos/orders/${orderId}/guest`,
-                    {
-                      expectedOrderVersion: quote.data!.order.version,
-                      guestCount: quote.data!.order.guestCount ?? 1,
-                      customerId: customer?.id ?? null,
-                    },
-                    { method: 'PATCH', headers: mutationHeaders(csrf) },
-                  );
-                  await queryClient.invalidateQueries({ queryKey: ['pos-order-quote', orderId] });
-                }}
-              />
+              {paymentSnapshotId ? (
+                <Typography.Text>
+                  {quote.data.order.customerName || 'Khách lẻ'}
+                  {quote.data.order.customerPhone ? ` · ${quote.data.order.customerPhone}` : ''}
+                </Typography.Text>
+              ) : (
+                <PosCustomerSelector
+                  customerId={quote.data.order.customerId ?? null}
+                  csrfToken={csrf}
+                  allowCreate
+                  variant="compact"
+                  onSelect={async (customer) => {
+                    const snapshot = await jsonRequest<OrderMutationSnapshot>(
+                      `/api/v1/pos/orders/${orderId}/guest`,
+                      {
+                        expectedOrderVersion: quote.data!.order.version,
+                        guestCount: quote.data!.order.guestCount ?? 1,
+                        customerId: customer?.id ?? null,
+                      },
+                      { method: 'PATCH', headers: mutationHeaders(csrf) },
+                    );
+                    queryClient.setQueryData(['pos-order-quote', orderId], snapshot.quote);
+                  }}
+                />
+              )}
             </section>
 
             <section className="staff-payment-page__section">
@@ -9601,6 +9905,7 @@ export function StaffPosPortalPage() {
   const posContext = useQuery({
     queryKey: ['pos-context'],
     queryFn: () => apiRequest<StaffContext>('/api/v1/pos/context'),
+    staleTime: Infinity,
   });
   if (auth.isLoading) return <Spin fullscreen description="Đang mở cổng nhân viên" />;
   if (auth.isError || auth.data?.actor?.kind !== 'EMPLOYEE') {
@@ -9700,235 +10005,237 @@ export function StaffPosPortalPage() {
   return (
     <ConfigProvider theme={{ token: { colorPrimary: BRAND, borderRadius: 8 } }}>
       <RealtimeProvider>
-        <div className={`staff-pos-shell${isFullScreen ? ' staff-pos-shell--editor' : ''}`}>
-          <PushNotificationControl csrfToken={auth.data.csrfToken} autoPrompt />
-          <StaffOnboarding auth={auth.data} restartToken={onboardingRestartToken} />
-          {!isFullScreen ? (
-            <StaffHeader
-              context={auth.data}
-              onOpenNotifications={() => setNotificationCenterOpen(true)}
+        <PosNotificationsProvider>
+          <div className={`staff-pos-shell${isFullScreen ? ' staff-pos-shell--editor' : ''}`}>
+            <PushNotificationControl csrfToken={auth.data.csrfToken} autoPrompt />
+            <StaffOnboarding auth={auth.data} restartToken={onboardingRestartToken} />
+            {!isFullScreen ? (
+              <StaffHeader
+                context={auth.data}
+                onOpenNotifications={() => setNotificationCenterOpen(true)}
+              />
+            ) : null}
+            <div className="staff-pos-main">
+              {isPrinterSettings ? (
+                <StaffPrinterSettingsPage
+                  csrfToken={auth.data.csrfToken}
+                  storeName={posContext.data?.storeName ?? 'PRO POS'}
+                  onBack={() => navigate('/pos/more')}
+                />
+              ) : isInvoiceDetail ? (
+                <InvoicePage />
+              ) : isInvoicesList ? (
+                <div className="staff-invoices-shell">
+                  <div className="staff-invoices-container">
+                    <OwnerInvoicesPage
+                      apiPrefix="/api/v1/pos/invoices"
+                      userPermissions={posContext.data?.permissions}
+                      isOwner={false}
+                      onBack={() => navigate('/pos/more')}
+                    />
+                  </div>
+                </div>
+              ) : isCustomerNew ? (
+                <div className="staff-invoices-shell">
+                  <div className="staff-invoices-container">
+                    <OwnerCustomerFormPage
+                      baseRoute="/pos/customers"
+                      apiPrefix="/api/v1/pos/customers"
+                      userPermissions={posContext.data?.permissions}
+                      isOwner={false}
+                      onBack={() => navigate('/pos/customers')}
+                    />
+                  </div>
+                </div>
+              ) : isCustomerEdit ? (
+                <div className="staff-invoices-shell">
+                  <div className="staff-invoices-container">
+                    <OwnerCustomerFormPage
+                      customerId={location.pathname.split('/')[3]!}
+                      baseRoute="/pos/customers"
+                      apiPrefix="/api/v1/pos/customers"
+                      userPermissions={posContext.data?.permissions}
+                      isOwner={false}
+                      onBack={() => navigate(`/pos/customers/${location.pathname.split('/')[3]!}`)}
+                    />
+                  </div>
+                </div>
+              ) : isCustomerGroupNew ? (
+                <div className="staff-invoices-shell">
+                  <div className="staff-invoices-container">
+                    <OwnerCustomerGroupFormPage
+                      baseRoute="/pos/customers/groups"
+                      apiPrefix="/api/v1/pos/customers"
+                      userPermissions={posContext.data?.permissions}
+                      isOwner={false}
+                      onBack={() => navigate('/pos/customers/groups')}
+                    />
+                  </div>
+                </div>
+              ) : isCustomerGroupEdit ? (
+                <div className="staff-invoices-shell">
+                  <div className="staff-invoices-container">
+                    <OwnerCustomerGroupFormPage
+                      groupId={location.pathname.split('/')[4]!}
+                      baseRoute="/pos/customers/groups"
+                      apiPrefix="/api/v1/pos/customers"
+                      userPermissions={posContext.data?.permissions}
+                      isOwner={false}
+                      onBack={() => navigate('/pos/customers/groups')}
+                    />
+                  </div>
+                </div>
+              ) : isCustomerGroups ? (
+                <div className="staff-invoices-shell">
+                  <div className="staff-invoices-container">
+                    <OwnerCustomerGroupListPage
+                      baseRoute="/pos/customers/groups"
+                      apiPrefix="/api/v1/pos/customers"
+                      userPermissions={posContext.data?.permissions}
+                      isOwner={false}
+                      onBack={() => navigate('/pos/customers')}
+                    />
+                  </div>
+                </div>
+              ) : isCustomerDetail ? (
+                <div className="staff-invoices-shell">
+                  <div className="staff-invoices-container">
+                    <OwnerCustomerDetailPage
+                      customerId={location.pathname.split('/')[3]!}
+                      baseRoute="/pos/customers"
+                      apiPrefix="/api/v1/pos/customers"
+                      userPermissions={posContext.data?.permissions}
+                      isOwner={false}
+                      onBack={() => navigate('/pos/customers')}
+                    />
+                  </div>
+                </div>
+              ) : isCustomerList ? (
+                <div className="staff-invoices-shell">
+                  <div className="staff-invoices-container">
+                    <OwnerCustomerListPage
+                      baseRoute="/pos/customers"
+                      apiPrefix="/api/v1/pos/customers"
+                      userPermissions={posContext.data?.permissions}
+                      isOwner={false}
+                      onBack={() => navigate('/pos/more')}
+                    />
+                  </div>
+                </div>
+              ) : isStaffNew ? (
+                <div className="staff-invoices-shell">
+                  <div className="staff-invoices-container">
+                    <OwnerEmployeeFormPage
+                      baseRoute="/pos/staff"
+                      apiPrefix="/api/v1/pos/staff"
+                      userPermissions={posContext.data?.permissions}
+                      isOwner={false}
+                      onBack={() => navigate('/pos/staff')}
+                    />
+                  </div>
+                </div>
+              ) : isStaffEdit ? (
+                <div className="staff-invoices-shell">
+                  <div className="staff-invoices-container">
+                    <OwnerEmployeeFormPage
+                      userId={location.pathname.split('/').at(-1)!}
+                      baseRoute="/pos/staff"
+                      apiPrefix="/api/v1/pos/staff"
+                      userPermissions={posContext.data?.permissions}
+                      isOwner={false}
+                      onBack={() => navigate('/pos/staff')}
+                    />
+                  </div>
+                </div>
+              ) : isStaffList ? (
+                <div className="staff-invoices-shell">
+                  <div className="staff-invoices-container">
+                    <OwnerStaffListPage
+                      baseRoute="/pos/staff"
+                      apiPrefix="/api/v1/pos/staff"
+                      userPermissions={posContext.data?.permissions}
+                      isOwner={false}
+                      onBack={() => navigate('/pos/more')}
+                    />
+                  </div>
+                </div>
+              ) : isCatalogNewProduct ? (
+                <div className="staff-invoices-shell">
+                  <div className="staff-invoices-container">
+                    <OwnerProductFormPage
+                      baseRoute="/pos/catalog"
+                      userPermissions={posContext.data?.permissions}
+                      isOwner={false}
+                      onBack={() => navigate('/pos/catalog/products')}
+                    />
+                  </div>
+                </div>
+              ) : isCatalogEditProduct ? (
+                <div className="staff-invoices-shell">
+                  <div className="staff-invoices-container">
+                    <OwnerProductFormPage
+                      productId={location.pathname.split('/').at(-1)!}
+                      baseRoute="/pos/catalog"
+                      userPermissions={posContext.data?.permissions}
+                      isOwner={false}
+                      onBack={() => navigate('/pos/catalog/products')}
+                    />
+                  </div>
+                </div>
+              ) : isCatalogCategoryDetail ? (
+                <div className="staff-invoices-shell">
+                  <div className="staff-invoices-container">
+                    <OwnerCategoryDetailPage
+                      categoryId={location.pathname.split('/').at(-1)!}
+                      baseRoute="/pos/catalog"
+                      onBack={() => navigate('/pos/catalog/categories')}
+                    />
+                  </div>
+                </div>
+              ) : isCatalogCategories ? (
+                <div className="staff-invoices-shell">
+                  <div className="staff-invoices-container">
+                    <OwnerCategoryListPage
+                      baseRoute="/pos/catalog"
+                      onBack={() => navigate('/pos/catalog/products')}
+                    />
+                  </div>
+                </div>
+              ) : isCatalogList ? (
+                <div className="staff-invoices-shell">
+                  <div className="staff-invoices-container">
+                    <OwnerProductListPage
+                      baseRoute="/pos/catalog"
+                      userPermissions={posContext.data?.permissions}
+                      isOwner={false}
+                      onBack={() => navigate('/pos/more')}
+                    />
+                  </div>
+                </div>
+              ) : isDetail && detailOrderId ? (
+                <OrderDetailPage orderId={detailOrderId} />
+              ) : isPayment && paymentOrderId ? (
+                <PaymentPage orderId={paymentOrderId} auth={auth.data} />
+              ) : isEditor ? (
+                <OrderEditor auth={auth.data} />
+              ) : active === 'qr' ? (
+                <QrOrderPage />
+              ) : active === 'more' ? (
+                <MorePage
+                  auth={auth.data}
+                  onStartOnboarding={() => setOnboardingRestartToken((value) => value + 1)}
+                />
+              ) : (
+                <AreasPage />
+              )}
+            </div>
+            {!isFullScreen ? <StaffBottomNav active={active} /> : null}
+            <StaffNotificationCenter
+              open={notificationCenterOpen}
+              onClose={() => setNotificationCenterOpen(false)}
             />
-          ) : null}
-          <div className="staff-pos-main">
-            {isPrinterSettings ? (
-              <StaffPrinterSettingsPage
-                csrfToken={auth.data.csrfToken}
-                storeName={posContext.data?.storeName ?? 'PRO POS'}
-                onBack={() => navigate('/pos/more')}
-              />
-            ) : isInvoiceDetail ? (
-              <InvoicePage />
-            ) : isInvoicesList ? (
-              <div className="staff-invoices-shell">
-                <div className="staff-invoices-container">
-                  <OwnerInvoicesPage
-                    apiPrefix="/api/v1/pos/invoices"
-                    userPermissions={posContext.data?.permissions}
-                    isOwner={false}
-                    onBack={() => navigate('/pos/more')}
-                  />
-                </div>
-              </div>
-            ) : isCustomerNew ? (
-              <div className="staff-invoices-shell">
-                <div className="staff-invoices-container">
-                  <OwnerCustomerFormPage
-                    baseRoute="/pos/customers"
-                    apiPrefix="/api/v1/pos/customers"
-                    userPermissions={posContext.data?.permissions}
-                    isOwner={false}
-                    onBack={() => navigate('/pos/customers')}
-                  />
-                </div>
-              </div>
-            ) : isCustomerEdit ? (
-              <div className="staff-invoices-shell">
-                <div className="staff-invoices-container">
-                  <OwnerCustomerFormPage
-                    customerId={location.pathname.split('/')[3]!}
-                    baseRoute="/pos/customers"
-                    apiPrefix="/api/v1/pos/customers"
-                    userPermissions={posContext.data?.permissions}
-                    isOwner={false}
-                    onBack={() => navigate(`/pos/customers/${location.pathname.split('/')[3]!}`)}
-                  />
-                </div>
-              </div>
-            ) : isCustomerGroupNew ? (
-              <div className="staff-invoices-shell">
-                <div className="staff-invoices-container">
-                  <OwnerCustomerGroupFormPage
-                    baseRoute="/pos/customers/groups"
-                    apiPrefix="/api/v1/pos/customers"
-                    userPermissions={posContext.data?.permissions}
-                    isOwner={false}
-                    onBack={() => navigate('/pos/customers/groups')}
-                  />
-                </div>
-              </div>
-            ) : isCustomerGroupEdit ? (
-              <div className="staff-invoices-shell">
-                <div className="staff-invoices-container">
-                  <OwnerCustomerGroupFormPage
-                    groupId={location.pathname.split('/')[4]!}
-                    baseRoute="/pos/customers/groups"
-                    apiPrefix="/api/v1/pos/customers"
-                    userPermissions={posContext.data?.permissions}
-                    isOwner={false}
-                    onBack={() => navigate('/pos/customers/groups')}
-                  />
-                </div>
-              </div>
-            ) : isCustomerGroups ? (
-              <div className="staff-invoices-shell">
-                <div className="staff-invoices-container">
-                  <OwnerCustomerGroupListPage
-                    baseRoute="/pos/customers/groups"
-                    apiPrefix="/api/v1/pos/customers"
-                    userPermissions={posContext.data?.permissions}
-                    isOwner={false}
-                    onBack={() => navigate('/pos/customers')}
-                  />
-                </div>
-              </div>
-            ) : isCustomerDetail ? (
-              <div className="staff-invoices-shell">
-                <div className="staff-invoices-container">
-                  <OwnerCustomerDetailPage
-                    customerId={location.pathname.split('/')[3]!}
-                    baseRoute="/pos/customers"
-                    apiPrefix="/api/v1/pos/customers"
-                    userPermissions={posContext.data?.permissions}
-                    isOwner={false}
-                    onBack={() => navigate('/pos/customers')}
-                  />
-                </div>
-              </div>
-            ) : isCustomerList ? (
-              <div className="staff-invoices-shell">
-                <div className="staff-invoices-container">
-                  <OwnerCustomerListPage
-                    baseRoute="/pos/customers"
-                    apiPrefix="/api/v1/pos/customers"
-                    userPermissions={posContext.data?.permissions}
-                    isOwner={false}
-                    onBack={() => navigate('/pos/more')}
-                  />
-                </div>
-              </div>
-            ) : isStaffNew ? (
-              <div className="staff-invoices-shell">
-                <div className="staff-invoices-container">
-                  <OwnerEmployeeFormPage
-                    baseRoute="/pos/staff"
-                    apiPrefix="/api/v1/pos/staff"
-                    userPermissions={posContext.data?.permissions}
-                    isOwner={false}
-                    onBack={() => navigate('/pos/staff')}
-                  />
-                </div>
-              </div>
-            ) : isStaffEdit ? (
-              <div className="staff-invoices-shell">
-                <div className="staff-invoices-container">
-                  <OwnerEmployeeFormPage
-                    userId={location.pathname.split('/').at(-1)!}
-                    baseRoute="/pos/staff"
-                    apiPrefix="/api/v1/pos/staff"
-                    userPermissions={posContext.data?.permissions}
-                    isOwner={false}
-                    onBack={() => navigate('/pos/staff')}
-                  />
-                </div>
-              </div>
-            ) : isStaffList ? (
-              <div className="staff-invoices-shell">
-                <div className="staff-invoices-container">
-                  <OwnerStaffListPage
-                    baseRoute="/pos/staff"
-                    apiPrefix="/api/v1/pos/staff"
-                    userPermissions={posContext.data?.permissions}
-                    isOwner={false}
-                    onBack={() => navigate('/pos/more')}
-                  />
-                </div>
-              </div>
-            ) : isCatalogNewProduct ? (
-              <div className="staff-invoices-shell">
-                <div className="staff-invoices-container">
-                  <OwnerProductFormPage
-                    baseRoute="/pos/catalog"
-                    userPermissions={posContext.data?.permissions}
-                    isOwner={false}
-                    onBack={() => navigate('/pos/catalog/products')}
-                  />
-                </div>
-              </div>
-            ) : isCatalogEditProduct ? (
-              <div className="staff-invoices-shell">
-                <div className="staff-invoices-container">
-                  <OwnerProductFormPage
-                    productId={location.pathname.split('/').at(-1)!}
-                    baseRoute="/pos/catalog"
-                    userPermissions={posContext.data?.permissions}
-                    isOwner={false}
-                    onBack={() => navigate('/pos/catalog/products')}
-                  />
-                </div>
-              </div>
-            ) : isCatalogCategoryDetail ? (
-              <div className="staff-invoices-shell">
-                <div className="staff-invoices-container">
-                  <OwnerCategoryDetailPage
-                    categoryId={location.pathname.split('/').at(-1)!}
-                    baseRoute="/pos/catalog"
-                    onBack={() => navigate('/pos/catalog/categories')}
-                  />
-                </div>
-              </div>
-            ) : isCatalogCategories ? (
-              <div className="staff-invoices-shell">
-                <div className="staff-invoices-container">
-                  <OwnerCategoryListPage
-                    baseRoute="/pos/catalog"
-                    onBack={() => navigate('/pos/catalog/products')}
-                  />
-                </div>
-              </div>
-            ) : isCatalogList ? (
-              <div className="staff-invoices-shell">
-                <div className="staff-invoices-container">
-                  <OwnerProductListPage
-                    baseRoute="/pos/catalog"
-                    userPermissions={posContext.data?.permissions}
-                    isOwner={false}
-                    onBack={() => navigate('/pos/more')}
-                  />
-                </div>
-              </div>
-            ) : isDetail && detailOrderId ? (
-              <OrderDetailPage orderId={detailOrderId} />
-            ) : isPayment && paymentOrderId ? (
-              <PaymentPage orderId={paymentOrderId} auth={auth.data} />
-            ) : isEditor ? (
-              <OrderEditor auth={auth.data} />
-            ) : active === 'qr' ? (
-              <QrOrderPage />
-            ) : active === 'more' ? (
-              <MorePage
-                auth={auth.data}
-                onStartOnboarding={() => setOnboardingRestartToken((value) => value + 1)}
-              />
-            ) : (
-              <AreasPage />
-            )}
           </div>
-          {!isFullScreen ? <StaffBottomNav active={active} /> : null}
-          <StaffNotificationCenter
-            open={notificationCenterOpen}
-            onClose={() => setNotificationCenterOpen(false)}
-          />
-        </div>
+        </PosNotificationsProvider>
       </RealtimeProvider>
     </ConfigProvider>
   );

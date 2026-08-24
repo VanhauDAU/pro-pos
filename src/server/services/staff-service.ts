@@ -236,11 +236,15 @@ export class StaffService {
         entityType: 'USER',
         entityId: userId,
         before: null,
-        after: { sessionsTerminated: result.meta.changes ?? 0 },
+        after: { sessionsTerminated: result.results.length },
         now: Date.now(),
       });
     }
-    return { userId, sessionsTerminated: result.meta.changes ?? 0 };
+    return {
+      userId,
+      sessionsTerminated: result.results.length,
+      sessionIds: result.results.map((session) => session.id),
+    };
   }
 
   async bulkAction(

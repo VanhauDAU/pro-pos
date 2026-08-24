@@ -331,7 +331,8 @@ export function OrderDetailPage({
 
   const detailQuery = useQuery({
     queryKey: ['pos-order-detail', targetOrderId],
-    queryFn: () => apiRequest<OrderDetailDto>(`/api/v1/pos/orders/${targetOrderId}/detail`),
+    queryFn: ({ signal }) =>
+      apiRequest<OrderDetailDto>(`/api/v1/pos/orders/${targetOrderId}/detail`, { signal }),
     enabled: Boolean(targetOrderId),
     refetchInterval: (query) =>
       query.state.data?.order.status === 'OPEN' ? detailPollingInterval : false,
@@ -457,6 +458,7 @@ export function OrderDetailPage({
   const printSettings = useQuery({
     queryKey: ['pos-print-settings'],
     queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
+    staleTime: Infinity,
   });
 
   const staffContext = useQuery({
@@ -470,6 +472,7 @@ export function OrderDetailPage({
         bankAccountNumber?: string | null;
         bankAccountName?: string | null;
       }>('/api/v1/pos/context'),
+    staleTime: Infinity,
   });
 
   const buildReceiptPrintData = (receiptType: 'PROVISIONAL' | 'PAYMENT'): PosReceiptPrintData => {

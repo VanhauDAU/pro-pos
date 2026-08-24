@@ -151,6 +151,138 @@ interface PromotionGiftInvoiceLineInput {
 export class PosRepository {
   constructor(private readonly db: D1Database) {}
 
+  executeAtomic(statements: D1PreparedStatement[]) {
+    return this.db.batch(statements);
+  }
+
+  prepareSaveCommand(input: {
+    commandId: string;
+    storeId: string;
+    orderId: string;
+    payloadHash: string;
+    now: number;
+  }) {
+    return this.db
+      .prepare(
+        `INSERT INTO pos_save_commands
+         (id, store_id, order_id, payload_hash, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .bind(input.commandId, input.storeId, input.orderId, input.payloadHash, input.now);
+  }
+
+  buildBeginRealtimeBatchStatement(input: {
+    storeId: string;
+    commandId: string;
+    orderId: string;
+    now: number;
+  }) {
+    return this.db
+      .prepare(
+        `INSERT INTO realtime_batch_contexts (store_id, command_id, order_id, created_at)
+         VALUES (?, ?, ?, ?)`,
+      )
+      .bind(input.storeId, input.commandId, input.orderId, input.now);
+  }
+
+  buildCompleteRealtimeBatchStatements(input: {
+    storeId: string;
+    commandId: string;
+    orderId: string;
+    orderVersion: number;
+    actorId: string;
+    requestId: string;
+    created: boolean;
+    affectedTableIds: string[];
+    now: number;
+  }) {
+    return [
+      this.db
+        .prepare(
+          `INSERT INTO realtime_event_requests (
+            id, store_id, event_type, order_id, order_version,
+            actor_user_id, device_id, client_mutation_id, request_id,
+            topics_json, data_json, occurred_at
+          ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          crypto.randomUUID(),
+          input.storeId,
+          input.created ? 'pos.order.created' : 'pos.order.changed',
+          input.orderId,
+          input.orderVersion,
+          input.actorId,
+          input.commandId,
+          input.requestId,
+          JSON.stringify(['pos.orders', 'pos.tables', `pos.order:${input.orderId}`]),
+          JSON.stringify({
+            reason: 'BATCH_SAVED',
+            affectedTableIds: input.affectedTableIds,
+          }),
+          input.now,
+        ),
+      this.db
+        .prepare('DELETE FROM realtime_batch_contexts WHERE store_id = ? AND command_id = ?')
+        .bind(input.storeId, input.commandId),
+    ];
+  }
+
+  buildConsolidateSaveAuditStatements(input: {
+    storeId: string;
+    orderId: string;
+    actorId: string;
+    requestId: string;
+    addedCount: number;
+    updatedCount: number;
+    now: number;
+  }) {
+    return [
+      this.db
+        .prepare('DELETE FROM audit_logs WHERE store_id = ? AND request_id = ?')
+        .bind(input.storeId, input.requestId),
+      this.db
+        .prepare(
+          `INSERT INTO audit_logs (
+            id, store_id, actor_user_id, action, entity_type, entity_id,
+            request_id, after_json, created_at
+          ) VALUES (?, ?, ?, 'ORDER_BATCH_SAVED', 'ORDER', ?, ?, ?, ?)`,
+        )
+        .bind(
+          crypto.randomUUID(),
+          input.storeId,
+          input.actorId,
+          input.orderId,
+          input.requestId,
+          JSON.stringify({
+            orderId: input.orderId,
+            addedCount: input.addedCount,
+            updatedCount: input.updatedCount,
+          }),
+          input.now,
+        ),
+    ];
+  }
+
+  findSaveCommand(storeId: string, commandId: string) {
+    return this.db
+      .prepare(
+        `SELECT order_id AS orderId, payload_hash AS payloadHash, response_json AS responseJson
+         FROM pos_save_commands WHERE store_id = ? AND id = ? LIMIT 1`,
+      )
+      .bind(storeId, commandId)
+      .first<{ orderId: string; payloadHash: string; responseJson: string | null }>();
+  }
+
+  completeSaveCommand(storeId: string, commandId: string, responseJson: string, now: number) {
+    return this.db
+      .prepare(
+        `UPDATE pos_save_commands SET response_json = ?, completed_at = ?
+         WHERE store_id = ? AND id = ?`,
+      )
+      .bind(responseJson, now, storeId, commandId)
+      .run();
+  }
+
   async listTables(storeId: string) {
     return this.db
       .prepare(
@@ -558,7 +690,19 @@ export class PosRepository {
                 COALESCE((
                   SELECT sc.enabled FROM store_capabilities sc
                   WHERE sc.store_id = s.id AND sc.capability = 'POS_REALTIME' LIMIT 1
-                ), 1) AS posRealtimeEnabled
+                ), 1) AS posRealtimeEnabled,
+                COALESCE((
+                  SELECT sc.enabled FROM store_capabilities sc
+                  WHERE sc.store_id = s.id AND sc.capability = 'POS_COMMANDS_V2' LIMIT 1
+                ), 1) AS posCommandsV2Enabled,
+                COALESCE((
+                  SELECT sc.enabled FROM store_capabilities sc
+                  WHERE sc.store_id = s.id AND sc.capability = 'POS_PAYMENT_SNAPSHOT_V2' LIMIT 1
+                ), 1) AS posPaymentSnapshotV2Enabled,
+                COALESCE((
+                  SELECT sc.enabled FROM store_capabilities sc
+                  WHERE sc.store_id = s.id AND sc.capability = 'POS_REALTIME_DELTAS_V2' LIMIT 1
+                ), 0) AS posRealtimeDeltasV2Enabled
          FROM stores s
          JOIN store_memberships sm ON sm.store_id = s.id AND sm.user_id = ?
            AND sm.status = 'ACTIVE' AND sm.deleted_at IS NULL
@@ -578,6 +722,9 @@ export class PosRepository {
         bankAccountNumber: string | null;
         bankAccountName: string | null;
         posRealtimeEnabled: 0 | 1;
+        posCommandsV2Enabled: 0 | 1;
+        posPaymentSnapshotV2Enabled: 0 | 1;
+        posRealtimeDeltasV2Enabled: 0 | 1;
       }>();
   }
 
@@ -705,6 +852,22 @@ export class PosRepository {
       )
       .bind(input.reason, input.storeId, input.orderId, input.itemId)
       .run();
+  }
+
+  buildSetOrderItemDiscountReasonStatement(input: {
+    storeId: string;
+    orderType: 'DINE_IN' | 'TAKEAWAY';
+    orderId: string;
+    itemId: string;
+    reason: string | null;
+  }) {
+    const table = input.orderType === 'DINE_IN' ? 'order_items' : 'takeaway_order_items';
+    return this.db
+      .prepare(
+        `UPDATE ${table} SET discount_reason = ?
+         WHERE store_id = ? AND order_id = ? AND id = ?`,
+      )
+      .bind(input.reason, input.storeId, input.orderId, input.itemId);
   }
 
   findSaleVariant(storeId: string, productId: string, variantId: string | null | undefined) {
@@ -1320,6 +1483,152 @@ export class PosRepository {
       .first<{ orderId: string; stoppedAt: number }>();
   }
 
+  findPaymentSnapshotByCommand(storeId: string, commandId: string) {
+    return this.db
+      .prepare(
+        `SELECT id, order_id AS orderId, order_type AS orderType,
+                order_version AS orderVersion, quote_json AS quoteJson,
+                status, created_at AS createdAt
+         FROM payment_snapshots WHERE store_id = ? AND command_id = ? LIMIT 1`,
+      )
+      .bind(storeId, commandId)
+      .first<{
+        id: string;
+        orderId: string;
+        orderType: 'DINE_IN' | 'TAKEAWAY';
+        orderVersion: number;
+        quoteJson: string;
+        status: 'ACTIVE' | 'CONSUMED' | 'INVALIDATED';
+        createdAt: number;
+      }>();
+  }
+
+  findActivePaymentSnapshot(storeId: string, orderId: string) {
+    return this.db
+      .prepare(
+        `SELECT id, order_id AS orderId, order_type AS orderType,
+                order_version AS orderVersion, quote_json AS quoteJson,
+                status, created_at AS createdAt
+         FROM payment_snapshots
+         WHERE store_id = ? AND order_id = ? AND status = 'ACTIVE'
+         ORDER BY created_at DESC LIMIT 1`,
+      )
+      .bind(storeId, orderId)
+      .first<{
+        id: string;
+        orderId: string;
+        orderType: 'DINE_IN' | 'TAKEAWAY';
+        orderVersion: number;
+        quoteJson: string;
+        status: 'ACTIVE';
+        createdAt: number;
+      }>();
+  }
+
+  findPaymentSnapshot(storeId: string, orderId: string, snapshotId: string) {
+    return this.db
+      .prepare(
+        `SELECT id, order_id AS orderId, order_type AS orderType,
+                order_version AS orderVersion, quote_json AS quoteJson,
+                status, created_at AS createdAt
+         FROM payment_snapshots
+         WHERE store_id = ? AND order_id = ? AND id = ? LIMIT 1`,
+      )
+      .bind(storeId, orderId, snapshotId)
+      .first<{
+        id: string;
+        orderId: string;
+        orderType: 'DINE_IN' | 'TAKEAWAY';
+        orderVersion: number;
+        quoteJson: string;
+        status: 'ACTIVE' | 'CONSUMED' | 'INVALIDATED';
+        createdAt: number;
+      }>();
+  }
+
+  createPaymentSnapshot(input: {
+    id: string;
+    storeId: string;
+    orderId: string;
+    orderType: 'DINE_IN' | 'TAKEAWAY';
+    orderVersion: number;
+    commandId: string;
+    quoteJson: string;
+    createdAt: number;
+  }) {
+    return this.db
+      .prepare(
+        `INSERT INTO payment_snapshots (
+          id, store_id, order_id, order_type, order_version, command_id,
+          quote_json, status, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)`,
+      )
+      .bind(
+        input.id,
+        input.storeId,
+        input.orderId,
+        input.orderType,
+        input.orderVersion,
+        input.commandId,
+        input.quoteJson,
+        input.createdAt,
+      )
+      .run();
+  }
+
+  stopTimeForCheckoutWithSnapshot(input: {
+    commandId: string;
+    storeId: string;
+    orderId: string;
+    expectedOrderVersion: number;
+    actorId: string;
+    actorSessionId?: string | null;
+    deviceId?: string | null;
+    requestId: string;
+    issuedAt: number;
+    snapshotId: string;
+    orderType: 'DINE_IN' | 'TAKEAWAY';
+    quoteJson: string;
+  }) {
+    return this.db.batch([
+      this.db
+        .prepare(
+          `INSERT INTO stop_time_commands (
+            id, store_id, order_id, expected_order_version,
+            actor_user_id, actor_session_id, device_id, request_id, issued_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          input.commandId,
+          input.storeId,
+          input.orderId,
+          input.expectedOrderVersion,
+          input.actorId,
+          input.actorSessionId ?? null,
+          input.deviceId ?? null,
+          input.requestId,
+          input.issuedAt,
+        ),
+      this.db
+        .prepare(
+          `INSERT INTO payment_snapshots (
+            id, store_id, order_id, order_type, order_version, command_id,
+            quote_json, status, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)`,
+        )
+        .bind(
+          input.snapshotId,
+          input.storeId,
+          input.orderId,
+          input.orderType,
+          input.expectedOrderVersion + 1,
+          input.commandId,
+          input.quoteJson,
+          input.issuedAt,
+        ),
+    ]);
+  }
+
   async stopTimeForCheckout(input: {
     commandId: string;
     storeId: string;
@@ -1373,25 +1682,33 @@ export class PosRepository {
     requestId: string;
     issuedAt: number;
   }) {
-    return this.db
-      .prepare(
-        `INSERT INTO resume_checkout_commands (
-          id, store_id, order_id, expected_order_version,
-          actor_user_id, actor_session_id, device_id, request_id, issued_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        input.commandId,
-        input.storeId,
-        input.orderId,
-        input.expectedOrderVersion,
-        input.actorId,
-        input.actorSessionId ?? null,
-        input.deviceId ?? null,
-        input.requestId,
-        input.issuedAt,
-      )
-      .run();
+    return this.db.batch([
+      this.db
+        .prepare(
+          `INSERT INTO resume_checkout_commands (
+            id, store_id, order_id, expected_order_version,
+            actor_user_id, actor_session_id, device_id, request_id, issued_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          input.commandId,
+          input.storeId,
+          input.orderId,
+          input.expectedOrderVersion,
+          input.actorId,
+          input.actorSessionId ?? null,
+          input.deviceId ?? null,
+          input.requestId,
+          input.issuedAt,
+        ),
+      this.db
+        .prepare(
+          `UPDATE payment_snapshots
+           SET status = 'INVALIDATED', invalidated_at = ?
+           WHERE store_id = ? AND order_id = ? AND status = 'ACTIVE'`,
+        )
+        .bind(input.issuedAt, input.storeId, input.orderId),
+    ]);
   }
 
   findCheckoutCommand(storeId: string, idempotencyKey: string) {
@@ -1436,6 +1753,8 @@ export class PosRepository {
     actorId: string;
     requestId: string;
     issuedAt: number;
+    paymentSnapshotId?: string | null;
+    additionalStatements?: D1PreparedStatement[];
   }) {
     const statements: D1PreparedStatement[] = [
       this.db
@@ -1446,8 +1765,8 @@ export class PosRepository {
           discount_total, total, cash_received, cash_change,
           time_line_description, time_elapsed_seconds, time_amount,
           time_snapshot_json, invoice_snapshot_json, actor_user_id,
-          request_id, issued_at, business_day
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          request_id, issued_at, business_day, payment_snapshot_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           input.idempotencyKey,
@@ -1472,6 +1791,7 @@ export class PosRepository {
           input.requestId,
           input.issuedAt,
           input.businessDay,
+          input.paymentSnapshotId ?? null,
         ),
     ];
     for (const gift of input.promotionGiftItems) {
@@ -1497,6 +1817,17 @@ export class PosRepository {
           ),
       );
     }
+    if (input.paymentSnapshotId) {
+      statements.push(
+        this.db
+          .prepare(
+            `UPDATE payment_snapshots SET status = 'CONSUMED', consumed_at = ?
+             WHERE store_id = ? AND id = ? AND status = 'ACTIVE'`,
+          )
+          .bind(input.issuedAt, input.storeId, input.paymentSnapshotId),
+      );
+    }
+    statements.push(...(input.additionalStatements ?? []));
     await this.db.batch(statements);
   }
 
@@ -1537,6 +1868,8 @@ export class PosRepository {
     actorId: string;
     requestId: string;
     issuedAt: number;
+    paymentSnapshotId?: string | null;
+    additionalStatements?: D1PreparedStatement[];
   }) {
     const statements: D1PreparedStatement[] = [
       this.db
@@ -1545,8 +1878,8 @@ export class PosRepository {
           id, store_id, order_id, expected_order_version, payment_id, invoice_id,
           invoice_display_code, method, subtotal, discount_total, total,
           cash_received, cash_change, invoice_snapshot_json, actor_user_id,
-          request_id, issued_at, business_day
-        ) VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          request_id, issued_at, business_day, payment_snapshot_id
+        ) VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           input.idempotencyKey,
@@ -1566,6 +1899,7 @@ export class PosRepository {
           input.requestId,
           input.issuedAt,
           input.businessDay,
+          input.paymentSnapshotId ?? null,
         ),
     ];
     for (const gift of input.promotionGiftItems) {
@@ -1591,6 +1925,17 @@ export class PosRepository {
           ),
       );
     }
+    if (input.paymentSnapshotId) {
+      statements.push(
+        this.db
+          .prepare(
+            `UPDATE payment_snapshots SET status = 'CONSUMED', consumed_at = ?
+             WHERE store_id = ? AND id = ? AND status = 'ACTIVE'`,
+          )
+          .bind(input.issuedAt, input.storeId, input.paymentSnapshotId),
+      );
+    }
+    statements.push(...(input.additionalStatements ?? []));
     return this.db.batch(statements);
   }
 
@@ -1773,7 +2118,18 @@ export class PosRepository {
          FROM takeaway_invoices WHERE store_id = ? AND id = ? LIMIT 1`,
       )
       .bind(storeId, invoiceId, storeId, invoiceId)
-      .first<{ orderType: 'DINE_IN' | 'TAKEAWAY' } & Record<string, unknown>>();
+      .first<{
+        id: string;
+        orderId: string;
+        displayCode: string;
+        subtotal: number;
+        discountTotal: number;
+        total: number;
+        status: 'COMPLETED' | 'CANCELLED';
+        issuedAt: number;
+        snapshotJson: string;
+        orderType: 'DINE_IN' | 'TAKEAWAY';
+      }>();
     const lines = invoice
       ? await this.db
           .prepare(
@@ -2311,6 +2667,214 @@ export class PosRepository {
         afterJson: string | null;
         eventAt: number;
       }>();
+  }
+
+  buildOpenTableStatement(input: Parameters<PosRepository['executeOpenTable']>[0]) {
+    return this.db
+      .prepare(
+        `INSERT INTO open_table_commands (
+          id, store_id, table_id, expected_table_version, order_id,
+          time_session_id, pricing_snapshot_json, pricing_version,
+          actor_user_id, request_id, issued_at, business_day, display_code
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '')`,
+      )
+      .bind(
+        input.commandId,
+        input.storeId,
+        input.tableId,
+        input.expectedTableVersion,
+        input.orderId,
+        input.timeSessionId,
+        input.pricingSnapshotJson,
+        input.pricingVersion,
+        input.actorId,
+        input.requestId,
+        input.issuedAt,
+        input.businessDay,
+      );
+  }
+
+  buildCreateTakeawayStatement(input: Parameters<PosRepository['createTakeawayOrder']>[0]) {
+    return this.db
+      .prepare(
+        `INSERT INTO create_takeaway_order_commands (
+          id, store_id, order_id, display_code, note, actor_user_id, request_id, issued_at,
+          business_day
+        ) VALUES (?, ?, ?, '', ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        input.commandId,
+        input.storeId,
+        input.orderId,
+        input.note,
+        input.actorId,
+        input.requestId,
+        input.issuedAt,
+        input.businessDay,
+      );
+  }
+
+  buildAddItemStatement(input: Parameters<PosRepository['executeAddItem']>[0]) {
+    return this.db
+      .prepare(
+        `INSERT INTO add_item_commands (
+          id, store_id, order_id, expected_order_version, item_id,
+          product_id, variant_id, product_type, product_name_snapshot,
+          variant_name_snapshot, unit_name_snapshot, unit_price_snapshot,
+          quantity_milli, discount_type, discount_value, line_total,
+          actor_user_id, request_id, issued_at, discount_input_value,
+          discount_amount, gross_line_total, net_line_total, item_note,
+          time_started_at, time_ended_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        input.commandId,
+        input.storeId,
+        input.orderId,
+        input.expectedOrderVersion,
+        input.itemId,
+        input.productId,
+        input.variantId,
+        input.productType,
+        input.productName,
+        input.variantName,
+        input.unitName,
+        input.unitPriceVnd,
+        input.quantityMilli,
+        input.discountType,
+        input.discountAmountVnd,
+        input.netLineTotalVnd,
+        input.actorId,
+        input.requestId,
+        input.issuedAt,
+        input.discountInputValue,
+        input.discountAmountVnd,
+        input.grossLineTotalVnd,
+        input.netLineTotalVnd,
+        input.note,
+        input.timeStartedAtMs ?? null,
+        input.timeEndedAtMs ?? null,
+      );
+  }
+
+  buildAddTakeawayItemStatement(input: Parameters<PosRepository['executeAddTakeawayItem']>[0]) {
+    return this.db
+      .prepare(
+        `INSERT INTO add_takeaway_item_commands (
+          id, store_id, order_id, expected_order_version, item_id,
+          product_id, variant_id, product_type, product_name_snapshot,
+          variant_name_snapshot, unit_name_snapshot, unit_price_snapshot,
+          quantity_milli, discount_type, discount_input_value, discount_amount,
+          gross_line_total, net_line_total, actor_user_id, request_id, issued_at,
+          item_note
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        input.commandId,
+        input.storeId,
+        input.orderId,
+        input.expectedOrderVersion,
+        input.itemId,
+        input.productId,
+        input.variantId,
+        input.productType,
+        input.productName,
+        input.variantName,
+        input.unitName,
+        input.unitPriceVnd,
+        input.quantityMilli,
+        input.discountType,
+        input.discountInputValue,
+        input.discountAmountVnd,
+        input.grossLineTotalVnd,
+        input.netLineTotalVnd,
+        input.actorId,
+        input.requestId,
+        input.issuedAt,
+        input.note,
+      );
+  }
+
+  buildUpdateItemStatement(input: Parameters<PosRepository['updateOrderItem']>[0]) {
+    return this.db
+      .prepare(
+        `INSERT INTO update_order_item_commands (
+          id, store_id, order_type, order_id, item_id, expected_order_version,
+          quantity_milli, note, time_started_at, time_ended_at,
+          actor_user_id, request_id, issued_at,
+          variant_id, variant_name_snapshot, unit_price_snapshot,
+          discount_type, discount_input_value, discount_amount,
+          gross_line_total, net_line_total
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        input.commandId,
+        input.storeId,
+        input.orderType,
+        input.orderId,
+        input.itemId,
+        input.expectedOrderVersion,
+        input.quantityMilli,
+        input.note,
+        input.timeStartedAtMs ?? null,
+        input.timeEndedAtMs ?? null,
+        input.actorId,
+        input.requestId,
+        input.issuedAt,
+        input.variantId ?? null,
+        input.variantName ?? null,
+        input.unitPriceVnd ?? null,
+        input.discountType ?? null,
+        input.discountInputValue ?? null,
+        input.discountAmountVnd ?? null,
+        input.grossLineTotalVnd ?? null,
+        input.netLineTotalVnd ?? null,
+      );
+  }
+
+  buildUpdateNoteStatement(input: Parameters<PosRepository['updateOrderNote']>[0]) {
+    return this.db
+      .prepare(
+        `INSERT INTO update_order_note_commands (
+          id, store_id, order_type, order_id, expected_order_version, note,
+          actor_user_id, request_id, issued_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        input.commandId,
+        input.storeId,
+        input.orderType,
+        input.orderId,
+        input.expectedOrderVersion,
+        input.note,
+        input.actorId,
+        input.requestId,
+        input.issuedAt,
+      );
+  }
+
+  buildUpdateGuestStatement(input: Parameters<PosRepository['updateOrderGuest']>[0]) {
+    return this.db
+      .prepare(
+        `INSERT INTO update_order_guest_commands (
+          id, store_id, order_type, order_id, expected_order_version, guest_count,
+          customer_name, customer_phone, customer_id, actor_user_id, request_id, issued_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        input.commandId,
+        input.storeId,
+        input.orderType,
+        input.orderId,
+        input.expectedOrderVersion,
+        input.guestCount,
+        input.customerName,
+        input.customerPhone,
+        input.customerId,
+        input.actorId,
+        input.requestId,
+        input.issuedAt,
+      );
   }
 
   async listInvoicePaymentAllocations(storeId: string, invoiceId: string) {

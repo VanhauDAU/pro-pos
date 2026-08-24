@@ -7,6 +7,7 @@ import {
 } from '@server/lib/crypto';
 import { requireSecret } from '@server/lib/env';
 import { PlatformRepository } from '@server/repositories/platform-repository';
+import type { StoreCapability } from '@contracts/platform';
 
 export class PlatformService {
   private readonly repository: PlatformRepository;
@@ -124,7 +125,7 @@ export class PlatformService {
 
   async setStoreCapability(input: {
     storeId: string;
-    capability: 'POS_REALTIME';
+    capability: StoreCapability;
     enabled: boolean;
     actorId: string;
     requestId: string;

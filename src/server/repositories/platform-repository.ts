@@ -1,3 +1,5 @@
+import type { StoreCapability } from '@contracts/platform';
+
 export class PlatformRepository {
   constructor(private readonly db: D1Database) {}
 
@@ -212,7 +214,7 @@ export class PlatformRepository {
 
   async setStoreCapability(input: {
     storeId: string;
-    capability: 'POS_REALTIME';
+    capability: StoreCapability;
     enabled: boolean;
     actorId: string;
     requestId: string;

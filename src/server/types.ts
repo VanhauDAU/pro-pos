@@ -1,5 +1,7 @@
 export interface AppVariables {
   requestId: string;
+  actionId: string | null;
+  requestTimings: Record<string, number>;
   actor: {
     id: string;
     displayName: string;

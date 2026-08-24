@@ -1011,7 +1011,8 @@ function StaffHeader({
   const notifications = usePosNotifications();
   const allQrOrdersQuery = useQuery<GuestOrderRequestDto[]>({
     queryKey: ['pos-staff-all-qr-orders'],
-    queryFn: ({ signal }) => apiRequest<GuestOrderRequestDto[]>('/api/v1/pos/qr-orders', { signal }),
+    queryFn: ({ signal }) =>
+      apiRequest<GuestOrderRequestDto[]>('/api/v1/pos/qr-orders', { signal }),
     staleTime: 30_000,
     refetchOnMount: false,
     refetchInterval: 15_000,
@@ -3818,8 +3819,16 @@ interface QuickProductForm {
 }
 
 const AVATAR_COLORS_QA = [
-  '#f87171', '#fb923c', '#facc15', '#4ade80', '#34d399',
-  '#38bdf8', '#818cf8', '#e879f9', '#94a3b8', '#f97316',
+  '#f87171',
+  '#fb923c',
+  '#facc15',
+  '#4ade80',
+  '#34d399',
+  '#38bdf8',
+  '#818cf8',
+  '#e879f9',
+  '#94a3b8',
+  '#f97316',
 ];
 
 function QuickAddProductModal({
@@ -4092,11 +4101,9 @@ function QuickAddProductModal({
           promptPrice: Boolean(v.promptPrice),
         })),
       };
-      const saved = await jsonRequest<{ id: string }>(
-        '/api/v1/owner/catalog/products',
-        payload,
-        { headers: { 'X-CSRF-Token': auth.csrfToken ?? '' } },
-      );
+      const saved = await jsonRequest<{ id: string }>('/api/v1/owner/catalog/products', payload, {
+        headers: { 'X-CSRF-Token': auth.csrfToken ?? '' },
+      });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['pos-catalog'] }),
         queryClient.invalidateQueries({ queryKey: ['owner-catalog-categories'] }),
@@ -4115,11 +4122,7 @@ function QuickAddProductModal({
     <Modal
       open={open}
       onCancel={handleClose}
-      title={
-        <span style={{ fontWeight: 700, fontSize: 16 }}>
-          ➕ Thêm nhanh mặt hàng
-        </span>
-      }
+      title={<span style={{ fontWeight: 700, fontSize: 16 }}>➕ Thêm nhanh mặt hàng</span>}
       footer={null}
       centered
       width={540}
@@ -4142,11 +4145,7 @@ function QuickAddProductModal({
           label="Tên mặt hàng"
           rules={[{ required: true, message: 'Vui lòng nhập tên mặt hàng.' }]}
         >
-          <Input
-            placeholder="Ví dụ: Nước suối, Bít tết, Trà đào..."
-            maxLength={160}
-            autoFocus
-          />
+          <Input placeholder="Ví dụ: Nước suối, Bít tết, Trà đào..." maxLength={160} autoFocus />
         </Form.Item>
 
         {/* Loại / Danh mục / Đơn vị */}
@@ -4250,11 +4249,7 @@ function QuickAddProductModal({
                         <Form.Item
                           name={[field.name, 'salePriceVnd']}
                           label={index === 0 ? 'Giá bán' : undefined}
-                          rules={
-                            isPrompt
-                              ? []
-                              : [{ required: true, message: 'Nhập giá.' }]
-                          }
+                          rules={isPrompt ? [] : [{ required: true, message: 'Nhập giá.' }]}
                           style={{ marginBottom: 0 }}
                         >
                           <InputNumber
@@ -7118,7 +7113,6 @@ function OrderEditor({
                   {committedDisplayItems.map((item) => {
                     const isDraftLine = draftLines.some((l) => l.id === item.id);
                     const catalogProd = catalog.data?.find((p) => p.productId === item.productId);
-                    const qtyInt = Math.round(Number(item.quantityMilli) / 1000);
 
                     const openItemEdit = () => {
                       if (item.promotionGift) return;
@@ -7575,7 +7569,14 @@ function OrderEditor({
               ))}
             </aside>
             <section className="staff-product-picker">
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: 12,
+                }}
+              >
                 <Typography.Title level={3} style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>
                   {selectedCategory === 'ALL'
                     ? 'Tất cả sản phẩm'

@@ -18,6 +18,7 @@ import {
 } from '@server/repositories/qr-order-repository';
 import { MediaService } from '@server/services/media-service';
 import { PosService } from '@server/services/pos-service';
+import { StoreService } from '@server/services/store-service';
 
 const STAFF_NOTIFICATION_RETENTION_DAYS = 3 as const;
 const STAFF_NOTIFICATION_RETENTION_MS = STAFF_NOTIFICATION_RETENTION_DAYS * 24 * 60 * 60_000;
@@ -344,6 +345,12 @@ export class QrOrderService {
         session.locationExpiresAt && session.locationExpiresAt > now && session.locationVerifiedAt,
       );
 
+    const storeService = new StoreService(this.env);
+    const [storeSettings, printSettings] = await Promise.all([
+      storeService.getSettings(session.storeId),
+      storeService.getPrintSettings(session.storeId),
+    ]);
+
     return {
       tableStatus: 'OPEN',
       storeName: session.storeName,
@@ -367,6 +374,18 @@ export class QrOrderService {
       },
       activeOrder: await this.getActiveOrder(session.storeId, session.orderId, now),
       menu: await this.repository.listMenu(session.storeId),
+      storeInfo: storeSettings
+        ? {
+            name: storeSettings.name,
+            phone: storeSettings.phone,
+            address: storeSettings.address,
+            bankName: storeSettings.bankName,
+            bankAccountNumber: storeSettings.bankAccountNumber,
+            bankAccountName: storeSettings.bankAccountName,
+            bankQrMediaId: storeSettings.bankQrMediaId,
+          }
+        : null,
+      printSettings,
     };
   }
 
@@ -403,6 +422,12 @@ export class QrOrderService {
         tableContext.longitude !== null &&
         tableContext.longitude !== undefined;
 
+      const storeService = new StoreService(this.env);
+      const [storeSettings, printSettings] = await Promise.all([
+        storeService.getSettings(tableContext.storeId),
+        storeService.getPrintSettings(tableContext.storeId),
+      ]);
+
       return {
         rawGuest: '',
         context: {
@@ -426,6 +451,18 @@ export class QrOrderService {
             verifiedExpiresAt: null,
           },
           menu: await this.repository.listMenu(tableContext.storeId),
+          storeInfo: storeSettings
+            ? {
+                name: storeSettings.name,
+                phone: storeSettings.phone,
+                address: storeSettings.address,
+                bankName: storeSettings.bankName,
+                bankAccountNumber: storeSettings.bankAccountNumber,
+                bankAccountName: storeSettings.bankAccountName,
+                bankQrMediaId: storeSettings.bankQrMediaId,
+              }
+            : null,
+          printSettings,
         },
       };
     }

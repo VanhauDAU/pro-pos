@@ -289,15 +289,20 @@ export function GuestOrderPage() {
       ],
     };
 
+    const storeInfo = context.data.storeInfo;
+    const printSettings = context.data.printSettings;
+
     return {
       data: printData,
+      printSettings: printSettings ?? null,
       storeInfo: {
-        storeName: context.data.storeName,
-        phone: null,
-        address: null,
-        bankName: null,
-        bankAccountNumber: null,
-        bankAccountName: null,
+        storeName: storeInfo?.name ?? context.data.storeName,
+        phone: storeInfo?.phone ?? null,
+        address: storeInfo?.address ?? null,
+        bankName: storeInfo?.bankName ?? null,
+        bankAccountNumber: storeInfo?.bankAccountNumber ?? null,
+        bankAccountName: storeInfo?.bankAccountName ?? null,
+        bankQrMediaId: storeInfo?.bankQrMediaId ?? null,
       },
     };
   }, [activeOrderQuery.data, context.data]);

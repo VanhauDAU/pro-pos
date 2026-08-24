@@ -110,6 +110,8 @@ export interface VerifyGuestLocationResponse {
   expiresAt: number;
 }
 
+import type { StorePrintSettings } from './store';
+
 export interface GuestLocationRequirementDto {
   required: boolean;
   configured: boolean;
@@ -118,6 +120,16 @@ export interface GuestLocationRequirementDto {
   isVerified: boolean;
   verifiedExpiresAt: number | null;
   distanceMeters?: number | null;
+}
+
+export interface GuestStoreInfoDto {
+  name: string;
+  phone: string | null;
+  address: string | null;
+  bankName: string | null;
+  bankAccountNumber: string | null;
+  bankAccountName: string | null;
+  bankQrMediaId: string | null;
 }
 
 export interface GuestOrderContext {
@@ -139,6 +151,8 @@ export interface GuestOrderContext {
   locationRequirement: GuestLocationRequirementDto;
   activeOrder?: GuestActiveOrderDto | null;
   menu: GuestMenuProduct[];
+  storeInfo?: GuestStoreInfoDto | null;
+  printSettings?: StorePrintSettings | null;
 }
 
 export interface TableOpenRequestDto {

@@ -56,7 +56,7 @@ import { qrOrderStaffRoutes } from '@server/routes/qr-order-staff';
 import { QrOrderService } from '@server/services/qr-order-service';
 import { pushNotificationRoutes } from '@server/routes/push-notifications';
 import type { AppEnv } from '@server/types';
-import { measureRequestTiming } from '@server/lib/performance';
+import { addRequestTiming, measureRequestTiming } from '@server/lib/performance';
 
 const posRoutes = new Hono<AppEnv>();
 posRoutes.use('*', requireActor('OWNER', 'EMPLOYEE'));
@@ -510,7 +510,9 @@ posRoutes.get('/overview', requirePermission('table.view'), async (c) =>
   success(
     c,
     await measureRequestTiming(c, 'overview', () =>
-      new PosService(c.env).overview(c.get('actor').storeId!),
+      new PosService(c.env).overview(c.get('actor').storeId!, Date.now(), (name, durationMs) =>
+        addRequestTiming(c, name, durationMs),
+      ),
     ),
   ),
 );
@@ -531,6 +533,7 @@ posRoutes.post('/orders/open', requirePermission('order.manage'), async (c) => {
         requestId: c.get('requestId'),
         idempotencyKey: idempotencyKey(c),
         values: body,
+        timing: (name, durationMs) => addRequestTiming(c, name, durationMs),
       }),
     ),
     201,
@@ -559,6 +562,7 @@ posRoutes.post('/orders/:orderId/save', requirePermission('order.manage'), async
         values: body,
         actorSessionId: c.get('sessionId'),
         deviceId: c.get('device')?.id ?? null,
+        timing: (name, durationMs) => addRequestTiming(c, name, durationMs),
       }),
     ),
   );

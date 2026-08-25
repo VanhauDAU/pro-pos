@@ -1004,8 +1004,8 @@ function PosNotificationWatcher() {
     for (const sr of data.serviceRequests) {
       if (!seenServiceRequestIds.current.has(sr.id) && sr.status === 'OPEN') {
         seenServiceRequestIds.current.add(sr.id);
-        playPosSound('CALL_STAFF', { dedupeKey: `service-req:${sr.id}` });
         if (sr.type === 'CALL_STAFF') {
+          playPosSound('CALL_STAFF', { dedupeKey: `service-req:${sr.id}` });
           toast.warning(`🔔 Gọi nhân viên - ${sr.tableName}`, {
             description: `${sr.tableName} (${sr.areaName}) đang gọi nhân viên hỗ trợ`,
             duration: 8000,
@@ -1015,6 +1015,7 @@ function PosNotificationWatcher() {
             },
           });
         } else if (sr.type === 'CHECKOUT_REQUEST') {
+          playPosSound('CHECKOUT_REQUEST', { dedupeKey: `service-req:${sr.id}` });
           toast.info(`💳 Yêu cầu thanh toán - ${sr.tableName}`, {
             description: `${sr.tableName} (${sr.areaName}) vừa yêu cầu thanh toán`,
             duration: 8000,
@@ -3268,12 +3269,14 @@ function SwipeableOrderItemRow({
   onDelete,
   locked = false,
   className = '',
+  dataVariantId,
 }: {
   children: React.ReactNode;
   onClick: () => void;
   onDelete: () => void;
   locked?: boolean;
   className?: string;
+  dataVariantId?: string;
 }) {
   const [offsetX, setOffsetX] = useState(0);
   const [isSwiping, setIsSwiping] = useState(false);
@@ -3343,7 +3346,10 @@ function SwipeableOrderItemRow({
   };
 
   return (
-    <div className={`staff-swipeable-item-wrapper${locked ? ' is-locked' : ''}`}>
+    <div
+      className={`staff-swipeable-item-wrapper${locked ? ' is-locked' : ''}`}
+      data-variant-id={dataVariantId}
+    >
       {!locked ? (
         <div
           className="staff-swipeable-delete-action"
@@ -3367,6 +3373,7 @@ function SwipeableOrderItemRow({
       <div
         role="button"
         tabIndex={0}
+        data-variant-id={dataVariantId}
         className={`staff-compact-order-row staff-compact-order-row--editable ${className}`}
         style={{
           transform: offsetX !== 0 ? `translateX(${offsetX}px)` : undefined,
@@ -3838,7 +3845,28 @@ function OrderItemDetailModal({
                 >
                   <MinusOutlined />
                 </button>
-                <span className="staff-item-modal__stepper-val">{itemQuantityMilli / 1000}</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  className="staff-item-modal__stepper-val"
+                  value={itemQuantityMilli / 1000}
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(/\D/g, '');
+                    if (raw === '') {
+                      setItemQuantityMilli(0);
+                      return;
+                    }
+                    const num = Math.min(999, Math.max(1, parseInt(raw, 10)));
+                    setItemQuantityMilli(num * 1000);
+                  }}
+                  onBlur={() => {
+                    if (itemQuantityMilli < 1000) {
+                      setItemQuantityMilli(1000);
+                    }
+                  }}
+                  onFocus={(e) => e.target.select()}
+                />
                 <button
                   type="button"
                   className="staff-item-modal__stepper-btn"
@@ -4501,6 +4529,7 @@ function OrderEditor({
   const draftBaseVersionRef = useRef<number | null>(null);
   const committedQuantitiesRef = useRef<Record<string, number>>({});
   const committedOrderVersionRef = useRef<number | null>(null);
+  const [recentlyAddedLineKey, setRecentlyAddedLineKey] = useState<string | null>(null);
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
   const [guestCount, setGuestCount] = useState<number>(1);
   const [guestModalOpen, setGuestModalOpen] = useState(false);
@@ -5117,7 +5146,7 @@ function OrderEditor({
       chooseVariant(product, variant, event);
       return;
     }
-    if (event && isMobile && mobileView === 'PRODUCTS') triggerFlyAnimation(event, product);
+    if (event) triggerFlyAnimation(event, product, variant.id);
     addDraftVariant(product, variant);
   };
 
@@ -5136,24 +5165,50 @@ function OrderEditor({
       setVariantProduct(product);
       return;
     }
-    if (event && isMobile && mobileView === 'PRODUCTS') {
-      triggerFlyAnimation(event, product);
-    }
     const variant = product.variants[0];
     if (!variant) return;
+    if (event) {
+      triggerFlyAnimation(event, product, variant.id);
+    }
     chooseVariant(product, variant);
   };
 
-  const triggerFlyAnimation = (e: React.MouseEvent, product: CatalogProduct) => {
-    if (!cartIconRef.current) return;
-    const target = e.currentTarget as HTMLElement;
-    const startRect = target.getBoundingClientRect();
-    const cartRect = cartIconRef.current.getBoundingClientRect();
+  const triggerFlyAnimation = (
+    e: React.MouseEvent | HTMLElement,
+    product: CatalogProduct,
+    variantId?: string,
+  ) => {
+    // Only animate on desktop & tablet (skip on small mobile screens as requested)
+    if (typeof window === 'undefined' || window.innerWidth < 640) return;
 
-    const startX = startRect.left + startRect.width / 2 - 24;
-    const startY = startRect.top + startRect.height / 2 - 24;
-    const endX = cartRect.left + cartRect.width / 2 - 24;
-    const endY = cartRect.top + cartRect.height / 2 - 24;
+    const target = ('currentTarget' in e ? e.currentTarget : e) as HTMLElement;
+    if (!target || typeof target.getBoundingClientRect !== 'function') return;
+
+    const startRect = target.getBoundingClientRect();
+    if (startRect.width === 0 || startRect.height === 0) return;
+
+    const targetKey = variantId || product.variants[0]?.id || product.productId;
+    const existingRow = targetKey
+      ? (document.querySelector(
+          `.staff-cart-panel [data-variant-id="${targetKey}"]`,
+        ) as HTMLElement | null)
+      : null;
+    const cartList = document.querySelector('.staff-compact-order-list') as HTMLElement | null;
+    const cartPanel = document.querySelector('.staff-cart-panel') as HTMLElement | null;
+    const destEl = existingRow || cartList || cartPanel;
+
+    if (!destEl) return;
+    const destRect = destEl.getBoundingClientRect();
+
+    const startX = startRect.left + startRect.width / 2 - 22;
+    const startY = startRect.top + startRect.height / 2 - 22;
+
+    const endX = existingRow
+      ? destRect.left + 24
+      : destRect.left + Math.min(destRect.width / 2, 80) - 22;
+    const endY = existingRow
+      ? destRect.top + destRect.height / 2 - 22
+      : destRect.top + Math.min(destRect.height / 2, 60);
 
     const flyer = document.createElement('div');
     flyer.className = 'staff-flying-item';
@@ -5175,15 +5230,22 @@ function OrderEditor({
 
     document.body.appendChild(flyer);
 
+    // Card click pop animation
+    target.classList.add('staff-product-card--clicked');
+    setTimeout(() => target.classList.remove('staff-product-card--clicked'), 320);
+
     requestAnimationFrame(() => {
       flyer.classList.add('is-flying');
     });
 
     setTimeout(() => {
       flyer.remove();
-      cartIconRef.current?.classList.add('staff-cart-bounce');
-      setTimeout(() => cartIconRef.current?.classList.remove('staff-cart-bounce'), 450);
-    }, 550);
+      // Item row response in cart
+      setRecentlyAddedLineKey(targetKey);
+      setTimeout(() => {
+        setRecentlyAddedLineKey((curr) => (curr === targetKey ? null : curr));
+      }, 700);
+    }, 440);
   };
 
   const chooseVariant = (
@@ -5191,8 +5253,8 @@ function OrderEditor({
     variant: CatalogVariant,
     event?: React.MouseEvent,
   ) => {
-    if (event && isMobile && mobileView === 'PRODUCTS') {
-      triggerFlyAnimation(event, product);
+    if (event) {
+      triggerFlyAnimation(event, product, variant.id);
     }
     setVariantProduct(null);
     if (variant.promptPrice === 1 || variant.salePriceVnd === null) {
@@ -7613,22 +7675,12 @@ function OrderEditor({
                       (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
                 </strong>
               </div>
-              {!isNew && orderId && (
-                <Button
-                  icon={<HistoryOutlined />}
-                  onClick={() => navigate(`/pos/orders/${orderId}/detail`)}
-                  title="Xem chi tiết và lịch sử đơn hàng"
-                  className="staff-order-detail-btn"
-                >
-                  Chi tiết
-                </Button>
-              )}
             </div>
           </header>
           <div
             className={`staff-order-editor__body ${isResizing ? 'is-resizing' : ''}`}
             style={{
-              gridTemplateColumns: `205px minmax(0, 1fr) auto ${cartWidth}px`,
+              gridTemplateColumns: `120px minmax(0, 1fr) auto ${cartWidth}px`,
             }}
           >
             <aside className="staff-category-sidebar">
@@ -7704,7 +7756,7 @@ function OrderEditor({
                       <button
                         type="button"
                         key={product.productId}
-                        onClick={() => chooseProduct(product)}
+                        onClick={(e) => chooseProduct(product, e)}
                       >
                         <span
                           className={`staff-product-card__visual ${product.avatarType === 'IMAGE' && product.mediaId ? 'has-image' : 'has-color'} ${product.avatarColor ? 'has-custom-color' : ''}`}
@@ -8062,6 +8114,12 @@ function OrderEditor({
                             {committedDisplayItems.map((item) => (
                               <SwipeableOrderItemRow
                                 key={item.id}
+                                dataVariantId={item.variantId ?? item.productId}
+                                className={
+                                  recentlyAddedLineKey === (item.variantId ?? item.productId)
+                                    ? 'staff-order-line--just-added'
+                                    : ''
+                                }
                                 locked={Boolean(item.promotionGift)}
                                 onClick={() => {
                                   if (item.promotionGift) return;
@@ -8804,24 +8862,26 @@ function OrderEditor({
                 Bảng giá áp dụng
               </Typography.Title>
               <div className="staff-time-rates-list">
-                {quote.data.time.pricingConfig.firstPeriod.enabled ? (
+                {quote.data.time.pricingConfig?.firstPeriod?.enabled ? (
                   <div className="staff-time-detail-row">
                     <span>
                       <strong>Giá đầu tiên</strong>
                       <small>
-                        {formatElapsed(quote.data.time.pricingConfig.firstPeriod.durationSeconds)}{' '}
+                        {formatElapsed(
+                          quote.data.time.pricingConfig.firstPeriod.durationSeconds ?? 0,
+                        )}{' '}
                         đầu
                       </small>
                     </span>
                     <b>
                       {formatPriceRate(
-                        quote.data.time.pricingConfig.firstPeriod.priceVnd,
-                        quote.data.time.pricingConfig.firstPeriod.durationSeconds,
+                        quote.data.time.pricingConfig.firstPeriod.priceVnd ?? 0,
+                        quote.data.time.pricingConfig.firstPeriod.durationSeconds ?? 3600,
                       )}
                     </b>
                   </div>
                 ) : null}
-                {quote.data.time.pricingConfig.specialWindows.map((window) => (
+                {quote.data.time.pricingConfig?.specialWindows?.map((window) => (
                   <div key={window.id} className="staff-time-detail-row">
                     <span>
                       <strong>{window.name}</strong>
@@ -8834,27 +8894,29 @@ function OrderEditor({
                     <b>
                       {formatPriceRate(
                         window.priceVnd,
-                        quote.data!.time!.pricingConfig.baseDurationSeconds,
+                        quote.data?.time?.pricingConfig?.baseDurationSeconds ?? 3600,
                       )}
                     </b>
                   </div>
                 ))}
-                <div className="staff-time-detail-row">
-                  <span>
-                    <strong>Giá thường</strong>
-                    <small>
-                      {quote.data.time.pricingConfig.calculationMode === 'ACTUAL_TIME'
-                        ? 'Tính theo thời gian thực'
-                        : 'Tính tròn theo block'}
-                    </small>
-                  </span>
-                  <b>
-                    {formatPriceRate(
-                      quote.data.time.pricingConfig.basePriceVnd,
-                      quote.data.time.pricingConfig.baseDurationSeconds,
-                    )}
-                  </b>
-                </div>
+                {quote.data.time.pricingConfig ? (
+                  <div className="staff-time-detail-row">
+                    <span>
+                      <strong>Giá thường</strong>
+                      <small>
+                        {quote.data.time.pricingConfig.calculationMode === 'ACTUAL_TIME'
+                          ? 'Tính theo thời gian thực'
+                          : 'Tính tròn theo block'}
+                      </small>
+                    </span>
+                    <b>
+                      {formatPriceRate(
+                        quote.data.time.pricingConfig.basePriceVnd,
+                        quote.data.time.pricingConfig.baseDurationSeconds,
+                      )}
+                    </b>
+                  </div>
+                ) : null}
               </div>
             </section>
 
@@ -8864,7 +8926,7 @@ function OrderEditor({
                 Thành tiền tạm tính
               </Typography.Title>
               <div className="staff-time-rates-list">
-                {quote.data.time.segments.map((segment, index) => (
+                {(quote.data.time.segments ?? []).map((segment, index) => (
                   <div
                     key={`${segment.type}-${segment.startedAtMs}-${index}`}
                     className="staff-time-detail-row"
@@ -9358,20 +9420,6 @@ function OrderEditor({
                     }}
                   >
                     Chuyển bàn
-                  </Button>
-                )}
-
-                {orderId && (
-                  <Button
-                    size="large"
-                    block
-                    icon={<HistoryOutlined />}
-                    onClick={() => {
-                      setMobileActionsOpen(false);
-                      navigate(`/pos/orders/${orderId}/detail`);
-                    }}
-                  >
-                    Lịch sử đơn
                   </Button>
                 )}
 

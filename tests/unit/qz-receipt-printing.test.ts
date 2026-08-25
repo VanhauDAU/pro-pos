@@ -367,12 +367,15 @@ describe('QZ receipt dispatch', () => {
     const html = generateThermalReceiptHtml(options);
     const escPos = buildEscPosReceipt(options).escPosData;
     expect(data).toMatchObject({
-      subtotal: 143_000,
+      subtotal: 245_000,
       discountTotal: 32_000,
       promotionDiscount: 22_000,
-      total: 111_000,
+      total: 213_000,
     });
     for (const output of [html, escPos]) {
+      expect(output).toContain('Billiard');
+      expect(output).toContain('=Giờ đầu');
+      expect(output).toContain('=1 giờ');
       expect(output).toContain('Đồng giá trà đào');
       expect(output).toContain('Trà đào');
       expect(output).toContain('SL: 2');

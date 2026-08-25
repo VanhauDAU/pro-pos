@@ -6,6 +6,16 @@ import {
   parsePrinterDeviceConfig,
 } from '@contracts/store';
 
+export interface PosReceiptTimeSegment {
+  name: string;
+  type?: 'BASE' | 'FIRST_PERIOD' | 'SPECIAL' | string | undefined;
+  startedAtMs: number;
+  endedAtMs: number | null | undefined;
+  elapsedSeconds: number;
+  priceVnd: number;
+  amount: number;
+}
+
 export interface PosReceiptLineItem {
   id: string;
   name: string;
@@ -22,13 +32,7 @@ export interface PosReceiptLineItem {
   timeStartedAtMs?: number | undefined;
   timeEndedAtMs?: number | null | undefined;
   timeElapsedSeconds?: number | undefined;
-  timeSegments?:
-    | Array<{
-        name: string;
-        elapsedSeconds: number;
-        amount: number;
-      }>
-    | undefined;
+  timeSegments?: PosReceiptTimeSegment[] | undefined;
   tableSegments?:
     | Array<{
         tableName: string;
@@ -126,6 +130,37 @@ function formatDuration(sec: number): string {
   const m = Math.floor((sec % 3600) / 60);
   if (h > 0) return `${h}h${m > 0 ? `${m}p` : ''}`;
   return `${m} phút`;
+}
+
+export function formatDateOnly(ms: number): string {
+  const d = new Date(ms);
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yyyy = d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+
+export function formatTimeOnly(ms: number, withSeconds = false): string {
+  const d = new Date(ms);
+  const HH = String(d.getHours()).padStart(2, '0');
+  const MM = String(d.getMinutes()).padStart(2, '0');
+  const SS = String(d.getSeconds()).padStart(2, '0');
+  return `${HH}:${MM}${withSeconds ? `:${SS}` : ''}`;
+}
+
+export function formatSegmentDurationLabel(seg: {
+  name: string;
+  type?: string | undefined;
+  elapsedSeconds: number;
+}): string {
+  if (seg.type === 'FIRST_PERIOD' || seg.name === 'Giờ đầu tiên' || seg.name === 'Giờ đầu') {
+    return '=Giờ đầu';
+  }
+  const h = Math.floor(seg.elapsedSeconds / 3600);
+  const m = Math.floor((seg.elapsedSeconds % 3600) / 60);
+  if (h > 0 && m > 0) return `=${h} giờ ${m} phút`;
+  if (h > 0) return `=${h} giờ`;
+  return `=${m} phút`;
 }
 
 /**
@@ -238,7 +273,11 @@ export function buildEscPosReceipt(
       const itemPrefix = template.showItemIndex ? `${timeIdx}. ` : '';
       timeIdx++;
 
-      if (line.tableSegments && line.tableSegments.length > 1) {
+      if (
+        line.tableSegments &&
+        line.tableSegments.length > 1 &&
+        (!line.timeSegments || line.timeSegments.length === 0)
+      ) {
         raw += `${itemPrefix}Tiền giờ (Chuyển bàn)\n`;
         if (template.showHourlyDetail) {
           for (const tSeg of line.tableSegments) {
@@ -249,6 +288,62 @@ export function buildEscPosReceipt(
           }
         }
         raw += `   Tổng tiền giờ: ${formatVnd(line.totalPrice)}\n`;
+        continue;
+      }
+
+      if (
+        template.showHourlyDetail &&
+        template.hourlyDetailMode === 'FULL_TIMELOG' &&
+        line.timeSegments &&
+        line.timeSegments.length > 0
+      ) {
+        raw += `${itemPrefix}${line.name}\n`;
+        for (const seg of line.timeSegments) {
+          const startStr = formatTimeOnly(seg.startedAtMs, template.showHourlyTimeWithSeconds);
+          const endStr = seg.endedAtMs
+            ? formatTimeOnly(seg.endedAtMs, template.showHourlyTimeWithSeconds)
+            : 'Hiện tại';
+          const timeRange = `${startStr} - ${endStr}`;
+          const dateStr = formatDateOnly(seg.startedAtMs);
+          const durLabel = formatSegmentDurationLabel(seg);
+          const priceStr = formatVnd(seg.priceVnd);
+          const unitStr = template.showHourlyUnitDuration ? '/1h' : '';
+          const totalStr = formatVnd(seg.amount);
+
+          if (profile.layoutMode === 'MULTI_COLUMN') {
+            raw += `${timeRange}\n`;
+            if (template.showHourlyUnitPrice) {
+              const leftCol1 = dateStr.padEnd(28).slice(0, 28);
+              const priceCol1 = priceStr.padStart(10);
+              const totCol1 = totalStr.padStart(10);
+              raw += `${leftCol1} ${priceCol1} ${totCol1}\n`;
+
+              const leftCol2 = durLabel.padEnd(28).slice(0, 28);
+              const priceCol2 = unitStr.padStart(10);
+              const totCol2 = ''.padStart(10);
+              raw += `${leftCol2} ${priceCol2} ${totCol2}\n`;
+            } else {
+              const leftCol1 = dateStr.padEnd(36).slice(0, 36);
+              const totCol1 = totalStr.padStart(12);
+              raw += `${leftCol1} ${totCol1}\n`;
+
+              const leftCol2 = durLabel.padEnd(36).slice(0, 36);
+              raw += `${leftCol2}\n`;
+            }
+            raw += '\n';
+          } else {
+            // K58 single column
+            raw += `${timeRange}\n`;
+            const leftCol1 = dateStr.padEnd(22).slice(0, 22);
+            const totCol1 = totalStr.padStart(11);
+            raw += `${leftCol1} ${totCol1}\n`;
+            raw += `${durLabel}\n`;
+            if (template.showHourlyUnitPrice) {
+              raw += `   Đ.Giá: ${priceStr}${unitStr}\n`;
+            }
+            raw += '\n';
+          }
+        }
         continue;
       }
 
@@ -564,7 +659,11 @@ export function buildPrintDataFromQuote(
           segments?:
             | Array<{
                 name: string;
+                type?: 'BASE' | 'FIRST_PERIOD' | 'SPECIAL' | string | undefined;
+                startedAtMs?: number | undefined;
+                endedAtMs?: number | null | undefined;
                 elapsedSeconds: number;
+                priceVnd?: number | undefined;
                 amountBeforeRoundingVnd?: number | undefined;
                 amountAfterRoundingVnd?: number | undefined;
               }>
@@ -615,9 +714,16 @@ export function buildPrintDataFromQuote(
       timeStartedAtMs: quote.time.startedAtMs,
       timeEndedAtMs: quote.time.endedAtMs ?? null,
       timeElapsedSeconds: quote.time.elapsedSeconds,
-      timeSegments: quote.time.segments?.map((s) => ({
+      timeSegments: quote.time.segments?.map((s): PosReceiptTimeSegment => ({
         name: s.name,
+        type: s.type,
+        startedAtMs: s.startedAtMs ?? quote.time!.startedAtMs,
+        endedAtMs: s.endedAtMs ?? quote.time!.endedAtMs ?? null,
         elapsedSeconds: s.elapsedSeconds,
+        priceVnd:
+          s.priceVnd ??
+          quote.time!.pricingConfig?.basePriceVnd ??
+          quote.time!.amountAfterRoundingVnd,
         amount: s.amountAfterRoundingVnd ?? s.amountBeforeRoundingVnd ?? 0,
       })),
       tableSegments: quote.time.tableSegments?.map((t) => ({
@@ -735,6 +841,23 @@ export function buildPrintDataFromInvoice(invoice: {
       discountReason?: string | null;
       promotionGift?: { promotionName: string };
     }>;
+    time?: {
+      startedAtMs?: number;
+      endedAtMs?: number | null;
+      elapsedSeconds?: number;
+      amountBeforeRoundingVnd?: number;
+      amountAfterRoundingVnd?: number;
+      segments?: Array<{
+        name: string;
+        type?: 'BASE' | 'FIRST_PERIOD' | 'SPECIAL' | string | undefined;
+        startedAtMs?: number | undefined;
+        endedAtMs?: number | null | undefined;
+        elapsedSeconds: number;
+        priceVnd?: number | undefined;
+        amountBeforeRoundingVnd?: number | undefined;
+        amountAfterRoundingVnd?: number | undefined;
+      }>;
+    };
     promotion?: PosReceiptPromotion | null;
     promotions?: PosReceiptPromotion[];
   } = {};
@@ -759,8 +882,13 @@ export function buildPrintDataFromInvoice(invoice: {
       endedAtMs?: number | null;
       segments?: Array<{
         name: string;
+        type?: 'BASE' | 'FIRST_PERIOD' | 'SPECIAL' | string | undefined;
+        startedAtMs?: number | undefined;
+        endedAtMs?: number | null | undefined;
         elapsedSeconds: number;
-        amountBeforeRoundingVnd: number;
+        priceVnd?: number | undefined;
+        amountBeforeRoundingVnd?: number | undefined;
+        amountAfterRoundingVnd?: number | undefined;
       }>;
       tableSegments?: Array<{
         tableName: string;
@@ -804,10 +932,14 @@ export function buildPrintDataFromInvoice(invoice: {
       timeStartedAtMs: snapshot.startedAtMs,
       timeEndedAtMs: snapshot.endedAtMs ?? null,
       timeElapsedSeconds: snapshot.elapsedSeconds,
-      timeSegments: snapshot.segments?.map((s) => ({
+      timeSegments: (snapshot.segments ?? invoiceSnapshot.time?.segments)?.map((s: any) => ({
         name: s.name,
+        type: s.type,
+        startedAtMs: s.startedAtMs,
+        endedAtMs: s.endedAtMs,
         elapsedSeconds: s.elapsedSeconds,
-        amount: s.amountBeforeRoundingVnd,
+        priceVnd: s.priceVnd ?? line.unitPrice,
+        amount: s.amountAfterRoundingVnd ?? s.amountBeforeRoundingVnd ?? s.amount ?? line.lineTotal,
       })),
       tableSegments: snapshot.tableSegments?.map((t) => ({
         tableName: t.tableName,

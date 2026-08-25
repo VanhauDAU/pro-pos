@@ -10,7 +10,10 @@ import type {
 import { AppError } from '@server/lib/app-error';
 import { hashOpaqueToken, randomOpaqueToken } from '@server/lib/crypto';
 import { requireSecret } from '@server/lib/env';
-import { verifyLocationCoordinates } from '@server/lib/location';
+import {
+  LOCATION_VERIFICATION_SESSION_TTL_MS,
+  verifyLocationCoordinates,
+} from '@server/lib/location';
 import {
   QrOrderRepository,
   type GuestSessionRow,
@@ -268,6 +271,15 @@ export class QrOrderService {
               elapsedSeconds: quote.time.elapsedSeconds,
               basePriceVnd: quote.time.pricingConfig.basePriceVnd,
               amountAfterRoundingVnd: quote.time.amountAfterRoundingVnd,
+              segments: quote.time.segments?.map((s) => ({
+                name: s.name,
+                type: s.type,
+                startedAtMs: s.startedAtMs,
+                endedAtMs: s.endedAtMs,
+                elapsedSeconds: s.elapsedSeconds,
+                priceVnd: s.priceVnd,
+                amountAfterRoundingVnd: s.amountBeforeRoundingVnd,
+              })),
             }
           : null,
         subtotalVnd: quote.subtotalVnd,
@@ -705,7 +717,7 @@ export class QrOrderService {
       },
       input,
       serverNow: now,
-      sessionTtlMs: 15 * 60_000,
+      sessionTtlMs: LOCATION_VERIFICATION_SESSION_TTL_MS,
     });
     await this.repository.updateGuestLocationVerification({
       guestSessionId: session.guestSessionId,
@@ -743,7 +755,7 @@ export class QrOrderService {
       },
       input,
       serverNow: now,
-      sessionTtlMs: 15 * 60_000,
+      sessionTtlMs: LOCATION_VERIFICATION_SESSION_TTL_MS,
     });
 
     let returnRawGuest = rawGuest;
@@ -814,7 +826,7 @@ export class QrOrderService {
         },
         input: input.location,
         serverNow: now,
-        sessionTtlMs: 15 * 60_000,
+        sessionTtlMs: LOCATION_VERIFICATION_SESSION_TTL_MS,
       });
       await this.repository.updateGuestLocationVerification({
         guestSessionId: session.guestSessionId,
@@ -952,7 +964,7 @@ export class QrOrderService {
         },
         input: location,
         serverNow: now,
-        sessionTtlMs: 15 * 60_000,
+        sessionTtlMs: LOCATION_VERIFICATION_SESSION_TTL_MS,
       });
       await this.repository.updateGuestLocationVerification({
         guestSessionId: session.guestSessionId,

@@ -3262,4 +3262,76 @@ describe('online POS vertical slice', () => {
       ),
     ).toBe(false);
   });
+
+  it('removes time session on a table configured with first-period and special-windows pricing', async () => {
+    const catalog = new CatalogService(env);
+    const pos = new PosService(env);
+
+    const timeProd = await catalog.createProduct(storeId, {
+      name: 'Billiard VIP First & Special',
+      productType: 'TIME',
+      variants: [],
+    });
+    await catalog.upsertPricing(storeId, {
+      productId: timeProd.id,
+      basePriceVnd: 50_000,
+      baseDurationSeconds: 3600,
+      calculationMode: 'ACTUAL_TIME',
+      roundingUnitVnd: 1000,
+      firstPeriod: {
+        enabled: true,
+        durationSeconds: 1800,
+        priceVnd: 60_000,
+      },
+      specialWindows: [
+        {
+          name: 'Khung giờ tối',
+          priceVnd: 70_000,
+          startMinute: 1080,
+          endMinute: 1320,
+          weekdaysMask: 127,
+        },
+      ],
+    });
+
+    const area = await catalog.createNamed(storeId, 'areas', 'Khu VIP Pricing');
+    const table = await catalog.createTable({
+      storeId,
+      name: 'Bàn VIP Pricing 1',
+      areaId: area.id,
+      timeProductId: timeProd.id,
+    });
+
+    const openTime = Date.now() - 3600 * 1000;
+    const opened = await pos.openTable({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'req-open-vip-pricing',
+      idempotencyKey: 'cmd-open-vip-pricing',
+      tableId: table.id,
+      expectedTableVersion: 1,
+      now: openTime,
+    });
+
+    // Check quote before deletion
+    const quoteBefore = await pos.quote(storeId, opened.orderId);
+    expect(quoteBefore.time).toBeDefined();
+    expect(quoteBefore.time?.segments.length).toBeGreaterThan(0);
+
+    // Delete time session
+    const removeResult = await pos.removeTimeSession({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'req-del-vip-time',
+      idempotencyKey: 'cmd-del-vip-time',
+      orderId: opened.orderId,
+      expectedOrderVersion: 1,
+      reason: 'Miễn phí giờ VIP',
+    });
+    expect(removeResult.removed).toBe(true);
+
+    // Check quote after deletion
+    const quoteAfter = await pos.quote(storeId, opened.orderId);
+    expect(quoteAfter.time).toBeNull();
+  });
 });

@@ -233,15 +233,15 @@ export function QrOrderConfirmModal({ open, onClose, areas }: QrOrderConfirmModa
         open={open}
         onCancel={onClose}
         footer={null}
-        width={780}
+        width="min(1120px, calc(100vw - 24px))"
         centered
         destroyOnClose
         className="pos-qr-confirm-modal"
         styles={{
-          body: { padding: 0 },
+          body: { padding: 0, maxHeight: '72vh', overflowY: 'auto' },
         }}
         title={
-          <div style={{ fontSize: 17, fontWeight: 800, color: '#0f172a' }}>Xác nhận gọi món</div>
+          <div style={{ fontSize: 19, fontWeight: 800, color: '#0f172a' }}>Xác nhận gọi món</div>
         }
       >
         <div className="pos-qr-confirm-modal__content">

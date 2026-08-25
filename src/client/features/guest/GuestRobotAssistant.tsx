@@ -28,7 +28,7 @@ interface GuestRobotAssistantProps {
   onAction: (action: GuestAssistantAction) => void;
 }
 
-type RobotExpression = 'neutral' | 'happy' | 'success' | 'error';
+export type RobotExpression = 'neutral' | 'happy' | 'success' | 'error';
 
 function actionIcon(action: GuestAssistantAction, disabled?: boolean) {
   if (disabled) return <ClockCircleOutlined />;
@@ -38,7 +38,7 @@ function actionIcon(action: GuestAssistantAction, disabled?: boolean) {
   return <PlayCircleFilled />;
 }
 
-function RobotVisual({
+export function RobotVisual({
   expression,
   speaking,
   compact = false,

@@ -942,6 +942,8 @@ interface PosNotificationsContextValue {
   isError: boolean;
   isFetching: boolean;
   refetch: () => Promise<unknown>;
+  qrConfirmModalOpen: boolean;
+  setQrConfirmModalOpen: (open: boolean) => void;
 }
 
 const PosNotificationsContext = createContext<PosNotificationsContextValue | null>(null);
@@ -970,6 +972,8 @@ function PosNotificationWatcher() {
       if (!seenGuestOrderIds.current.has(req.id) && req.status === 'PENDING') {
         seenGuestOrderIds.current.add(req.id);
         playPosSound('NEW_QR_ORDER', { dedupeKey: `qr-order:${req.id}` });
+        // Automatically pop up the QR order confirmation modal
+        notifications.setQrConfirmModalOpen(true);
         const itemCount =
           req.items?.reduce((sum, item) => sum + (item.quantity || 1), 0) || req.items?.length || 0;
         toast.info(
@@ -979,7 +983,9 @@ function PosNotificationWatcher() {
             duration: 8000,
             action: {
               label: 'Xem ngay',
-              onClick: () => navigate('/pos/qr-order'),
+              onClick: () => {
+                notifications.setQrConfirmModalOpen(true);
+              },
             },
           },
         );
@@ -1036,13 +1042,14 @@ function PosNotificationWatcher() {
         );
       }
     }
-  }, [notifications.data, navigate]);
+  }, [notifications.data, navigate, notifications]);
 
   return null;
 }
 
 function PosNotificationsProvider({ children }: { children: React.ReactNode }) {
   const pollingInterval = usePosPollingInterval(15_000);
+  const [qrConfirmModalOpen, setQrConfirmModalOpen] = useState(false);
   const summary = useQuery({
     queryKey: ['pos-notification-summary'],
     queryFn: ({ signal }) =>
@@ -1058,12 +1065,22 @@ function PosNotificationsProvider({ children }: { children: React.ReactNode }) {
       isError: summary.isError,
       isFetching: summary.isFetching,
       refetch: summary.refetch,
+      qrConfirmModalOpen,
+      setQrConfirmModalOpen,
     }),
-    [summary.data, summary.isError, summary.isFetching, summary.isLoading, summary.refetch],
+    [
+      summary.data,
+      summary.isError,
+      summary.isFetching,
+      summary.isLoading,
+      summary.refetch,
+      qrConfirmModalOpen,
+    ],
   );
   return (
     <PosNotificationsContext.Provider value={value}>
       <PosNotificationWatcher />
+      <QrOrderConfirmModal open={qrConfirmModalOpen} onClose={() => setQrConfirmModalOpen(false)} />
       {children}
     </PosNotificationsContext.Provider>
   );
@@ -1089,17 +1106,16 @@ function StaffHeader({
   const queryClient = useQueryClient();
   const [modal, holder] = Modal.useModal();
   const [loggingOut, setLoggingOut] = useState(false);
-  const notifications = usePosNotifications();
+  const { data: notificationsData, setQrConfirmModalOpen } = usePosNotifications();
   const pendingQrCount =
-    (notifications.data?.counts.guestOrders ?? 0) +
-    (notifications.data?.counts.tableOpenRequests ?? 0);
+    (notificationsData?.counts.guestOrders ?? 0) +
+    (notificationsData?.counts.tableOpenRequests ?? 0);
   const showQrBell = pendingQrCount > 0;
-  const [qrConfirmModalOpen, setQrConfirmModalOpen] = useState(false);
 
   const pendingNotificationCount =
-    (notifications.data?.counts.guestOrders ?? 0) +
-    (notifications.data?.counts.serviceRequests ?? 0) +
-    (notifications.data?.counts.tableOpenRequests ?? 0);
+    (notificationsData?.counts.guestOrders ?? 0) +
+    (notificationsData?.counts.serviceRequests ?? 0) +
+    (notificationsData?.counts.tableOpenRequests ?? 0);
 
   const logout = () => {
     modal.confirm({
@@ -1270,7 +1286,6 @@ function StaffHeader({
           <DownOutlined style={{ fontSize: 11, color: '#8c8c8c' }} />
         </Button>
       </Dropdown>
-      <QrOrderConfirmModal open={qrConfirmModalOpen} onClose={() => setQrConfirmModalOpen(false)} />
     </header>
   );
 }
@@ -1890,6 +1905,23 @@ function QrOrderPage() {
       queryClient.invalidateQueries({ queryKey: ['pos-overview'] }),
       queryClient.invalidateQueries({ queryKey: ['pos-staff-all-qr-orders'] }),
     ]);
+
+  const refreshAreasAfterTableOpen = async () => {
+    // Areas intentionally uses refetchOnMount=false to avoid a request storm.
+    // Fetching the authoritative overview here prevents it from rendering a
+    // stale AVAILABLE table after the operator returns from QR Order.
+    const overview = await queryClient.fetchQuery<PosOverviewSnapshot>({
+      queryKey: ['pos-overview'],
+      queryFn: ({ signal }) => apiRequest<PosOverviewSnapshot>('/api/v1/pos/overview', { signal }),
+      staleTime: 0,
+    });
+    queryClient.setQueryData(['pos-tables'], overview.tables);
+    queryClient.setQueryData(['pos-orders-list'], overview.orders);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['pos-notification-summary'] }),
+      queryClient.invalidateQueries({ queryKey: ['pos-staff-all-qr-orders'] }),
+    ]);
+  };
   const accept = useMutation({
     mutationFn: (request: GuestOrderRequestDto) =>
       jsonRequest(
@@ -1963,8 +1995,8 @@ function QrOrderPage() {
         {},
         { headers: mutationHeaders(auth.data?.csrfToken ?? '') },
       );
+      await refreshAreasAfterTableOpen();
       messageApi.success(`Đã mở ${request.tableName}.`);
-      await refresh();
     } catch (error) {
       messageApi.error(errorText(error));
       await refresh();

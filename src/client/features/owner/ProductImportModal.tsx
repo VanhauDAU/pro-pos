@@ -13,6 +13,7 @@ import { apiRequest, jsonRequest } from '@client/lib/api';
 import {
   downloadCatalogImportReport,
   downloadCatalogWorkbook,
+  CATALOG_TEMPLATE_SAMPLE_ROWS,
   parseCatalogImportFile,
   type CatalogExcelError,
 } from './catalog-excel';
@@ -28,7 +29,11 @@ function stamp() {
 }
 
 async function downloadTemplate() {
-  await downloadCatalogWorkbook([], 'pro-pos-mau-nhap-mat-hang.xlsx', true);
+  await downloadCatalogWorkbook(
+    CATALOG_TEMPLATE_SAMPLE_ROWS,
+    'pro-pos-mau-nhap-mat-hang.xlsx',
+    true,
+  );
 }
 
 export function ProductImportModal({ open, onClose, onCommitted }: ProductImportModalProps) {

@@ -22,7 +22,6 @@ import {
 } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  Alert,
   Button,
   Drawer,
   Empty,
@@ -948,22 +947,26 @@ export function GuestOrderPage() {
         </header>
 
         {!isTableOpen ? (
-          <Alert
-            className="qr-guest-table-open-alert"
-            type={isWaitingForOpen ? 'info' : 'warning'}
-            showIcon
-            icon={<HourglassOutlined />}
-            title={isWaitingForOpen ? 'Đang chờ nhân viên mở bàn' : 'Bàn chưa được mở'}
-            description={
-              <div className="qr-guest-table-open-alert__content">
-                <span>
-                  {isWaitingForOpen
-                    ? 'Bạn cứ chọn món vào giỏ. Trang sẽ tự cập nhật ngay khi bàn được mở.'
-                    : 'Chạm trợ lý Pro POS phía dưới để yêu cầu mở bàn. Bạn vẫn có thể xem menu và chọn món trước.'}
-                </span>
-              </div>
-            }
-          />
+          <div
+            className={`qr-guest-status-banner qr-guest-status-banner--${isWaitingForOpen ? 'waiting' : 'closed'}`}
+            role="status"
+          >
+            <div className="qr-guest-status-banner__icon-wrap">
+              <HourglassOutlined
+                className={`qr-guest-status-banner__icon ${isWaitingForOpen ? 'qr-guest-status-banner__icon--pulse' : ''}`}
+              />
+            </div>
+            <div className="qr-guest-status-banner__content">
+              <span className="qr-guest-status-banner__title">
+                {isWaitingForOpen ? 'Đang chờ nhân viên mở bàn' : 'Bàn chưa được mở'}
+              </span>
+              <p className="qr-guest-status-banner__desc">
+                {isWaitingForOpen
+                  ? 'Bạn cứ chọn món vào giỏ. Bàn sẽ tự cập nhật ngay khi được mở.'
+                  : 'Chạm trợ lý Pro POS phía dưới để yêu cầu mở bàn.'}
+              </p>
+            </div>
+          </div>
         ) : null}
 
         <GuestRobotAssistant

@@ -143,19 +143,175 @@ describe('7-Day Database Retention Cleanup Maintenance', () => {
       .bind(newAttemptKey, now, now)
       .run();
 
+    // 6. Area, Table, Product, Orders, Guest Orders, and Service Requests
+    const areaId = `area-${Math.random().toString(36).slice(2, 8)}`;
+    const tableId1 = `tbl-1-${Math.random().toString(36).slice(2, 8)}`;
+    const tableId2 = `tbl-2-${Math.random().toString(36).slice(2, 8)}`;
+    const prodId = `prod-${Math.random().toString(36).slice(2, 8)}`;
+    const varId = `var-${Math.random().toString(36).slice(2, 8)}`;
+    const qrCodeId = `qr-${Math.random().toString(36).slice(2, 8)}`;
+    const session1Id = `gsess-1-${Math.random().toString(36).slice(2, 8)}`;
+    const session2Id = `gsess-2-${Math.random().toString(36).slice(2, 8)}`;
+    const paidOrderId = `ord-paid-${Math.random().toString(36).slice(2, 8)}`;
+    const openOrderId = `ord-open-${Math.random().toString(36).slice(2, 8)}`;
+    const timeSess1Id = `tsess-1-${Math.random().toString(36).slice(2, 8)}`;
+    const timeSess2Id = `tsess-2-${Math.random().toString(36).slice(2, 8)}`;
+    const paidGuestReqId = `greq-paid-${Math.random().toString(36).slice(2, 8)}`;
+    const openGuestReqId = `greq-open-${Math.random().toString(36).slice(2, 8)}`;
+    const paidServiceReqId = `sreq-paid-${Math.random().toString(36).slice(2, 8)}`;
+    const openServiceReqId = `sreq-open-${Math.random().toString(36).slice(2, 8)}`;
+
+    const timeProdId = `time-prod-${Math.random().toString(36).slice(2, 8)}`;
+
+    await env.DB.prepare(
+      `INSERT INTO areas (id, store_id, name, status, created_at, updated_at) VALUES (?, ?, 'Area 1', 'ACTIVE', ?, ?)`,
+    )
+      .bind(areaId, storeId, now, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO products (id, store_id, name, product_type, status, created_at, updated_at) VALUES (?, ?, 'Prod 1', 'QUANTITY', 'ACTIVE', ?, ?)`,
+    )
+      .bind(prodId, storeId, now, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO products (id, store_id, name, product_type, status, created_at, updated_at) VALUES (?, ?, 'Time Prod', 'TIME', 'ACTIVE', ?, ?)`,
+    )
+      .bind(timeProdId, storeId, now, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO product_variants (id, store_id, product_id, display_code, name, sale_price, cost_price, prompt_price, status, created_at, updated_at)
+       VALUES (?, ?, ?, 'VAR-1', 'Default', 50000, 20000, 0, 'ACTIVE', ?, ?)`,
+    )
+      .bind(varId, storeId, prodId, now, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO service_tables (id, store_id, area_id, time_product_id, name, status, version, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'Bàn 1', 'AVAILABLE', 1, ?, ?)`,
+    )
+      .bind(tableId1, storeId, areaId, timeProdId, now, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO service_tables (id, store_id, area_id, time_product_id, name, status, version, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'Bàn 2', 'AVAILABLE', 1, ?, ?)`,
+    )
+      .bind(tableId2, storeId, areaId, timeProdId, now, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO table_qr_codes (id, store_id, table_id, token_hash, version, enabled, created_by, created_at, rotated_at)
+       VALUES (?, ?, ?, 'hash1', 1, 1, ?, ?, ?)`,
+    )
+      .bind(qrCodeId, storeId, tableId1, userId, now, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO orders (id, store_id, table_id, status, version, opened_by, opened_at, created_at, updated_at)
+       VALUES (?, ?, ?, 'PAID', 1, ?, ?, ?, ?)`,
+    )
+      .bind(paidOrderId, storeId, tableId1, userId, twoDaysAgo, twoDaysAgo, twoDaysAgo)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO orders (id, store_id, table_id, status, version, opened_by, opened_at, created_at, updated_at)
+       VALUES (?, ?, ?, 'OPEN', 1, ?, ?, ?, ?)`,
+    )
+      .bind(openOrderId, storeId, tableId2, userId, twoDaysAgo, twoDaysAgo, twoDaysAgo)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO time_sessions (id, store_id, order_id, table_id, time_product_id, status, started_at, paused_seconds, pricing_snapshot_json, pricing_version, opened_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'RUNNING', ?, 0, '{}', 1, ?, ?)`,
+    )
+      .bind(timeSess1Id, storeId, paidOrderId, tableId1, timeProdId, twoDaysAgo, userId, twoDaysAgo)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO time_sessions (id, store_id, order_id, table_id, time_product_id, status, started_at, paused_seconds, pricing_snapshot_json, pricing_version, opened_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'RUNNING', ?, 0, '{}', 1, ?, ?)`,
+    )
+      .bind(timeSess2Id, storeId, openOrderId, tableId2, timeProdId, twoDaysAgo, userId, twoDaysAgo)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO guest_order_sessions (id, secret_hash, store_id, table_id, time_session_id, qr_code_id, status, created_at, last_seen_at, expires_at)
+       VALUES (?, 'sec-1', ?, ?, ?, ?, 'ACTIVE', ?, ?, ?)`,
+    )
+      .bind(session1Id, storeId, tableId1, timeSess1Id, qrCodeId, twoDaysAgo, twoDaysAgo, inTwoDays)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO guest_order_sessions (id, secret_hash, store_id, table_id, time_session_id, qr_code_id, status, created_at, last_seen_at, expires_at)
+       VALUES (?, 'sec-2', ?, ?, ?, ?, 'ACTIVE', ?, ?, ?)`,
+    )
+      .bind(session2Id, storeId, tableId2, timeSess2Id, qrCodeId, twoDaysAgo, twoDaysAgo, inTwoDays)
+      .run();
+
+    // Guest order request on PAID order (ACCEPTED 2 days ago -> must be cleaned up)
+    await env.DB.prepare(
+      `INSERT INTO guest_order_requests (id, store_id, guest_session_id, table_id, time_session_id, order_id, status, client_request_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'ACCEPTED', 'client-1', ?)`,
+    )
+      .bind(paidGuestReqId, storeId, session1Id, tableId1, timeSess1Id, paidOrderId, twoDaysAgo)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO guest_order_request_items (id, store_id, request_id, product_id, variant_id, product_name_snapshot, unit_price_snapshot, quantity_milli, gross_line_total, created_at)
+       VALUES ('gri-1', ?, ?, ?, ?, 'Prod 1', 50000, 1000, 50000, ?)`,
+    )
+      .bind(storeId, paidGuestReqId, prodId, varId, twoDaysAgo)
+      .run();
+
+    // Guest order request on OPEN order (ACCEPTED 2 days ago -> must be PRESERVED)
+    await env.DB.prepare(
+      `INSERT INTO guest_order_requests (id, store_id, guest_session_id, table_id, time_session_id, order_id, status, client_request_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'ACCEPTED', 'client-2', ?)`,
+    )
+      .bind(openGuestReqId, storeId, session2Id, tableId2, timeSess2Id, openOrderId, twoDaysAgo)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO guest_order_request_items (id, store_id, request_id, product_id, variant_id, product_name_snapshot, unit_price_snapshot, quantity_milli, gross_line_total, created_at)
+       VALUES ('gri-2', ?, ?, ?, ?, 'Prod 1', 50000, 1000, 50000, ?)`,
+    )
+      .bind(storeId, openGuestReqId, prodId, varId, twoDaysAgo)
+      .run();
+
+    // Service request on PAID order (COMPLETED 2 days ago -> must be cleaned up)
+    await env.DB.prepare(
+      `INSERT INTO service_requests (id, store_id, table_id, time_session_id, order_id, guest_session_id, type, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'CHECKOUT_REQUEST', 'COMPLETED', ?)`,
+    )
+      .bind(paidServiceReqId, storeId, tableId1, timeSess1Id, paidOrderId, session1Id, twoDaysAgo)
+      .run();
+
+    // Service request on OPEN order (OPEN 2 days ago -> must be PRESERVED)
+    await env.DB.prepare(
+      `INSERT INTO service_requests (id, store_id, table_id, time_session_id, order_id, guest_session_id, type, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'CALL_STAFF', 'OPEN', ?)`,
+    )
+      .bind(openServiceReqId, storeId, tableId2, timeSess2Id, openOrderId, session2Id, twoDaysAgo)
+      .run();
+
     // Execute 7-day retention cleanup
     const service = new MaintenanceService(env);
     const result = await service.runRetentionCleanup(7);
 
     expect(result.retentionDays).toBe(7);
-    expect(result.totalDeleted).toBeGreaterThanOrEqual(5);
+    expect(result.totalDeleted).toBeGreaterThanOrEqual(7);
     expect(result.tables['audit_logs']).toBeGreaterThanOrEqual(1);
     expect(result.tables['staff_notification_events']).toBeGreaterThanOrEqual(1);
     expect(result.tables['realtime_events']).toBeGreaterThanOrEqual(1);
     expect(result.tables['auth_sessions']).toBeGreaterThanOrEqual(1);
     expect(result.tables['login_attempts']).toBeGreaterThanOrEqual(1);
+    expect(result.tables['guest_order_requests']).toBeGreaterThanOrEqual(1);
+    expect(result.tables['service_requests']).toBeGreaterThanOrEqual(1);
 
-    // Verify Old rows are DELETED
+    // Verify Old / Completed order requests are DELETED
     const oldAudit = await env.DB.prepare('SELECT id FROM audit_logs WHERE id = ?')
       .bind(oldAuditId)
       .first();
@@ -183,7 +339,17 @@ describe('7-Day Database Retention Cleanup Maintenance', () => {
       .first();
     expect(oldAttempt).toBeNull();
 
-    // Verify New rows are PRESERVED
+    const paidGuestReq = await env.DB.prepare('SELECT id FROM guest_order_requests WHERE id = ?')
+      .bind(paidGuestReqId)
+      .first();
+    expect(paidGuestReq).toBeNull();
+
+    const paidServiceReq = await env.DB.prepare('SELECT id FROM service_requests WHERE id = ?')
+      .bind(paidServiceReqId)
+      .first();
+    expect(paidServiceReq).toBeNull();
+
+    // Verify New / Active order requests are PRESERVED
     const newAudit = await env.DB.prepare('SELECT id FROM audit_logs WHERE id = ?')
       .bind(newAuditId)
       .first();
@@ -210,5 +376,15 @@ describe('7-Day Database Retention Cleanup Maintenance', () => {
       .bind(newAttemptKey)
       .first();
     expect(newAttempt).not.toBeNull();
+
+    const openGuestReq = await env.DB.prepare('SELECT id FROM guest_order_requests WHERE id = ?')
+      .bind(openGuestReqId)
+      .first();
+    expect(openGuestReq).not.toBeNull();
+
+    const openServiceReq = await env.DB.prepare('SELECT id FROM service_requests WHERE id = ?')
+      .bind(openServiceReqId)
+      .first();
+    expect(openServiceReq).not.toBeNull();
   });
 });

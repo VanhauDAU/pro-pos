@@ -78,21 +78,48 @@ export class MaintenanceRepository {
       .run();
     tableStats['access_auth_requests'] = rAccessAuth.meta?.changes ?? 0;
 
-    // 8. Handled / Cancelled Service Requests
+    // 8. Handled / Cancelled Service Requests (including those of completed/closed orders)
     const rServiceReq = await this.db
       .prepare(
-        "DELETE FROM service_requests WHERE status IN ('COMPLETED', 'CANCELLED') AND created_at < ?",
+        `DELETE FROM service_requests
+         WHERE (status IN ('COMPLETED', 'CANCELLED') AND created_at < ?)
+            OR order_id IN (SELECT id FROM orders WHERE status IN ('PAID', 'CANCELLED'))`,
       )
       .bind(cutoff)
       .run();
     tableStats['service_requests'] = rServiceReq.meta?.changes ?? 0;
 
-    // 9. Handled / Rejected Guest Order Requests
+    // 9. Handled / Accepted / Rejected Guest Order Requests (including those of completed/closed orders)
+    const rAcceptCmd = await this.db
+      .prepare(
+        `DELETE FROM accept_guest_order_request_commands WHERE guest_request_id IN (
+           SELECT id FROM guest_order_requests
+           WHERE (status IN ('ACCEPTED', 'REJECTED', 'CANCELLED', 'EXPIRED') AND created_at < ?)
+              OR (status IN ('ACCEPTED', 'REJECTED', 'CANCELLED', 'EXPIRED') AND order_id IN (SELECT id FROM orders WHERE status IN ('PAID', 'CANCELLED')))
+         )`,
+      )
+      .bind(cutoff)
+      .run();
+    tableStats['accept_guest_order_request_commands'] = rAcceptCmd.meta?.changes ?? 0;
+
+    const rRejectCmd = await this.db
+      .prepare(
+        `DELETE FROM reject_guest_order_request_commands WHERE guest_request_id IN (
+           SELECT id FROM guest_order_requests
+           WHERE (status IN ('ACCEPTED', 'REJECTED', 'CANCELLED', 'EXPIRED') AND created_at < ?)
+              OR (status IN ('ACCEPTED', 'REJECTED', 'CANCELLED', 'EXPIRED') AND order_id IN (SELECT id FROM orders WHERE status IN ('PAID', 'CANCELLED')))
+         )`,
+      )
+      .bind(cutoff)
+      .run();
+    tableStats['reject_guest_order_request_commands'] = rRejectCmd.meta?.changes ?? 0;
+
     const rGuestOrderItems = await this.db
       .prepare(
         `DELETE FROM guest_order_request_items WHERE request_id IN (
            SELECT id FROM guest_order_requests
-           WHERE status IN ('ACCEPTED', 'REJECTED', 'CANCELLED') AND created_at < ?
+           WHERE (status IN ('ACCEPTED', 'REJECTED', 'CANCELLED', 'EXPIRED') AND created_at < ?)
+              OR (status IN ('ACCEPTED', 'REJECTED', 'CANCELLED', 'EXPIRED') AND order_id IN (SELECT id FROM orders WHERE status IN ('PAID', 'CANCELLED')))
          )`,
       )
       .bind(cutoff)
@@ -101,7 +128,9 @@ export class MaintenanceRepository {
 
     const rGuestOrders = await this.db
       .prepare(
-        "DELETE FROM guest_order_requests WHERE status IN ('ACCEPTED', 'REJECTED', 'CANCELLED') AND created_at < ?",
+        `DELETE FROM guest_order_requests
+         WHERE (status IN ('ACCEPTED', 'REJECTED', 'CANCELLED', 'EXPIRED') AND created_at < ?)
+            OR (status IN ('ACCEPTED', 'REJECTED', 'CANCELLED', 'EXPIRED') AND order_id IN (SELECT id FROM orders WHERE status IN ('PAID', 'CANCELLED')))`,
       )
       .bind(cutoff)
       .run();

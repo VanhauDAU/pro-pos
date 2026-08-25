@@ -430,7 +430,7 @@ export function OwnerPrintSettingsPage() {
           .then((printers) => {
             if (isMounted) setSystemPrinters(printers);
           })
-          .catch(() => { });
+          .catch(() => {});
       }
     });
     return () => {
@@ -1176,8 +1176,8 @@ export function OwnerPrintSettingsPage() {
                       {(templateConfig.showCustomerPhone ||
                         templateConfig.showCustomerAddress ||
                         templateConfig.showOrderNote) && (
-                          <div className="thermal-receipt-divider-dash" />
-                        )}
+                        <div className="thermal-receipt-divider-dash" />
+                      )}
 
                       <div className="thermal-receipt-row">
                         <span className="thermal-receipt-label">Khách hàng</span>
@@ -1254,7 +1254,7 @@ export function OwnerPrintSettingsPage() {
                         <div className="thermal-receipt-item-main">
                           <span style={{ flex: 1, fontWeight: 600 }}>1. Billiard</span>
                           {!templateConfig.showHourlyDetail ||
-                            templateConfig.hourlyDetailMode === 'TOTAL_ONLY' ? (
+                          templateConfig.hourlyDetailMode === 'TOTAL_ONLY' ? (
                             <>
                               {previewPaperSize === 'K80' && templateConfig.showHourlyUnitPrice && (
                                 <span style={{ width: 65, textAlign: 'right' }}>
@@ -1275,7 +1275,7 @@ export function OwnerPrintSettingsPage() {
                         </div>
 
                         {!templateConfig.showHourlyDetail ||
-                          templateConfig.hourlyDetailMode === 'TOTAL_ONLY' ? (
+                        templateConfig.hourlyDetailMode === 'TOTAL_ONLY' ? (
                           <>
                             {previewPaperSize === 'K58' && templateConfig.showHourlyUnitPrice && (
                               <div className="thermal-receipt-item-sub">
@@ -1283,7 +1283,10 @@ export function OwnerPrintSettingsPage() {
                               </div>
                             )}
                             {templateConfig.showHourlyDetail && (
-                              <div className="thermal-receipt-item-sub" style={{ color: '#64748b' }}>
+                              <div
+                                className="thermal-receipt-item-sub"
+                                style={{ color: '#64748b' }}
+                              >
                                 = 2 giờ 30 phút
                               </div>
                             )}
@@ -1299,9 +1302,10 @@ export function OwnerPrintSettingsPage() {
                               </div>
                               <div style={{ display: 'flex', alignItems: 'baseline' }}>
                                 <span style={{ flex: 1 }}>20/06/2024</span>
-                                {previewPaperSize === 'K80' && templateConfig.showHourlyUnitPrice && (
-                                  <span style={{ width: 65, textAlign: 'right' }}>60,000</span>
-                                )}
+                                {previewPaperSize === 'K80' &&
+                                  templateConfig.showHourlyUnitPrice && (
+                                    <span style={{ width: 65, textAlign: 'right' }}>60,000</span>
+                                  )}
                                 <span
                                   style={{
                                     width: previewPaperSize === 'K58' ? 48 : 65,
@@ -1317,7 +1321,9 @@ export function OwnerPrintSettingsPage() {
                                 {previewPaperSize === 'K80' &&
                                   templateConfig.showHourlyUnitPrice &&
                                   templateConfig.showHourlyUnitDuration && (
-                                    <span style={{ width: 65, textAlign: 'right', color: '#64748b' }}>
+                                    <span
+                                      style={{ width: 65, textAlign: 'right', color: '#64748b' }}
+                                    >
                                       /1h
                                     </span>
                                   )}
@@ -1339,9 +1345,10 @@ export function OwnerPrintSettingsPage() {
                               </div>
                               <div style={{ display: 'flex', alignItems: 'baseline' }}>
                                 <span style={{ flex: 1 }}>20/06/2024</span>
-                                {previewPaperSize === 'K80' && templateConfig.showHourlyUnitPrice && (
-                                  <span style={{ width: 65, textAlign: 'right' }}>40,000</span>
-                                )}
+                                {previewPaperSize === 'K80' &&
+                                  templateConfig.showHourlyUnitPrice && (
+                                    <span style={{ width: 65, textAlign: 'right' }}>40,000</span>
+                                  )}
                                 <span
                                   style={{
                                     width: previewPaperSize === 'K58' ? 48 : 65,
@@ -1357,7 +1364,9 @@ export function OwnerPrintSettingsPage() {
                                 {previewPaperSize === 'K80' &&
                                   templateConfig.showHourlyUnitPrice &&
                                   templateConfig.showHourlyUnitDuration && (
-                                    <span style={{ width: 65, textAlign: 'right', color: '#64748b' }}>
+                                    <span
+                                      style={{ width: 65, textAlign: 'right', color: '#64748b' }}
+                                    >
                                       /1h
                                     </span>
                                   )}
@@ -1379,9 +1388,10 @@ export function OwnerPrintSettingsPage() {
                               </div>
                               <div style={{ display: 'flex', alignItems: 'baseline' }}>
                                 <span style={{ flex: 1 }}>20/06/2024</span>
-                                {previewPaperSize === 'K80' && templateConfig.showHourlyUnitPrice && (
-                                  <span style={{ width: 65, textAlign: 'right' }}>50,000</span>
-                                )}
+                                {previewPaperSize === 'K80' &&
+                                  templateConfig.showHourlyUnitPrice && (
+                                    <span style={{ width: 65, textAlign: 'right' }}>50,000</span>
+                                  )}
                                 <span
                                   style={{
                                     width: previewPaperSize === 'K58' ? 48 : 65,
@@ -1397,7 +1407,9 @@ export function OwnerPrintSettingsPage() {
                                 {previewPaperSize === 'K80' &&
                                   templateConfig.showHourlyUnitPrice &&
                                   templateConfig.showHourlyUnitDuration && (
-                                    <span style={{ width: 65, textAlign: 'right', color: '#64748b' }}>
+                                    <span
+                                      style={{ width: 65, textAlign: 'right', color: '#64748b' }}
+                                    >
                                       /1h
                                     </span>
                                   )}

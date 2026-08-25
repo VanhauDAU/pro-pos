@@ -329,7 +329,11 @@ export function generateThermalReceiptHtml(
       const prefix = template.showItemIndex ? `${timeIdx}. ` : '';
       timeIdx++;
 
-      if (line.tableSegments && line.tableSegments.length > 1 && (!line.timeSegments || line.timeSegments.length === 0)) {
+      if (
+        line.tableSegments &&
+        line.tableSegments.length > 1 &&
+        (!line.timeSegments || line.timeSegments.length === 0)
+      ) {
         // Table transfers
         html += `
           <div class="thermal-receipt-item-row" style="margin-top: 3px;">
@@ -362,7 +366,10 @@ export function generateThermalReceiptHtml(
             </div>
             ${line.timeSegments
               .map((seg, sIdx) => {
-                const startStr = formatTimeOnly(seg.startedAtMs, template.showHourlyTimeWithSeconds);
+                const startStr = formatTimeOnly(
+                  seg.startedAtMs,
+                  template.showHourlyTimeWithSeconds,
+                );
                 const endStr = seg.endedAtMs
                   ? formatTimeOnly(seg.endedAtMs, template.showHourlyTimeWithSeconds)
                   : 'Hiện tại';

@@ -174,7 +174,11 @@ function mapDatabaseError(error: unknown): never {
     );
   }
   if (message.includes('TIME_SESSION_ALREADY_EXISTS')) {
-    throw new AppError('TIME_SESSION_ALREADY_EXISTS', 'Bàn đã có phiên tính giờ đang hoạt động.', 409);
+    throw new AppError(
+      'TIME_SESSION_ALREADY_EXISTS',
+      'Bàn đã có phiên tính giờ đang hoạt động.',
+      409,
+    );
   }
   if (message.includes('TIME_RANGE_INVALID')) {
     throw new AppError('TIME_RANGE_INVALID', 'Khoảng thời gian tính giờ không hợp lệ.', 422);

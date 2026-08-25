@@ -4,7 +4,6 @@ import {
   ClockCircleOutlined,
   CreditCardOutlined,
   PlayCircleFilled,
-  ReloadOutlined,
   ShopOutlined,
 } from '@ant-design/icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';

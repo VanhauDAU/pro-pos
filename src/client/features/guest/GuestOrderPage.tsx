@@ -115,11 +115,11 @@ export function GuestOrderPage() {
   const [locationError, setLocationError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<
     | ((coords?: {
-      latitude: number;
-      longitude: number;
-      accuracyMeters: number;
-      capturedAt: number;
-    }) => void | Promise<void>)
+        latitude: number;
+        longitude: number;
+        accuracyMeters: number;
+        capturedAt: number;
+      }) => void | Promise<void>)
     | null
   >(null);
   const [localLocationVerified, setLocalLocationVerified] = useState(false);
@@ -260,27 +260,27 @@ export function GuestOrderPage() {
       lines: [
         ...(order.time
           ? [
-            {
-              id: 'time-session',
-              name: 'Tiền giờ',
-              quantity: 1,
-              unitPrice: order.time.basePriceVnd ?? order.time.amountAfterRoundingVnd,
-              totalPrice: order.time.amountAfterRoundingVnd,
-              isTime: true,
-              timeStartedAtMs: order.time.startedAtMs,
-              timeEndedAtMs: order.time.endedAtMs,
-              timeElapsedSeconds: order.time.elapsedSeconds,
-              timeSegments: order.time.segments?.map((s) => ({
-                name: s.name,
-                type: s.type,
-                startedAtMs: s.startedAtMs,
-                endedAtMs: s.endedAtMs,
-                elapsedSeconds: s.elapsedSeconds,
-                priceVnd: s.priceVnd,
-                amount: s.amountAfterRoundingVnd,
-              })),
-            },
-          ]
+              {
+                id: 'time-session',
+                name: 'Tiền giờ',
+                quantity: 1,
+                unitPrice: order.time.basePriceVnd ?? order.time.amountAfterRoundingVnd,
+                totalPrice: order.time.amountAfterRoundingVnd,
+                isTime: true,
+                timeStartedAtMs: order.time.startedAtMs,
+                timeEndedAtMs: order.time.endedAtMs,
+                timeElapsedSeconds: order.time.elapsedSeconds,
+                timeSegments: order.time.segments?.map((s) => ({
+                  name: s.name,
+                  type: s.type,
+                  startedAtMs: s.startedAtMs,
+                  endedAtMs: s.endedAtMs,
+                  elapsedSeconds: s.elapsedSeconds,
+                  priceVnd: s.priceVnd,
+                  amount: s.amountAfterRoundingVnd,
+                })),
+              },
+            ]
           : []),
         ...order.items.map((it) => ({
           id: it.id,
@@ -378,30 +378,6 @@ export function GuestOrderPage() {
       content: `Đã thêm ${product.name}`,
       duration: 1.2,
       style: { marginTop: '10vh' },
-    });
-  };
-
-  const QUICK_TABLE_NOTES = [
-    '🧊 Thêm đá lạnh',
-    '🥢 Thêm chén đũa/ly',
-    '🌶️ Ít cay / không cay',
-    '🥤 Mang nước trước',
-    '⚡ Làm nhanh giúp em',
-    '🥡 Cho mang về',
-  ];
-
-  const handleToggleQuickNote = (chipText: string) => {
-    setOrderNote((prev) => {
-      const trimmed = prev.trim();
-      if (!trimmed) return chipText;
-      if (trimmed.includes(chipText)) {
-        return trimmed
-          .replace(chipText, '')
-          .replace(/,\s*,/g, ',')
-          .replace(/^,\s*|,\s*$/g, '')
-          .trim();
-      }
-      return `${trimmed}, ${chipText}`;
     });
   };
 
@@ -558,13 +534,13 @@ export function GuestOrderPage() {
     }: {
       type: 'CALL_STAFF' | 'CHECKOUT_REQUEST';
       coords?:
-      | {
-        latitude: number;
-        longitude: number;
-        accuracyMeters: number;
-        capturedAt?: number;
-      }
-      | undefined;
+        | {
+            latitude: number;
+            longitude: number;
+            accuracyMeters: number;
+            capturedAt?: number;
+          }
+        | undefined;
     }) => {
       const loc = coords ?? lastVerifiedCoords.current ?? undefined;
       return jsonRequest('/api/v1/guest-order/service-requests', {
@@ -995,7 +971,7 @@ export function GuestOrderPage() {
                         Math.floor(
                           ((activeOrderQuery.data.time.endedAtMs ?? clientNow) -
                             activeOrderQuery.data.time.startedAtMs) /
-                          1000,
+                            1000,
                         ),
                       ),
                     )}
@@ -1018,10 +994,11 @@ export function GuestOrderPage() {
           <div className="qr-guest-status-banner" onClick={() => setHistoryDrawerOpen(true)}>
             <div className="qr-guest-status-banner__left">
               <span
-                className={`qr-guest-status-banner__badge ${latestRequest.status === 'ACCEPTED'
-                  ? 'qr-guest-status-banner__badge--accepted'
-                  : 'qr-guest-status-banner__badge--pending'
-                  }`}
+                className={`qr-guest-status-banner__badge ${
+                  latestRequest.status === 'ACCEPTED'
+                    ? 'qr-guest-status-banner__badge--accepted'
+                    : 'qr-guest-status-banner__badge--pending'
+                }`}
               >
                 {latestRequest.status === 'ACCEPTED' ? (
                   <>
@@ -1426,9 +1403,7 @@ export function GuestOrderPage() {
                           />
                         ) : line.note ? (
                           <div className="qr-cart-item-note-badge">
-                            <span className="qr-cart-item-note-text">
-                              📝 {line.note}
-                            </span>
+                            <span className="qr-cart-item-note-text">📝 {line.note}</span>
                             <div className="qr-cart-item-note-btns">
                               <button
                                 type="button"
@@ -1984,46 +1959,46 @@ export function GuestOrderPage() {
           footer={
             isLocationVerified
               ? [
-                <Button
-                  key="reverify"
-                  loading={isVerifyingLocation}
-                  onClick={handleVerifyLocation}
-                  icon={<AimOutlined />}
-                >
-                  Xác minh lại
-                </Button>,
-                <Button
-                  key="close"
-                  type="primary"
-                  onClick={() => {
-                    setLocationModalOpen(false);
-                    setPendingAction(null);
-                  }}
-                >
-                  Đã hiểu
-                </Button>,
-              ]
+                  <Button
+                    key="reverify"
+                    loading={isVerifyingLocation}
+                    onClick={handleVerifyLocation}
+                    icon={<AimOutlined />}
+                  >
+                    Xác minh lại
+                  </Button>,
+                  <Button
+                    key="close"
+                    type="primary"
+                    onClick={() => {
+                      setLocationModalOpen(false);
+                      setPendingAction(null);
+                    }}
+                  >
+                    Đã hiểu
+                  </Button>,
+                ]
               : [
-                <Button
-                  key="cancel"
-                  disabled={isVerifyingLocation}
-                  onClick={() => {
-                    setLocationModalOpen(false);
-                    setPendingAction(null);
-                  }}
-                >
-                  Để sau
-                </Button>,
-                <Button
-                  key="verify"
-                  type="primary"
-                  loading={isVerifyingLocation}
-                  onClick={handleVerifyLocation}
-                  icon={<AimOutlined />}
-                >
-                  Xác nhận vị trí
-                </Button>,
-              ]
+                  <Button
+                    key="cancel"
+                    disabled={isVerifyingLocation}
+                    onClick={() => {
+                      setLocationModalOpen(false);
+                      setPendingAction(null);
+                    }}
+                  >
+                    Để sau
+                  </Button>,
+                  <Button
+                    key="verify"
+                    type="primary"
+                    loading={isVerifyingLocation}
+                    onClick={handleVerifyLocation}
+                    icon={<AimOutlined />}
+                  >
+                    Xác nhận vị trí
+                  </Button>,
+                ]
           }
         >
           <div style={{ padding: '8px 0', fontSize: 14, color: '#334155', lineHeight: 1.6 }}>

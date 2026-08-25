@@ -273,7 +273,11 @@ export function buildEscPosReceipt(
       const itemPrefix = template.showItemIndex ? `${timeIdx}. ` : '';
       timeIdx++;
 
-      if (line.tableSegments && line.tableSegments.length > 1 && (!line.timeSegments || line.timeSegments.length === 0)) {
+      if (
+        line.tableSegments &&
+        line.tableSegments.length > 1 &&
+        (!line.timeSegments || line.timeSegments.length === 0)
+      ) {
         raw += `${itemPrefix}Tiền giờ (Chuyển bàn)\n`;
         if (template.showHourlyDetail) {
           for (const tSeg of line.tableSegments) {
@@ -716,7 +720,10 @@ export function buildPrintDataFromQuote(
         startedAtMs: s.startedAtMs ?? quote.time!.startedAtMs,
         endedAtMs: s.endedAtMs ?? quote.time!.endedAtMs ?? null,
         elapsedSeconds: s.elapsedSeconds,
-        priceVnd: s.priceVnd ?? quote.time!.pricingConfig?.basePriceVnd ?? quote.time!.amountAfterRoundingVnd,
+        priceVnd:
+          s.priceVnd ??
+          quote.time!.pricingConfig?.basePriceVnd ??
+          quote.time!.amountAfterRoundingVnd,
         amount: s.amountAfterRoundingVnd ?? s.amountBeforeRoundingVnd ?? 0,
       })),
       tableSegments: quote.time.tableSegments?.map((t) => ({

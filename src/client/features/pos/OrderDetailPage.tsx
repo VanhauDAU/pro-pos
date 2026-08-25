@@ -559,9 +559,7 @@ export function OrderDetailPage({
                       startedAtMs: s.startedAt,
                       endedAtMs:
                         s.endedAt ??
-                        (data.order.status === 'OPEN'
-                          ? now
-                          : (data.order.closedAt ?? now)),
+                        (data.order.status === 'OPEN' ? now : (data.order.closedAt ?? now)),
                       config: s.pricingRuleSnapshot,
                     });
                     if (singlePricing.segments && singlePricing.segments.length > 0) {

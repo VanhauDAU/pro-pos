@@ -759,9 +759,7 @@ export function OwnerPrintTemplateEditPage() {
                           {/* Segment 1: Giờ đầu */}
                           <div style={{ marginTop: 3 }}>
                             <div>
-                              {showHourlyTimeWithSeconds
-                                ? '18:00:00 - 18:30:00'
-                                : '18:00 - 18:30'}
+                              {showHourlyTimeWithSeconds ? '18:00:00 - 18:30:00' : '18:00 - 18:30'}
                             </div>
                             <div style={{ display: 'flex', alignItems: 'baseline' }}>
                               <span style={{ flex: 1 }}>20/06/2024</span>
@@ -799,9 +797,7 @@ export function OwnerPrintTemplateEditPage() {
                           {/* Segment 2: Giá thường */}
                           <div style={{ marginTop: 6 }}>
                             <div>
-                              {showHourlyTimeWithSeconds
-                                ? '18:30:00 - 19:30:00'
-                                : '18:30 - 19:30'}
+                              {showHourlyTimeWithSeconds ? '18:30:00 - 19:30:00' : '18:30 - 19:30'}
                             </div>
                             <div style={{ display: 'flex', alignItems: 'baseline' }}>
                               <span style={{ flex: 1 }}>20/06/2024</span>
@@ -839,9 +835,7 @@ export function OwnerPrintTemplateEditPage() {
                           {/* Segment 3: Khung giờ tối */}
                           <div style={{ marginTop: 6 }}>
                             <div>
-                              {showHourlyTimeWithSeconds
-                                ? '19:30:00 - 20:30:00'
-                                : '19:30 - 20:30'}
+                              {showHourlyTimeWithSeconds ? '19:30:00 - 20:30:00' : '19:30 - 20:30'}
                             </div>
                             <div style={{ display: 'flex', alignItems: 'baseline' }}>
                               <span style={{ flex: 1 }}>20/06/2024</span>

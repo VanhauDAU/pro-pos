@@ -3285,7 +3285,6 @@ describe('online POS vertical slice', () => {
       },
       specialWindows: [
         {
-          id: 'spw-evening-1',
           name: 'Khung giờ tối',
           priceVnd: 70_000,
           startMinute: 1080,

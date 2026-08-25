@@ -5189,7 +5189,9 @@ function OrderEditor({
 
     const targetKey = variantId || product.variants[0]?.id || product.productId;
     const existingRow = targetKey
-      ? (document.querySelector(`.staff-cart-panel [data-variant-id="${targetKey}"]`) as HTMLElement | null)
+      ? (document.querySelector(
+          `.staff-cart-panel [data-variant-id="${targetKey}"]`,
+        ) as HTMLElement | null)
       : null;
     const cartList = document.querySelector('.staff-compact-order-list') as HTMLElement | null;
     const cartPanel = document.querySelector('.staff-cart-panel') as HTMLElement | null;
@@ -8113,7 +8115,11 @@ function OrderEditor({
                               <SwipeableOrderItemRow
                                 key={item.id}
                                 dataVariantId={item.variantId ?? item.productId}
-                                className={recentlyAddedLineKey === (item.variantId ?? item.productId) ? 'staff-order-line--just-added' : ''}
+                                className={
+                                  recentlyAddedLineKey === (item.variantId ?? item.productId)
+                                    ? 'staff-order-line--just-added'
+                                    : ''
+                                }
                                 locked={Boolean(item.promotionGift)}
                                 onClick={() => {
                                   if (item.promotionGift) return;
@@ -8861,7 +8867,9 @@ function OrderEditor({
                     <span>
                       <strong>Giá đầu tiên</strong>
                       <small>
-                        {formatElapsed(quote.data.time.pricingConfig.firstPeriod.durationSeconds ?? 0)}{' '}
+                        {formatElapsed(
+                          quote.data.time.pricingConfig.firstPeriod.durationSeconds ?? 0,
+                        )}{' '}
                         đầu
                       </small>
                     </span>
@@ -9414,7 +9422,6 @@ function OrderEditor({
                     Chuyển bàn
                   </Button>
                 )}
-
 
                 <Button
                   size="large"

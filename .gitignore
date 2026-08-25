@@ -6,6 +6,8 @@ dist/
 coverage/
 playwright-report/
 test-results/
+playwright/.auth/
+artifacts/perf/
 *.cpuprofile
 worker-configuration.d.ts
 worker-configuration.access.d.ts

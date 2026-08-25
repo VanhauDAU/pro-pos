@@ -52,6 +52,7 @@ import type {
   PosReceiptPrintOptions,
 } from '@domain/receipt/receipt-generator';
 import { apiRequest, jsonRequest } from '@client/lib/api';
+import { playPosSound } from '@client/lib/sound';
 import { ReceiptPreviewPaper } from '@client/features/pos/ReceiptPreviewModal';
 import { GuestRobotAssistant } from './GuestRobotAssistant';
 import { type GuestAssistantAction, type GuestAssistantFeedback } from './guest-assistant';
@@ -494,6 +495,7 @@ export function GuestOrderPage() {
       );
     },
     onSuccess: async () => {
+      playPosSound('GUEST_ORDER_SENT');
       setCart({});
       setOrderNote('');
       setCartDrawerOpen(false);
@@ -566,6 +568,7 @@ export function GuestOrderPage() {
       if (type === 'CALL_STAFF') {
         setCallStaffCooldown(60);
       } else {
+        playPosSound('GUEST_CHECKOUT_REQUEST_SENT');
         setCheckoutCooldown(60);
       }
       messageApi.success(
@@ -630,6 +633,9 @@ export function GuestOrderPage() {
         coords ? { location: coords } : {},
       ),
     onSuccess: async (result) => {
+      if (!result.alreadyOpen) {
+        playPosSound('GUEST_QR_OPEN_REQUESTED');
+      }
       messageApi.success(
         result.alreadyOpen
           ? 'Bàn đã được mở. Đang tải phiên gọi món...'

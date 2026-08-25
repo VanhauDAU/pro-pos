@@ -21,7 +21,9 @@ registerRoute(
     request.method === 'GET' &&
     url.origin === self.location.origin &&
     !url.pathname.startsWith('/api/') &&
-    ['script', 'style', 'image'].includes(request.destination),
+    (['script', 'style', 'image', 'audio'].includes(request.destination) ||
+      url.pathname.endsWith('.ogg') ||
+      url.pathname.startsWith('/sounds/')),
   async ({ request }) => {
     const cache = await caches.open(RUNTIME_ASSET_CACHE);
     const cached = await cache.match(request);

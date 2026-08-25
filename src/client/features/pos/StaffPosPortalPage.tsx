@@ -133,6 +133,7 @@ const StaffPrinterSettingsPage = lazy(async () => {
 });
 
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
+import { playPosSound } from '@client/lib/sound';
 import {
   RealtimeProvider,
   usePosPollingInterval,
@@ -963,6 +964,88 @@ interface PosNotificationsContextValue {
 
 const PosNotificationsContext = createContext<PosNotificationsContextValue | null>(null);
 
+function PosNotificationWatcher() {
+  const navigate = useNavigate();
+  const notifications = usePosNotifications();
+  const initializedRef = useRef(false);
+  const seenGuestOrderIds = useRef<Set<string>>(new Set());
+  const seenServiceRequestIds = useRef<Set<string>>(new Set());
+  const seenTableOpenRequestIds = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const data = notifications.data;
+    if (!data) return;
+
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      seenGuestOrderIds.current = new Set(data.guestOrders.map((g) => g.id));
+      seenServiceRequestIds.current = new Set(data.serviceRequests.map((s) => s.id));
+      seenTableOpenRequestIds.current = new Set(data.tableOpenRequests.map((t) => t.id));
+      return;
+    }
+
+    for (const req of data.guestOrders) {
+      if (!seenGuestOrderIds.current.has(req.id) && req.status === 'PENDING') {
+        seenGuestOrderIds.current.add(req.id);
+        playPosSound('NEW_QR_ORDER', { dedupeKey: `qr-order:${req.id}` });
+        const itemCount =
+          req.items?.reduce((sum, item) => sum + (item.quantity || 1), 0) || req.items?.length || 0;
+        toast.info(`🔔 Yêu cầu gọi món - ${req.tableName}`, {
+          description: `${req.tableName} (${req.areaName}) vừa gửi yêu cầu gọi món (${itemCount} món)`,
+          duration: 8000,
+          action: {
+            label: 'Xem ngay',
+            onClick: () => navigate('/pos/qr-order'),
+          },
+        });
+      }
+    }
+
+    for (const sr of data.serviceRequests) {
+      if (!seenServiceRequestIds.current.has(sr.id) && sr.status === 'OPEN') {
+        seenServiceRequestIds.current.add(sr.id);
+        playPosSound('CALL_STAFF', { dedupeKey: `service-req:${sr.id}` });
+        if (sr.type === 'CALL_STAFF') {
+          toast.warning(`🔔 Gọi nhân viên - ${sr.tableName}`, {
+            description: `${sr.tableName} (${sr.areaName}) đang gọi nhân viên hỗ trợ`,
+            duration: 8000,
+            action: {
+              label: 'Xem ngay',
+              onClick: () => navigate('/pos/qr-order'),
+            },
+          });
+        } else if (sr.type === 'CHECKOUT_REQUEST') {
+          toast.info(`💳 Yêu cầu thanh toán - ${sr.tableName}`, {
+            description: `${sr.tableName} (${sr.areaName}) vừa yêu cầu thanh toán`,
+            duration: 8000,
+            action: {
+              label: 'Xem ngay',
+              onClick: () => navigate('/pos/qr-order'),
+            },
+          });
+        }
+      }
+    }
+
+    for (const tor of data.tableOpenRequests) {
+      if (!seenTableOpenRequestIds.current.has(tor.id) && tor.status === 'OPEN') {
+        seenTableOpenRequestIds.current.add(tor.id);
+        playPosSound('TABLE_OPEN_REQUEST', { dedupeKey: `table-open:${tor.id}` });
+        toast.info(`🪑 Yêu cầu mở bàn - ${tor.tableName}`, {
+          description: `Khách yêu cầu mở ${tor.tableName} (${tor.areaName})`,
+          duration: 8000,
+          action: {
+            label: 'Xem ngay',
+            onClick: () => navigate('/pos/qr-order'),
+          },
+        });
+      }
+    }
+  }, [notifications.data, navigate]);
+
+  return null;
+}
+
 function PosNotificationsProvider({ children }: { children: React.ReactNode }) {
   const pollingInterval = usePosPollingInterval(15_000);
   const summary = useQuery({
@@ -984,7 +1067,10 @@ function PosNotificationsProvider({ children }: { children: React.ReactNode }) {
     [summary.data, summary.isError, summary.isFetching, summary.isLoading, summary.refetch],
   );
   return (
-    <PosNotificationsContext.Provider value={value}>{children}</PosNotificationsContext.Provider>
+    <PosNotificationsContext.Provider value={value}>
+      <PosNotificationWatcher />
+      {children}
+    </PosNotificationsContext.Provider>
   );
 }
 
@@ -10252,6 +10338,7 @@ function PaymentPage({
         }
       }
 
+      playPosSound('PAYMENT_SUCCESS', { dedupeKey: `payment:${resolvedCode}` });
       setPaymentSuccessData({
         invoiceCode: resolvedCode,
         tableName:

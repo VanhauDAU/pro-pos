@@ -55,11 +55,13 @@ import { useLocation, useNavigate, useParams } from 'react-router';
 import type { AuthContextResponse } from '@contracts/auth';
 import type { OrderDetailDto, OrderItemDetail } from '@contracts/order-detail';
 import type { StorePrintSettings } from '@contracts/store';
+import { calculateTimePrice } from '@domain/pricing/engine';
 import { apiRequest } from '@client/lib/api';
 import {
   printReceipt,
   type PosReceiptPrintData,
   type PosReceiptPrintOptions,
+  type PosReceiptTimeSegment,
 } from '@client/lib/pos-receipt-printer';
 import { usePosPollingInterval, useRealtime } from '@client/realtime/RealtimeProvider';
 import { ReceiptPreviewModal, ReceiptPreviewPaper } from './ReceiptPreviewModal';
@@ -551,6 +553,41 @@ export function OrderDetailPage({
                 timeEndedAtMs:
                   data.order.status === 'OPEN' ? null : (data.order.closedAt ?? Date.now()),
                 timeElapsedSeconds: liveTotalElapsed,
+                timeSegments: liveTimeSegments.flatMap((s): PosReceiptTimeSegment[] => {
+                  if (s.pricingRuleSnapshot) {
+                    const singlePricing = calculateTimePrice({
+                      startedAtMs: s.startedAt,
+                      endedAtMs:
+                        s.endedAt ??
+                        (data.order.status === 'OPEN'
+                          ? now
+                          : (data.order.closedAt ?? now)),
+                      config: s.pricingRuleSnapshot,
+                    });
+                    if (singlePricing.segments && singlePricing.segments.length > 0) {
+                      return singlePricing.segments.map((ps): PosReceiptTimeSegment => ({
+                        name: ps.name,
+                        type: ps.type,
+                        startedAtMs: ps.startedAtMs,
+                        endedAtMs: ps.endedAtMs,
+                        elapsedSeconds: ps.elapsedSeconds,
+                        priceVnd: ps.priceVnd,
+                        amount: ps.amountBeforeRoundingVnd,
+                      }));
+                    }
+                  }
+                  return [
+                    {
+                      name: s.rateNameSnapshot || 'Giá tính giờ',
+                      type: 'BASE' as const,
+                      startedAtMs: s.startedAt,
+                      endedAtMs: s.endedAt,
+                      elapsedSeconds: s.elapsedSeconds,
+                      priceVnd: s.unitPriceSnapshot,
+                      amount: s.amountAfterRoundingVnd,
+                    },
+                  ];
+                }),
                 tableSegments: liveTimeSegments.map((s) => ({
                   tableName: s.tableName,
                   startedAtMs: s.startedAt,

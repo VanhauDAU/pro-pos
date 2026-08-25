@@ -207,7 +207,7 @@ export function OwnerPrintSettingsPage() {
       customAddress: printSettings.data.customAddress || storeSettings.data?.address || null,
       footerLine1: printSettings.data.footerLine1 ?? 'Cảm ơn quý khách và hẹn gặp lại',
       footerLine1Bold: printSettings.data.footerLine1Bold ?? false,
-      footerLine2: printSettings.data.footerLine2 ?? 'Một sản phẩm của Pro POS',
+      footerLine2: printSettings.data.footerLine2 ?? 'Một sản phẩm của Văn Hậu IT',
       footerLine2Bold: printSettings.data.footerLine2Bold ?? true,
       printWifiEnabled: printSettings.data.printWifiEnabled ?? false,
       wifiName: printSettings.data.wifiName ?? null,
@@ -360,7 +360,7 @@ export function OwnerPrintSettingsPage() {
         customAddress: printSettings.data.customAddress || storeSettings.data?.address || null,
         footerLine1: printSettings.data.footerLine1 ?? 'Cảm ơn quý khách và hẹn gặp lại',
         footerLine1Bold: printSettings.data.footerLine1Bold ?? false,
-        footerLine2: printSettings.data.footerLine2 ?? 'Một sản phẩm của Pro POS',
+        footerLine2: printSettings.data.footerLine2 ?? 'Một sản phẩm của Văn Hậu IT',
         footerLine2Bold: printSettings.data.footerLine2Bold ?? true,
         printWifiEnabled: printSettings.data.printWifiEnabled ?? false,
         wifiName: printSettings.data.wifiName ?? null,
@@ -430,7 +430,7 @@ export function OwnerPrintSettingsPage() {
           .then((printers) => {
             if (isMounted) setSystemPrinters(printers);
           })
-          .catch(() => {});
+          .catch(() => { });
       }
     });
     return () => {
@@ -715,7 +715,7 @@ export function OwnerPrintSettingsPage() {
             customAddressEnabled: false,
             footerLine1: 'Cảm ơn quý khách và hẹn gặp lại',
             footerLine1Bold: false,
-            footerLine2: 'Một sản phẩm của Pro POS',
+            footerLine2: 'Một sản phẩm của Văn Hậu IT',
             footerLine2Bold: true,
             printWifiEnabled: false,
             paperSize: 'K80',
@@ -1003,7 +1003,7 @@ export function OwnerPrintSettingsPage() {
                     </div>
                     <Form.Item name="footerLine2" style={{ marginBottom: 16 }}>
                       <Input
-                        placeholder="Một sản phẩm của Pro POS"
+                        placeholder="Một sản phẩm của Văn Hậu IT"
                         size="large"
                         maxLength={255}
                         allowClear
@@ -1176,8 +1176,8 @@ export function OwnerPrintSettingsPage() {
                       {(templateConfig.showCustomerPhone ||
                         templateConfig.showCustomerAddress ||
                         templateConfig.showOrderNote) && (
-                        <div className="thermal-receipt-divider-dash" />
-                      )}
+                          <div className="thermal-receipt-divider-dash" />
+                        )}
 
                       <div className="thermal-receipt-row">
                         <span className="thermal-receipt-label">Khách hàng</span>
@@ -1253,40 +1253,162 @@ export function OwnerPrintSettingsPage() {
                       <div className="thermal-receipt-item-row">
                         <div className="thermal-receipt-item-main">
                           <span style={{ flex: 1, fontWeight: 600 }}>1. Billiard</span>
-                          {previewPaperSize === 'K80' && templateConfig.showHourlyUnitPrice && (
-                            <span style={{ width: 65, textAlign: 'right' }}>
-                              50,000{templateConfig.showHourlyUnitDuration ? '/1h' : ''}
-                            </span>
-                          )}
-                          <span
-                            style={{
-                              width: previewPaperSize === 'K58' ? 48 : 65,
-                              textAlign: 'right',
-                              fontWeight: 600,
-                            }}
-                          >
-                            50,000
-                          </span>
+                          {!templateConfig.showHourlyDetail ||
+                            templateConfig.hourlyDetailMode === 'TOTAL_ONLY' ? (
+                            <>
+                              {previewPaperSize === 'K80' && templateConfig.showHourlyUnitPrice && (
+                                <span style={{ width: 65, textAlign: 'right' }}>
+                                  60,000{templateConfig.showHourlyUnitDuration ? '/1h' : ''}
+                                </span>
+                              )}
+                              <span
+                                style={{
+                                  width: previewPaperSize === 'K58' ? 48 : 65,
+                                  textAlign: 'right',
+                                  fontWeight: 600,
+                                }}
+                              >
+                                150,000
+                              </span>
+                            </>
+                          ) : null}
                         </div>
-                        {previewPaperSize === 'K58' && templateConfig.showHourlyUnitPrice && (
-                          <div className="thermal-receipt-item-sub">
-                            Đ.Giá: 50,000{templateConfig.showHourlyUnitDuration ? '/1h' : ''}
-                          </div>
-                        )}
-                        {templateConfig.showHourlyDetail && (
-                          <div className="thermal-receipt-item-sub">
-                            {templateConfig.hourlyDetailMode === 'FULL_TIMELOG' ? (
-                              <>
-                                <div>
-                                  {templateConfig.showHourlyTimeWithSeconds
-                                    ? '18:00:00 - 20:30:00 20/06/2026'
-                                    : '18:00 - 20:30 20/06/2026'}
-                                </div>
-                                <div style={{ color: '#64748b' }}>= 1 giờ 30 phút</div>
-                              </>
-                            ) : (
-                              <div>= 1 giờ 30 phút</div>
+
+                        {!templateConfig.showHourlyDetail ||
+                          templateConfig.hourlyDetailMode === 'TOTAL_ONLY' ? (
+                          <>
+                            {previewPaperSize === 'K58' && templateConfig.showHourlyUnitPrice && (
+                              <div className="thermal-receipt-item-sub">
+                                Đ.Giá: 60,000{templateConfig.showHourlyUnitDuration ? '/1h' : ''}
+                              </div>
                             )}
+                            {templateConfig.showHourlyDetail && (
+                              <div className="thermal-receipt-item-sub" style={{ color: '#64748b' }}>
+                                = 2 giờ 30 phút
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <div className="thermal-receipt-item-sub">
+                            {/* Segment 1: Giờ đầu */}
+                            <div style={{ marginTop: 3 }}>
+                              <div>
+                                {templateConfig.showHourlyTimeWithSeconds
+                                  ? '18:00:00 - 18:30:00'
+                                  : '18:00 - 18:30'}
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                                <span style={{ flex: 1 }}>20/06/2024</span>
+                                {previewPaperSize === 'K80' && templateConfig.showHourlyUnitPrice && (
+                                  <span style={{ width: 65, textAlign: 'right' }}>60,000</span>
+                                )}
+                                <span
+                                  style={{
+                                    width: previewPaperSize === 'K58' ? 48 : 65,
+                                    textAlign: 'right',
+                                    fontWeight: 600,
+                                  }}
+                                >
+                                  60,000
+                                </span>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                                <span style={{ flex: 1, color: '#64748b' }}>=Giờ đầu</span>
+                                {previewPaperSize === 'K80' &&
+                                  templateConfig.showHourlyUnitPrice &&
+                                  templateConfig.showHourlyUnitDuration && (
+                                    <span style={{ width: 65, textAlign: 'right', color: '#64748b' }}>
+                                      /1h
+                                    </span>
+                                  )}
+                                <span style={{ width: previewPaperSize === 'K58' ? 48 : 65 }} />
+                              </div>
+                              {previewPaperSize === 'K58' && templateConfig.showHourlyUnitPrice && (
+                                <div className="thermal-receipt-item-sub">
+                                  Đ.Giá: 60,000{templateConfig.showHourlyUnitDuration ? '/1h' : ''}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Segment 2: Giá thường */}
+                            <div style={{ marginTop: 6 }}>
+                              <div>
+                                {templateConfig.showHourlyTimeWithSeconds
+                                  ? '18:30:00 - 19:30:00'
+                                  : '18:30 - 19:30'}
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                                <span style={{ flex: 1 }}>20/06/2024</span>
+                                {previewPaperSize === 'K80' && templateConfig.showHourlyUnitPrice && (
+                                  <span style={{ width: 65, textAlign: 'right' }}>40,000</span>
+                                )}
+                                <span
+                                  style={{
+                                    width: previewPaperSize === 'K58' ? 48 : 65,
+                                    textAlign: 'right',
+                                    fontWeight: 600,
+                                  }}
+                                >
+                                  40,000
+                                </span>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                                <span style={{ flex: 1, color: '#64748b' }}>=1 giờ</span>
+                                {previewPaperSize === 'K80' &&
+                                  templateConfig.showHourlyUnitPrice &&
+                                  templateConfig.showHourlyUnitDuration && (
+                                    <span style={{ width: 65, textAlign: 'right', color: '#64748b' }}>
+                                      /1h
+                                    </span>
+                                  )}
+                                <span style={{ width: previewPaperSize === 'K58' ? 48 : 65 }} />
+                              </div>
+                              {previewPaperSize === 'K58' && templateConfig.showHourlyUnitPrice && (
+                                <div className="thermal-receipt-item-sub">
+                                  Đ.Giá: 40,000{templateConfig.showHourlyUnitDuration ? '/1h' : ''}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Segment 3: Khung giờ tối */}
+                            <div style={{ marginTop: 6 }}>
+                              <div>
+                                {templateConfig.showHourlyTimeWithSeconds
+                                  ? '19:30:00 - 20:30:00'
+                                  : '19:30 - 20:30'}
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                                <span style={{ flex: 1 }}>20/06/2024</span>
+                                {previewPaperSize === 'K80' && templateConfig.showHourlyUnitPrice && (
+                                  <span style={{ width: 65, textAlign: 'right' }}>50,000</span>
+                                )}
+                                <span
+                                  style={{
+                                    width: previewPaperSize === 'K58' ? 48 : 65,
+                                    textAlign: 'right',
+                                    fontWeight: 600,
+                                  }}
+                                >
+                                  50,000
+                                </span>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                                <span style={{ flex: 1, color: '#64748b' }}>=1 giờ</span>
+                                {previewPaperSize === 'K80' &&
+                                  templateConfig.showHourlyUnitPrice &&
+                                  templateConfig.showHourlyUnitDuration && (
+                                    <span style={{ width: 65, textAlign: 'right', color: '#64748b' }}>
+                                      /1h
+                                    </span>
+                                  )}
+                                <span style={{ width: previewPaperSize === 'K58' ? 48 : 65 }} />
+                              </div>
+                              {previewPaperSize === 'K58' && templateConfig.showHourlyUnitPrice && (
+                                <div className="thermal-receipt-item-sub">
+                                  Đ.Giá: 50,000{templateConfig.showHourlyUnitDuration ? '/1h' : ''}
+                                </div>
+                              )}
+                            </div>
                           </div>
                         )}
                       </div>

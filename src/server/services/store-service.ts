@@ -288,7 +288,7 @@ export class StoreService {
       customAddress: null,
       footerLine1: 'Cảm ơn quý khách và hẹn gặp lại',
       footerLine1Bold: false,
-      footerLine2: 'Một sản phẩm của Pro POS',
+      footerLine2: 'Một sản phẩm của Văn Hậu IT',
       footerLine2Bold: true,
       printWifiEnabled: false,
       wifiName: null,

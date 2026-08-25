@@ -58,7 +58,7 @@ describe('verifyLocationCoordinates core engine', () => {
     });
     expect(result.verified).toBe(true);
     expect(result.distanceMeters).toBe(0);
-    expect(result.expiresAt).toBe(serverNow + 15 * 60_000);
+    expect(result.expiresAt).toBe(serverNow + 60 * 60_000);
   });
 
   it('throws STORE_LOCATION_NOT_CONFIGURED if store coordinates are null when enabled', () => {
@@ -125,7 +125,7 @@ describe('verifyLocationCoordinates core engine', () => {
     ).toThrowError('nằm ngoài bán kính cho phép');
   });
 
-  it('accepts valid GPS reading within allowed radius and returns 15m server TTL', () => {
+  it('accepts valid GPS reading within allowed radius and returns 60m server TTL', () => {
     // 50m away with good 15m accuracy
     const closeLat = 16.0548;
     const closeLng = 108.2022;
@@ -146,7 +146,7 @@ describe('verifyLocationCoordinates core engine', () => {
     expect(result.allowedRadiusMeters).toBe(300);
     expect(result.accuracyMeters).toBe(15);
     expect(result.verifiedAt).toBe(serverNow);
-    expect(result.expiresAt).toBe(serverNow + 15 * 60_000);
+    expect(result.expiresAt).toBe(serverNow + 60 * 60_000);
   });
 });
 

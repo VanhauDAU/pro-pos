@@ -115,11 +115,11 @@ export function GuestOrderPage() {
   const [locationError, setLocationError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<
     | ((coords?: {
-        latitude: number;
-        longitude: number;
-        accuracyMeters: number;
-        capturedAt: number;
-      }) => void | Promise<void>)
+      latitude: number;
+      longitude: number;
+      accuracyMeters: number;
+      capturedAt: number;
+    }) => void | Promise<void>)
     | null
   >(null);
   const [localLocationVerified, setLocalLocationVerified] = useState(false);
@@ -260,18 +260,27 @@ export function GuestOrderPage() {
       lines: [
         ...(order.time
           ? [
-              {
-                id: 'time-session',
-                name: 'Tiền giờ',
-                quantity: 1,
-                unitPrice: order.time.basePriceVnd ?? order.time.amountAfterRoundingVnd,
-                totalPrice: order.time.amountAfterRoundingVnd,
-                isTime: true,
-                timeStartedAtMs: order.time.startedAtMs,
-                timeEndedAtMs: order.time.endedAtMs,
-                timeElapsedSeconds: order.time.elapsedSeconds,
-              },
-            ]
+            {
+              id: 'time-session',
+              name: 'Tiền giờ',
+              quantity: 1,
+              unitPrice: order.time.basePriceVnd ?? order.time.amountAfterRoundingVnd,
+              totalPrice: order.time.amountAfterRoundingVnd,
+              isTime: true,
+              timeStartedAtMs: order.time.startedAtMs,
+              timeEndedAtMs: order.time.endedAtMs,
+              timeElapsedSeconds: order.time.elapsedSeconds,
+              timeSegments: order.time.segments?.map((s) => ({
+                name: s.name,
+                type: s.type,
+                startedAtMs: s.startedAtMs,
+                endedAtMs: s.endedAtMs,
+                elapsedSeconds: s.elapsedSeconds,
+                priceVnd: s.priceVnd,
+                amount: s.amountAfterRoundingVnd,
+              })),
+            },
+          ]
           : []),
         ...order.items.map((it) => ({
           id: it.id,
@@ -549,13 +558,13 @@ export function GuestOrderPage() {
     }: {
       type: 'CALL_STAFF' | 'CHECKOUT_REQUEST';
       coords?:
-        | {
-            latitude: number;
-            longitude: number;
-            accuracyMeters: number;
-            capturedAt?: number;
-          }
-        | undefined;
+      | {
+        latitude: number;
+        longitude: number;
+        accuracyMeters: number;
+        capturedAt?: number;
+      }
+      | undefined;
     }) => {
       const loc = coords ?? lastVerifiedCoords.current ?? undefined;
       return jsonRequest('/api/v1/guest-order/service-requests', {
@@ -965,7 +974,7 @@ export function GuestOrderPage() {
                   setActiveOrderDrawerOpen(true);
                 }}
               >
-                Xem chi tiết <RightOutlined />
+                Xem HĐ tạm tính <RightOutlined />
               </Button>
             </div>
 
@@ -986,7 +995,7 @@ export function GuestOrderPage() {
                         Math.floor(
                           ((activeOrderQuery.data.time.endedAtMs ?? clientNow) -
                             activeOrderQuery.data.time.startedAtMs) /
-                            1000,
+                          1000,
                         ),
                       ),
                     )}
@@ -1009,11 +1018,10 @@ export function GuestOrderPage() {
           <div className="qr-guest-status-banner" onClick={() => setHistoryDrawerOpen(true)}>
             <div className="qr-guest-status-banner__left">
               <span
-                className={`qr-guest-status-banner__badge ${
-                  latestRequest.status === 'ACCEPTED'
-                    ? 'qr-guest-status-banner__badge--accepted'
-                    : 'qr-guest-status-banner__badge--pending'
-                }`}
+                className={`qr-guest-status-banner__badge ${latestRequest.status === 'ACCEPTED'
+                  ? 'qr-guest-status-banner__badge--accepted'
+                  : 'qr-guest-status-banner__badge--pending'
+                  }`}
               >
                 {latestRequest.status === 'ACCEPTED' ? (
                   <>
@@ -1400,43 +1408,26 @@ export function GuestOrderPage() {
                         </div>
                       </div>
 
-                      {/* Item Note Section */}
+                      {/* Item Note Section — auto-save, no buttons */}
                       <div className="qr-cart-item-note-section">
                         {isEditingNote ? (
-                          <div className="qr-cart-item-note-edit">
-                            <Input
-                              size="small"
-                              placeholder="Ghi chú món này (vd: ít đường, không đá...)"
-                              value={tempItemNote}
-                              maxLength={100}
-                              autoFocus
-                              onChange={(e) => setTempItemNote(e.target.value)}
-                              onPressEnter={() => {
-                                handleUpdateItemNote(line.variant.id, tempItemNote);
-                                setEditingNoteVariantId(null);
-                              }}
-                              className="qr-cart-item-note-input"
-                            />
-                            <div className="qr-cart-item-note-edit-actions">
-                              <Button
-                                size="small"
-                                type="primary"
-                                onClick={() => {
-                                  handleUpdateItemNote(line.variant.id, tempItemNote);
-                                  setEditingNoteVariantId(null);
-                                }}
-                              >
-                                Lưu
-                              </Button>
-                              <Button size="small" onClick={() => setEditingNoteVariantId(null)}>
-                                Hủy
-                              </Button>
-                            </div>
-                          </div>
+                          <Input
+                            size="small"
+                            placeholder="Ghi chú món này (vd: ít đường, không đá...)"
+                            value={tempItemNote}
+                            maxLength={100}
+                            autoFocus
+                            className="qr-cart-item-note-input"
+                            onChange={(e) => {
+                              setTempItemNote(e.target.value);
+                              handleUpdateItemNote(line.variant.id, e.target.value);
+                            }}
+                            onBlur={() => setEditingNoteVariantId(null)}
+                          />
                         ) : line.note ? (
                           <div className="qr-cart-item-note-badge">
                             <span className="qr-cart-item-note-text">
-                              📝 <strong>Ghi chú:</strong> {line.note}
+                              📝 {line.note}
                             </span>
                             <div className="qr-cart-item-note-btns">
                               <button
@@ -1476,36 +1467,16 @@ export function GuestOrderPage() {
                 })}
               </div>
 
-              {/* Table Order Notes & Quick Suggestions */}
+              {/* Table Order Note */}
               <div className="qr-cart-table-note-card">
-                <div className="qr-cart-table-note-header">
-                  <span className="qr-cart-table-note-title">
-                    <FileTextOutlined /> Ghi chú cho cả bàn
-                  </span>
-                  <span className="qr-cart-table-note-hint">Chạm gợi ý để chọn nhanh</span>
+                <div className="qr-cart-table-note-title">
+                  <FileTextOutlined /> Ghi chú cho bàn
                 </div>
-
-                <div className="qr-cart-quick-chips">
-                  {QUICK_TABLE_NOTES.map((chip) => {
-                    const isSelected = orderNote.includes(chip);
-                    return (
-                      <button
-                        key={chip}
-                        type="button"
-                        className={`qr-cart-quick-chip ${isSelected ? 'is-selected' : ''}`}
-                        onClick={() => handleToggleQuickNote(chip)}
-                      >
-                        {chip}
-                      </button>
-                    );
-                  })}
-                </div>
-
                 <Input.TextArea
                   rows={2}
                   maxLength={200}
                   showCount
-                  placeholder="Nhập thêm ghi chú phục vụ cho nhà hàng nếu cần..."
+                  placeholder="Yêu cầu đặc biệt, ít cay, không đá... (tùy chọn)"
                   value={orderNote}
                   onChange={(e) => setOrderNote(e.target.value)}
                   className="qr-cart-table-note-input"
@@ -1672,11 +1643,40 @@ export function GuestOrderPage() {
                     disabled={modalQuantity <= 1}
                     onClick={() => setModalQuantity((q) => Math.max(1, q - 1))}
                   />
-                  <span
-                    style={{ fontSize: 18, fontWeight: 800, minWidth: 28, textAlign: 'center' }}
-                  >
-                    {modalQuantity}
-                  </span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={modalQuantity}
+                    onChange={(e) => {
+                      const raw = e.target.value.replace(/\D/g, '');
+                      if (raw === '') {
+                        setModalQuantity('' as unknown as number);
+                        return;
+                      }
+                      const num = Math.min(50, Math.max(1, parseInt(raw, 10)));
+                      setModalQuantity(num);
+                    }}
+                    onBlur={() => {
+                      if (!modalQuantity || Number(modalQuantity) < 1) {
+                        setModalQuantity(1);
+                      }
+                    }}
+                    style={{
+                      fontSize: 18,
+                      fontWeight: 800,
+                      width: 44,
+                      textAlign: 'center',
+                      border: '1.5px solid #e2e8f0',
+                      borderRadius: 8,
+                      padding: '4px 0',
+                      outline: 'none',
+                      background: '#f8fafc',
+                      appearance: 'none',
+                      MozAppearance: 'textfield',
+                    }}
+                    onFocus={(e) => e.target.select()}
+                  />
                   <Button
                     size="large"
                     shape="circle"
@@ -1984,46 +1984,46 @@ export function GuestOrderPage() {
           footer={
             isLocationVerified
               ? [
-                  <Button
-                    key="reverify"
-                    loading={isVerifyingLocation}
-                    onClick={handleVerifyLocation}
-                    icon={<AimOutlined />}
-                  >
-                    Xác minh lại
-                  </Button>,
-                  <Button
-                    key="close"
-                    type="primary"
-                    onClick={() => {
-                      setLocationModalOpen(false);
-                      setPendingAction(null);
-                    }}
-                  >
-                    Đã hiểu
-                  </Button>,
-                ]
+                <Button
+                  key="reverify"
+                  loading={isVerifyingLocation}
+                  onClick={handleVerifyLocation}
+                  icon={<AimOutlined />}
+                >
+                  Xác minh lại
+                </Button>,
+                <Button
+                  key="close"
+                  type="primary"
+                  onClick={() => {
+                    setLocationModalOpen(false);
+                    setPendingAction(null);
+                  }}
+                >
+                  Đã hiểu
+                </Button>,
+              ]
               : [
-                  <Button
-                    key="cancel"
-                    disabled={isVerifyingLocation}
-                    onClick={() => {
-                      setLocationModalOpen(false);
-                      setPendingAction(null);
-                    }}
-                  >
-                    Để sau
-                  </Button>,
-                  <Button
-                    key="verify"
-                    type="primary"
-                    loading={isVerifyingLocation}
-                    onClick={handleVerifyLocation}
-                    icon={<AimOutlined />}
-                  >
-                    Xác nhận vị trí
-                  </Button>,
-                ]
+                <Button
+                  key="cancel"
+                  disabled={isVerifyingLocation}
+                  onClick={() => {
+                    setLocationModalOpen(false);
+                    setPendingAction(null);
+                  }}
+                >
+                  Để sau
+                </Button>,
+                <Button
+                  key="verify"
+                  type="primary"
+                  loading={isVerifyingLocation}
+                  onClick={handleVerifyLocation}
+                  icon={<AimOutlined />}
+                >
+                  Xác nhận vị trí
+                </Button>,
+              ]
           }
         >
           <div style={{ padding: '8px 0', fontSize: 14, color: '#334155', lineHeight: 1.6 }}>
@@ -2092,14 +2092,7 @@ export function GuestOrderPage() {
                     description={locationError}
                     style={{ marginTop: 8 }}
                   />
-                ) : (
-                  <Alert
-                    type="info"
-                    showIcon
-                    description="Hệ thống chỉ kiểm tra vị trí một lần và tự động lưu phiên trong 15 phút. Bạn vẫn có thể xem menu và chọn món thoải mái bất cứ lúc nào."
-                    style={{ marginTop: 8 }}
-                  />
-                )}
+                ) : null}
               </div>
             )}
           </div>

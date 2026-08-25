@@ -12,13 +12,23 @@
  */
 
 export type PosSoundType =
-  'NEW_QR_ORDER' | 'PAYMENT_SUCCESS' | 'TABLE_OPEN_REQUEST' | 'CALL_STAFF' | 'NOTIFICATION_CHIME';
+  | 'NEW_QR_ORDER'
+  | 'PAYMENT_SUCCESS'
+  | 'TABLE_OPEN_REQUEST'
+  | 'CALL_STAFF'
+  | 'NOTIFICATION_CHIME'
+  | 'GUEST_ORDER_SENT'
+  | 'GUEST_CHECKOUT_REQUEST_SENT'
+  | 'GUEST_QR_OPEN_REQUESTED';
 
 const SOUND_FILES: Record<Exclude<PosSoundType, 'NOTIFICATION_CHIME'>, string> = {
   NEW_QR_ORDER: '/sounds/sound_goimonmoi.ogg',
   PAYMENT_SUCCESS: '/sounds/sound_thanhtoanthanhcong.ogg',
   TABLE_OPEN_REQUEST: '/sounds/sound_yeuccaumoban.ogg',
   CALL_STAFF: '/sounds/sound_yeuccaumoban.ogg',
+  GUEST_ORDER_SENT: '/sounds/guest_order_sent.ogg',
+  GUEST_CHECKOUT_REQUEST_SENT: '/sounds/guest_checkout_request_sent.ogg',
+  GUEST_QR_OPEN_REQUESTED: '/sounds/guest_qr_open_requested.ogg',
 };
 
 interface QueueItem {

@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS store_print_settings (
   custom_address TEXT,
   footer_line_1 TEXT DEFAULT 'Cảm ơn quý khách và hẹn gặp lại',
   footer_line_1_bold INTEGER NOT NULL DEFAULT 0,
-  footer_line_2 TEXT DEFAULT 'Một sản phẩm của Pro POS',
+  footer_line_2 TEXT DEFAULT 'Một sản phẩm của Văn Hậu IT',
   footer_line_2_bold INTEGER NOT NULL DEFAULT 1,
   print_wifi_enabled INTEGER NOT NULL DEFAULT 0,
   wifi_name TEXT,

@@ -81,6 +81,16 @@ export interface GuestActiveOrderItemDto {
   } | null;
 }
 
+export interface GuestActiveOrderTimeSegmentDto {
+  name: string;
+  type: 'BASE' | 'FIRST_PERIOD' | 'SPECIAL' | string;
+  startedAtMs: number;
+  endedAtMs: number | null;
+  elapsedSeconds: number;
+  priceVnd: number;
+  amountAfterRoundingVnd: number;
+}
+
 export interface GuestActiveOrderTimeDto {
   status: 'RUNNING' | 'PAUSED' | 'ENDED';
   startedAtMs: number;
@@ -89,6 +99,7 @@ export interface GuestActiveOrderTimeDto {
   elapsedSeconds: number;
   basePriceVnd: number;
   amountAfterRoundingVnd: number;
+  segments?: GuestActiveOrderTimeSegmentDto[];
 }
 
 export interface GuestActiveOrderDto {

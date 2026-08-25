@@ -43,6 +43,8 @@ export interface LocationVerificationResult {
   expiresAt: number;
 }
 
+export const LOCATION_VERIFICATION_SESSION_TTL_MS = 60 * 60_000; // 60 minutes (1 hour)
+
 /**
  * Core verification engine for GPS coordinates.
  * Validates store configuration, GPS timestamp freshness, accuracy threshold, and radial proximity.
@@ -53,7 +55,12 @@ export function verifyLocationCoordinates(params: {
   serverNow: number;
   sessionTtlMs?: number;
 }): LocationVerificationResult {
-  const { storeSettings, input, serverNow, sessionTtlMs = 15 * 60_000 } = params;
+  const {
+    storeSettings,
+    input,
+    serverNow,
+    sessionTtlMs = LOCATION_VERIFICATION_SESSION_TTL_MS,
+  } = params;
 
   // 1. If feature is disabled, bypass check
   if (!storeSettings.locationVerificationEnabled) {

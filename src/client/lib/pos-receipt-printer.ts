@@ -4,7 +4,13 @@ import {
   parsePrintTemplateConfigs,
   parsePrinterDeviceConfig,
 } from '@contracts/store';
-import { buildEscPosReceipt, type PosReceiptPrintOptions } from '@domain/receipt/receipt-generator';
+import {
+  buildEscPosReceipt,
+  formatDateOnly,
+  formatSegmentDurationLabel,
+  formatTimeOnly,
+  type PosReceiptPrintOptions,
+} from '@domain/receipt/receipt-generator';
 import { checkQzTrayStatus, printEscPosReceipt } from './qz-tray-service';
 
 export * from '@domain/receipt/receipt-generator';
@@ -323,7 +329,11 @@ export function generateThermalReceiptHtml(
       const prefix = template.showItemIndex ? `${timeIdx}. ` : '';
       timeIdx++;
 
-      if (line.tableSegments && line.tableSegments.length > 1) {
+      if (
+        line.tableSegments &&
+        line.tableSegments.length > 1 &&
+        (!line.timeSegments || line.timeSegments.length === 0)
+      ) {
         // Table transfers
         html += `
           <div class="thermal-receipt-item-row" style="margin-top: 3px;">
@@ -343,6 +353,49 @@ export function generateThermalReceiptHtml(
           html += `<div class="thermal-receipt-item-sub" style="color: #64748b;">= Tổng thời gian: ${formatDuration(line.timeElapsedSeconds || 0)}</div>`;
         }
         html += `</div>`;
+      } else if (
+        template.showHourlyDetail &&
+        template.hourlyDetailMode === 'FULL_TIMELOG' &&
+        line.timeSegments &&
+        line.timeSegments.length > 0
+      ) {
+        html += `
+          <div class="thermal-receipt-item-row" style="margin-top: 3px;">
+            <div class="thermal-receipt-item-main">
+              <span style="flex: 1; font-weight: 600;">${prefix}${escapeHtml(line.name)}</span>
+            </div>
+            ${line.timeSegments
+              .map((seg, sIdx) => {
+                const startStr = formatTimeOnly(
+                  seg.startedAtMs,
+                  template.showHourlyTimeWithSeconds,
+                );
+                const endStr = seg.endedAtMs
+                  ? formatTimeOnly(seg.endedAtMs, template.showHourlyTimeWithSeconds)
+                  : 'Hiện tại';
+                const timeRangeStr = `${startStr} - ${endStr}`;
+                const dateStr = formatDateOnly(seg.startedAtMs);
+                const durationLabel = formatSegmentDurationLabel(seg);
+                return `
+                  <div class="thermal-receipt-time-segment" style="margin-top: ${sIdx > 0 ? '6px' : '3px'};">
+                    <div>${timeRangeStr}</div>
+                    <div style="display: flex; align-items: baseline;">
+                      <span style="flex: 1;">${dateStr}</span>
+                      ${!isK58 && template.showHourlyUnitPrice ? `<span style="width: 65px; text-align: right;">${formatVnd(seg.priceVnd)}</span>` : ''}
+                      <span style="width: ${isK58 ? '48px' : '65px'}; text-align: right; font-weight: 600;">${formatVnd(seg.amount)}</span>
+                    </div>
+                    <div style="display: flex; align-items: baseline;">
+                      <span style="flex: 1; color: #64748b;">${durationLabel}</span>
+                      ${!isK58 && template.showHourlyUnitPrice && template.showHourlyUnitDuration ? `<span style="width: 65px; text-align: right; color: #64748b;">/1h</span>` : ''}
+                      <span style="width: ${isK58 ? '48px' : '65px'};"></span>
+                    </div>
+                    ${isK58 && template.showHourlyUnitPrice ? `<div class="thermal-receipt-item-sub">Đ.Giá: ${formatVnd(seg.priceVnd)}${template.showHourlyUnitDuration ? '/1h' : ''}</div>` : ''}
+                  </div>
+                `;
+              })
+              .join('')}
+          </div>
+        `;
       } else {
         html += `
           <div class="thermal-receipt-item-row" style="margin-top: 3px;">

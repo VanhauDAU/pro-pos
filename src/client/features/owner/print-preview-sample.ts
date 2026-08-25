@@ -1,12 +1,17 @@
 import type { PosReceiptPrintData } from '@domain/receipt/receipt-generator';
 
-export const OWNER_PRINT_PREVIEW_TOTAL_VND = 111_000;
+export const OWNER_PRINT_PREVIEW_TOTAL_VND = 213_000;
 
 export function buildOwnerPrintPreviewSample(
   receiptType: 'PROVISIONAL' | 'PAYMENT',
   now = Date.now(),
 ): PosReceiptPrintData {
   const payment = receiptType === 'PAYMENT';
+  const startMs = now - 150 * 60_000; // 2 hours 30 minutes ago
+  const seg1End = startMs + 30 * 60_000;
+  const seg2End = seg1End + 60 * 60_000;
+  const seg3End = now;
+
   return {
     receiptType,
     orderCode: payment ? 'HD-260822-000012' : 'D-260822-0012',
@@ -19,10 +24,10 @@ export function buildOwnerPrintPreviewSample(
     guestPhone: '0966690040',
     guestAddress: '266 Đội Cấn, Ba Đình, Hà Nội',
     note: 'Ít đá, không lấy ống hút',
-    checkInTimeMs: now - 90 * 60_000,
+    checkInTimeMs: startMs,
     issuedAtMs: now,
-    // Gross 143,000 - manual item discount 10,000 - two promotions 22,000 = 111,000.
-    subtotal: 143_000,
+    // Gross 245,000 (Time 150,000 + Goods 95,000) - manual item discount 10,000 - two promotions 22,000 = 213,000.
+    subtotal: 245_000,
     discountTotal: 32_000,
     promotionDiscount: 22_000,
     promotion: {
@@ -59,24 +64,53 @@ export function buildOwnerPrintPreviewSample(
     ...(payment
       ? {
           paymentMethod: 'CASH' as const,
-          cashReceived: 200_000,
-          cashChange: 89_000,
-          paidAmountVnd: 111_000,
+          cashReceived: 300_000,
+          cashChange: 87_000,
+          paidAmountVnd: 213_000,
           debtAmountVnd: 0,
-          paymentAllocations: [{ method: 'CASH' as const, amountVnd: 111_000 }],
+          paymentAllocations: [{ method: 'CASH' as const, amountVnd: 213_000 }],
         }
       : {}),
     lines: [
       {
         id: 'preview-time',
-        name: 'Tiền giờ',
+        name: 'Billiard',
         quantity: 1,
-        unitPrice: 50_000,
-        totalPrice: 48_000,
+        unitPrice: 60_000,
+        totalPrice: 150_000,
         isTime: true,
-        timeStartedAtMs: now - 90 * 60_000,
-        timeEndedAtMs: now,
-        timeElapsedSeconds: 90 * 60,
+        timeStartedAtMs: startMs,
+        timeEndedAtMs: seg3End,
+        timeElapsedSeconds: 150 * 60,
+        timeSegments: [
+          {
+            name: 'Giờ đầu',
+            type: 'FIRST_PERIOD',
+            startedAtMs: startMs,
+            endedAtMs: seg1End,
+            elapsedSeconds: 30 * 60,
+            priceVnd: 60_000,
+            amount: 60_000,
+          },
+          {
+            name: 'Giá thường',
+            type: 'BASE',
+            startedAtMs: seg1End,
+            endedAtMs: seg2End,
+            elapsedSeconds: 60 * 60,
+            priceVnd: 40_000,
+            amount: 40_000,
+          },
+          {
+            name: 'Khung giờ tối',
+            type: 'SPECIAL',
+            startedAtMs: seg2End,
+            endedAtMs: seg3End,
+            elapsedSeconds: 60 * 60,
+            priceVnd: 50_000,
+            amount: 50_000,
+          },
+        ],
       },
       {
         id: 'preview-drink',

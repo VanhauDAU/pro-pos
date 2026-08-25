@@ -4,10 +4,9 @@ import {
   ClockCircleOutlined,
   CreditCardOutlined,
   PlayCircleFilled,
-  ReloadOutlined,
   ShopOutlined,
 } from '@ant-design/icons';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   getGuestAssistantActions,
@@ -182,8 +181,26 @@ export function GuestRobotAssistant({
   const [introSpeaking, setIntroSpeaking] = useState(!introWasSeen);
   const [feedbackSpeaking, setFeedbackSpeaking] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
+  const dockRef = useRef<HTMLElement>(null);
   const [message, setMessage] = useState(() => getGuestAssistantNarration(tableStatus));
   const actions = useMemo(() => getGuestAssistantActions(tableStatus), [tableStatus]);
+
+  // Close panel when clicking/tapping outside the dock
+  useEffect(() => {
+    if (!panelOpen) return;
+    const handleOutsideClick = (e: MouseEvent | TouchEvent) => {
+      if (dockRef.current && !dockRef.current.contains(e.target as Node)) {
+        setPanelOpen(false);
+        setPhase('DOCKED');
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('touchstart', handleOutsideClick);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('touchstart', handleOutsideClick);
+    };
+  }, [panelOpen]);
 
   const finishSpeech = useCallback(() => {
     markIntroSeen(token);
@@ -249,13 +266,6 @@ export function GuestRobotAssistant({
       window.clearTimeout(timer);
     };
   }, [feedback]);
-
-  const startSpeaking = () => {
-    setMessage(getGuestAssistantNarration(tableStatus));
-    setPanelOpen(false);
-    setPhase('SPEAKING');
-  };
-
   const skipIntro = () => {
     markIntroSeen(token);
     setIntroActive(false);
@@ -353,6 +363,7 @@ export function GuestRobotAssistant({
         </section>
       ) : (
         <aside
+          ref={dockRef}
           className={`guest-assistant-dock ${hasCart ? 'has-cart' : ''} ${panelOpen ? 'is-open' : ''}`}
           aria-label="Trợ lý Pro POS"
         >
@@ -372,11 +383,6 @@ export function GuestRobotAssistant({
               ) : (
                 actionList
               )}
-              {phase !== 'FEEDBACK' ? (
-                <button type="button" className="guest-assistant-replay" onClick={startSpeaking}>
-                  <ReloadOutlined /> Nghe lại lời chào
-                </button>
-              ) : null}
             </div>
           ) : null}
           {!panelOpen ? (

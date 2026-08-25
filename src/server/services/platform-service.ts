@@ -207,4 +207,17 @@ export class PlatformService {
     await this.repository.revokeDevice(input.storeId, input.deviceId, Date.now());
     return { success: true };
   }
+
+  async deleteStore(storeId: string) {
+    const result = await this.repository.deleteStore(storeId);
+    if (!result) {
+      throw new AppError('STORE_NOT_FOUND', 'Không tìm thấy cửa hàng.', 404);
+    }
+    if (this.env.MEDIA && result.mediaKeys.length > 0) {
+      await Promise.all(
+        result.mediaKeys.map((key) => this.env.MEDIA.delete(key).catch(() => undefined)),
+      );
+    }
+    return { success: true, storeId };
+  }
 }

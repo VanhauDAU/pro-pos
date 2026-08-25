@@ -306,6 +306,40 @@ describe('Owner and POS activation invariants', () => {
     expect(details.members.length).toBeGreaterThanOrEqual(1);
     expect(details.members[0]?.roleCode).toBe('OWNER');
     expect(details.stats).toBeDefined();
+
+    // Now DELETE the store
+    const deleted = await SELF.fetch(`${ORIGIN}/api/v1/platform/stores/${store.storeId}`, {
+      method: 'DELETE',
+      headers: {
+        Origin: ORIGIN,
+        Cookie: sessionCookie,
+        'X-CSRF-Token': context.csrfToken!,
+      },
+    });
+    expect(deleted.status).toBe(200);
+
+    const storeRow = await env.DB.prepare('SELECT id FROM stores WHERE id = ?')
+      .bind(store.storeId)
+      .first();
+    expect(storeRow).toBeNull();
+
+    const memberRow = await env.DB.prepare('SELECT id FROM store_memberships WHERE store_id = ?')
+      .bind(store.storeId)
+      .first();
+    expect(memberRow).toBeNull();
+
+    const roleRow = await env.DB.prepare('SELECT id FROM roles WHERE store_id = ?')
+      .bind(store.storeId)
+      .first();
+    expect(roleRow).toBeNull();
+
+    const deletedDetails = await SELF.fetch(`${ORIGIN}/api/v1/platform/stores/${store.storeId}`, {
+      headers: {
+        Origin: ORIGIN,
+        Cookie: sessionCookie,
+      },
+    });
+    expect(deletedDetails.status).toBe(404);
   });
 
   it('allows Owner login on a fresh device without creating a POS device', async () => {

@@ -3,6 +3,7 @@ import {
   ClearOutlined,
   ClockCircleOutlined,
   CreditCardOutlined,
+  DeleteOutlined,
   DesktopOutlined,
   DollarOutlined,
   EditOutlined,
@@ -813,6 +814,29 @@ export function SuperAdminPage() {
     }
   };
 
+  const deleteStore = async (store: { id: string; name: string }) => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      await apiRequest(`/api/v1/platform/stores/${store.id}`, {
+        method: 'DELETE',
+        headers: csrfHeaders(),
+      });
+      if (selectedStoreId === store.id) {
+        setSelectedStoreId(null);
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['platform-stores'] }),
+        queryClient.invalidateQueries({ queryKey: ['platform-analytics'] }),
+      ]);
+      message.success(`Đã xóa sạch toàn bộ dữ liệu cửa hàng "${store.name}" thành công!`);
+    } catch (deleteError) {
+      setError(readableError(deleteError));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const toggleRealtime = async (store: { id: string; posRealtimeEnabled: boolean }) => {
     setSubmitting(true);
     setError(null);
@@ -1497,6 +1521,23 @@ export function SuperAdminPage() {
                           {store.status === 'ACTIVE' ? 'Khóa' : 'Mở lại'}
                         </Button>
                       </Popconfirm>
+                      <Popconfirm
+                        title={`Xóa vĩnh viễn cửa hàng "${store.name}"?`}
+                        description="Hành động này sẽ XÓA SẠCH toàn bộ dữ liệu (đơn hàng, hóa đơn, thực đơn, nhân viên, thiết bị, báo cáo...) và KHÔNG THỂ KHÔI PHỤC."
+                        okText="Xóa sạch"
+                        cancelText="Hủy"
+                        okButtonProps={{ danger: true }}
+                        onConfirm={() => deleteStore(store)}
+                      >
+                        <Button
+                          danger
+                          icon={<DeleteOutlined />}
+                          style={{ borderRadius: 6 }}
+                          loading={submitting}
+                        >
+                          Xóa
+                        </Button>
+                      </Popconfirm>
                     </Space>
                   ),
                 },
@@ -1570,6 +1611,18 @@ export function SuperAdminPage() {
               >
                 {detail.store.status === 'ACTIVE' ? 'Khóa' : 'Mở lại'}
               </Button>
+              <Popconfirm
+                title={`Xóa vĩnh viễn cửa hàng "${detail.store.name}"?`}
+                description="Hành động này sẽ XÓA SẠCH toàn bộ dữ liệu (đơn hàng, hóa đơn, thực đơn, nhân viên, thiết bị, báo cáo...) và KHÔNG THỂ KHÔI PHỤC."
+                okText="Xóa sạch"
+                cancelText="Hủy"
+                okButtonProps={{ danger: true }}
+                onConfirm={() => deleteStore(detail.store)}
+              >
+                <Button size="small" danger icon={<DeleteOutlined />} loading={submitting}>
+                  Xóa cửa hàng
+                </Button>
+              </Popconfirm>
             </Space>
           ) : null
         }

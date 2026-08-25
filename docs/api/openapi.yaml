@@ -57,6 +57,13 @@ paths:
   /platform/stores:
     get: { summary: List stores, responses: { '200': { description: Store list } } }
     post: { summary: Create store and Owner, responses: { '201': { description: Created } } }
+  /platform/stores/{storeId}:
+    get: { summary: Get store details, responses: { '200': { description: Store details } } }
+    delete:
+      {
+        summary: Delete store and all its data completely,
+        responses: { '200': { description: Store deleted } },
+      }
   /owner/staff:
     get: { summary: List employees, responses: { '200': { description: Employee list } } }
     post:

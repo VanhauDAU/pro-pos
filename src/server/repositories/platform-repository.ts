@@ -939,4 +939,190 @@ export class PlatformRepository {
         .bind(now, storeId, deviceId),
     ]);
   }
+
+  async deleteStore(storeId: string) {
+    const store = await this.db
+      .prepare('SELECT id FROM stores WHERE id = ?')
+      .bind(storeId)
+      .first<{ id: string }>();
+    if (!store) {
+      return null;
+    }
+
+    // 1. Get media keys to delete from R2
+    const mediaRows = await this.db
+      .prepare('SELECT object_key AS objectKey FROM media_objects WHERE store_id = ?')
+      .bind(storeId)
+      .all<{ objectKey: string }>();
+    const mediaKeys = (mediaRows.results ?? []).map((r) => r.objectKey);
+
+    // 2. Identify users who only belong to this store and are not SUPER_ADMIN
+    const orphanUsersResult = await this.db
+      .prepare(
+        `SELECT user_id AS userId FROM store_memberships
+         WHERE store_id = ?
+           AND user_id NOT IN (SELECT user_id FROM store_memberships WHERE store_id != ?)
+           AND user_id NOT IN (SELECT id FROM users WHERE platform_role = 'SUPER_ADMIN')`,
+      )
+      .bind(storeId, storeId)
+      .all<{ userId: string }>();
+    const orphanUserIds = (orphanUsersResult.results ?? []).map((r) => r.userId);
+
+    // Batch 1: Realtime, Notifications, Audit, Push, Sequences, Settings
+    const batch1 = [
+      this.db.prepare('DELETE FROM audit_logs WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM staff_notification_events WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM realtime_batch_contexts WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM realtime_event_requests WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM realtime_events WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM realtime_store_sequences WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM push_subscriptions WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM invoice_sequences WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM order_sequences WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM store_capabilities WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM store_settings WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM store_print_settings WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM store_bank_accounts WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM media_objects WHERE store_id = ?').bind(storeId),
+    ];
+
+    // Batch 2: Auth, Sessions, Devices
+    const batch2 = [
+      this.db.prepare('DELETE FROM auth_sessions WHERE store_id = ?').bind(storeId),
+      this.db
+        .prepare(
+          'DELETE FROM device_credentials WHERE device_id IN (SELECT id FROM devices WHERE store_id = ?)',
+        )
+        .bind(storeId),
+      this.db.prepare('DELETE FROM activation_grants WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM devices WHERE store_id = ?').bind(storeId),
+    ];
+
+    // Batch 3: QR Guest orders & Service requests
+    const batch3 = [
+      this.db
+        .prepare('DELETE FROM accept_guest_order_request_commands WHERE store_id = ?')
+        .bind(storeId),
+      this.db
+        .prepare('DELETE FROM reject_guest_order_request_commands WHERE store_id = ?')
+        .bind(storeId),
+      this.db
+        .prepare('DELETE FROM create_guest_order_request_commands WHERE store_id = ?')
+        .bind(storeId),
+      this.db.prepare('DELETE FROM guest_order_request_items WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM guest_order_requests WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM service_requests WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM table_open_requests WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM guest_order_sessions WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM table_qr_codes WHERE store_id = ?').bind(storeId),
+    ];
+
+    // Batch 4: POS & Time commands
+    const batch4 = [
+      this.db
+        .prepare('DELETE FROM create_takeaway_order_commands WHERE store_id = ?')
+        .bind(storeId),
+      this.db.prepare('DELETE FROM add_takeaway_item_commands WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM update_order_item_commands WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM remove_order_item_commands WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM update_order_note_commands WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM update_order_guest_commands WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM takeaway_checkout_commands WHERE store_id = ?').bind(storeId),
+      this.db
+        .prepare('DELETE FROM cancel_takeaway_order_commands WHERE store_id = ?')
+        .bind(storeId),
+      this.db.prepare('DELETE FROM create_time_session_commands WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM remove_time_session_commands WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM update_time_range_commands WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM stop_time_commands WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM resume_checkout_commands WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM pause_time_commands WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM resume_time_commands WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM open_table_commands WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM add_item_commands WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM transfer_table_commands WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM checkout_commands WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM cancel_order_commands WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM pos_save_commands WHERE store_id = ?').bind(storeId),
+    ];
+
+    // Batch 5: Invoices, Payments, Orders, Tables
+    const batch5 = [
+      this.db.prepare('DELETE FROM invoice_payment_allocations WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM invoice_lines WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM invoices WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM takeaway_invoice_lines WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM takeaway_invoices WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM takeaway_payments WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM payments WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM payment_snapshots WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM order_call_batch_entries WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM order_call_batches WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM order_promotions WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM order_promotion_suppressions WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM order_items WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM takeaway_order_items WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM takeaway_orders WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM table_time_segments WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM pricing_segments WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM time_pauses WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM time_sessions WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM orders WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM service_tables WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM areas WHERE store_id = ?').bind(storeId),
+    ];
+
+    // Batch 6: Promotions, Customers, Catalog
+    const batch6 = [
+      this.db.prepare('DELETE FROM promotion_targets WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM promotion_customer_groups WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM invoice_promotions WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM promotions WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM customer_debt_entries WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM customer_loyalty_entries WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM customer_loyalty_settings WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM customer_group_members WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM customer_groups WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM customers WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM special_price_windows WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM time_price_configs WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM product_variants WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM products WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM categories WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM units WHERE store_id = ?').bind(storeId),
+    ];
+
+    // Batch 7: Roles, Memberships, Store record
+    const batch7 = [
+      this.db.prepare('DELETE FROM pin_verifiers WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM role_permissions WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM pin_credentials WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM store_memberships WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM roles WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM stores WHERE id = ?').bind(storeId),
+    ];
+
+    await this.db.batch(batch1);
+    await this.db.batch(batch2);
+    await this.db.batch(batch3);
+    await this.db.batch(batch4);
+    await this.db.batch(batch5);
+    await this.db.batch(batch6);
+    await this.db.batch(batch7);
+
+    // Delete orphan users if any
+    for (const userId of orphanUserIds) {
+      try {
+        await this.db.batch([
+          this.db.prepare('DELETE FROM password_credentials WHERE user_id = ?').bind(userId),
+          this.db.prepare('DELETE FROM access_identities WHERE user_id = ?').bind(userId),
+          this.db.prepare('DELETE FROM users WHERE id = ?').bind(userId),
+        ]);
+      } catch {
+        // Continue if other references exist
+      }
+    }
+
+    return { storeId, mediaKeys };
+  }
 }

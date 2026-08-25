@@ -4,6 +4,13 @@ on:
   pull_request:
   push:
     branches: [main, dev]
+  workflow_dispatch:
+    inputs:
+      run_benchmark:
+        description: Run the non-blocking staging benchmark after authenticated E2E
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -35,3 +42,74 @@ jobs:
       - run: pnpm test
       - run: pnpm test:integration
       - run: pnpm build
+
+  authenticated-e2e:
+    name: authenticated E2E (staging)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: staging
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.22.0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+        env:
+          E2E_BASE_URL: ${{ secrets.E2E_BASE_URL }}
+          E2E_OWNER_USERNAME: ${{ secrets.E2E_OWNER_USERNAME }}
+          E2E_OWNER_PASSWORD: ${{ secrets.E2E_OWNER_PASSWORD }}
+          E2E_POS_USERNAME: ${{ secrets.E2E_POS_USERNAME }}
+          E2E_POS_PIN: ${{ secrets.E2E_POS_PIN }}
+          E2E_DEVICE_NAME: GitHub Actions Playwright
+      - name: Upload safe Playwright diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-failures
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  staging-benchmark:
+    name: POS staging benchmark (non-blocking)
+    if: github.event_name == 'workflow_dispatch' && inputs.run_benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: staging
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.22.0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm benchmark:pos:staging
+        env:
+          E2E_BASE_URL: ${{ secrets.E2E_BASE_URL }}
+          E2E_OWNER_USERNAME: ${{ secrets.E2E_OWNER_USERNAME }}
+          E2E_OWNER_PASSWORD: ${{ secrets.E2E_OWNER_PASSWORD }}
+          E2E_POS_USERNAME: ${{ secrets.E2E_POS_USERNAME }}
+          E2E_POS_PIN: ${{ secrets.E2E_POS_PIN }}
+          E2E_DEVICE_NAME: GitHub Actions benchmark
+          E2E_BENCHMARK_ENABLED: 'true'
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pos-staging-benchmark
+          path: artifacts/perf/
+          if-no-files-found: ignore
+          retention-days: 30

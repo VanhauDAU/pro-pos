@@ -31,6 +31,7 @@ import {
   Popconfirm,
   Result,
   Spin,
+  Switch,
   Tag,
   message,
 } from 'antd';
@@ -150,6 +151,7 @@ export function GuestOrderPage() {
   });
   const [nameModalOpen, setNameModalOpen] = useState(false);
   const [tempCustomerName, setTempCustomerName] = useState(() => customerName || '');
+  const [autoRequestTableOpen, setAutoRequestTableOpen] = useState(true);
 
   const [cart, setCart] = useState<Record<string, CartLine>>({});
   const [search, setSearch] = useState('');
@@ -479,7 +481,7 @@ export function GuestOrderPage() {
     });
   };
 
-  const handleConfirmName = (nameToSave?: string) => {
+  const handleConfirmName = (nameToSave?: string, shouldTriggerTableOpen?: boolean) => {
     const raw = nameToSave ?? tempCustomerName;
     const finalName = raw.trim() || 'Khách tại bàn';
     setCustomerName(finalName);
@@ -490,6 +492,17 @@ export function GuestOrderPage() {
       localStorage.setItem(guestNameStorageKey, finalName);
       localStorage.setItem('qr_guest_name', finalName);
     } catch {}
+
+    if (
+      shouldTriggerTableOpen &&
+      !isTableOpen &&
+      !isWaitingForOpen &&
+      !requestTableOpen.isPending
+    ) {
+      void executeWithLocationCheck((coords) =>
+        requestTableOpen.mutate({ coords, customerNameOverride: finalName }),
+      );
+    }
   };
 
   // Submit Order Mutation
@@ -617,19 +630,58 @@ export function GuestOrderPage() {
   });
 
   const requestTableOpen = useMutation({
-    mutationFn: (coords?: {
-      latitude: number;
-      longitude: number;
-      accuracyMeters: number;
-      capturedAt?: number;
-    }) =>
-      jsonRequest<{ requestId: string | null; alreadyOpen: boolean }>(
+    mutationFn: (
+      args?:
+        | {
+            coords?:
+              | {
+                  latitude: number;
+                  longitude: number;
+                  accuracyMeters: number;
+                  capturedAt?: number;
+                }
+              | undefined;
+            customerNameOverride?: string | undefined;
+          }
+        | {
+            latitude: number;
+            longitude: number;
+            accuracyMeters: number;
+            capturedAt?: number;
+          }
+        | undefined,
+    ) => {
+      const isDirectCoords = Boolean(args && 'latitude' in args);
+      const coords = isDirectCoords
+        ? (args as {
+            latitude: number;
+            longitude: number;
+            accuracyMeters: number;
+            capturedAt?: number;
+          })
+        : (
+            args as {
+              coords?: {
+                latitude: number;
+                longitude: number;
+                accuracyMeters: number;
+                capturedAt?: number;
+              };
+            }
+          )?.coords;
+      const customerNameOverride = !isDirectCoords
+        ? (args as { customerNameOverride?: string })?.customerNameOverride
+        : undefined;
+      const nameToSend = (customerNameOverride ?? customerName).trim() || undefined;
+
+      return jsonRequest<{ requestId: string | null; alreadyOpen: boolean }>(
         `/api/v1/guest-order/resolve/${token}/open-request`,
         {
-          customerName: customerName.trim() || undefined,
+          customerName: nameToSend,
           ...(coords ? { location: coords } : {}),
         },
-      ),
+      );
+    },
     onSuccess: async (result) => {
       if (!result.alreadyOpen) {
         playPosSound('GUEST_QR_OPEN_REQUESTED');
@@ -790,22 +842,19 @@ export function GuestOrderPage() {
           {/* 2. Top-Aligned Form Card (Won't get obscured when mobile keyboard opens) */}
           <section className="qr-guest-landing__form-card">
             <div className="qr-guest-landing__card-header">
-              <h2 className="qr-guest-landing__title">Xin chào quý khách! 👋</h2>
-              <p className="qr-guest-landing__desc">
-                Nhập tên hoặc danh xưng của bạn để bắt đầu chọn món nhé:
-              </p>
+              <h2 className="qr-guest-landing__title">Chào bạn! 👋</h2>
             </div>
 
             <div className="qr-guest-landing__input-box">
               <Input
                 size="large"
-                prefix={<UserOutlined style={{ color: '#0975f7', fontSize: 18, marginRight: 6 }} />}
-                placeholder="Nhập tên của bạn (VD: Anh Nam, Chị Linh...)"
+                prefix={<UserOutlined style={{ color: '#0975f7', fontSize: 17, marginRight: 6 }} />}
+                placeholder="Tên của bạn (VD: Nam, Linh...)"
                 value={tempCustomerName}
                 onChange={(e) => setTempCustomerName(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
-                    handleConfirmName();
+                    handleConfirmName(tempCustomerName, autoRequestTableOpen);
                   }
                 }}
                 maxLength={50}
@@ -814,29 +863,34 @@ export function GuestOrderPage() {
               />
             </div>
 
+            {!isTableOpen ? (
+              <div className="qr-guest-landing__switch-row">
+                <span className="qr-guest-landing__switch-label">Yêu cầu mở bàn</span>
+                <Switch
+                  checked={autoRequestTableOpen}
+                  onChange={(checked) => setAutoRequestTableOpen(checked)}
+                  className="qr-guest-landing__switch"
+                />
+              </div>
+            ) : null}
+
             <Button
               type="primary"
               size="large"
               block
               className="qr-guest-landing__submit-btn"
-              onClick={() => handleConfirmName()}
+              onClick={() => handleConfirmName(tempCustomerName, autoRequestTableOpen)}
+              loading={requestTableOpen.isPending}
               icon={<ArrowRightOutlined />}
             >
-              Bắt đầu gọi món
+              Bắt đầu
             </Button>
-
-            <p className="qr-guest-landing__note">
-              💡 Tên sẽ hiển thị trên đơn gửi nhân viên và hóa đơn bàn
-            </p>
           </section>
 
-          {/* 3. Robot Mascot Character Below Form */}
+          {/* 3. Robot Mascot Character */}
           <section className="qr-guest-landing__mascot-section" aria-label="Trợ lý Pro POS">
             <div className="qr-guest-landing__robot-wrap">
               <RobotVisual expression="happy" speaking={false} />
-            </div>
-            <div className="qr-guest-landing__mascot-badge">
-              <span>🤖 Trợ lý thông minh Pro POS sẵn sàng phục vụ</span>
             </div>
           </section>
         </div>

@@ -42,6 +42,11 @@ app.get('/cdn-cgi/access/logout', (c) => {
   return c.redirect(target, 303);
 });
 
+app.use('/sounds/*', async (c, next) => {
+  await next();
+  c.header('Cache-Control', 'public, max-age=31536000, immutable');
+});
+
 app.use('/api/*', async (c, next) => {
   const startedAt = performance.now();
   const requestId = c.req.header('X-Request-ID') ?? crypto.randomUUID();

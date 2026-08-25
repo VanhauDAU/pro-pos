@@ -34,6 +34,7 @@
     "src/client/lib/qz-tray-service.ts",
     "src/client/lib/pos-receipt-printer.ts",
     "src/client/lib/onboarding-audio.ts",
+    "src/client/lib/sound.ts",
     "worker-configuration.d.ts"
   ]
 }

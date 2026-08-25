@@ -71,6 +71,12 @@ platformRoutes.patch('/stores/:storeId/status', async (c) => {
   );
 });
 
+platformRoutes.delete('/stores/:storeId', async (c) => {
+  const storeId = c.req.param('storeId');
+  const result = await new PlatformService(c.env).deleteStore(storeId);
+  return success(c, result);
+});
+
 platformRoutes.patch('/stores/:storeId/capabilities', async (c) => {
   const body = await parseJson(c.req.raw, setStoreCapabilitySchema);
   return success(

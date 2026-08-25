@@ -5,6 +5,7 @@ import {
   CheckOutlined,
   CopyOutlined,
   DeleteOutlined,
+  DownloadOutlined,
   EditOutlined,
   FilterOutlined,
   PictureOutlined,
@@ -50,6 +51,8 @@ import { useNavigate, useSearchParams } from 'react-router';
 import type { AuthContextResponse } from '@contracts/auth';
 import { CameraCaptureModal } from '@client/components/CameraCaptureModal';
 import { ImageCropperModal } from '@client/components/ImageCropperModal';
+import { ProductImportModal } from './ProductImportModal';
+import { downloadCatalogWorkbook, type CatalogExportRow } from './catalog-excel';
 
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 
@@ -309,6 +312,8 @@ export function OwnerProductListPage({
   const [categoryFilters, setCategoryFilters] = useState<string[]>([]);
   const [unitFilters, setUnitFilters] = useState<string[]>([]);
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const products = useQuery({
     queryKey: PRODUCT_QUERY,
     queryFn: () => apiRequest<ProductSummary[]>('/api/v1/owner/catalog/products'),
@@ -412,6 +417,29 @@ export function OwnerProductListPage({
       messageApi.success('Đã khôi phục mặt hàng.');
     } catch (error) {
       messageApi.error(errorMessage(error, 'Không thể khôi phục mặt hàng.'));
+    }
+  };
+
+  const exportProducts = async () => {
+    setExporting(true);
+    try {
+      const csrfToken =
+        (await apiRequest<AuthContextResponse>('/api/v1/auth/context')).csrfToken ?? '';
+      const exported = await jsonRequest<CatalogExportRow[]>(
+        '/api/v1/owner/catalog/export',
+        { productIds: rows.map((product) => product.id) },
+        { headers: { 'X-CSRF-Token': csrfToken } },
+      );
+      const stamp = new Date()
+        .toISOString()
+        .replaceAll(/[-:]/gu, '')
+        .slice(0, 13)
+        .replace('T', '-');
+      await downloadCatalogWorkbook(exported, `pro-pos-mat-hang-${stamp}.xlsx`);
+    } catch (error) {
+      messageApi.error(errorMessage(error, 'Không thể xuất danh sách mặt hàng.'));
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -531,6 +559,20 @@ export function OwnerProductListPage({
           </Typography.Text>
         </div>
         <Button
+          icon={<UploadOutlined />}
+          onClick={() => setImportOpen(true)}
+          disabled={!canEditProduct}
+        >
+          Nhập Excel
+        </Button>
+        <Button
+          icon={<DownloadOutlined />}
+          loading={exporting}
+          onClick={() => void exportProducts()}
+        >
+          Xuất Excel
+        </Button>
+        <Button
           type="primary"
           icon={<PlusOutlined />}
           onClick={() => navigate(`${baseRoute}/products/new`)}
@@ -538,6 +580,18 @@ export function OwnerProductListPage({
           Thêm mặt hàng
         </Button>
       </div>
+      <ProductImportModal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onCommitted={async () => {
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: PRODUCT_QUERY }),
+            queryClient.invalidateQueries({ queryKey: CATEGORY_QUERY }),
+            queryClient.invalidateQueries({ queryKey: ['owner-units'] }),
+            queryClient.invalidateQueries({ queryKey: ['pos-catalog'] }),
+          ]);
+        }}
+      />
       <div className="owner-catalog-subnav">
         <Button
           type="link"

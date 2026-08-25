@@ -1,12 +1,11 @@
 import {
-  AimOutlined,
+  ArrowRightOutlined,
   CheckCircleFilled,
   ClockCircleFilled,
   CloseCircleFilled,
   CloseOutlined,
   DeleteOutlined,
   EditOutlined,
-  EnvironmentOutlined,
   FileTextOutlined,
   HistoryOutlined,
   HourglassOutlined,
@@ -19,10 +18,10 @@ import {
   ShoppingCartOutlined,
   SyncOutlined,
   ThunderboltOutlined,
+  UserOutlined,
 } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  Alert,
   Button,
   Drawer,
   Empty,
@@ -30,10 +29,9 @@ import {
   Modal,
   Popconfirm,
   Result,
-  Space,
   Spin,
+  Switch,
   Tag,
-  Typography,
   message,
 } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -54,7 +52,7 @@ import type {
 import { apiRequest, jsonRequest } from '@client/lib/api';
 import { playPosSound } from '@client/lib/sound';
 import { ReceiptPreviewPaper } from '@client/features/pos/ReceiptPreviewModal';
-import { GuestRobotAssistant } from './GuestRobotAssistant';
+import { GuestRobotAssistant, RobotVisual } from './GuestRobotAssistant';
 import { type GuestAssistantAction, type GuestAssistantFeedback } from './guest-assistant';
 
 interface CartLine {
@@ -63,6 +61,39 @@ interface CartLine {
   variant: GuestMenuVariant;
   quantity: number;
   note: string;
+}
+
+interface GuestLocationCoordinates {
+  latitude: number;
+  longitude: number;
+  accuracyMeters: number;
+  capturedAt: number;
+}
+
+async function geolocationPermissionState(): Promise<PermissionState | 'unsupported'> {
+  if (!('geolocation' in navigator)) return 'unsupported';
+  if (!('permissions' in navigator)) return 'prompt';
+  try {
+    return (await navigator.permissions.query({ name: 'geolocation' })).state;
+  } catch {
+    return 'prompt';
+  }
+}
+
+function currentBrowserLocation(): Promise<GuestLocationCoordinates> {
+  return new Promise((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(
+      (position) =>
+        resolve({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracyMeters: position.coords.accuracy,
+          capturedAt: Date.now(),
+        }),
+      (error) => reject(error),
+      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 30_000 },
+    );
+  });
 }
 
 function formatVnd(value: number): string {
@@ -98,6 +129,29 @@ export function GuestOrderPage() {
   const menuAnchorRef = useRef<HTMLDivElement>(null);
 
   // State
+  const guestNameStorageKey = token ? `qr_customer_name_${token}` : 'qr_guest_name';
+  const [customerName, setCustomerName] = useState(() => {
+    try {
+      return (
+        localStorage.getItem(guestNameStorageKey) || localStorage.getItem('qr_guest_name') || ''
+      );
+    } catch {
+      return '';
+    }
+  });
+  const [hasEnteredName, setHasEnteredName] = useState(() => {
+    try {
+      const saved =
+        localStorage.getItem(guestNameStorageKey) || localStorage.getItem('qr_guest_name');
+      return Boolean(saved && saved.trim());
+    } catch {
+      return false;
+    }
+  });
+  const [nameModalOpen, setNameModalOpen] = useState(false);
+  const [tempCustomerName, setTempCustomerName] = useState(() => customerName || '');
+  const [autoRequestTableOpen, setAutoRequestTableOpen] = useState(true);
+
   const [cart, setCart] = useState<Record<string, CartLine>>({});
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
@@ -109,25 +163,6 @@ export function GuestOrderPage() {
   // Anti-spam cooldowns (seconds)
   const [callStaffCooldown, setCallStaffCooldown] = useState(0);
   const [checkoutCooldown, setCheckoutCooldown] = useState(0);
-  // Location Verification state
-  const [locationModalOpen, setLocationModalOpen] = useState(false);
-  const [isVerifyingLocation, setIsVerifyingLocation] = useState(false);
-  const [locationError, setLocationError] = useState<string | null>(null);
-  const [pendingAction, setPendingAction] = useState<
-    | ((coords?: {
-        latitude: number;
-        longitude: number;
-        accuracyMeters: number;
-        capturedAt: number;
-      }) => void | Promise<void>)
-    | null
-  >(null);
-  const [localLocationVerified, setLocalLocationVerified] = useState(false);
-  const [verifiedLocationData, setVerifiedLocationData] = useState<{
-    distanceMeters: number;
-    allowedRadiusMeters: number;
-    accuracyMeters?: number;
-  } | null>(null);
   const lastVerifiedCoords = useRef<{
     latitude: number;
     longitude: number;
@@ -151,11 +186,6 @@ export function GuestOrderPage() {
   const [modalQuantity, setModalQuantity] = useState<number>(1);
   const [modalItemNote, setModalItemNote] = useState<string>('');
 
-  // Service Confirmation Modal
-  const [serviceConfirm, setServiceConfirm] = useState<{
-    open: boolean;
-    type: 'CALL_STAFF' | 'CHECKOUT_REQUEST';
-  }>({ open: false, type: 'CALL_STAFF' });
   const [assistantFeedback, setAssistantFeedback] = useState<GuestAssistantFeedback | null>(null);
 
   const showAssistantFeedback = useCallback(
@@ -247,7 +277,7 @@ export function GuestOrderPage() {
       tableName: context.data.tableName,
       areaName: context.data.areaName,
       cashierName: null,
-      customerName: null,
+      customerName: customerName.trim() || null,
       guestPhone: null,
       guestAddress: null,
       note: null,
@@ -450,6 +480,30 @@ export function GuestOrderPage() {
     });
   };
 
+  const handleConfirmName = (nameToSave?: string, shouldTriggerTableOpen?: boolean) => {
+    const raw = nameToSave ?? tempCustomerName;
+    const finalName = raw.trim() || 'Khách tại bàn';
+    setCustomerName(finalName);
+    setTempCustomerName(finalName);
+    setHasEnteredName(true);
+    setNameModalOpen(false);
+    try {
+      localStorage.setItem(guestNameStorageKey, finalName);
+      localStorage.setItem('qr_guest_name', finalName);
+    } catch {}
+
+    if (
+      shouldTriggerTableOpen &&
+      !isTableOpen &&
+      !isWaitingForOpen &&
+      !requestTableOpen.isPending
+    ) {
+      void executeWithLocationCheck((coords) =>
+        requestTableOpen.mutate({ coords, customerNameOverride: finalName }),
+      );
+    }
+  };
+
   // Submit Order Mutation
   const submitOrder = useMutation({
     mutationFn: async (coords?: {
@@ -467,6 +521,7 @@ export function GuestOrderPage() {
         '/api/v1/guest-order/requests',
         {
           clientRequestId,
+          customerName: customerName.trim() || undefined,
           items: cartLines.map((line) => ({
             productId: line.product.id,
             variantId: line.variant.id,
@@ -500,23 +555,7 @@ export function GuestOrderPage() {
         (error as { code?: string })?.code === 'LOCATION_VERIFICATION_REQUIRED' ||
         (error instanceof Error && error.message.includes('xác minh vị trí'));
       if (isLocErr) {
-        setLocalLocationVerified(false);
-        setVerifiedLocationData(null);
         lastVerifiedCoords.current = null;
-        setLocationError(
-          error instanceof Error ? error.message : 'Vui lòng xác minh vị trí tại quán.',
-        );
-        setLocationModalOpen(true);
-        setPendingAction(
-          () =>
-            (coords?: {
-              latitude: number;
-              longitude: number;
-              accuracyMeters: number;
-              capturedAt?: number;
-            }) =>
-              submitOrder.mutate(coords),
-        );
       }
       showAssistantFeedback(
         'error',
@@ -545,11 +584,11 @@ export function GuestOrderPage() {
       const loc = coords ?? lastVerifiedCoords.current ?? undefined;
       return jsonRequest('/api/v1/guest-order/service-requests', {
         type,
+        customerName: customerName.trim() || undefined,
         ...(loc ? { location: loc } : {}),
       });
     },
     onSuccess: (_, { type }) => {
-      setServiceConfirm({ open: false, type: 'CALL_STAFF' });
       if (type === 'CALL_STAFF') {
         setCallStaffCooldown(60);
       } else {
@@ -571,28 +610,11 @@ export function GuestOrderPage() {
       void queryClient.invalidateQueries({ queryKey: ['guest-order-context', token] });
     },
     onError: (error, { type }) => {
-      setServiceConfirm({ open: false, type: 'CALL_STAFF' });
       const isLocErr =
         (error as { code?: string })?.code === 'LOCATION_VERIFICATION_REQUIRED' ||
         (error instanceof Error && error.message.includes('xác minh vị trí'));
       if (isLocErr) {
-        setLocalLocationVerified(false);
-        setVerifiedLocationData(null);
         lastVerifiedCoords.current = null;
-        setLocationError(
-          error instanceof Error ? error.message : 'Vui lòng xác minh vị trí tại quán.',
-        );
-        setLocationModalOpen(true);
-        setPendingAction(
-          () =>
-            (coords?: {
-              latitude: number;
-              longitude: number;
-              accuracyMeters: number;
-              capturedAt?: number;
-            }) =>
-              submitService.mutate({ type, ...(coords ? { coords } : {}) }),
-        );
       }
       const errMsg = error instanceof Error ? error.message : 'Không thể gửi yêu cầu.';
       const retryAfter =
@@ -607,16 +629,58 @@ export function GuestOrderPage() {
   });
 
   const requestTableOpen = useMutation({
-    mutationFn: (coords?: {
-      latitude: number;
-      longitude: number;
-      accuracyMeters: number;
-      capturedAt?: number;
-    }) =>
-      jsonRequest<{ requestId: string | null; alreadyOpen: boolean }>(
+    mutationFn: (
+      args?:
+        | {
+            coords?:
+              | {
+                  latitude: number;
+                  longitude: number;
+                  accuracyMeters: number;
+                  capturedAt?: number;
+                }
+              | undefined;
+            customerNameOverride?: string | undefined;
+          }
+        | {
+            latitude: number;
+            longitude: number;
+            accuracyMeters: number;
+            capturedAt?: number;
+          }
+        | undefined,
+    ) => {
+      const isDirectCoords = Boolean(args && 'latitude' in args);
+      const coords = isDirectCoords
+        ? (args as {
+            latitude: number;
+            longitude: number;
+            accuracyMeters: number;
+            capturedAt?: number;
+          })
+        : (
+            args as {
+              coords?: {
+                latitude: number;
+                longitude: number;
+                accuracyMeters: number;
+                capturedAt?: number;
+              };
+            }
+          )?.coords;
+      const customerNameOverride = !isDirectCoords
+        ? (args as { customerNameOverride?: string })?.customerNameOverride
+        : undefined;
+      const nameToSend = (customerNameOverride ?? customerName).trim() || undefined;
+
+      return jsonRequest<{ requestId: string | null; alreadyOpen: boolean }>(
         `/api/v1/guest-order/resolve/${token}/open-request`,
-        coords ? { location: coords } : {},
-      ),
+        {
+          customerName: nameToSend,
+          ...(coords ? { location: coords } : {}),
+        },
+      );
+    },
     onSuccess: async (result) => {
       if (!result.alreadyOpen) {
         playPosSound('GUEST_QR_OPEN_REQUESTED');
@@ -639,23 +703,7 @@ export function GuestOrderPage() {
         (error as { code?: string })?.code === 'LOCATION_VERIFICATION_REQUIRED' ||
         (error instanceof Error && error.message.includes('xác minh vị trí'));
       if (isLocErr) {
-        setLocalLocationVerified(false);
-        setVerifiedLocationData(null);
         lastVerifiedCoords.current = null;
-        setLocationError(
-          error instanceof Error ? error.message : 'Vui lòng xác minh vị trí tại quán.',
-        );
-        setLocationModalOpen(true);
-        setPendingAction(
-          () =>
-            (coords?: {
-              latitude: number;
-              longitude: number;
-              accuracyMeters: number;
-              capturedAt?: number;
-            }) =>
-              requestTableOpen.mutate(coords),
-        );
       }
       showAssistantFeedback(
         'error',
@@ -700,19 +748,8 @@ export function GuestOrderPage() {
       ? `/api/v1/guest-order/media/${mediaId}`
       : `/api/v1/guest-order/resolve/${token}/media/${mediaId}`;
 
-  const isLocationVerified = Boolean(
-    context.data?.locationRequirement?.isVerified || localLocationVerified,
-  );
-  const currentDistance =
-    verifiedLocationData?.distanceMeters ?? context.data?.locationRequirement?.distanceMeters;
-
   const executeWithLocationCheck = async (
-    action: (coords?: {
-      latitude: number;
-      longitude: number;
-      accuracyMeters: number;
-      capturedAt: number;
-    }) => void | Promise<void>,
+    action: (coords?: GuestLocationCoordinates) => void | Promise<void>,
   ) => {
     const locReq = context.data?.locationRequirement;
     if (!locReq || !locReq.required) {
@@ -725,87 +762,42 @@ export function GuestOrderPage() {
       return;
     }
 
-    // If server confirmed verified OR we have verified coords in memory:
-    if (locReq.isVerified || (localLocationVerified && lastVerifiedCoords.current)) {
+    // The server has already validated this guest session. No browser prompt
+    // or additional application UI is needed until the session verification expires.
+    if (locReq.isVerified) {
       await action(lastVerifiedCoords.current ?? undefined);
       return;
     }
 
-    setPendingAction(() => action);
-    setLocationError(null);
-    setLocationModalOpen(true);
-  };
-
-  const handleVerifyLocation = async () => {
-    if (!('geolocation' in navigator)) {
-      setLocationError('Trình duyệt của bạn không hỗ trợ định vị GPS.');
+    const permission = await geolocationPermissionState();
+    if (permission === 'unsupported') {
+      messageApi.error('Trình duyệt không hỗ trợ định vị. Vui lòng liên hệ nhân viên hỗ trợ.');
       return;
     }
-    setIsVerifyingLocation(true);
-    setLocationError(null);
-
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        try {
-          const { latitude, longitude, accuracy } = pos.coords;
-          const capturedAt = Math.floor(Date.now());
-          const coordsPayload = {
-            latitude,
-            longitude,
-            accuracyMeters: accuracy,
-            capturedAt,
-          };
-          lastVerifiedCoords.current = coordsPayload;
-
-          const endpoint = `/api/v1/guest-order/resolve/${token}/location/verify`;
-
-          const verifyRes = await jsonRequest<VerifyGuestLocationResponse>(endpoint, coordsPayload);
-
-          setVerifiedLocationData({
-            distanceMeters: verifyRes.distanceMeters,
-            allowedRadiusMeters: verifyRes.allowedRadiusMeters,
-            accuracyMeters: accuracy,
-          });
-          setLocalLocationVerified(true);
-          setIsVerifyingLocation(false);
-          setLocationModalOpen(false);
-
-          const distText = Math.round(verifyRes.distanceMeters);
-          messageApi.success(
-            `Xác minh vị trí thành công! (~${distText}m, bán kính cho phép: ${verifyRes.allowedRadiusMeters}m)`,
-          );
-
-          await queryClient.invalidateQueries({ queryKey: ['guest-order-context', token] });
-
-          if (pendingAction) {
-            const act = pendingAction;
-            setPendingAction(null);
-            void act(coordsPayload);
-          }
-        } catch (err: unknown) {
-          setIsVerifyingLocation(false);
-          const errMsg = err instanceof Error ? err.message : 'Xác minh vị trí thất bại.';
-          setLocationError(errMsg);
-        }
-      },
-      (err) => {
-        setIsVerifyingLocation(false);
-        if (err.code === err.PERMISSION_DENIED) {
-          setLocationError(
-            'Bạn đã từ chối quyền truy cập vị trí. Vui lòng vào Cài đặt trình duyệt (hoặc icon ổ khóa/cài đặt trên thanh địa chỉ) để cho phép quyền Vị trí, sau đó bấm thử lại.',
-          );
-        } else if (err.code === err.POSITION_UNAVAILABLE) {
-          setLocationError(
-            'Không thể lấy tín hiệu GPS từ thiết bị. Vui lòng bật định vị GPS và thử lại.',
-          );
-        } else if (err.code === err.TIMEOUT) {
-          setLocationError('Hết thời gian chờ định vị GPS. Vui lòng thử lại.');
-        } else {
-          setLocationError('Không thể lấy vị trí thiết bị. Vui lòng thử lại.');
-        }
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 },
-    );
+    if (permission === 'denied') {
+      messageApi.error('Vị trí đang bị chặn trong trình duyệt. Hãy cho phép Vị trí rồi thử lại.');
+      return;
+    }
+    try {
+      // With granted permission this is silent. With prompt permission, this
+      // is the only UI shown: the browser-native location permission prompt.
+      const coordinates = await currentBrowserLocation();
+      await jsonRequest<VerifyGuestLocationResponse>(
+        `/api/v1/guest-order/resolve/${token}/location/verify`,
+        coordinates,
+      );
+      lastVerifiedCoords.current = coordinates;
+      await queryClient.invalidateQueries({ queryKey: ['guest-order-context', token] });
+      await action(coordinates);
+    } catch (error) {
+      if ((error as GeolocationPositionError | undefined)?.code === 1) {
+        messageApi.error(
+          'Bạn chưa cho phép vị trí. Hãy bật quyền Vị trí trong trình duyệt rồi thử lại.',
+        );
+      } else {
+        messageApi.error(error instanceof Error ? error.message : 'Không thể xác minh vị trí.');
+      }
+    }
   };
 
   const handleAssistantAction = (action: GuestAssistantAction) => {
@@ -822,13 +814,88 @@ export function GuestOrderPage() {
       return;
     }
     if (!isTableOpen) return;
-    void executeWithLocationCheck(() => {
-      setServiceConfirm({
-        open: true,
-        type: action === 'CALL_STAFF' ? 'CALL_STAFF' : 'CHECKOUT_REQUEST',
-      });
-    });
+    const type = action === 'CALL_STAFF' ? 'CALL_STAFF' : 'CHECKOUT_REQUEST';
+    void executeWithLocationCheck((coords) =>
+      submitService.mutate({ type, ...(coords ? { coords } : {}) }),
+    );
   };
+
+  if (context.data && !hasEnteredName) {
+    return (
+      <div className="qr-guest-landing">
+        {holder}
+        <div className="qr-guest-landing__container">
+          {/* 1. Header with Store & Table info */}
+          <header className="qr-guest-landing__header">
+            <div className="qr-guest-landing__store-badge">
+              <ShopOutlined />
+              <span>{context.data.storeName}</span>
+            </div>
+            <div className="qr-guest-landing__table-badge">
+              <span className="qr-guest-hero__pulse" />
+              <span>{context.data.tableName}</span>
+              {context.data.areaName ? <span> · {context.data.areaName}</span> : null}
+            </div>
+          </header>
+
+          {/* 2. Top-Aligned Form Card (Won't get obscured when mobile keyboard opens) */}
+          <section className="qr-guest-landing__form-card">
+            <div className="qr-guest-landing__card-header">
+              <h2 className="qr-guest-landing__title">Chào bạn! 👋</h2>
+            </div>
+
+            <div className="qr-guest-landing__input-box">
+              <Input
+                size="large"
+                prefix={<UserOutlined style={{ color: '#0975f7', fontSize: 17, marginRight: 6 }} />}
+                placeholder="Tên của bạn (VD: Nam, Linh...)"
+                value={tempCustomerName}
+                onChange={(e) => setTempCustomerName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleConfirmName(tempCustomerName, autoRequestTableOpen);
+                  }
+                }}
+                maxLength={50}
+                autoFocus
+                className="qr-guest-landing__input"
+              />
+            </div>
+
+            {!isTableOpen ? (
+              <div className="qr-guest-landing__switch-row">
+                <span className="qr-guest-landing__switch-label">Yêu cầu mở bàn</span>
+                <Switch
+                  checked={autoRequestTableOpen}
+                  onChange={(checked) => setAutoRequestTableOpen(checked)}
+                  className="qr-guest-landing__switch"
+                />
+              </div>
+            ) : null}
+
+            <Button
+              type="primary"
+              size="large"
+              block
+              className="qr-guest-landing__submit-btn"
+              onClick={() => handleConfirmName(tempCustomerName, autoRequestTableOpen)}
+              loading={requestTableOpen.isPending}
+              icon={<ArrowRightOutlined />}
+            >
+              Bắt đầu
+            </Button>
+          </section>
+
+          {/* 3. Robot Mascot Character */}
+          <section className="qr-guest-landing__mascot-section" aria-label="Trợ lý Pro POS">
+            <div className="qr-guest-landing__robot-wrap">
+              <RobotVisual expression="happy" speaking={false} />
+            </div>
+          </section>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="qr-guest-layout">
@@ -853,6 +920,21 @@ export function GuestOrderPage() {
             </div>
 
             <div className="qr-guest-hero__badges">
+              <div
+                className="qr-guest-hero__customer-pill"
+                onClick={() => {
+                  setTempCustomerName(customerName);
+                  setNameModalOpen(true);
+                }}
+                title="Chạm để đổi tên xưng hô"
+                role="button"
+                tabIndex={0}
+              >
+                <UserOutlined style={{ color: '#0975f7' }} />
+                <span>{customerName || 'Khách tại bàn'}</span>
+                <EditOutlined style={{ fontSize: 11, opacity: 0.6, marginLeft: 2 }} />
+              </div>
+
               <div className="qr-guest-hero__table-pill">
                 <span className="qr-guest-hero__pulse" />
                 <span>{context.data.tableName}</span>
@@ -860,61 +942,31 @@ export function GuestOrderPage() {
                   <span style={{ opacity: 0.8 }}>· {context.data.areaName}</span>
                 ) : null}
               </div>
-
-              {context.data.locationRequirement?.required ? (
-                isLocationVerified ? (
-                  <div
-                    className="qr-guest-hero__location-pill qr-guest-hero__location-pill--verified"
-                    onClick={() => {
-                      setLocationError(null);
-                      setLocationModalOpen(true);
-                    }}
-                    title="Đã xác minh vị trí tại quán"
-                  >
-                    <span className="qr-guest-hero__location-dot" />
-                    <EnvironmentOutlined />
-                    <span>
-                      Đã ở quán
-                      {typeof currentDistance === 'number'
-                        ? ` (~${Math.round(currentDistance)}m)`
-                        : ''}
-                    </span>
-                  </div>
-                ) : (
-                  <div
-                    className="qr-guest-hero__location-pill qr-guest-hero__location-pill--pending"
-                    onClick={() => {
-                      setLocationError(null);
-                      setLocationModalOpen(true);
-                    }}
-                    title="Chạm để xác minh vị trí tại quán"
-                  >
-                    <AimOutlined />
-                    <span>Chưa xác minh vị trí</span>
-                  </div>
-                )
-              ) : null}
             </div>
           </div>
         </header>
 
         {!isTableOpen ? (
-          <Alert
-            className="qr-guest-table-open-alert"
-            type={isWaitingForOpen ? 'info' : 'warning'}
-            showIcon
-            icon={<HourglassOutlined />}
-            title={isWaitingForOpen ? 'Đang chờ nhân viên mở bàn' : 'Bàn chưa được mở'}
-            description={
-              <div className="qr-guest-table-open-alert__content">
-                <span>
-                  {isWaitingForOpen
-                    ? 'Bạn cứ chọn món vào giỏ. Trang sẽ tự cập nhật ngay khi bàn được mở.'
-                    : 'Chạm trợ lý Pro POS phía dưới để yêu cầu mở bàn. Bạn vẫn có thể xem menu và chọn món trước.'}
-                </span>
-              </div>
-            }
-          />
+          <div
+            className={`qr-guest-status-banner qr-guest-status-banner--${isWaitingForOpen ? 'waiting' : 'closed'}`}
+            role="status"
+          >
+            <div className="qr-guest-status-banner__icon-wrap">
+              <HourglassOutlined
+                className={`qr-guest-status-banner__icon ${isWaitingForOpen ? 'qr-guest-status-banner__icon--pulse' : ''}`}
+              />
+            </div>
+            <div className="qr-guest-status-banner__content">
+              <span className="qr-guest-status-banner__title">
+                {isWaitingForOpen ? 'Đang chờ nhân viên mở bàn' : 'Bàn chưa được mở'}
+              </span>
+              <p className="qr-guest-status-banner__desc">
+                {isWaitingForOpen
+                  ? 'Bạn cứ chọn món vào giỏ. Bàn sẽ tự cập nhật ngay khi được mở.'
+                  : 'Chạm trợ lý Pro POS phía dưới để yêu cầu mở bàn.'}
+              </p>
+            </div>
+          </div>
         ) : null}
 
         <GuestRobotAssistant
@@ -1458,32 +1510,6 @@ export function GuestOrderPage() {
                 />
               </div>
 
-              {/* Location Verification Warning Banner inside cart */}
-              {context.data?.locationRequirement?.required && !isLocationVerified ? (
-                <div
-                  className="qr-cart-location-notice"
-                  onClick={() => {
-                    setLocationError(null);
-                    setLocationModalOpen(true);
-                  }}
-                  role="button"
-                  tabIndex={0}
-                >
-                  <div className="qr-cart-location-notice__icon">
-                    <AimOutlined />
-                  </div>
-                  <div className="qr-cart-location-notice__content">
-                    <div className="qr-cart-location-notice__title">
-                      Chưa xác minh vị trí tại quán
-                    </div>
-                    <div className="qr-cart-location-notice__desc">
-                      Chạm để xác nhận GPS tại quán trước khi gửi gọi món.
-                    </div>
-                  </div>
-                  <span className="qr-cart-location-notice__action">Xác nhận</span>
-                </div>
-              ) : null}
-
               {/* Summary Breakdown */}
               <div className="qr-cart-summary-card">
                 <div className="qr-cart-summary-row">
@@ -1522,9 +1548,7 @@ export function GuestOrderPage() {
                       {submitOrder.isPending
                         ? 'Đang gửi yêu cầu...'
                         : isTableOpen
-                          ? context.data?.locationRequirement?.required && !isLocationVerified
-                            ? 'Xác minh vị trí & Gọi món'
-                            : 'Gửi yêu cầu gọi món'
+                          ? 'Gửi yêu cầu gọi món'
                           : 'Chờ nhân viên mở bàn'}
                     </span>
                     <span className="qr-cart-submit-btn__badge">{formatVnd(totalAmount)}</span>
@@ -1862,39 +1886,7 @@ export function GuestOrderPage() {
           )}
         </Drawer>
 
-        {/* ── 10. Service Call / Bill Confirmation Modal ───────────────────── */}
-        <Modal
-          open={serviceConfirm.open}
-          title={
-            serviceConfirm.type === 'CALL_STAFF'
-              ? 'Xác nhận gọi nhân viên'
-              : 'Xác nhận yêu cầu thanh toán'
-          }
-          okText="Xác nhận gửi"
-          cancelText="Hủy"
-          confirmLoading={submitService.isPending}
-          centered
-          zIndex={1500}
-          onOk={() => submitService.mutate({ type: serviceConfirm.type })}
-          onCancel={() => setServiceConfirm({ open: false, type: 'CALL_STAFF' })}
-        >
-          <div style={{ padding: '8px 0', fontSize: 14.5, color: '#334155', lineHeight: 1.5 }}>
-            {serviceConfirm.type === 'CALL_STAFF' ? (
-              <p>
-                Bạn muốn gửi tín hiệu <strong>gọi nhân viên phục vụ</strong> đến{' '}
-                <strong>{context.data.tableName}</strong>? Nhân viên sẽ tới bàn hỗ trợ bạn ngay.
-              </p>
-            ) : (
-              <p>
-                Bạn muốn <strong>yêu cầu thanh toán</strong> cho{' '}
-                <strong>{context.data.tableName}</strong>? Thu ngân sẽ chốt giờ chơi và mang hóa đơn
-                tới bàn.
-              </p>
-            )}
-          </div>
-        </Modal>
-
-        {/* ── 11. Order Success Modal ──────────────────────────────────────── */}
+        {/* ── 10. Order Success Modal ──────────────────────────────────────── */}
         <Modal
           open={orderSuccessModalOpen}
           footer={null}
@@ -1935,141 +1927,39 @@ export function GuestOrderPage() {
             </Button>
           </div>
         </Modal>
-        {/* ── 12. Location Verification Modal ────────────────────────────── */}
+        {/* ── 8. Edit Customer Name Modal ────────────────────────────────────── */}
         <Modal
-          open={locationModalOpen}
+          open={nameModalOpen}
+          onCancel={() => setNameModalOpen(false)}
+          onOk={() => handleConfirmName()}
+          okText="Lưu tên"
+          cancelText="Hủy"
           title={
-            <Space>
-              <EnvironmentOutlined
-                style={{ color: isLocationVerified ? '#10b981' : '#1677ff', fontSize: 18 }}
-              />
-              <span>
-                {isLocationVerified ? 'Vị trí tại quán đã xác minh' : 'Xác minh vị trí tại quán'}
-              </span>
-            </Space>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <UserOutlined style={{ color: '#0975f7' }} />
+              <span>Đổi tên xưng hô</span>
+            </div>
           }
           centered
-          zIndex={1500}
-          onCancel={() => {
-            if (!isVerifyingLocation) {
-              setLocationModalOpen(false);
-              setPendingAction(null);
-            }
-          }}
-          footer={
-            isLocationVerified
-              ? [
-                  <Button
-                    key="reverify"
-                    loading={isVerifyingLocation}
-                    onClick={handleVerifyLocation}
-                    icon={<AimOutlined />}
-                  >
-                    Xác minh lại
-                  </Button>,
-                  <Button
-                    key="close"
-                    type="primary"
-                    onClick={() => {
-                      setLocationModalOpen(false);
-                      setPendingAction(null);
-                    }}
-                  >
-                    Đã hiểu
-                  </Button>,
-                ]
-              : [
-                  <Button
-                    key="cancel"
-                    disabled={isVerifyingLocation}
-                    onClick={() => {
-                      setLocationModalOpen(false);
-                      setPendingAction(null);
-                    }}
-                  >
-                    Để sau
-                  </Button>,
-                  <Button
-                    key="verify"
-                    type="primary"
-                    loading={isVerifyingLocation}
-                    onClick={handleVerifyLocation}
-                    icon={<AimOutlined />}
-                  >
-                    Xác nhận vị trí
-                  </Button>,
-                ]
-          }
         >
-          <div style={{ padding: '8px 0', fontSize: 14, color: '#334155', lineHeight: 1.6 }}>
-            {isLocationVerified ? (
-              <div>
-                <Alert
-                  type="success"
-                  showIcon
-                  icon={<CheckCircleFilled style={{ color: '#10b981' }} />}
-                  message="Vị trí của bạn hợp lệ"
-                  description={
-                    <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      <div>
-                        📍 Khoảng cách tới quán:{' '}
-                        <strong>~{Math.round(currentDistance ?? 0)} mét</strong> (Bán kính cho phép:{' '}
-                        {context.data.locationRequirement?.allowedRadiusMeters ?? 300}m)
-                      </div>
-                      {verifiedLocationData?.accuracyMeters ? (
-                        <div>
-                          🛰️ Độ chính xác GPS:{' '}
-                          <strong>±{Math.round(verifiedLocationData.accuracyMeters)} mét</strong>
-                        </div>
-                      ) : null}
-                      <div style={{ color: '#059669', fontSize: 12, marginTop: 4 }}>
-                        ✓ Phiên gọi món và gửi yêu cầu tại bàn đang hoạt động bình thường.
-                      </div>
-                    </div>
-                  }
-                  style={{ marginBottom: 12 }}
-                />
-              </div>
-            ) : (
-              <div>
-                <Typography.Paragraph style={{ marginBottom: 12 }}>
-                  Để thực hiện gọi món hoặc gửi yêu cầu tại bàn, quán cần xác nhận bạn đang có mặt
-                  trong phạm vi cửa hàng.
-                </Typography.Paragraph>
-
-                <div
-                  style={{
-                    background: '#f8fafc',
-                    border: '1px solid #e2e8f0',
-                    borderRadius: 10,
-                    padding: '10px 14px',
-                    fontSize: 13,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 4,
-                    marginBottom: 12,
-                  }}
-                >
-                  <div>
-                    🏪 Bán kính quán cho phép:{' '}
-                    <strong>{context.data.locationRequirement?.allowedRadiusMeters ?? 300}m</strong>
-                  </div>
-                  <div>
-                    🛰️ Sai số GPS tối đa:{' '}
-                    <strong>{context.data.locationRequirement?.maxAccuracyMeters ?? 100}m</strong>
-                  </div>
-                </div>
-
-                {locationError ? (
-                  <Alert
-                    type="warning"
-                    showIcon
-                    description={locationError}
-                    style={{ marginTop: 8 }}
-                  />
-                ) : null}
-              </div>
-            )}
+          <div style={{ padding: '12px 0' }}>
+            <p style={{ fontSize: 13.5, color: '#64748b', marginBottom: 10 }}>
+              Tên của bạn sẽ hiển thị trên các yêu cầu gọi món gửi đến nhân viên và hóa đơn bàn:
+            </p>
+            <Input
+              size="large"
+              prefix={<UserOutlined style={{ color: '#0975f7', marginRight: 6 }} />}
+              placeholder="Nhập tên của bạn (VD: Anh Nam, Chị Linh...)"
+              value={tempCustomerName}
+              onChange={(e) => setTempCustomerName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  handleConfirmName();
+                }
+              }}
+              maxLength={50}
+              autoFocus
+            />
           </div>
         </Modal>
       </div>

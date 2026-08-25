@@ -4,6 +4,7 @@ import {
   DownOutlined,
   ExclamationCircleOutlined,
   UpOutlined,
+  UserOutlined,
 } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button, Empty, Input, Modal, Select, Spin, message } from 'antd';
@@ -232,15 +233,15 @@ export function QrOrderConfirmModal({ open, onClose, areas }: QrOrderConfirmModa
         open={open}
         onCancel={onClose}
         footer={null}
-        width={780}
+        width="min(1120px, calc(100vw - 24px))"
         centered
         destroyOnClose
         className="pos-qr-confirm-modal"
         styles={{
-          body: { padding: 0 },
+          body: { padding: 0, maxHeight: '72vh', overflowY: 'auto' },
         }}
         title={
-          <div style={{ fontSize: 17, fontWeight: 800, color: '#0f172a' }}>Xác nhận gọi món</div>
+          <div style={{ fontSize: 19, fontWeight: 800, color: '#0f172a' }}>Xác nhận gọi món</div>
         }
       >
         <div className="pos-qr-confirm-modal__content">
@@ -341,6 +342,24 @@ export function QrOrderConfirmModal({ open, onClose, areas }: QrOrderConfirmModa
                           <span className="pos-qr-confirm-card__table-name">
                             {order.tableName} - {order.areaName}
                           </span>
+                          {order.customerName ? (
+                            <span
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 4,
+                                padding: '2px 8px',
+                                borderRadius: 12,
+                                background: '#eff6ff',
+                                color: '#1d4ed8',
+                                fontSize: 12,
+                                fontWeight: 600,
+                              }}
+                            >
+                              <UserOutlined style={{ fontSize: 11 }} />
+                              {order.customerName}
+                            </span>
+                          ) : null}
                           <span className="pos-qr-confirm-card__time">
                             <ClockCircleOutlined style={{ marginRight: 4 }} />
                             {formatRelativeTime(order.createdAt)}

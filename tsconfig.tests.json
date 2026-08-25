@@ -30,6 +30,8 @@
     "src/contracts",
     "src/domain",
     "src/client/features/guest/guest-assistant.ts",
+    "src/client/features/pos/payment-return-state.ts",
+    "src/client/features/pos/payment-navigation.ts",
     "src/client/features/owner/print-preview-sample.ts",
     "src/client/lib/qz-tray-service.ts",
     "src/client/lib/pos-receipt-printer.ts",

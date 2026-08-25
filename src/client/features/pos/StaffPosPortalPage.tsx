@@ -963,6 +963,133 @@ interface PosNotificationsContextValue {
 
 const PosNotificationsContext = createContext<PosNotificationsContextValue | null>(null);
 
+function playNotificationChime() {
+  if (typeof window === 'undefined') return;
+  try {
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    if (ctx.state === 'suspended') {
+      void ctx.resume();
+    }
+    const now = ctx.currentTime;
+
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.type = 'sine';
+    osc1.frequency.setValueAtTime(587.33, now);
+    gain1.gain.setValueAtTime(0.12, now);
+    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.25);
+
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(880, now + 0.1);
+    gain2.gain.setValueAtTime(0.15, now + 0.1);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.start(now + 0.1);
+    osc2.stop(now + 0.4);
+  } catch {
+    // Ignore audio restrictions
+  }
+}
+
+function PosNotificationWatcher() {
+  const navigate = useNavigate();
+  const notifications = usePosNotifications();
+  const initializedRef = useRef(false);
+  const seenGuestOrderIds = useRef<Set<string>>(new Set());
+  const seenServiceRequestIds = useRef<Set<string>>(new Set());
+  const seenTableOpenRequestIds = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const data = notifications.data;
+    if (!data) return;
+
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      seenGuestOrderIds.current = new Set(data.guestOrders.map((g) => g.id));
+      seenServiceRequestIds.current = new Set(data.serviceRequests.map((s) => s.id));
+      seenTableOpenRequestIds.current = new Set(data.tableOpenRequests.map((t) => t.id));
+      return;
+    }
+
+    let hasNew = false;
+
+    for (const req of data.guestOrders) {
+      if (!seenGuestOrderIds.current.has(req.id) && req.status === 'PENDING') {
+        seenGuestOrderIds.current.add(req.id);
+        hasNew = true;
+        const itemCount =
+          req.items?.reduce((sum, item) => sum + (item.quantity || 1), 0) || req.items?.length || 0;
+        toast.info(`🔔 Yêu cầu gọi món - ${req.tableName}`, {
+          description: `${req.tableName} (${req.areaName}) vừa gửi yêu cầu gọi món (${itemCount} món)`,
+          duration: 8000,
+          action: {
+            label: 'Xem ngay',
+            onClick: () => navigate('/pos/qr-order'),
+          },
+        });
+      }
+    }
+
+    for (const sr of data.serviceRequests) {
+      if (!seenServiceRequestIds.current.has(sr.id) && sr.status === 'OPEN') {
+        seenServiceRequestIds.current.add(sr.id);
+        hasNew = true;
+        if (sr.type === 'CALL_STAFF') {
+          toast.warning(`🔔 Gọi nhân viên - ${sr.tableName}`, {
+            description: `${sr.tableName} (${sr.areaName}) đang gọi nhân viên hỗ trợ`,
+            duration: 8000,
+            action: {
+              label: 'Xem ngay',
+              onClick: () => navigate('/pos/qr-order'),
+            },
+          });
+        } else if (sr.type === 'CHECKOUT_REQUEST') {
+          toast.info(`💳 Yêu cầu thanh toán - ${sr.tableName}`, {
+            description: `${sr.tableName} (${sr.areaName}) vừa yêu cầu thanh toán`,
+            duration: 8000,
+            action: {
+              label: 'Xem ngay',
+              onClick: () => navigate('/pos/qr-order'),
+            },
+          });
+        }
+      }
+    }
+
+    for (const tor of data.tableOpenRequests) {
+      if (!seenTableOpenRequestIds.current.has(tor.id) && tor.status === 'OPEN') {
+        seenTableOpenRequestIds.current.add(tor.id);
+        hasNew = true;
+        toast.info(`🪑 Yêu cầu mở bàn - ${tor.tableName}`, {
+          description: `Khách yêu cầu mở ${tor.tableName} (${tor.areaName})`,
+          duration: 8000,
+          action: {
+            label: 'Xem ngay',
+            onClick: () => navigate('/pos/qr-order'),
+          },
+        });
+      }
+    }
+
+    if (hasNew) {
+      playNotificationChime();
+    }
+  }, [notifications.data, navigate]);
+
+  return null;
+}
+
 function PosNotificationsProvider({ children }: { children: React.ReactNode }) {
   const pollingInterval = usePosPollingInterval(15_000);
   const summary = useQuery({
@@ -984,7 +1111,10 @@ function PosNotificationsProvider({ children }: { children: React.ReactNode }) {
     [summary.data, summary.isError, summary.isFetching, summary.isLoading, summary.refetch],
   );
   return (
-    <PosNotificationsContext.Provider value={value}>{children}</PosNotificationsContext.Provider>
+    <PosNotificationsContext.Provider value={value}>
+      <PosNotificationWatcher />
+      {children}
+    </PosNotificationsContext.Provider>
   );
 }
 

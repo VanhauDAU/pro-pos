@@ -38,7 +38,7 @@ describe('QR Fixed Table Token', () => {
       specialWindows: [],
     });
 
-    const beverage = await catalog.createProduct(storeId, {
+    await catalog.createProduct(storeId, {
       name: 'Cà phê đá',
       productType: 'QUANTITY',
       variants: [
@@ -346,10 +346,6 @@ describe('QR Fixed Table Token', () => {
     const token = qrResult.path.replace('/q/', '');
 
     // Disable the table
-    const tableVersion = await env.DB.prepare('SELECT version FROM service_tables WHERE id = ?')
-      .bind(table1Id)
-      .first<{ version: number }>();
-
     await catalog.updateTableStatus(storeId, table1Id, 'DISABLED');
 
     // QR should not resolve
@@ -358,10 +354,6 @@ describe('QR Fixed Table Token', () => {
     ).rejects.toThrow(/bàn hiện không nhận gọi món/u);
 
     // Re-enable the table for cleanup
-    const tableVersion2 = await env.DB.prepare('SELECT version FROM service_tables WHERE id = ?')
-      .bind(table1Id)
-      .first<{ version: number }>();
-
     await catalog.updateTableStatus(storeId, table1Id, 'AVAILABLE');
   });
 });

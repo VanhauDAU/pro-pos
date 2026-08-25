@@ -1167,7 +1167,7 @@ export class QrOrderService {
       throw error;
     }
     // Security: revoke all active guest sessions for this table
-    await this.repository.revokeGuestSessionsByTable(storeId, tableId, now);
+    await this.repository.revokeGuestSessionsByTable(storeId, tableId);
     return { token: rawToken, path: `/q/${rawToken}` };
   }
 }

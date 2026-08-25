@@ -1043,7 +1043,7 @@ export class QrOrderRepository {
       .run();
   }
 
-  revokeGuestSessionsByTable(storeId: string, tableId: string, now: number) {
+  revokeGuestSessionsByTable(storeId: string, tableId: string) {
     return this.db
       .prepare(
         `UPDATE guest_order_sessions SET status = 'REVOKED'

@@ -342,6 +342,219 @@ describe('Owner and POS activation invariants', () => {
     expect(deletedDetails.status).toBe(404);
   });
 
+  it('lets SUPER_ADMIN delete a fully populated store with GMV, invoices, payments, tables and customers', async () => {
+    const result = await completeAccess('PLATFORM_LOGIN', 'system.admin@example.com');
+    if (result.purpose !== 'PLATFORM_LOGIN') throw new Error('Expected platform session.');
+    const context = await new AuthService(env).context(result.rawSession);
+    const sessionCookie = `__Host-propos-session=${result.rawSession}`;
+
+    const created = await SELF.fetch(`${ORIGIN}/api/v1/platform/stores`, {
+      method: 'POST',
+      headers: {
+        Origin: ORIGIN,
+        Cookie: sessionCookie,
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': context.csrfToken!,
+      },
+      body: JSON.stringify({
+        name: 'Busy Coffee Store',
+        ownerDisplayName: 'Store Owner',
+        ownerEmail: 'busy.owner@example.com',
+      }),
+    });
+    expect(created.status).toBe(201);
+    const { storeId } = await jsonData<{ storeId: string }>(created);
+
+    const now = Date.now();
+    const areaId = `area-${Math.random().toString(36).slice(2, 8)}`;
+    const tableId = `tbl-${Math.random().toString(36).slice(2, 8)}`;
+    const prodId = `prd-${Math.random().toString(36).slice(2, 8)}`;
+    const timeProdId = `tprd-${Math.random().toString(36).slice(2, 8)}`;
+    const varId = `var-${Math.random().toString(36).slice(2, 8)}`;
+    const orderId = `ord-${Math.random().toString(36).slice(2, 8)}`;
+    const invoiceId = `inv-${Math.random().toString(36).slice(2, 8)}`;
+    const paymentId = `pay-${Math.random().toString(36).slice(2, 8)}`;
+    const bankAccId = `bank-${Math.random().toString(36).slice(2, 8)}`;
+    const customerId = `cust-${Math.random().toString(36).slice(2, 8)}`;
+    const custGroupId = `cgrp-${Math.random().toString(36).slice(2, 8)}`;
+    const promoId = `prm-${Math.random().toString(36).slice(2, 8)}`;
+    const batchId = `cbat-${Math.random().toString(36).slice(2, 8)}`;
+
+    const ownerUser = await env.DB.prepare(
+      `SELECT user_id AS id FROM store_memberships WHERE store_id = ? LIMIT 1`,
+    )
+      .bind(storeId)
+      .first<{ id: string }>();
+
+    // Seed populated store data
+    await env.DB.prepare(
+      `INSERT INTO store_bank_accounts (id, store_id, bank_bin, bank_code, bank_name, account_number, account_name, is_default, status, created_at, updated_at)
+       VALUES (?, ?, '970436', 'VCB', 'Vietcombank', '0123456789', 'OWNER', 1, 'ACTIVE', ?, ?)`,
+    )
+      .bind(bankAccId, storeId, now, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO areas (id, store_id, name, status, created_at, updated_at) VALUES (?, ?, 'Khu A', 'ACTIVE', ?, ?)`,
+    )
+      .bind(areaId, storeId, now, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO products (id, store_id, name, product_type, status, created_at, updated_at) VALUES (?, ?, 'Cà phê', 'QUANTITY', 'ACTIVE', ?, ?)`,
+    )
+      .bind(prodId, storeId, now, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO products (id, store_id, name, product_type, status, created_at, updated_at) VALUES (?, ?, 'Bàn giờ', 'TIME', 'ACTIVE', ?, ?)`,
+    )
+      .bind(timeProdId, storeId, now, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO product_variants (id, store_id, product_id, display_code, name, sale_price, cost_price, prompt_price, status, created_at, updated_at)
+       VALUES (?, ?, ?, 'CF-01', 'Mặc định', 35000, 15000, 0, 'ACTIVE', ?, ?)`,
+    )
+      .bind(varId, storeId, prodId, now, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO service_tables (id, store_id, area_id, time_product_id, name, status, version, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'Bàn 1', 'AVAILABLE', 1, ?, ?)`,
+    )
+      .bind(tableId, storeId, areaId, timeProdId, now, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO customers (id, store_id, name, phone, normalized_phone, debt_balance_vnd, loyalty_points, created_by, created_at, updated_at)
+       VALUES (?, ?, 'Nguyễn Văn A', '0901234567', '0901234567', 0, 100, ?, ?, ?)`,
+    )
+      .bind(customerId, storeId, ownerUser!.id, now, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO customer_groups (id, store_id, name, membership_type, created_by, created_at, updated_at)
+       VALUES (?, ?, 'VIP', 'MANUAL', ?, ?, ?)`,
+    )
+      .bind(custGroupId, storeId, ownerUser!.id, now, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO customer_group_members (store_id, group_id, customer_id, added_at)
+       VALUES (?, ?, ?, ?)`,
+    )
+      .bind(storeId, custGroupId, customerId, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO promotions (id, store_id, name, promotion_type, scope, value, starts_at, status, created_by, created_at, updated_at)
+       VALUES (?, ?, 'KM Giảm giá', 'PERCENT', 'INVOICE', 10, ?, 'ACTIVE', ?, ?, ?)`,
+    )
+      .bind(promoId, storeId, now, ownerUser!.id, now, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO promotion_targets (store_id, promotion_id, target_type, target_id)
+       VALUES (?, ?, 'PRODUCT', ?)`,
+    )
+      .bind(storeId, promoId, prodId)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO orders (id, store_id, table_id, status, version, opened_by, opened_at, created_at, updated_at)
+       VALUES (?, ?, ?, 'PAID', 1, ?, ?, ?, ?)`,
+    )
+      .bind(orderId, storeId, tableId, ownerUser!.id, now, now, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO order_items (id, store_id, order_id, product_id, variant_id, product_type, product_name_snapshot, variant_name_snapshot, unit_price_snapshot, quantity_milli, gross_line_total, discount_amount, net_line_total, line_total, added_by, created_at, updated_at)
+       VALUES ('oi-1', ?, ?, ?, ?, 'QUANTITY', 'Cà phê', 'Mặc định', 35000, 2000, 70000, 0, 70000, 70000, ?, ?, ?)`,
+    )
+      .bind(storeId, orderId, prodId, varId, ownerUser!.id, now, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO order_call_batches (id, store_id, order_id, order_type, sequence_no, actor_user_id, request_id, created_at)
+       VALUES (?, ?, ?, 'DINE_IN', 1, ?, 'req-1', ?)`,
+    )
+      .bind(batchId, storeId, orderId, ownerUser!.id, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO order_call_batch_entries (id, store_id, batch_id, order_id, item_id, change_type, product_id, variant_id, product_type, product_name_snapshot, unit_price_snapshot, before_quantity_milli, delta_quantity_milli, after_quantity_milli, created_at)
+       VALUES ('ocbe-1', ?, ?, ?, 'oi-1', 'ADD', ?, ?, 'QUANTITY', 'Cà phê', 35000, 0, 2000, 2000, ?)`,
+    )
+      .bind(storeId, batchId, orderId, prodId, varId, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO invoices (id, store_id, order_id, display_code, subtotal, discount_total, total, status, issued_at, issued_by, snapshot_json)
+       VALUES (?, ?, ?, 'HD001', 70000, 0, 70000, 'COMPLETED', ?, ?, '{}')`,
+    )
+      .bind(invoiceId, storeId, orderId, now, ownerUser!.id)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO invoice_lines (id, store_id, invoice_id, line_type, description, quantity_milli, unit_price, gross_line_total, discount_amount, line_total, snapshot_json)
+       VALUES ('il-1', ?, ?, 'PRODUCT', 'Cà phê', 2000, 35000, 70000, 0, 70000, '{}')`,
+    )
+      .bind(storeId, invoiceId)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO payments (id, store_id, order_id, method, status, amount, idempotency_key, created_by, created_at)
+       VALUES (?, ?, ?, 'BANK_TRANSFER', 'SUCCEEDED', 70000, 'idemp-1', ?, ?)`,
+    )
+      .bind(paymentId, storeId, orderId, ownerUser!.id, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO invoice_payment_allocations (id, store_id, invoice_id, method, amount_vnd, tendered_vnd, bank_account_id, created_at)
+       VALUES ('ipa-1', ?, ?, 'BANK_TRANSFER', 70000, 70000, ?, ?)`,
+    )
+      .bind(storeId, invoiceId, bankAccId, now)
+      .run();
+
+    // Now call DELETE on the fully populated store
+    const deleteResp = await SELF.fetch(`${ORIGIN}/api/v1/platform/stores/${storeId}`, {
+      method: 'DELETE',
+      headers: {
+        Origin: ORIGIN,
+        Cookie: sessionCookie,
+        'X-CSRF-Token': context.csrfToken!,
+      },
+    });
+    expect(deleteResp.status).toBe(200);
+
+    // Verify all rows in all tables for storeId are completely gone
+    const storeRow = await env.DB.prepare('SELECT id FROM stores WHERE id = ?')
+      .bind(storeId)
+      .first();
+    expect(storeRow).toBeNull();
+
+    const orderRow = await env.DB.prepare('SELECT id FROM orders WHERE store_id = ?')
+      .bind(storeId)
+      .first();
+    expect(orderRow).toBeNull();
+
+    const invRow = await env.DB.prepare('SELECT id FROM invoices WHERE store_id = ?')
+      .bind(storeId)
+      .first();
+    expect(invRow).toBeNull();
+
+    const custRow = await env.DB.prepare('SELECT id FROM customers WHERE store_id = ?')
+      .bind(storeId)
+      .first();
+    expect(custRow).toBeNull();
+
+    const prodRow = await env.DB.prepare('SELECT id FROM products WHERE store_id = ?')
+      .bind(storeId)
+      .first();
+    expect(prodRow).toBeNull();
+  });
+
   it('allows Owner login on a fresh device without creating a POS device', async () => {
     const beforeCount = await env.DB.prepare('SELECT COUNT(*) AS total FROM devices').first<{
       total: number;

@@ -139,6 +139,13 @@ import {
   usePosPollingInterval,
   useRealtime,
 } from '@client/realtime/RealtimeProvider';
+import {
+  armPaymentReturn,
+  clearPaymentPageActive,
+  isReturningFromPayment,
+  markPaymentNavigationStarted,
+} from './payment-return-state';
+import { canonicalPaymentPath } from './payment-navigation';
 
 const BRAND = '#0975f7';
 
@@ -304,6 +311,27 @@ interface OrderMutationSnapshot {
   serverNowMs: number;
   callBatch?: OrderCallBatchDto;
   paymentSnapshot?: PaymentSnapshotResult;
+}
+
+interface PosOverviewOrder {
+  id: string;
+  displayCode: string;
+  orderType: 'DINE_IN' | 'TAKEAWAY';
+  status: string;
+  openedAt: number;
+  itemCount: number;
+  totalVnd: number;
+  tableId?: string | null;
+  tableName?: string | null;
+  areaId?: string | null;
+  areaName?: string | null;
+  timeStatus?: string | null;
+}
+
+interface PosOverviewSnapshot {
+  tables: PosTable[];
+  orders: PosOverviewOrder[];
+  serverNowMs: number;
 }
 
 interface PaymentSnapshotResult {
@@ -896,52 +924,6 @@ function mutationHeaders(csrfToken: string) {
   return { 'X-CSRF-Token': csrfToken, 'Idempotency-Key': crypto.randomUUID() };
 }
 
-function paymentReturnKey(orderId: string) {
-  return `pos-payment-return:${orderId}`;
-}
-
-interface PaymentReturnMarker {
-  enteredAt: number;
-  pendingVersion: number | null;
-  returnArmed: boolean;
-}
-
-// Module state is intentionally scoped to one browser tab/runtime. Persisted
-// storage can be copied when a tab is duplicated and must not grant another tab
-// permission to resume an order it did not leave from checkout.
-const activePaymentReturns = new Map<string, PaymentReturnMarker>();
-
-function markPaymentNavigationStarted(orderId: string) {
-  activePaymentReturns.set(paymentReturnKey(orderId), {
-    enteredAt: Date.now(),
-    pendingVersion: null,
-    returnArmed: false,
-  });
-}
-
-function armPaymentReturn(orderId: string, pendingVersion: number | null = null) {
-  const key = paymentReturnKey(orderId);
-  const current = activePaymentReturns.get(key);
-  activePaymentReturns.set(paymentReturnKey(orderId), {
-    enteredAt: current?.enteredAt ?? Date.now(),
-    pendingVersion,
-    returnArmed: true,
-  });
-}
-
-function clearPaymentPageActive(orderId: string) {
-  activePaymentReturns.delete(paymentReturnKey(orderId));
-}
-
-function isReturningFromPayment(orderId: string, pendingVersion: number) {
-  const marker = activePaymentReturns.get(paymentReturnKey(orderId));
-  if (!marker?.returnArmed) return false;
-  if (marker.pendingVersion !== null) {
-    return marker.pendingVersion === pendingVersion;
-  }
-  return Date.now() - marker.enteredAt < 120_000;
-}
-
 interface PosNotificationSummary {
   guestOrders: GuestOrderRequestDto[];
   serviceRequests: ServiceRequestDto[];
@@ -1096,19 +1078,10 @@ function StaffHeader({
   const [modal, holder] = Modal.useModal();
   const [loggingOut, setLoggingOut] = useState(false);
   const notifications = usePosNotifications();
-  const allQrOrdersQuery = useQuery<GuestOrderRequestDto[]>({
-    queryKey: ['pos-staff-all-qr-orders'],
-    queryFn: ({ signal }) =>
-      apiRequest<GuestOrderRequestDto[]>('/api/v1/pos/qr-orders', { signal }),
-    staleTime: 30_000,
-    refetchOnMount: false,
-    refetchInterval: 15_000,
-  });
   const pendingQrCount =
     (notifications.data?.counts.guestOrders ?? 0) +
     (notifications.data?.counts.tableOpenRequests ?? 0);
-  const totalQrOrdersCount = (allQrOrdersQuery.data ?? []).length;
-  const showQrBell = pendingQrCount > 0 || totalQrOrdersCount > 0;
+  const showQrBell = pendingQrCount > 0;
   const [qrConfirmModalOpen, setQrConfirmModalOpen] = useState(false);
 
   const pendingNotificationCount =
@@ -1383,7 +1356,7 @@ function AreasPage() {
         serverNowMs: number;
       }>('/api/v1/pos/overview', { signal }),
     refetchInterval: pollingInterval,
-    refetchOnMount: 'always',
+    refetchOnMount: false,
   });
   const tables = {
     data: overview.data?.tables,
@@ -1903,8 +1876,6 @@ function QrOrderPage() {
     Promise.all([
       queryClient.invalidateQueries({ queryKey: ['pos-notification-summary'] }),
       queryClient.invalidateQueries({ queryKey: ['pos-overview'] }),
-      queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
-      queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] }),
       queryClient.invalidateQueries({ queryKey: ['pos-staff-all-qr-orders'] }),
     ]);
   const accept = useMutation({
@@ -4614,14 +4585,52 @@ function OrderEditor({
 
   const applyOrderMutationSnapshot = (snapshot: OrderMutationSnapshot) => {
     queryClient.setQueryData<OrderQuote>(['pos-order-quote', snapshot.order.id], snapshot.quote);
+    const changedTables = new Map(snapshot.tableSummaries.map((table) => [table.id, table]));
+    const itemCount = snapshot.quote.items.reduce(
+      (sum, item) => sum + item.quantityMilli / 1000,
+      0,
+    );
+    const overviewOrder: PosOverviewOrder = {
+      id: snapshot.order.id,
+      displayCode: snapshot.order.displayCode ?? '',
+      orderType: snapshot.order.orderType,
+      status: snapshot.order.status,
+      openedAt: snapshot.order.openedAt,
+      itemCount,
+      totalVnd: snapshot.quote.totalVnd,
+      tableId: snapshot.order.tableId,
+      tableName: snapshot.order.tableName,
+      areaName: snapshot.order.areaName,
+      timeStatus: snapshot.quote.time?.status ?? null,
+    };
     queryClient.setQueryData<PosTable[]>(['pos-tables'], (cached) => {
       if (!cached || snapshot.tableSummaries.length === 0) return cached;
-      const changed = new Map(snapshot.tableSummaries.map((table) => [table.id, table]));
-      return cached.map((table) => changed.get(table.id) ?? table);
+      return cached.map((table) => changedTables.get(table.id) ?? table);
     });
-    void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
-    void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
-    void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
+    queryClient.setQueryData<PosOverviewSnapshot>(['pos-overview'], (cached) => {
+      if (!cached) return cached;
+      const tables =
+        snapshot.tableSummaries.length === 0
+          ? cached.tables
+          : cached.tables.map((table) => changedTables.get(table.id) ?? table);
+      const orderIndex = cached.orders.findIndex((order) => order.id === overviewOrder.id);
+      const orders =
+        orderIndex < 0
+          ? [...cached.orders, overviewOrder]
+          : cached.orders.map((order, index) =>
+              index === orderIndex ? { ...order, ...overviewOrder } : order,
+            );
+      return { ...cached, tables, orders, serverNowMs: snapshot.serverNowMs };
+    });
+    queryClient.setQueryData<PosOverviewOrder[]>(['pos-orders-list'], (cached) => {
+      if (!cached) return cached;
+      const orderIndex = cached.findIndex((order) => order.id === overviewOrder.id);
+      return orderIndex < 0
+        ? [...cached, overviewOrder]
+        : cached.map((order, index) =>
+            index === orderIndex ? { ...order, ...overviewOrder } : order,
+          );
+    });
     if (snapshot.callBatch) {
       queryClient.setQueryData<OrderCallBatchPageDto>(
         ['pos-order-call-batches', snapshot.order.id],
@@ -4638,7 +4647,14 @@ function OrderEditor({
 
   const navigateToPayment = (targetOrderId: string, replace = false) => {
     markPaymentNavigationStarted(targetOrderId);
+    const canonicalOrderPath = `/pos/orders/${targetOrderId}`;
+    const leavingNewOrder =
+      isNew || orderId !== targetOrderId || location.pathname !== canonicalOrderPath;
     if (isDesktopPayment) {
+      if (leavingNewOrder) {
+        navigate(canonicalPaymentPath(targetOrderId, true), { replace: true });
+        return;
+      }
       setSearchParams(
         (current) => {
           const next = new URLSearchParams(current);
@@ -4649,7 +4665,9 @@ function OrderEditor({
       );
       return;
     }
-    navigate(`/pos/orders/${targetOrderId}/payment`, replace ? { replace: true } : undefined);
+    navigate(canonicalPaymentPath(targetOrderId, false), {
+      replace: leavingNewOrder || replace,
+    });
   };
 
   useEffect(() => {
@@ -5157,6 +5175,22 @@ function OrderEditor({
     ]);
   };
 
+  const refreshCachesAfterCancel = async (cancelledOrderId: string) => {
+    // Cancel responses only acknowledge the order id. Fetch one authoritative
+    // overview before navigation so tables and active-order lists cannot remain
+    // stale when the own realtime event is intentionally ignored.
+    const overview = await queryClient.fetchQuery<PosOverviewSnapshot>({
+      queryKey: ['pos-overview'],
+      queryFn: ({ signal }) => apiRequest<PosOverviewSnapshot>('/api/v1/pos/overview', { signal }),
+      staleTime: 0,
+    });
+    queryClient.setQueryData(['pos-tables'], overview.tables);
+    queryClient.setQueryData(['pos-orders-list'], overview.orders);
+    queryClient.removeQueries({ queryKey: ['pos-order-quote', cancelledOrderId] });
+    queryClient.removeQueries({ queryKey: ['pos-order-detail', cancelledOrderId] });
+    queryClient.removeQueries({ queryKey: ['pos-payment-snapshot', cancelledOrderId] });
+  };
+
   const chooseProduct = (product: CatalogProduct, event?: React.MouseEvent) => {
     if (event) {
       event.stopPropagation();
@@ -5471,9 +5505,6 @@ function OrderEditor({
     applyOrderMutationSnapshot(snapshot);
     clearOrderDraft();
     setManualPromotionIds(null);
-    void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
-    void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
-    void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
     if (checkoutAfterSave) {
       navigateToPayment(snapshot.order.id, true);
     } else {
@@ -5641,9 +5672,6 @@ function OrderEditor({
       applyOrderMutationSnapshot(snapshot);
       clearOrderDraft();
       setManualPromotionIds(null);
-      void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
-      void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
-      void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
       messageApi.success(
         snapshot.callBatch
           ? `Đã lưu Đợt ${snapshot.callBatch.sequenceNo}.`
@@ -5748,6 +5776,7 @@ function OrderEditor({
     const currentQuote = quote.data;
     if (
       suppressPaymentAutoResume ||
+      desktopCheckoutOpen ||
       !currentQuote?.time ||
       currentQuote.order.status !== 'PAYMENT_PENDING' ||
       !isReturningFromPayment(currentQuote.order.id, currentQuote.order.version) ||
@@ -5772,7 +5801,7 @@ function OrderEditor({
     return () => {
       if (retryTimer !== null) window.clearTimeout(retryTimer);
     };
-  }, [autoResumeRetryToken, quote.data, suppressPaymentAutoResume]);
+  }, [autoResumeRetryToken, desktopCheckoutOpen, quote.data, suppressPaymentAutoResume]);
 
   const handleOpenTableQrModal = async () => {
     const tableId = quote.data?.order.tableId ?? selectedTable?.id ?? preselectedTableId;
@@ -5820,6 +5849,7 @@ function OrderEditor({
       return;
     }
     if (!isNew) {
+      if (quote.data) markPaymentNavigationStarted(quote.data.order.id);
       const hasPendingChanges =
         draftLines.length > 0 || hasPendingSavedItemChanges() || manualPromotionIds !== null;
       if (hasPendingChanges && !confirmedPending) {
@@ -6185,10 +6215,7 @@ function OrderEditor({
       setCancelOpen(false);
       setCancelReason('');
       messageApi.success('Đã hủy đơn hàng thành công.');
-      await refreshOrder();
-      void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
-      void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
-      void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
+      await refreshCachesAfterCancel(quote.data.order.id);
       if (orderType === 'TAKEAWAY' || quote.data.order.orderType === 'TAKEAWAY') {
         navigate('/pos/areas?tab=takeaway', {
           replace: true,
@@ -9968,7 +9995,7 @@ function PaymentPage({
     return cached?.paymentSnapshotId ?? null;
   });
   const checkoutPreparationStartedRef = useRef(false);
-  const checkoutWasFrozenRef = useRef(false);
+  const completionInFlightRef = useRef(false);
   const csrf = auth.csrfToken!;
 
   const quote = useQuery({
@@ -9996,25 +10023,35 @@ function PaymentPage({
   });
   const paymentSnapshotV2Enabled = staffContext.data?.capabilities?.posPaymentSnapshotV2 !== false;
 
-  useEffect(() => {
-    const currentQuote = quote.data;
-    if (!currentQuote?.time) return;
-    if (currentQuote.order.status === 'PAYMENT_PENDING') {
-      armPaymentReturn(orderId, currentQuote.order.version);
-    } else if (currentQuote.order.status === 'OPEN' && !checkoutWasFrozenRef.current) {
-      armPaymentReturn(orderId);
+  const handleCelebrationComplete = useCallback(async () => {
+    if (completionInFlightRef.current) return;
+    const completedOrder = quote.data?.order;
+    if (!completedOrder) return;
+    completionInFlightRef.current = true;
+    clearPaymentPageActive(completedOrder.id);
+    queryClient.removeQueries({ queryKey: ['pos-order-quote', completedOrder.id] });
+    queryClient.removeQueries({ queryKey: ['pos-payment-snapshot', completedOrder.id] });
+    try {
+      // Checkout responses contain table summaries but not the complete active
+      // order list. Fetch one authoritative overview before returning to Areas
+      // so refetchOnMount=false cannot leave the paid order visible.
+      const overview = await queryClient.fetchQuery<PosOverviewSnapshot>({
+        queryKey: ['pos-overview'],
+        queryFn: ({ signal }) =>
+          apiRequest<PosOverviewSnapshot>('/api/v1/pos/overview', { signal }),
+        staleTime: 0,
+      });
+      queryClient.setQueryData(['pos-tables'], overview.tables);
+      queryClient.setQueryData(['pos-orders-list'], overview.orders);
+    } catch {
+      // Keep navigation responsive if the refresh fails; the query remains
+      // invalidated for the next realtime/full-sync opportunity.
+      void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
+    } finally {
+      setPaymentSuccessData(null);
+      completionInFlightRef.current = false;
     }
-  }, [orderId, quote.data?.order.status, quote.data?.order.version, Boolean(quote.data?.time)]);
-
-  const handleCelebrationComplete = useCallback(() => {
-    if (quote.data?.order.id) {
-      clearPaymentPageActive(quote.data.order.id);
-    }
-    setPaymentSuccessData(null);
-    void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
-    void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
-    void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
-    if (quote.data?.order.orderType === 'TAKEAWAY') {
+    if (completedOrder.orderType === 'TAKEAWAY') {
       navigate('/pos/areas?tab=takeaway', {
         replace: true,
         state: { selectedArea: '__TAKEAWAY__' },
@@ -10022,7 +10059,7 @@ function PaymentPage({
     } else {
       navigate('/pos/areas', { replace: true });
     }
-  }, [quote.data?.order.id, quote.data?.order.orderType, navigate, queryClient]);
+  }, [navigate, queryClient, quote.data?.order]);
 
   useEffect(() => {
     if (!paymentSuccessData) return;
@@ -10054,7 +10091,13 @@ function PaymentPage({
       const refreshed = await apiRequest<OrderQuote>(
         `/api/v1/pos/orders/${frozenQuote.order.id}/quote`,
       );
-      if (!refreshed.time || refreshed.order.status === 'OPEN') return true;
+      if (!refreshed.time || refreshed.order.status === 'OPEN') {
+        queryClient.setQueryData<OrderQuote>(['pos-order-quote', orderId], (cached) =>
+          !cached || refreshed.order.version >= cached.order.version ? refreshed : cached,
+        );
+        clearPaymentPageActive(frozenQuote.order.id);
+        return true;
+      }
       if (
         refreshed.order.status !== 'PAYMENT_PENDING' ||
         refreshed.order.version === frozenQuote.order.version
@@ -10090,12 +10133,6 @@ function PaymentPage({
       (!paymentSnapshotV2Enabled || paymentSnapshotId)
     ) {
       checkoutPreparationStartedRef.current = true;
-      checkoutWasFrozenRef.current = true;
-      return;
-    }
-    if (currentQuote?.order.status === 'OPEN' && checkoutWasFrozenRef.current) {
-      clearPaymentPageActive(currentQuote.order.id);
-      navigate(`/pos/orders/${currentQuote.order.id}`, { replace: true });
       return;
     }
     if (
@@ -10110,7 +10147,6 @@ function PaymentPage({
     // tạo state không nhất quán ở table_time_segments.
     if (currentQuote.time.status === 'ENDED') {
       checkoutPreparationStartedRef.current = true;
-      checkoutWasFrozenRef.current = true;
       // Vẫn cần chuyển order sang PAYMENT_PENDING - gọi stop-time an toàn vì trigger đã bảo vệ ended_at
     }
 
@@ -10124,7 +10160,6 @@ function PaymentPage({
       { headers: mutationHeaders(csrf) },
     )
       .then(async (result) => {
-        checkoutWasFrozenRef.current = true;
         const cachedQuote = queryClient.getQueryData<OrderQuote>(['pos-order-quote', orderId]);
         if (!cachedQuote || result.quote.order.version >= cachedQuote.order.version) {
           queryClient.setQueryData(['pos-order-quote', orderId], result.quote);
@@ -10443,7 +10478,6 @@ function PaymentPage({
         currentQuote = stopped.quote;
         setPaymentSnapshotId(stopped.paymentSnapshotId);
         queryClient.setQueryData(['pos-payment-snapshot', orderId], stopped);
-        armPaymentReturn(orderId, stopped.quote.order.version);
       }
       queryClient.setQueryData(['pos-order-quote', orderId], currentQuote);
       setCustomerModalOpen(false);
@@ -11096,6 +11130,7 @@ function PaymentPage({
 export function StaffPosPortalPage() {
   const navigate = useNavigate();
   const location = useLocation();
+  const queryClient = useQueryClient();
   const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
   const [onboardingRestartToken, setOnboardingRestartToken] = useState(0);
   const [desktopPayment, setDesktopPayment] = useState(() =>
@@ -11120,6 +11155,40 @@ export function StaffPosPortalPage() {
     media.addEventListener('change', sync);
     return () => media.removeEventListener('change', sync);
   }, []);
+  const routePaymentOrderId =
+    location.pathname.startsWith('/pos/orders/') && location.pathname.endsWith('/payment')
+      ? location.pathname.split('/')[3]
+      : undefined;
+  const routeDesktopCheckoutOrderId =
+    desktopPayment &&
+    /^\/pos\/orders\/[^/]+$/u.test(location.pathname) &&
+    new URLSearchParams(location.search).get('checkout') === '1'
+      ? location.pathname.split('/')[3]
+      : undefined;
+  const checkoutActive = Boolean(routePaymentOrderId || routeDesktopCheckoutOrderId);
+  const checkoutActiveOrderId = routePaymentOrderId ?? routeDesktopCheckoutOrderId;
+  const previousCheckoutRef = useRef<{
+    active: boolean;
+    orderId: string | undefined;
+  }>({ active: false, orderId: undefined });
+
+  useEffect(() => {
+    const previous = previousCheckoutRef.current;
+    if (
+      previous.active &&
+      previous.orderId &&
+      (!checkoutActive || previous.orderId !== checkoutActiveOrderId)
+    ) {
+      const currentQuote = queryClient.getQueryData<OrderQuote>([
+        'pos-order-quote',
+        previous.orderId,
+      ]);
+      if (currentQuote?.time && currentQuote.order.status === 'PAYMENT_PENDING') {
+        armPaymentReturn(previous.orderId, currentQuote.order.version);
+      }
+    }
+    previousCheckoutRef.current = { active: checkoutActive, orderId: checkoutActiveOrderId };
+  }, [checkoutActive, checkoutActiveOrderId, queryClient]);
   if (auth.isLoading) return <PosAppSplash message="Đang nạp dữ liệu POS..." />;
   if (auth.isError || auth.data?.actor?.kind !== 'EMPLOYEE') {
     return <Navigate to="/?tab=employee&authError=SESSION_EXPIRED" replace />;

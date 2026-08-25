@@ -98,6 +98,13 @@ export function QrOrderConfirmModal({ open, onClose, areas }: QrOrderConfirmModa
 
   const allOrders = useMemo(() => ordersQuery.data ?? [], [ordersQuery.data]);
 
+  const refreshAfterMutation = () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['pos-staff-all-qr-orders'] }),
+      queryClient.invalidateQueries({ queryKey: ['pos-notification-summary'] }),
+      queryClient.invalidateQueries({ queryKey: ['pos-overview'] }),
+    ]);
+
   const pendingOrders = useMemo(() => allOrders.filter((o) => o.status === 'PENDING'), [allOrders]);
   const acceptedOrders = useMemo(
     () => allOrders.filter((o) => o.status === 'ACCEPTED'),
@@ -193,11 +200,7 @@ export function QrOrderConfirmModal({ open, onClose, areas }: QrOrderConfirmModa
       ),
     onSuccess: () => {
       messageApi.success('Đã xác nhận món vào hóa đơn bàn.');
-      void queryClient.invalidateQueries({ queryKey: ['pos-staff-all-qr-orders'] });
-      void queryClient.invalidateQueries({ queryKey: ['pos-notification-summary'] });
-      void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
-      void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
-      void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
+      void refreshAfterMutation();
     },
     onError: (err) => {
       messageApi.error(err instanceof Error ? err.message : 'Không thể xác nhận món.');
@@ -215,11 +218,7 @@ export function QrOrderConfirmModal({ open, onClose, areas }: QrOrderConfirmModa
       messageApi.success('Đã từ chối đơn gọi món.');
       setRejectingRequest(null);
       setRejectReason('');
-      void queryClient.invalidateQueries({ queryKey: ['pos-staff-all-qr-orders'] });
-      void queryClient.invalidateQueries({ queryKey: ['pos-notification-summary'] });
-      void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
-      void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
-      void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
+      void refreshAfterMutation();
     },
     onError: (err) => {
       messageApi.error(err instanceof Error ? err.message : 'Không thể từ chối đơn.');

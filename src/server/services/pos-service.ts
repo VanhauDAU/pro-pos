@@ -35,6 +35,20 @@ function checkedPercentAmount(amountVnd: number, percent: number) {
 
 type SaveOrderItemInput = OpenOrderCommandInput['items'][number];
 type PromotionPreviewItem = Parameters<PromotionService['previewForOrder']>[0]['items'][number];
+type TimingCallback = (name: string, durationMs: number) => void;
+
+async function measurePhase<T>(
+  timing: TimingCallback | undefined,
+  name: string,
+  operation: () => Promise<T>,
+) {
+  const startedAt = performance.now();
+  try {
+    return await operation();
+  } finally {
+    timing?.(name, performance.now() - startedAt);
+  }
+}
 
 interface PreparedSaveItem {
   itemId: string;
@@ -289,19 +303,20 @@ export class PosService {
     );
   }
 
-  async overview(storeId: string, now = Date.now()) {
-    const [tableRows, orderRows] = await Promise.all([
-      this.repository.listTables(storeId),
-      this.repository.listActiveOrders(storeId),
-    ]);
-    const quoteEntries = await Promise.all(
-      orderRows.results.map(async (order) => {
-        try {
-          return [order.id, await this.quote(storeId, order.id, now)] as const;
-        } catch {
-          return [order.id, null] as const;
-        }
-      }),
+  async overview(storeId: string, now = Date.now(), timing?: TimingCallback) {
+    const [tableRows, orderRows] = await measurePhase(timing, 'overview_base', () =>
+      Promise.all([this.repository.listTables(storeId), this.repository.listActiveOrders(storeId)]),
+    );
+    const quoteEntries = await measurePhase(timing, 'overview_quotes', () =>
+      Promise.all(
+        orderRows.results.map(async (order) => {
+          try {
+            return [order.id, await this.quote(storeId, order.id, now)] as const;
+          } catch {
+            return [order.id, null] as const;
+          }
+        }),
+      ),
     );
     const quotes = new Map(quoteEntries);
     const orders = orderRows.results.map((order) => {
@@ -582,12 +597,15 @@ export class PosService {
     clientMutationId: string,
     now = Date.now(),
     includeLatestCallBatch = false,
+    timing?: TimingCallback,
   ) {
     const [quote, rawTables, callBatchPage] = await Promise.all([
-      this.quote(storeId, orderId, now),
-      this.repository.listTables(storeId),
+      measurePhase(timing, 'snapshot_quote', () => this.quote(storeId, orderId, now)),
+      measurePhase(timing, 'snapshot_tables', () => this.repository.listTables(storeId)),
       includeLatestCallBatch
-        ? this.listOrderCallBatches(storeId, orderId, undefined, 1)
+        ? measurePhase(timing, 'snapshot_call_batch', () =>
+            this.listOrderCallBatches(storeId, orderId, undefined, 1),
+          )
         : Promise.resolve<OrderCallBatchPageDto | null>(null),
     ]);
     const table = quote.order.tableId
@@ -733,6 +751,7 @@ export class PosService {
     requestId: string;
     idempotencyKey: string;
     values: OpenOrderCommandInput;
+    timing?: TimingCallback;
   }) {
     const payloadHash = await this.commandPayloadHash(input.values);
     const replay = await this.replaySaveCommand(input.storeId, input.idempotencyKey, payloadHash);
@@ -740,16 +759,21 @@ export class PosService {
     const now = Date.now();
     const orderId = crypto.randomUUID();
     const takeaway = input.values.orderType === 'TAKEAWAY';
-    const [preparedItems, guest, businessDay] = await Promise.all([
-      this.prepareSaveItems(
-        input.storeId,
-        mergeCompatibleSaveItems(input.values.items),
-        takeaway,
-        now,
-      ),
-      this.resolveGuest(input.storeId, input.values.guest),
-      this.businessDay(input.storeId, now),
-    ]);
+    const [preparedItems, guest, businessDay] = await measurePhase(
+      input.timing,
+      'cmd_prepare',
+      () =>
+        Promise.all([
+          this.prepareSaveItems(
+            input.storeId,
+            mergeCompatibleSaveItems(input.values.items),
+            takeaway,
+            now,
+          ),
+          this.resolveGuest(input.storeId, input.values.guest),
+          this.businessDay(input.storeId, now),
+        ]),
+    );
     const statements: D1PreparedStatement[] = [
       this.repository.prepareSaveCommand({
         commandId: input.idempotencyKey,
@@ -779,7 +803,9 @@ export class PosService {
         }),
       );
     } else {
-      const pricing = await this.pricingSnapshot(input.storeId, input.values.tableId!);
+      const pricing = await measurePhase(input.timing, 'cmd_pricing', () =>
+        this.pricingSnapshot(input.storeId, input.values.tableId!),
+      );
       statements.push(
         this.repository.buildOpenTableStatement({
           commandId: `${input.idempotencyKey}:open`,
@@ -890,18 +916,20 @@ export class PosService {
       removalReason: null,
     }));
     statements.push(
-      ...(await this.promotionStatements({
-        storeId: input.storeId,
-        orderId,
-        orderType: input.values.orderType,
-        promotionIds: input.values.promotionIds,
-        customerId: guest?.customerId ?? null,
-        items: promotionItems,
-        subtotalVnd: promotionItems.reduce((sum, item) => sum + item.netLineTotalVnd, 0),
-        expectedVersion: version,
-        actorId: input.actorId,
-        now,
-      })),
+      ...(await measurePhase(input.timing, 'cmd_promotion', () =>
+        this.promotionStatements({
+          storeId: input.storeId,
+          orderId,
+          orderType: input.values.orderType,
+          promotionIds: input.values.promotionIds,
+          customerId: guest?.customerId ?? null,
+          items: promotionItems,
+          subtotalVnd: promotionItems.reduce((sum, item) => sum + item.netLineTotalVnd, 0),
+          expectedVersion: version,
+          actorId: input.actorId,
+          now,
+        }),
+      )),
       ...this.repository.buildOrderCallBatchStatements({
         batchId: crypto.randomUUID(),
         storeId: input.storeId,
@@ -934,7 +962,9 @@ export class PosService {
       }),
     );
     try {
-      await this.repository.executeAtomic(statements);
+      await measurePhase(input.timing, 'cmd_atomic', () =>
+        this.repository.executeAtomic(statements),
+      );
     } catch (error) {
       const concurrent = await this.replaySaveCommand(
         input.storeId,
@@ -944,18 +974,23 @@ export class PosService {
       if (concurrent) return concurrent;
       mapDatabaseError(error);
     }
-    const snapshot = await this.orderMutationSnapshot(
-      input.storeId,
-      orderId,
-      input.idempotencyKey,
-      now,
-      true,
+    const snapshot = await measurePhase(input.timing, 'cmd_snapshot', () =>
+      this.orderMutationSnapshot(
+        input.storeId,
+        orderId,
+        input.idempotencyKey,
+        now,
+        true,
+        input.timing,
+      ),
     );
-    await this.repository.completeSaveCommand(
-      input.storeId,
-      input.idempotencyKey,
-      JSON.stringify(snapshot),
-      Date.now(),
+    await measurePhase(input.timing, 'cmd_complete', () =>
+      this.repository.completeSaveCommand(
+        input.storeId,
+        input.idempotencyKey,
+        JSON.stringify(snapshot),
+        Date.now(),
+      ),
     );
     return snapshot;
   }
@@ -969,6 +1004,7 @@ export class PosService {
     values: SaveExistingOrderCommandInput;
     actorSessionId?: string | null;
     deviceId?: string | null;
+    timing?: TimingCallback;
   }) {
     const payloadHash = await this.commandPayloadHash(input.values);
     const replay = await this.replaySaveCommand(input.storeId, input.idempotencyKey, payloadHash);
@@ -979,7 +1015,9 @@ export class PosService {
       });
     }
     const now = Date.now();
-    const current = await this.quote(input.storeId, input.orderId, now);
+    const current = await measurePhase(input.timing, 'cmd_prepare', () =>
+      this.quote(input.storeId, input.orderId, now),
+    );
     if (
       current.order.status !== 'OPEN' ||
       current.order.version !== input.values.expectedOrderVersion
@@ -993,15 +1031,17 @@ export class PosService {
     }
     const takeaway = current.order.orderType === 'TAKEAWAY';
     const recordCallHistory = current.order.hasCallHistory;
-    const [preparedItems, guest] = await Promise.all([
-      this.prepareSaveItems(
-        input.storeId,
-        mergeCompatibleSaveItems(input.values.addedItems),
-        takeaway,
-        now,
-      ),
-      this.resolveGuest(input.storeId, input.values.guest),
-    ]);
+    const [preparedItems, guest] = await measurePhase(input.timing, 'cmd_prepare', () =>
+      Promise.all([
+        this.prepareSaveItems(
+          input.storeId,
+          mergeCompatibleSaveItems(input.values.addedItems),
+          takeaway,
+          now,
+        ),
+        this.resolveGuest(input.storeId, input.values.guest),
+      ]),
+    );
     const updateVariantEntries = await Promise.all(
       input.values.updatedItems.map(async (update) => {
         const item = current.items.find((candidate) => candidate.id === update.itemId);
@@ -1369,20 +1409,22 @@ export class PosService {
       }
     }
     statements.push(
-      ...(await this.promotionStatements({
-        storeId: input.storeId,
-        orderId: input.orderId,
-        orderType: current.order.orderType,
-        promotionIds: input.values.promotionIds,
-        customerId: guest?.customerId ?? current.order.customerId,
-        items: finalItems,
-        subtotalVnd:
-          finalItems.reduce((sum, item) => sum + item.netLineTotalVnd, 0) +
-          (current.time?.amountAfterRoundingVnd ?? 0),
-        expectedVersion: version,
-        actorId: input.actorId,
-        now,
-      })),
+      ...(await measurePhase(input.timing, 'cmd_promotion', () =>
+        this.promotionStatements({
+          storeId: input.storeId,
+          orderId: input.orderId,
+          orderType: current.order.orderType,
+          promotionIds: input.values.promotionIds,
+          customerId: guest?.customerId ?? current.order.customerId,
+          items: finalItems,
+          subtotalVnd:
+            finalItems.reduce((sum, item) => sum + item.netLineTotalVnd, 0) +
+            (current.time?.amountAfterRoundingVnd ?? 0),
+          expectedVersion: version,
+          actorId: input.actorId,
+          now,
+        }),
+      )),
       ...(recordCallHistory && batchEntries.length > 0
         ? this.repository.buildOrderCallBatchStatements({
             batchId: crypto.randomUUID(),
@@ -1417,7 +1459,9 @@ export class PosService {
       }),
     );
     try {
-      await this.repository.executeAtomic(statements);
+      await measurePhase(input.timing, 'cmd_atomic', () =>
+        this.repository.executeAtomic(statements),
+      );
     } catch (error) {
       const concurrent = await this.replaySaveCommand(
         input.storeId,
@@ -1432,18 +1476,23 @@ export class PosService {
       }
       mapDatabaseError(error);
     }
-    const snapshot = await this.orderMutationSnapshot(
-      input.storeId,
-      input.orderId,
-      input.idempotencyKey,
-      now,
-      recordCallHistory && batchEntries.length > 0,
+    const snapshot = await measurePhase(input.timing, 'cmd_snapshot', () =>
+      this.orderMutationSnapshot(
+        input.storeId,
+        input.orderId,
+        input.idempotencyKey,
+        now,
+        recordCallHistory && batchEntries.length > 0,
+        input.timing,
+      ),
     );
-    await this.repository.completeSaveCommand(
-      input.storeId,
-      input.idempotencyKey,
-      JSON.stringify(snapshot),
-      Date.now(),
+    await measurePhase(input.timing, 'cmd_complete', () =>
+      this.repository.completeSaveCommand(
+        input.storeId,
+        input.idempotencyKey,
+        JSON.stringify(snapshot),
+        Date.now(),
+      ),
     );
     return this.finishSaveNextAction(snapshot, {
       ...input,

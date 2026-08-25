@@ -2,6 +2,9 @@ import { Hono } from 'hono';
 
 import {
   createAreaLayoutSchema,
+  catalogImportCommitSchema,
+  catalogExportSchema,
+  catalogImportPreviewSchema,
   createProductSchema,
   createServiceTableSchema,
   namedResourceSchema,
@@ -12,11 +15,14 @@ import {
   updateServiceTableStatusSchema,
   updateServiceTablePricingSchema,
 } from '@contracts/catalog';
+import { AppError } from '@server/lib/app-error';
 import { success } from '@server/lib/response';
 import { parseJson } from '@server/lib/validation';
 import { requireActor, requirePermission } from '@server/middleware/authorization';
 import { CatalogService } from '@server/services/catalog-service';
+import { CatalogImportService } from '@server/services/catalog-import-service';
 import { QrOrderService } from '@server/services/qr-order-service';
+import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
 import type { AppEnv } from '@server/types';
 
 const ownerCatalogRoutes = new Hono<AppEnv>();
@@ -56,6 +62,49 @@ function auditContext(c: Parameters<typeof success>[0]) {
     requestId: c.get('requestId'),
   };
 }
+
+function idempotencyKey(c: Parameters<typeof success>[0]) {
+  const key = c.req.header('Idempotency-Key');
+  if (!key || key.length < 8 || key.length > 128) {
+    throw new AppError('IDEMPOTENCY_KEY_REQUIRED', 'Thiếu mã xác nhận hợp lệ.', 422);
+  }
+  return key;
+}
+
+ownerCatalogRoutes.post('/import/preview', requirePermission('catalog.manage'), async (c) => {
+  const body = await parseJson(c.req.raw, catalogImportPreviewSchema);
+  return success(c, await new CatalogImportService(c.env).preview(c.get('actor').storeId!, body));
+});
+
+ownerCatalogRoutes.post('/import/commit', requirePermission('catalog.manage'), async (c) => {
+  const body = await parseJson(c.req.raw, catalogImportCommitSchema);
+  const storeId = c.get('actor').storeId!;
+  const result = await new CatalogImportService(c.env).commit({
+    storeId,
+    payload: body,
+    idempotencyKey: idempotencyKey(c),
+    auditContext: auditContext(c),
+  });
+  if (
+    result.createdProducts ||
+    result.updatedProducts ||
+    result.createdCategories ||
+    result.createdUnits
+  ) {
+    c.executionCtx.waitUntil(
+      new RealtimeDispatcher(c.env).dispatchStore(storeId).catch(() => undefined),
+    );
+  }
+  return success(c, result);
+});
+
+ownerCatalogRoutes.post('/export', requirePermission('catalog.manage'), async (c) => {
+  const body = await parseJson(c.req.raw, catalogExportSchema);
+  return success(
+    c,
+    await new CatalogImportService(c.env).exportRows(c.get('actor').storeId!, body.productIds),
+  );
+});
 
 for (const table of ['areas', 'categories', 'units'] as const) {
   ownerCatalogRoutes.get(`/${table}`, requirePermission('catalog.manage'), async (c) => {

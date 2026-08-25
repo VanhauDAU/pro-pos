@@ -6,19 +6,17 @@ import {
   PlayCircleFilled,
   ShopOutlined,
 } from '@ant-design/icons';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   getGuestAssistantActions,
   getGuestAssistantNarration,
-  guestAssistantStorageKey,
   type GuestAssistantAction,
   type GuestAssistantFeedback,
   type GuestAssistantPhase,
   type GuestAssistantTableStatus,
 } from './guest-assistant';
 
-const FALLBACK_SPEECH_DURATION_MS = 2_400;
 const FEEDBACK_DURATION_MS = 4_200;
 
 interface GuestRobotAssistantProps {
@@ -30,24 +28,7 @@ interface GuestRobotAssistantProps {
   onAction: (action: GuestAssistantAction) => void;
 }
 
-type RobotExpression = 'neutral' | 'happy' | 'success' | 'error';
-
-function wasIntroSeen(token: string) {
-  if (typeof window === 'undefined') return false;
-  try {
-    return window.sessionStorage.getItem(guestAssistantStorageKey(token)) === '1';
-  } catch {
-    return false;
-  }
-}
-
-function markIntroSeen(token: string) {
-  try {
-    window.sessionStorage.setItem(guestAssistantStorageKey(token), '1');
-  } catch {
-    // The assistant still works when storage is unavailable.
-  }
-}
+export type RobotExpression = 'neutral' | 'happy' | 'success' | 'error';
 
 function actionIcon(action: GuestAssistantAction, disabled?: boolean) {
   if (disabled) return <ClockCircleOutlined />;
@@ -57,7 +38,7 @@ function actionIcon(action: GuestAssistantAction, disabled?: boolean) {
   return <PlayCircleFilled />;
 }
 
-function RobotVisual({
+export function RobotVisual({
   expression,
   speaking,
   compact = false,
@@ -168,17 +149,14 @@ function RobotVisual({
 }
 
 export function GuestRobotAssistant({
-  token,
+  token: _token,
   tableStatus,
   hasCart,
   actionPending = false,
   feedback,
   onAction,
 }: GuestRobotAssistantProps) {
-  const introWasSeen = useMemo(() => wasIntroSeen(token), [token]);
-  const [phase, setPhase] = useState<GuestAssistantPhase>(introWasSeen ? 'DOCKED' : 'CHOOSING');
-  const [introActive, setIntroActive] = useState(!introWasSeen);
-  const [introSpeaking, setIntroSpeaking] = useState(!introWasSeen);
+  const [phase, setPhase] = useState<GuestAssistantPhase>('DOCKED');
   const [feedbackSpeaking, setFeedbackSpeaking] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const dockRef = useRef<HTMLElement>(null);
@@ -202,50 +180,9 @@ export function GuestRobotAssistant({
     };
   }, [panelOpen]);
 
-  const finishSpeech = useCallback(() => {
-    markIntroSeen(token);
-    setPhase('CHOOSING');
-    setPanelOpen(true);
-  }, [token]);
-
   useEffect(() => {
     if (phase !== 'FEEDBACK') setMessage(getGuestAssistantNarration(tableStatus));
   }, [phase, tableStatus]);
-
-  useEffect(() => {
-    if (introActive) markIntroSeen(token);
-  }, [introActive, token]);
-
-  useEffect(() => {
-    if (!introSpeaking || !introActive) return;
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      setIntroSpeaking(false);
-      return;
-    }
-    const timer = window.setTimeout(() => setIntroSpeaking(false), FALLBACK_SPEECH_DURATION_MS);
-    return () => window.clearTimeout(timer);
-  }, [introActive, introSpeaking]);
-
-  useEffect(() => {
-    if (!introActive) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [introActive]);
-
-  useEffect(() => {
-    if (phase !== 'SPEAKING') return;
-    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (reducedMotion) {
-      finishSpeech();
-      return;
-    }
-
-    const timer = window.setTimeout(finishSpeech, FALLBACK_SPEECH_DURATION_MS);
-    return () => window.clearTimeout(timer);
-  }, [finishSpeech, phase]);
 
   useEffect(() => {
     if (!feedback) return;
@@ -266,16 +203,8 @@ export function GuestRobotAssistant({
       window.clearTimeout(timer);
     };
   }, [feedback]);
-  const skipIntro = () => {
-    markIntroSeen(token);
-    setIntroActive(false);
-    setPanelOpen(false);
-    setPhase('DOCKED');
-  };
-
   const chooseAction = (action: GuestAssistantAction, disabled?: boolean) => {
     if (disabled || actionPending) return;
-    setIntroActive(false);
     setPanelOpen(false);
     setPhase('DOCKED');
     onAction(action);
@@ -330,91 +259,57 @@ export function GuestRobotAssistant({
   );
 
   return (
-    <>
-      {introActive ? (
-        <section className="guest-assistant-intro" aria-label="Trợ lý Pro POS">
-          <div className="guest-assistant-intro__backdrop" />
-          <div className="guest-assistant-intro__card">
-            <button type="button" className="guest-assistant-intro__skip" onClick={skipIntro}>
-              Bỏ qua
-            </button>
-            <div className="guest-assistant-intro__heading">
-              <span>TRỢ LÝ PRO POS</span>
-              <strong>Tôi luôn sẵn sàng hỗ trợ bạn</strong>
-            </div>
-            <RobotVisual expression={expression} speaking={phase === 'SPEAKING' || introSpeaking} />
-            <div
-              className={`guest-assistant-bubble ${phase === 'SPEAKING' || introSpeaking ? 'is-speaking' : ''}`}
-              aria-live="polite"
-            >
-              {message}
-            </div>
-            {phase === 'CHOOSING' ? (
-              actionList
-            ) : (
-              <div className="guest-assistant-listening" aria-hidden="true">
-                <span />
-                <span />
-                <span />
-                <small>Đang nói...</small>
-              </div>
-            )}
-          </div>
-        </section>
-      ) : (
-        <aside
-          ref={dockRef}
-          className={`guest-assistant-dock ${hasCart ? 'has-cart' : ''} ${panelOpen ? 'is-open' : ''}`}
-          aria-label="Trợ lý Pro POS"
-        >
-          {panelOpen ? (
-            <div className="guest-assistant-dock__panel">
-              <div
-                className={`guest-assistant-dock__message is-${feedback?.tone ?? 'normal'}`}
-                aria-live="polite"
-              >
-                {message}
-              </div>
-              {phase === 'FEEDBACK' ? (
-                <div className="guest-assistant-feedback-status">
-                  {feedback?.tone === 'success' ? <CheckCircleFilled /> : null}
-                  {feedback?.tone === 'success' ? 'Đã hoàn tất' : 'Bạn có thể thử lại'}
-                </div>
-              ) : (
-                actionList
-              )}
-            </div>
-          ) : null}
-          {!panelOpen ? (
-            <div className="guest-assistant-dock__quick-actions" aria-label="Chọn hỗ trợ nhanh">
-              {actions.map((option) => (
-                <button
-                  key={`quick-${option.action}-${option.label}`}
-                  type="button"
-                  disabled={option.disabled || actionPending}
-                  onClick={() => chooseAction(option.action, option.disabled)}
-                >
-                  <span>{actionIcon(option.action, option.disabled)}</span>
-                  <strong>{option.label}</strong>
-                </button>
-              ))}
-            </div>
-          ) : null}
-          <button
-            type="button"
-            className="guest-assistant-dock__button"
-            aria-expanded={panelOpen}
-            aria-label={panelOpen ? 'Thu gọn trợ lý Pro POS' : 'Mở trợ lý Pro POS'}
-            onClick={toggleDock}
+    <aside
+      ref={dockRef}
+      className={`guest-assistant-dock ${hasCart ? 'has-cart' : ''} ${panelOpen ? 'is-open' : ''}`}
+      aria-label="Trợ lý Pro POS"
+    >
+      {panelOpen ? (
+        <div className="guest-assistant-dock__panel">
+          <div
+            className={`guest-assistant-dock__message is-${feedback?.tone ?? 'normal'}`}
+            aria-live="polite"
           >
-            <RobotVisual
-              expression={expression}
-              speaking={phase === 'SPEAKING' || feedbackSpeaking}
-              compact
-            />
-          </button>
-        </aside>
-      )}
-    </>
+            {message}
+          </div>
+          {phase === 'FEEDBACK' ? (
+            <div className="guest-assistant-feedback-status">
+              {feedback?.tone === 'success' ? <CheckCircleFilled /> : null}
+              {feedback?.tone === 'success' ? 'Đã hoàn tất' : 'Bạn có thể thử lại'}
+            </div>
+          ) : (
+            actionList
+          )}
+        </div>
+      ) : null}
+      {!panelOpen ? (
+        <div className="guest-assistant-dock__quick-actions" aria-label="Chọn hỗ trợ nhanh">
+          {actions.map((option) => (
+            <button
+              key={`quick-${option.action}-${option.label}`}
+              type="button"
+              disabled={option.disabled || actionPending}
+              onClick={() => chooseAction(option.action, option.disabled)}
+            >
+              <span>{actionIcon(option.action, option.disabled)}</span>
+              <strong>{option.label}</strong>
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <button
+        type="button"
+        className="guest-assistant-dock__button"
+        aria-expanded={panelOpen}
+        aria-label={panelOpen ? 'Thu gọn trợ lý Pro POS' : 'Mở trợ lý Pro POS'}
+        onClick={toggleDock}
+      >
+        <RobotVisual
+          expression={expression}
+          speaking={phase === 'SPEAKING' || feedbackSpeaking}
+          compact
+        />
+      </button>
+    </aside>
   );
 }

@@ -68,6 +68,65 @@ export interface ProductDetailRow {
   mediaId: string | null;
 }
 
+export interface CatalogImportProductRow extends ProductDetailRow {
+  updatedAt: number;
+}
+
+export interface CatalogImportVariantRow {
+  id: string;
+  productId: string;
+  displayCode: string;
+  name: string;
+  salePriceVnd: number | null;
+  costPriceVnd: number;
+  promptPrice: number;
+}
+
+export interface CatalogImportNamedRow {
+  id: string;
+  name: string;
+}
+
+export interface CatalogImportPricingRow {
+  productId: string;
+  basePriceVnd: number;
+  baseDurationSeconds: number;
+  calculationMode: 'ACTUAL_TIME' | 'TIME_BLOCK';
+  roundingUnitVnd: 0 | 100 | 500 | 1000 | 5000;
+  firstPeriodEnabled: number;
+  firstPeriodDurationSeconds: number | null;
+  firstPeriodPrice: number | null;
+}
+
+export interface CatalogImportMutationInput {
+  action: 'CREATE' | 'UPDATE';
+  product: {
+    id: string;
+    expectedUpdatedAt: number | null;
+    categoryId: string | null;
+    unitId: string | null;
+    name: string;
+    description: string | null;
+    productType: 'QUANTITY' | 'WEIGHT' | 'TIME';
+    avatarColor: string | null;
+  };
+  variants: Array<{
+    id: string;
+    displayCode: string;
+    name: string;
+    salePriceVnd: number | null;
+    costPriceVnd: number;
+    promptPrice: boolean;
+  }>;
+  pricing: {
+    basePriceVnd: number;
+    baseDurationSeconds: number;
+    calculationMode: 'ACTUAL_TIME' | 'TIME_BLOCK';
+    roundingUnitVnd: 0 | 100 | 500 | 1000 | 5000;
+    firstPeriod: { enabled: false } | { enabled: true; durationSeconds: number; priceVnd: number };
+  } | null;
+}
+
 export interface NamedRow {
   id: string;
   name: string;
@@ -805,6 +864,249 @@ export class CatalogRepository {
       )
       .bind(storeId)
       .all();
+  }
+
+  async loadImportSnapshot(storeId: string) {
+    const [products, variants, categories, units, pricing] = await this.db.batch([
+      this.db
+        .prepare(
+          `SELECT p.id, p.name, p.description, p.product_type AS productType,
+                  p.status, p.category_id AS categoryId, c.name AS categoryName,
+                  p.unit_id AS unitId, u.name AS unitName,
+                  p.avatar_type AS avatarType, p.avatar_color AS avatarColor,
+                  p.media_id AS mediaId, p.updated_at AS updatedAt
+           FROM products p
+           LEFT JOIN categories c ON c.id = p.category_id AND c.store_id = p.store_id
+           LEFT JOIN units u ON u.id = p.unit_id AND u.store_id = p.store_id
+           WHERE p.store_id = ? AND p.is_system = 0 AND p.status = 'ACTIVE'`,
+        )
+        .bind(storeId),
+      this.db
+        .prepare(
+          `SELECT id, product_id AS productId, display_code AS displayCode, name,
+                  sale_price AS salePriceVnd, cost_price AS costPriceVnd,
+                  prompt_price AS promptPrice
+           FROM product_variants WHERE store_id = ? AND status = 'ACTIVE'`,
+        )
+        .bind(storeId),
+      this.db
+        .prepare("SELECT id, name FROM categories WHERE store_id = ? AND status = 'ACTIVE'")
+        .bind(storeId),
+      this.db.prepare('SELECT id, name FROM units WHERE store_id = ?').bind(storeId),
+      this.db
+        .prepare(
+          `SELECT product_id AS productId, base_price AS basePriceVnd,
+                  base_duration_seconds AS baseDurationSeconds,
+                  calculation_mode AS calculationMode, rounding_unit AS roundingUnitVnd,
+                  first_period_enabled AS firstPeriodEnabled,
+                  first_period_duration_seconds AS firstPeriodDurationSeconds,
+                  first_period_price AS firstPeriodPrice
+           FROM time_price_configs WHERE store_id = ?`,
+        )
+        .bind(storeId),
+    ]);
+    return {
+      products: products!.results as CatalogImportProductRow[],
+      variants: variants!.results as CatalogImportVariantRow[],
+      categories: categories!.results as CatalogImportNamedRow[],
+      units: units!.results as CatalogImportNamedRow[],
+      pricing: pricing!.results as CatalogImportPricingRow[],
+    };
+  }
+
+  async commitCatalogImportGroup(storeId: string, input: CatalogImportMutationInput, now: number) {
+    const product = input.product;
+    const statements: D1PreparedStatement[] = [
+      input.action === 'CREATE'
+        ? this.db
+            .prepare(
+              `INSERT INTO products (
+                id, store_id, category_id, unit_id, name, description, product_type,
+                status, avatar_type, avatar_color, media_id, created_at, updated_at
+              )
+              SELECT ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 'COLOR', ?, NULL, ?, ?
+              WHERE NOT EXISTS (
+                SELECT 1 FROM products
+                WHERE store_id = ? AND is_system = 0 AND status = 'ACTIVE'
+                  AND LOWER(TRIM(name)) = LOWER(TRIM(?))
+              )`,
+            )
+            .bind(
+              product.id,
+              storeId,
+              product.categoryId,
+              product.unitId,
+              product.name,
+              product.description,
+              product.productType,
+              product.avatarColor,
+              now,
+              now,
+              storeId,
+              product.name,
+            )
+        : this.db
+            .prepare(
+              `UPDATE products
+               SET category_id = ?, unit_id = ?, name = ?, description = ?, product_type = ?,
+                   avatar_type = 'COLOR', avatar_color = ?, media_id = NULL, updated_at = ?
+               WHERE id = ? AND store_id = ? AND is_system = 0 AND status = 'ACTIVE'
+                 AND updated_at = ?`,
+            )
+            .bind(
+              product.categoryId,
+              product.unitId,
+              product.name,
+              product.description,
+              product.productType,
+              product.avatarColor,
+              now,
+              product.id,
+              storeId,
+              product.expectedUpdatedAt,
+            ),
+      ...(input.action === 'UPDATE' && product.productType === 'TIME'
+        ? [
+            this.db
+              .prepare(
+                `UPDATE product_variants SET status = 'DISABLED', updated_at = ?
+                 WHERE product_id = ? AND store_id = ? AND status = 'ACTIVE'`,
+              )
+              .bind(now, product.id, storeId),
+          ]
+        : []),
+      ...input.variants.map((variant) =>
+        this.db
+          .prepare(
+            `INSERT INTO product_variants (
+              id, store_id, product_id, display_code, name, sale_price, cost_price,
+              prompt_price, status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              display_code = excluded.display_code, name = excluded.name,
+              sale_price = excluded.sale_price, cost_price = excluded.cost_price,
+              prompt_price = excluded.prompt_price, status = 'ACTIVE', updated_at = excluded.updated_at`,
+          )
+          .bind(
+            variant.id,
+            storeId,
+            product.id,
+            variant.displayCode,
+            variant.name,
+            variant.salePriceVnd,
+            variant.costPriceVnd,
+            variant.promptPrice ? 1 : 0,
+            now,
+            now,
+          ),
+      ),
+      ...(input.pricing
+        ? [
+            this.db
+              .prepare(
+                `INSERT INTO time_price_configs (
+                  id, store_id, product_id, base_price, base_duration_seconds,
+                  calculation_mode, rounding_unit, first_period_enabled,
+                  first_period_duration_seconds, first_period_price, version, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                ON CONFLICT(store_id, product_id) DO UPDATE SET
+                  base_price = excluded.base_price,
+                  base_duration_seconds = excluded.base_duration_seconds,
+                  calculation_mode = excluded.calculation_mode,
+                  rounding_unit = excluded.rounding_unit,
+                  first_period_enabled = excluded.first_period_enabled,
+                  first_period_duration_seconds = excluded.first_period_duration_seconds,
+                  first_period_price = excluded.first_period_price,
+                  version = time_price_configs.version + 1,
+                  updated_at = excluded.updated_at`,
+              )
+              .bind(
+                crypto.randomUUID(),
+                storeId,
+                product.id,
+                input.pricing.basePriceVnd,
+                input.pricing.baseDurationSeconds,
+                input.pricing.calculationMode,
+                input.pricing.roundingUnitVnd,
+                input.pricing.firstPeriod.enabled ? 1 : 0,
+                input.pricing.firstPeriod.enabled
+                  ? input.pricing.firstPeriod.durationSeconds
+                  : null,
+                input.pricing.firstPeriod.enabled ? input.pricing.firstPeriod.priceVnd : null,
+                now,
+                now,
+              ),
+          ]
+        : []),
+    ];
+    const result = await this.db.batch(statements);
+    if ((result[0]?.meta.changes ?? 0) !== 1) {
+      return { committed: false };
+    }
+    return { committed: true };
+  }
+
+  async createCatalogImportNamed(input: {
+    storeId: string;
+    categories: Array<{ id: string; name: string }>;
+    units: Array<{ id: string; name: string }>;
+    now: number;
+  }) {
+    const statements: D1PreparedStatement[] = [
+      ...input.categories.map((category) =>
+        this.db
+          .prepare(
+            `INSERT INTO categories (
+              id, store_id, name, sort_order, status, created_at, updated_at
+            ) VALUES (?, ?, ?, 0, 'ACTIVE', ?, ?)`,
+          )
+          .bind(category.id, input.storeId, category.name, input.now, input.now),
+      ),
+      ...input.units.map((unit) =>
+        this.db
+          .prepare(
+            'INSERT INTO units (id, store_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+          )
+          .bind(unit.id, input.storeId, unit.name, input.now, input.now),
+      ),
+    ];
+    for (let index = 0; index < statements.length; index += 50) {
+      await this.db.batch(statements.slice(index, index + 50));
+    }
+  }
+
+  findCatalogImportCommand(storeId: string, idempotencyKey: string) {
+    return this.db
+      .prepare(
+        `SELECT payload_hash AS payloadHash, result_json AS resultJson
+         FROM catalog_import_commands WHERE store_id = ? AND idempotency_key = ? LIMIT 1`,
+      )
+      .bind(storeId, idempotencyKey)
+      .first<{ payloadHash: string; resultJson: string }>();
+  }
+
+  recordCatalogImportCommand(input: {
+    storeId: string;
+    idempotencyKey: string;
+    payloadHash: string;
+    resultJson: string;
+    now: number;
+  }) {
+    return this.db
+      .prepare(
+        `INSERT INTO catalog_import_commands (
+          id, store_id, idempotency_key, payload_hash, result_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        crypto.randomUUID(),
+        input.storeId,
+        input.idempotencyKey,
+        input.payloadHash,
+        input.resultJson,
+        input.now,
+      )
+      .run();
   }
 
   findTimeProduct(storeId: string, productId: string) {

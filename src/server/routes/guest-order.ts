@@ -58,9 +58,13 @@ guestOrderRoutes.get('/resolve/:token', async (c) => {
 guestOrderRoutes.post('/resolve/:token/open-request', async (c) => {
   assertSameOrigin(c);
   let location: z.infer<typeof verifyGuestLocationSchema> | undefined;
+  let customerName: string | null | undefined;
   if (c.req.header('content-type')?.includes('application/json')) {
     const rawBody = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
     if (rawBody && typeof rawBody === 'object') {
+      if (typeof rawBody.customerName === 'string') {
+        customerName = rawBody.customerName;
+      }
       const locData = 'location' in rawBody ? rawBody.location : rawBody;
       const parsed = verifyGuestLocationSchema.safeParse(locData);
       if (parsed.success) {
@@ -72,6 +76,7 @@ guestOrderRoutes.post('/resolve/:token/open-request', async (c) => {
     c.req.param('token'),
     clientIp(c),
     location,
+    customerName,
   );
   if (!result.alreadyOpen && !result.replayed && result.requestId && result.createdAt) {
     c.executionCtx.waitUntil(
@@ -81,8 +86,12 @@ guestOrderRoutes.post('/resolve/:token/open-request', async (c) => {
           storeId: result.storeId,
           kind: 'TABLE_OPEN_REQUEST',
           soundType: 'TABLE_OPEN_REQUEST',
-          title: `🪑 ${result.tableName} yêu cầu mở bàn`,
-          body: compactPushBody([result.areaName, 'Khách đang chờ để bắt đầu gọi món']),
+          title: `🪑 ${result.tableName}${result.customerName ? ` (${result.customerName})` : ''} yêu cầu mở bàn`,
+          body: compactPushBody([
+            result.areaName,
+            result.customerName ? `Khách: ${result.customerName}` : null,
+            'Khách đang chờ để bắt đầu gọi món',
+          ]),
           url: '/pos/qr-order',
           tag: `table-open-request:${result.requestId}`,
           timestamp: result.createdAt,
@@ -184,9 +193,10 @@ guestOrderRoutes.post('/requests', async (c) => {
           storeId: result.storeId,
           kind: 'QR_ORDER',
           soundType: 'NEW_QR_ORDER',
-          title: `🍽️ ${result.tableName}: ${totalQuantity} món mới`,
+          title: `🍽️ ${result.tableName}${result.customerName ? ` (${result.customerName})` : ''}: ${totalQuantity} món mới`,
           body: compactPushBody([
             result.areaName,
+            result.customerName ? `Khách: ${result.customerName}` : null,
             `${itemSummary}${moreCount > 0 ? `, +${moreCount} dòng món` : ''}`,
             `Tổng ${formatPushMoney(totalVnd)}`,
             result.note ? `Ghi chú: ${result.note}` : null,
@@ -214,6 +224,7 @@ guestOrderRoutes.post('/service-requests', async (c) => {
     body.type,
     clientIp(c),
     body.location,
+    body.customerName,
   );
   c.executionCtx.waitUntil(
     Promise.all([
@@ -224,10 +235,11 @@ guestOrderRoutes.post('/service-requests', async (c) => {
         soundType: body.type === 'CHECKOUT_REQUEST' ? 'CHECKOUT_REQUEST' : 'NEW_QR_ORDER',
         title:
           body.type === 'CALL_STAFF'
-            ? `🔔 ${result.tableName} gọi nhân viên`
-            : `💳 ${result.tableName} yêu cầu thanh toán`,
+            ? `🔔 ${result.tableName}${result.customerName ? ` (${result.customerName})` : ''} gọi nhân viên`
+            : `💳 ${result.tableName}${result.customerName ? ` (${result.customerName})` : ''} yêu cầu thanh toán`,
         body: compactPushBody([
           result.areaName,
+          result.customerName ? `Khách: ${result.customerName}` : null,
           body.type === 'CALL_STAFF'
             ? 'Khách đang chờ nhân viên hỗ trợ'
             : 'Khách đã sẵn sàng thanh toán',

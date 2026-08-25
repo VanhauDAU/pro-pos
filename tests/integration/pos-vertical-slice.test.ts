@@ -3023,6 +3023,10 @@ describe('online POS vertical slice', () => {
       tableName: 'Bàn chờ QR',
       openRequest: null,
     });
+    const overviewAfterAccept = await new PosService(env).overview(storeId);
+    expect(overviewAfterAccept.tables).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: table.id, status: 'OCCUPIED' })]),
+    );
   });
 
   it('creates a QR guest request and atomically accepts it into the active table order', async () => {

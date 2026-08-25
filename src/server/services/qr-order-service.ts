@@ -185,6 +185,7 @@ type SubmitOrderResult =
       replayed: true;
       storeId: string;
       tableName: string;
+      customerName?: string | null;
     }
   | {
       requestId: string;
@@ -192,6 +193,7 @@ type SubmitOrderResult =
       storeId: string;
       tableName: string;
       areaName: string;
+      customerName?: string | null;
       orderId: string;
       createdAt: number;
       note: string | null;
@@ -527,6 +529,7 @@ export class QrOrderService {
     rawQrToken: string,
     ip: string | null,
     location?: VerifyGuestLocationInput | null,
+    customerName?: string | null,
   ) {
     const context = await this.repository.findQrTableContext(
       await hashOpaqueToken(rawQrToken, this.pepper),
@@ -563,6 +566,7 @@ export class QrOrderService {
     if (context.tableStatus === 'OCCUPIED') {
       return {
         ...context,
+        customerName: customerName?.trim() || null,
         alreadyOpen: true,
         requestId: null,
         replayed: true,
@@ -579,6 +583,7 @@ export class QrOrderService {
     if (existing) {
       return {
         ...context,
+        customerName: customerName?.trim() || null,
         alreadyOpen: false,
         requestId: existing.id,
         replayed: true,
@@ -590,6 +595,7 @@ export class QrOrderService {
       await this.repository.createTableOpenRequest({
         id,
         context,
+        customerName: customerName?.trim() || null,
         ipHash: ip ? await hashOpaqueToken(`guest-ip:${ip}`, this.pepper) : null,
         now,
       });
@@ -601,6 +607,7 @@ export class QrOrderService {
       if (!concurrent) throw error;
       return {
         ...context,
+        customerName: customerName?.trim() || null,
         alreadyOpen: false,
         requestId: concurrent.id,
         replayed: true,
@@ -609,6 +616,7 @@ export class QrOrderService {
     }
     return {
       ...context,
+      customerName: customerName?.trim() || null,
       alreadyOpen: false,
       requestId: id,
       replayed: false,
@@ -652,6 +660,13 @@ export class QrOrderService {
         actorSessionId: input.actorSessionId,
         deviceId: input.deviceId,
       });
+      if (request.customerName && opened?.orderId) {
+        await this.env.DB.prepare(
+          `UPDATE orders SET customer_name = ? WHERE id = ? AND store_id = ?`,
+        )
+          .bind(request.customerName, opened.orderId, input.storeId)
+          .run();
+      }
     }
     await this.repository.completeTableOpenRequest({
       storeId: input.storeId,
@@ -897,6 +912,7 @@ export class QrOrderService {
         requestId,
         clientRequestId: input.clientRequestId,
         session,
+        customerName: input.customerName?.trim() || null,
         note: input.note?.trim() || null,
         ipHash: ip ? await hashOpaqueToken(`guest-ip:${ip}`, this.pepper) : null,
         now: createdAt,
@@ -917,6 +933,7 @@ export class QrOrderService {
           replayed: true,
           storeId: session.storeId,
           tableName: session.tableName,
+          customerName: input.customerName?.trim() || null,
         };
       }
       mapDatabaseError(error);
@@ -927,6 +944,7 @@ export class QrOrderService {
       storeId: session.storeId,
       tableName: session.tableName,
       areaName: session.areaName,
+      customerName: input.customerName?.trim() || null,
       orderId: session.orderId,
       createdAt,
       note: input.note?.trim() || null,
@@ -950,6 +968,7 @@ export class QrOrderService {
     type: 'CALL_STAFF' | 'CHECKOUT_REQUEST',
     _ip?: string | null,
     location?: VerifyGuestLocationInput | null,
+    customerName?: string | null,
   ) {
     const session = await this.contextFromSession(rawGuest);
     if (location) {
@@ -1004,6 +1023,7 @@ export class QrOrderService {
         id,
         session,
         type,
+        customerName: customerName?.trim() || null,
         now,
         notificationExpiresAt: now + STAFF_NOTIFICATION_RETENTION_MS,
       });
@@ -1016,6 +1036,7 @@ export class QrOrderService {
       storeId: session.storeId,
       tableName: session.tableName,
       areaName: session.areaName,
+      customerName: customerName?.trim() || null,
       orderId: session.orderId,
       createdAt: now,
     };

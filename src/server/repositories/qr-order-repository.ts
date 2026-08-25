@@ -156,14 +156,15 @@ export class QrOrderRepository {
   async createTableOpenRequest(input: {
     id: string;
     context: QrTableContextRow;
+    customerName?: string | null;
     ipHash: string | null;
     now: number;
   }) {
     await this.db
       .prepare(
         `INSERT INTO table_open_requests (
-          id, store_id, table_id, qr_code_id, status, ip_hash, created_at
-        ) VALUES (?, ?, ?, ?, 'OPEN', ?, ?)`,
+          id, store_id, table_id, qr_code_id, status, ip_hash, created_at, customer_name
+        ) VALUES (?, ?, ?, ?, 'OPEN', ?, ?, ?)`,
       )
       .bind(
         input.id,
@@ -172,6 +173,7 @@ export class QrOrderRepository {
         input.context.qrId,
         input.ipHash,
         input.now,
+        input.customerName ?? null,
       )
       .run();
   }
@@ -182,7 +184,8 @@ export class QrOrderRepository {
         `SELECT tor.id, tor.status, tor.table_id AS tableId,
                 COALESCE(st.display_name, st.name) AS tableName,
                 a.name AS areaName, st.version AS tableVersion,
-                tor.created_at AS createdAt
+                tor.created_at AS createdAt,
+                tor.customer_name AS customerName
          FROM table_open_requests tor
          JOIN service_tables st ON st.id = tor.table_id AND st.store_id = tor.store_id
          JOIN areas a ON a.id = st.area_id AND a.store_id = st.store_id
@@ -198,7 +201,8 @@ export class QrOrderRepository {
     return this.db
       .prepare(
         `SELECT tor.id, tor.status, tor.table_id AS tableId,
-                st.status AS tableStatus, st.version AS tableVersion
+                st.status AS tableStatus, st.version AS tableVersion,
+                tor.customer_name AS customerName
          FROM table_open_requests tor
          JOIN service_tables st ON st.id = tor.table_id AND st.store_id = tor.store_id
          WHERE tor.store_id = ? AND tor.id = ? LIMIT 1`,
@@ -210,6 +214,7 @@ export class QrOrderRepository {
         tableId: string;
         tableStatus: 'AVAILABLE' | 'OCCUPIED' | 'DISABLED';
         tableVersion: number;
+        customerName?: string | null;
       }>();
   }
 
@@ -452,8 +457,9 @@ export class QrOrderRepository {
       lineTotalVnd: number;
       note: string | null;
     }>;
+    customerName?: string | null;
   }) {
-    await this.db.batch([
+    const stmts = [
       this.db
         .prepare(
           `INSERT INTO create_guest_order_request_commands (
@@ -523,7 +529,21 @@ export class QrOrderRepository {
           input.now,
           input.notificationExpiresAt,
         ),
-    ]);
+    ];
+    if (input.customerName) {
+      stmts.push(
+        this.db
+          .prepare(`UPDATE guest_order_requests SET customer_name = ? WHERE id = ?`)
+          .bind(input.customerName, input.requestId),
+        this.db
+          .prepare(
+            `UPDATE orders SET customer_name = ?
+             WHERE id = ? AND (customer_name IS NULL OR customer_name = '' OR customer_name = 'Khách lẻ')`,
+          )
+          .bind(input.customerName, input.session.orderId),
+      );
+    }
+    await this.db.batch(stmts);
   }
 
   async listGuestRequestsBySession(guestSessionId: string) {
@@ -544,7 +564,8 @@ export class QrOrderRepository {
                 COALESCE(st.display_name, st.name) AS tableName, a.name AS areaName,
                 gor.order_id AS orderId, o.version AS orderVersion,
                 gor.created_at AS createdAt, gor.note,
-                gor.rejected_reason AS rejectedReason
+                gor.rejected_reason AS rejectedReason,
+                COALESCE(gor.customer_name, o.customer_name) AS customerName
          FROM guest_order_requests gor
          JOIN service_tables st ON st.id = gor.table_id
          JOIN areas a ON a.id = st.area_id
@@ -716,16 +737,17 @@ export class QrOrderRepository {
     id: string;
     session: GuestSessionRow;
     type: 'CALL_STAFF' | 'CHECKOUT_REQUEST';
+    customerName?: string | null;
     now: number;
     notificationExpiresAt: number;
   }) {
-    await this.db.batch([
+    const stmts = [
       this.db
         .prepare(
           `INSERT INTO service_requests (
             id, store_id, table_id, time_session_id, order_id, guest_session_id,
-            type, status, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?)`,
+            type, status, created_at, customer_name
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?)`,
         )
         .bind(
           input.id,
@@ -736,6 +758,7 @@ export class QrOrderRepository {
           input.session.guestSessionId,
           input.type,
           input.now,
+          input.customerName ?? null,
         ),
       this.db
         .prepare(
@@ -776,11 +799,28 @@ export class QrOrderRepository {
           input.session.tableId,
           input.session.tableName,
           input.session.areaName,
-          input.type === 'CALL_STAFF' ? 'Khách gọi nhân viên hỗ trợ' : 'Khách yêu cầu thanh toán',
+          input.type === 'CALL_STAFF'
+            ? input.customerName
+              ? `Khách (${input.customerName}) gọi nhân viên hỗ trợ`
+              : 'Khách gọi nhân viên hỗ trợ'
+            : input.customerName
+              ? `Khách (${input.customerName}) yêu cầu thanh toán`
+              : 'Khách yêu cầu thanh toán',
           input.now,
           input.notificationExpiresAt,
         ),
-    ]);
+    ];
+    if (input.customerName) {
+      stmts.push(
+        this.db
+          .prepare(
+            `UPDATE orders SET customer_name = ?
+             WHERE id = ? AND (customer_name IS NULL OR customer_name = '' OR customer_name = 'Khách lẻ')`,
+          )
+          .bind(input.customerName, input.session.orderId),
+      );
+    }
+    await this.db.batch(stmts);
   }
 
   async listServiceRequests(storeId: string): Promise<ServiceRequestDto[]> {
@@ -790,10 +830,12 @@ export class QrOrderRepository {
                 sr.table_id AS tableId, sr.order_id AS orderId,
                 COALESCE(st.display_name, st.name) AS tableName,
                 a.name AS areaName, sr.created_at AS createdAt,
-                sr.acknowledged_at AS acknowledgedAt
+                sr.acknowledged_at AS acknowledgedAt,
+                COALESCE(sr.customer_name, o.customer_name) AS customerName
          FROM service_requests sr
          JOIN service_tables st ON st.id = sr.table_id
          JOIN areas a ON a.id = st.area_id
+         LEFT JOIN orders o ON o.id = sr.order_id
          WHERE sr.store_id = ? AND sr.status IN ('OPEN', 'ACKNOWLEDGED')
          ORDER BY sr.created_at DESC`,
       )

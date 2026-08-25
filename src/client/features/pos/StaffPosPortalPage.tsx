@@ -972,14 +972,17 @@ function PosNotificationWatcher() {
         playPosSound('NEW_QR_ORDER', { dedupeKey: `qr-order:${req.id}` });
         const itemCount =
           req.items?.reduce((sum, item) => sum + (item.quantity || 1), 0) || req.items?.length || 0;
-        toast.info(`🔔 Yêu cầu gọi món - ${req.tableName}`, {
-          description: `${req.tableName} (${req.areaName}) vừa gửi yêu cầu gọi món (${itemCount} món)`,
-          duration: 8000,
-          action: {
-            label: 'Xem ngay',
-            onClick: () => navigate('/pos/qr-order'),
+        toast.info(
+          `🔔 Yêu cầu gọi món - ${req.tableName}${req.customerName ? ` (${req.customerName})` : ''}`,
+          {
+            description: `${req.customerName ? `Khách: ${req.customerName} • ` : ''}${req.tableName} (${req.areaName}) vừa gửi yêu cầu gọi món (${itemCount} món)`,
+            duration: 8000,
+            action: {
+              label: 'Xem ngay',
+              onClick: () => navigate('/pos/qr-order'),
+            },
           },
-        });
+        );
       }
     }
 
@@ -988,24 +991,30 @@ function PosNotificationWatcher() {
         seenServiceRequestIds.current.add(sr.id);
         if (sr.type === 'CALL_STAFF') {
           playPosSound('CALL_STAFF', { dedupeKey: `service-req:${sr.id}` });
-          toast.warning(`🔔 Gọi nhân viên - ${sr.tableName}`, {
-            description: `${sr.tableName} (${sr.areaName}) đang gọi nhân viên hỗ trợ`,
-            duration: 8000,
-            action: {
-              label: 'Xem ngay',
-              onClick: () => navigate('/pos/qr-order'),
+          toast.warning(
+            `🔔 Gọi nhân viên - ${sr.tableName}${sr.customerName ? ` (${sr.customerName})` : ''}`,
+            {
+              description: `${sr.customerName ? `Khách: ${sr.customerName} • ` : ''}${sr.tableName} (${sr.areaName}) đang gọi nhân viên hỗ trợ`,
+              duration: 8000,
+              action: {
+                label: 'Xem ngay',
+                onClick: () => navigate('/pos/qr-order'),
+              },
             },
-          });
+          );
         } else if (sr.type === 'CHECKOUT_REQUEST') {
           playPosSound('CHECKOUT_REQUEST', { dedupeKey: `service-req:${sr.id}` });
-          toast.info(`💳 Yêu cầu thanh toán - ${sr.tableName}`, {
-            description: `${sr.tableName} (${sr.areaName}) vừa yêu cầu thanh toán`,
-            duration: 8000,
-            action: {
-              label: 'Xem ngay',
-              onClick: () => navigate('/pos/qr-order'),
+          toast.info(
+            `💳 Yêu cầu thanh toán - ${sr.tableName}${sr.customerName ? ` (${sr.customerName})` : ''}`,
+            {
+              description: `${sr.customerName ? `Khách: ${sr.customerName} • ` : ''}${sr.tableName} (${sr.areaName}) vừa yêu cầu thanh toán`,
+              duration: 8000,
+              action: {
+                label: 'Xem ngay',
+                onClick: () => navigate('/pos/qr-order'),
+              },
             },
-          });
+          );
         }
       }
     }
@@ -1014,14 +1023,17 @@ function PosNotificationWatcher() {
       if (!seenTableOpenRequestIds.current.has(tor.id) && tor.status === 'OPEN') {
         seenTableOpenRequestIds.current.add(tor.id);
         playPosSound('TABLE_OPEN_REQUEST', { dedupeKey: `table-open:${tor.id}` });
-        toast.info(`🪑 Yêu cầu mở bàn - ${tor.tableName}`, {
-          description: `Khách yêu cầu mở ${tor.tableName} (${tor.areaName})`,
-          duration: 8000,
-          action: {
-            label: 'Xem ngay',
-            onClick: () => navigate('/pos/qr-order'),
+        toast.info(
+          `🪑 Yêu cầu mở bàn - ${tor.tableName}${tor.customerName ? ` (${tor.customerName})` : ''}`,
+          {
+            description: `${tor.customerName ? `Khách: ${tor.customerName} • ` : ''}Yêu cầu mở ${tor.tableName} (${tor.areaName})`,
+            duration: 8000,
+            action: {
+              label: 'Xem ngay',
+              onClick: () => navigate('/pos/qr-order'),
+            },
           },
-        });
+        );
       }
     }
   }, [notifications.data, navigate]);

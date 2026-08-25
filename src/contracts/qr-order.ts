@@ -18,6 +18,7 @@ export const guestOrderItemSchema = z.object({
 
 export const submitGuestOrderSchema = z.object({
   clientRequestId: z.uuid(),
+  customerName: z.string().trim().max(100).nullable().optional(),
   items: z.array(guestOrderItemSchema).min(1).max(20),
   note: z.string().trim().max(300).nullable().optional(),
   location: verifyGuestLocationSchema.optional(),
@@ -25,6 +26,7 @@ export const submitGuestOrderSchema = z.object({
 
 export const createServiceRequestSchema = z.object({
   type: z.enum(['CALL_STAFF', 'CHECKOUT_REQUEST']),
+  customerName: z.string().trim().max(100).nullable().optional(),
   location: verifyGuestLocationSchema.optional(),
 });
 
@@ -174,6 +176,7 @@ export interface TableOpenRequestDto {
   areaName: string;
   tableVersion: number;
   createdAt: number;
+  customerName?: string | null;
 }
 
 export type GuestOrderStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'CANCELLED' | 'EXPIRED';
@@ -189,6 +192,7 @@ export interface GuestOrderRequestDto {
   createdAt: number;
   note: string | null;
   rejectedReason: string | null;
+  customerName?: string | null;
   items: Array<{
     id: string;
     productName: string;
@@ -210,6 +214,7 @@ export interface ServiceRequestDto {
   orderId: string;
   createdAt: number;
   acknowledgedAt: number | null;
+  customerName?: string | null;
 }
 
 export type StaffNotificationEventType =

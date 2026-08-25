@@ -4,6 +4,7 @@ import {
   DownOutlined,
   ExclamationCircleOutlined,
   UpOutlined,
+  UserOutlined,
 } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button, Empty, Input, Modal, Select, Spin, message } from 'antd';
@@ -341,6 +342,24 @@ export function QrOrderConfirmModal({ open, onClose, areas }: QrOrderConfirmModa
                           <span className="pos-qr-confirm-card__table-name">
                             {order.tableName} - {order.areaName}
                           </span>
+                          {order.customerName ? (
+                            <span
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 4,
+                                padding: '2px 8px',
+                                borderRadius: 12,
+                                background: '#eff6ff',
+                                color: '#1d4ed8',
+                                fontSize: 12,
+                                fontWeight: 600,
+                              }}
+                            >
+                              <UserOutlined style={{ fontSize: 11 }} />
+                              {order.customerName}
+                            </span>
+                          ) : null}
                           <span className="pos-qr-confirm-card__time">
                             <ClockCircleOutlined style={{ marginRight: 4 }} />
                             {formatRelativeTime(order.createdAt)}

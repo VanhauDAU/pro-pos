@@ -1,5 +1,6 @@
 import {
   AimOutlined,
+  ArrowRightOutlined,
   CheckCircleFilled,
   ClockCircleFilled,
   CloseCircleFilled,
@@ -19,6 +20,7 @@ import {
   ShoppingCartOutlined,
   SyncOutlined,
   ThunderboltOutlined,
+  UserOutlined,
 } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -98,6 +100,28 @@ export function GuestOrderPage() {
   const menuAnchorRef = useRef<HTMLDivElement>(null);
 
   // State
+  const guestNameStorageKey = token ? `qr_customer_name_${token}` : 'qr_guest_name';
+  const [customerName, setCustomerName] = useState(() => {
+    try {
+      return (
+        localStorage.getItem(guestNameStorageKey) || localStorage.getItem('qr_guest_name') || ''
+      );
+    } catch {
+      return '';
+    }
+  });
+  const [hasEnteredName, setHasEnteredName] = useState(() => {
+    try {
+      const saved =
+        localStorage.getItem(guestNameStorageKey) || localStorage.getItem('qr_guest_name');
+      return Boolean(saved && saved.trim());
+    } catch {
+      return false;
+    }
+  });
+  const [nameModalOpen, setNameModalOpen] = useState(false);
+  const [tempCustomerName, setTempCustomerName] = useState(() => customerName || '');
+
   const [cart, setCart] = useState<Record<string, CartLine>>({});
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
@@ -247,7 +271,7 @@ export function GuestOrderPage() {
       tableName: context.data.tableName,
       areaName: context.data.areaName,
       cashierName: null,
-      customerName: null,
+      customerName: customerName.trim() || null,
       guestPhone: null,
       guestAddress: null,
       note: null,
@@ -450,6 +474,19 @@ export function GuestOrderPage() {
     });
   };
 
+  const handleConfirmName = (nameToSave?: string) => {
+    const raw = nameToSave ?? tempCustomerName;
+    const finalName = raw.trim() || 'Khách tại bàn';
+    setCustomerName(finalName);
+    setTempCustomerName(finalName);
+    setHasEnteredName(true);
+    setNameModalOpen(false);
+    try {
+      localStorage.setItem(guestNameStorageKey, finalName);
+      localStorage.setItem('qr_guest_name', finalName);
+    } catch {}
+  };
+
   // Submit Order Mutation
   const submitOrder = useMutation({
     mutationFn: async (coords?: {
@@ -467,6 +504,7 @@ export function GuestOrderPage() {
         '/api/v1/guest-order/requests',
         {
           clientRequestId,
+          customerName: customerName.trim() || undefined,
           items: cartLines.map((line) => ({
             productId: line.product.id,
             variantId: line.variant.id,
@@ -545,6 +583,7 @@ export function GuestOrderPage() {
       const loc = coords ?? lastVerifiedCoords.current ?? undefined;
       return jsonRequest('/api/v1/guest-order/service-requests', {
         type,
+        customerName: customerName.trim() || undefined,
         ...(loc ? { location: loc } : {}),
       });
     },
@@ -615,7 +654,10 @@ export function GuestOrderPage() {
     }) =>
       jsonRequest<{ requestId: string | null; alreadyOpen: boolean }>(
         `/api/v1/guest-order/resolve/${token}/open-request`,
-        coords ? { location: coords } : {},
+        {
+          customerName: customerName.trim() || undefined,
+          ...(coords ? { location: coords } : {}),
+        },
       ),
     onSuccess: async (result) => {
       if (!result.alreadyOpen) {
@@ -853,6 +895,21 @@ export function GuestOrderPage() {
             </div>
 
             <div className="qr-guest-hero__badges">
+              <div
+                className="qr-guest-hero__customer-pill"
+                onClick={() => {
+                  setTempCustomerName(customerName);
+                  setNameModalOpen(true);
+                }}
+                title="Chạm để đổi tên xưng hô"
+                role="button"
+                tabIndex={0}
+              >
+                <UserOutlined style={{ color: '#0975f7' }} />
+                <span>{customerName || 'Khách tại bàn'}</span>
+                <EditOutlined style={{ fontSize: 11, opacity: 0.6, marginLeft: 2 }} />
+              </div>
+
               <div className="qr-guest-hero__table-pill">
                 <span className="qr-guest-hero__pulse" />
                 <span>{context.data.tableName}</span>
@@ -2070,6 +2127,102 @@ export function GuestOrderPage() {
                 ) : null}
               </div>
             )}
+          </div>
+        </Modal>
+        {/* ── 8. Initial Welcome & Customer Name Input Modal ─────────────────── */}
+        <Modal
+          open={!hasEnteredName && Boolean(context.data)}
+          footer={null}
+          closable={false}
+          centered
+          width={440}
+          className="qr-guest-welcome-modal"
+          maskClosable={false}
+        >
+          <div className="qr-guest-welcome-card">
+            <div className="qr-guest-welcome-card__icon-badge">
+              <ShopOutlined />
+            </div>
+            <div className="qr-guest-welcome-card__store">
+              {context.data?.storeName || 'PRO POS'}
+            </div>
+            <div className="qr-guest-welcome-card__table-pill">
+              <span className="qr-guest-hero__pulse" />
+              <span>{context.data?.tableName}</span>
+              {context.data?.areaName ? (
+                <span style={{ opacity: 0.8 }}> · {context.data.areaName}</span>
+              ) : null}
+            </div>
+
+            <h2 className="qr-guest-welcome-card__title">Chào mừng quý khách!</h2>
+            <p className="qr-guest-welcome-card__subtitle">
+              Vui lòng nhập tên hoặc danh xưng của bạn để bắt đầu xem thực đơn và gọi món nhé.
+            </p>
+
+            <div className="qr-guest-welcome-card__input-box">
+              <Input
+                size="large"
+                prefix={<UserOutlined style={{ color: '#0975f7', fontSize: 18, marginRight: 6 }} />}
+                placeholder="Nhập tên của bạn (VD: Anh Nam, Chị Linh...)"
+                value={tempCustomerName}
+                onChange={(e) => setTempCustomerName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleConfirmName();
+                  }
+                }}
+                maxLength={50}
+                autoFocus
+                className="qr-guest-welcome-card__input"
+              />
+            </div>
+
+            <Button
+              type="primary"
+              size="large"
+              block
+              className="qr-guest-welcome-card__submit-btn"
+              onClick={() => handleConfirmName()}
+              icon={<ArrowRightOutlined />}
+            >
+              Bắt đầu gọi món
+            </Button>
+          </div>
+        </Modal>
+
+        {/* ── 9. Edit Customer Name Modal ────────────────────────────────────── */}
+        <Modal
+          open={nameModalOpen}
+          onCancel={() => setNameModalOpen(false)}
+          onOk={() => handleConfirmName()}
+          okText="Lưu tên"
+          cancelText="Hủy"
+          title={
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <UserOutlined style={{ color: '#0975f7' }} />
+              <span>Đổi tên xưng hô</span>
+            </div>
+          }
+          centered
+        >
+          <div style={{ padding: '12px 0' }}>
+            <p style={{ fontSize: 13.5, color: '#64748b', marginBottom: 10 }}>
+              Tên của bạn sẽ hiển thị trên các yêu cầu gọi món gửi đến nhân viên và hóa đơn bàn:
+            </p>
+            <Input
+              size="large"
+              prefix={<UserOutlined style={{ color: '#0975f7', marginRight: 6 }} />}
+              placeholder="Nhập tên của bạn (VD: Anh Nam, Chị Linh...)"
+              value={tempCustomerName}
+              onChange={(e) => setTempCustomerName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  handleConfirmName();
+                }
+              }}
+              maxLength={50}
+              autoFocus
+            />
           </div>
         </Modal>
       </div>

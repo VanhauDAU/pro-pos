@@ -215,6 +215,11 @@ try {
       ),
     );
     endpoints.push(
+      await collectSamples(page, 'GET /api/v1/pos/orders/:id/quote', () =>
+        api(page, `/api/v1/pos/orders/${seeded[0]}/quote`),
+      ),
+    );
+    endpoints.push(
       await collectSamples(page, 'POST /api/v1/pos/orders/open', async () => {
         const result = await openTakeaway(page, item);
         createdOrderIds.add(result.data.order.id);

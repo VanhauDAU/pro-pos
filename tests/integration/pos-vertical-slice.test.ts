@@ -214,6 +214,77 @@ describe('online POS vertical slice', () => {
     ).rejects.toMatchObject({ code: 'TABLE_NOT_AVAILABLE' });
   });
 
+  it('returns overview totals and versions from the same authoritative quote', async () => {
+    const pos = new PosService(env);
+    const created = await pos.createTakeaway({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-overview-consistency-create',
+      idempotencyKey: 'overview-consistency-create-001',
+      note: null,
+    });
+    await pos.addItem({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-overview-consistency-item',
+      idempotencyKey: 'overview-consistency-item-001',
+      orderId: created.orderId,
+      productId,
+      variantId,
+      quantityMilli: 2_000,
+      expectedOrderVersion: 1,
+      discount: null,
+    });
+
+    const authoritative = await pos.quote(storeId, created.orderId);
+    const overview = await pos.overview(storeId);
+    expect(overview.orders.find((order) => order.id === created.orderId)).toMatchObject({
+      version: authoritative.order.version,
+      status: authoritative.order.status,
+      totalVnd: authoritative.totalVnd,
+    });
+
+    await pos.cancel({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-overview-consistency-cancel',
+      idempotencyKey: 'overview-consistency-cancel-001',
+      orderId: created.orderId,
+      expectedOrderVersion: authoritative.order.version,
+      reason: 'Dọn dữ liệu test overview',
+    });
+  });
+
+  it('fails overview instead of replacing a quote failure with a zero total', async () => {
+    const pos = new PosService(env);
+    const opened = await openFreshTable('Bàn quote lỗi', 'overview-quote-error-open-001');
+    const segment = await env.DB.prepare(
+      `SELECT id, pricing_snapshot_json AS pricingSnapshotJson
+       FROM table_time_segments WHERE order_id = ? ORDER BY started_at DESC LIMIT 1`,
+    )
+      .bind(opened.orderId)
+      .first<{ id: string; pricingSnapshotJson: string }>();
+    expect(segment).not.toBeNull();
+    await env.DB.prepare('UPDATE table_time_segments SET pricing_snapshot_json = ? WHERE id = ?')
+      .bind('{invalid-json', segment!.id)
+      .run();
+
+    await expect(pos.overview(storeId)).rejects.toBeInstanceOf(SyntaxError);
+
+    await env.DB.prepare('UPDATE table_time_segments SET pricing_snapshot_json = ? WHERE id = ?')
+      .bind(segment!.pricingSnapshotJson, segment!.id)
+      .run();
+    await pos.cancel({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-overview-quote-error-cancel',
+      idempotencyKey: 'overview-quote-error-cancel-001',
+      orderId: opened.orderId,
+      expectedOrderVersion: 1,
+      reason: 'Dọn dữ liệu test quote lỗi',
+    });
+  });
+
   it('opens and saves a multi-item order atomically with idempotent replay', async () => {
     const catalog = new CatalogService(env);
     const table = await catalog.createTable({

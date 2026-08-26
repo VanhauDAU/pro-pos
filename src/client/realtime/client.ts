@@ -13,6 +13,14 @@ export type RealtimeConnectionStatus = 'DISABLED' | 'CONNECTING' | 'CONNECTED' |
 
 const BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 15_000, 30_000];
 
+function logRealtime(
+  level: 'info' | 'warn',
+  event: string,
+  details: Record<string, string | number | boolean | null>,
+) {
+  console[level]('[POS realtime]', { event, ...details });
+}
+
 export class PosRealtimeClient {
   private socket: WebSocket | null = null;
   private stopped = false;
@@ -113,6 +121,11 @@ export class PosRealtimeClient {
     socket.addEventListener('close', (event) => {
       if (this.socket === socket) this.socket = null;
       if (this.stopped) return;
+      logRealtime('warn', 'connection_closed', {
+        code: event.code,
+        clean: event.wasClean,
+        reconnectAttempt: this.reconnectAttempt + 1,
+      });
       this.scheduleReconnect(event.code === 4401 ? 250 : undefined);
     });
     socket.addEventListener('error', () => socket.close());
@@ -183,9 +196,18 @@ export class PosRealtimeClient {
       this.serverTimeOffset = response.serverNowMs - Date.now();
       this.onServerTime(this.serverTimeOffset);
       if (response.mode === 'FULL_SYNC') {
+        logRealtime('info', 'full_sync', {
+          reason: response.reason,
+          cursor: response.cursor,
+        });
         await this.fullSync();
         this.setCursor(response.cursor);
       } else {
+        logRealtime('info', 'replay', {
+          fromSequence: response.fromSequence,
+          toSequence: response.toSequence,
+          events: response.events.length,
+        });
         await this.receiveReplay(response.events);
         this.setCursor(response.toSequence);
       }

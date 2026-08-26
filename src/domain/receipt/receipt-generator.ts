@@ -16,6 +16,29 @@ export interface PosReceiptTimeSegment {
   amount: number;
 }
 
+export function compactReceiptTimeSegments(
+  segments: PosReceiptTimeSegment[] | undefined,
+): PosReceiptTimeSegment[] | undefined {
+  if (!segments || segments.length < 2) return segments;
+  const compacted: PosReceiptTimeSegment[] = [];
+  for (const segment of segments) {
+    const previous = compacted.at(-1);
+    if (
+      previous &&
+      previous.type === segment.type &&
+      previous.name === segment.name &&
+      previous.priceVnd === segment.priceVnd
+    ) {
+      previous.endedAtMs = segment.endedAtMs;
+      previous.elapsedSeconds += segment.elapsedSeconds;
+      previous.amount += segment.amount;
+    } else {
+      compacted.push({ ...segment });
+    }
+  }
+  return compacted;
+}
+
 export interface PosReceiptLineItem {
   id: string;
   name: string;
@@ -160,6 +183,7 @@ export function formatSegmentDurationLabel(seg: {
   const m = Math.floor((seg.elapsedSeconds % 3600) / 60);
   if (h > 0 && m > 0) return `=${h} giờ ${m} phút`;
   if (h > 0) return `=${h} giờ`;
+  if (m === 0) return `=${Math.max(0, seg.elapsedSeconds)} giây`;
   return `=${m} phút`;
 }
 
@@ -714,18 +738,20 @@ export function buildPrintDataFromQuote(
       timeStartedAtMs: quote.time.startedAtMs,
       timeEndedAtMs: quote.time.endedAtMs ?? null,
       timeElapsedSeconds: quote.time.elapsedSeconds,
-      timeSegments: quote.time.segments?.map((s): PosReceiptTimeSegment => ({
-        name: s.name,
-        type: s.type,
-        startedAtMs: s.startedAtMs ?? quote.time!.startedAtMs,
-        endedAtMs: s.endedAtMs ?? quote.time!.endedAtMs ?? null,
-        elapsedSeconds: s.elapsedSeconds,
-        priceVnd:
-          s.priceVnd ??
-          quote.time!.pricingConfig?.basePriceVnd ??
-          quote.time!.amountAfterRoundingVnd,
-        amount: s.amountAfterRoundingVnd ?? s.amountBeforeRoundingVnd ?? 0,
-      })),
+      timeSegments: compactReceiptTimeSegments(
+        quote.time.segments?.map((s): PosReceiptTimeSegment => ({
+          name: s.name,
+          type: s.type,
+          startedAtMs: s.startedAtMs ?? quote.time!.startedAtMs,
+          endedAtMs: s.endedAtMs ?? quote.time!.endedAtMs ?? null,
+          elapsedSeconds: s.elapsedSeconds,
+          priceVnd:
+            s.priceVnd ??
+            quote.time!.pricingConfig?.basePriceVnd ??
+            quote.time!.amountAfterRoundingVnd,
+          amount: s.amountAfterRoundingVnd ?? s.amountBeforeRoundingVnd ?? 0,
+        })),
+      ),
       tableSegments: quote.time.tableSegments?.map((t) => ({
         tableName: t.tableName,
         startedAtMs: t.startedAtMs,
@@ -932,15 +958,18 @@ export function buildPrintDataFromInvoice(invoice: {
       timeStartedAtMs: snapshot.startedAtMs,
       timeEndedAtMs: snapshot.endedAtMs ?? null,
       timeElapsedSeconds: snapshot.elapsedSeconds,
-      timeSegments: (snapshot.segments ?? invoiceSnapshot.time?.segments)?.map((s: any) => ({
-        name: s.name,
-        type: s.type,
-        startedAtMs: s.startedAtMs,
-        endedAtMs: s.endedAtMs,
-        elapsedSeconds: s.elapsedSeconds,
-        priceVnd: s.priceVnd ?? line.unitPrice,
-        amount: s.amountAfterRoundingVnd ?? s.amountBeforeRoundingVnd ?? s.amount ?? line.lineTotal,
-      })),
+      timeSegments: compactReceiptTimeSegments(
+        (snapshot.segments ?? invoiceSnapshot.time?.segments)?.map((s: any) => ({
+          name: s.name,
+          type: s.type,
+          startedAtMs: s.startedAtMs,
+          endedAtMs: s.endedAtMs,
+          elapsedSeconds: s.elapsedSeconds,
+          priceVnd: s.priceVnd ?? line.unitPrice,
+          amount:
+            s.amountAfterRoundingVnd ?? s.amountBeforeRoundingVnd ?? s.amount ?? line.lineTotal,
+        })),
+      ),
       tableSegments: snapshot.tableSegments?.map((t) => ({
         tableName: t.tableName,
         startedAtMs: t.startedAtMs,

@@ -415,9 +415,10 @@ body,
 }
 
 .staff-desktop-status-bar {
-  margin-bottom: 20px;
+  margin-bottom: 16px;
   background: #fff;
   border-radius: 10px;
+  overflow: hidden;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
@@ -21172,31 +21173,19 @@ body {
   border-radius: 6px;
 }
 
-.pos-payment-celebration__btn {
-  width: 100%;
-  height: 48px;
-  background: #0975f7;
-  color: #ffffff;
-  border: none;
-  border-radius: 12px;
-  font-size: 15px;
-  font-weight: 700;
-  cursor: pointer;
-  box-shadow: 0 4px 12px rgba(9, 117, 247, 0.28);
-  transition: all 0.15s ease;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.pos-payment-celebration__print-badge.is-printing {
+  color: #d97706;
+  background: #fffbeb;
 }
 
-.pos-payment-celebration__btn:hover {
-  background: #0284c7;
-  box-shadow: 0 6px 16px rgba(9, 117, 247, 0.35);
-  transform: translateY(-1px);
+.pos-payment-celebration__print-badge.is-failed {
+  color: #dc2626;
+  background: #fef2f2;
 }
 
-.pos-payment-celebration__btn:active {
-  transform: scale(0.98);
+.pos-payment-celebration__print-badge.is-printed {
+  color: #059669;
+  background: #ecfdf5;
 }
 
 /* 4. POS View Transitions & Interactive Feedback */

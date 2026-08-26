@@ -46,7 +46,9 @@ test('first payment entry freezes once, survives reload, and resumes exactly onc
     await resume;
     await expect(page).toHaveURL(new RegExp(`/pos/orders/${fixture.orderId}$`));
     expect(mutations.filter((path) => path.endsWith('/resume-checkout'))).toHaveLength(1);
-    expect((await quote(page, fixture.orderId)).order.status).toBe('OPEN');
+    const resumedQuote = await quote(page, fixture.orderId);
+    expect(resumedQuote.order.status).toBe('OPEN');
+    expect(resumedQuote.time?.status).toBe('RUNNING');
   } finally {
     await cancelOrder(page, fixture.orderId);
   }

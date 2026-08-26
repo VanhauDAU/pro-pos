@@ -510,8 +510,11 @@ posRoutes.get('/overview', requirePermission('table.view'), async (c) =>
   success(
     c,
     await measureRequestTiming(c, 'overview', () =>
-      new PosService(c.env).overview(c.get('actor').storeId!, Date.now(), (name, durationMs) =>
-        addRequestTiming(c, name, durationMs),
+      new PosService(c.env).overview(
+        c.get('actor').storeId!,
+        Date.now(),
+        (name, durationMs) => addRequestTiming(c, name, durationMs),
+        c.get('requestId'),
       ),
     ),
   ),
@@ -639,7 +642,12 @@ posRoutes.get('/tables/:tableId/qr-code', requirePermission('table.view'), async
 );
 
 posRoutes.get('/orders/:orderId/quote', requirePermission('table.view'), async (c) =>
-  success(c, await new PosService(c.env).quote(c.get('actor').storeId!, c.req.param('orderId'))),
+  success(
+    c,
+    await new PosService(c.env).quote(c.get('actor').storeId!, c.req.param('orderId'), Date.now(), {
+      requestId: c.get('requestId'),
+    }),
+  ),
 );
 
 posRoutes.get('/orders/:orderId/detail', requirePermission('table.view'), async (c) =>

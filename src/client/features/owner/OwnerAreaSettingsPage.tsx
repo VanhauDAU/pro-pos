@@ -9,8 +9,6 @@ import {
   PauseCircleOutlined,
   PlayCircleOutlined,
   PlusCircleOutlined,
-  QrcodeOutlined,
-  ReloadOutlined,
 } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -25,7 +23,6 @@ import {
   Select,
   Skeleton,
   Tag,
-  Tooltip,
   Typography,
   message,
 } from 'antd';
@@ -33,7 +30,6 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
-import { TableQrModal } from '@client/components/TableQrModal';
 
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 
@@ -122,12 +118,6 @@ export function OwnerAreaSettingsPage() {
   const [orderingAreaId, setOrderingAreaId] = useState<string | null>(null);
   const [pricingTableId, setPricingTableId] = useState<string | null>(null);
   const [togglingStatusTableId, setTogglingStatusTableId] = useState<string | null>(null);
-  const [qrGeneratingTableId, setQrGeneratingTableId] = useState<string | null>(null);
-  const [qrPreview, setQrPreview] = useState<{
-    tableName: string;
-    url: string;
-    image: string;
-  } | null>(null);
   const [draggedTable, setDraggedTable] = useState<{ areaId: string; tableId: string } | null>(
     null,
   );
@@ -165,61 +155,6 @@ export function OwnerAreaSettingsPage() {
   const openRenameArea = (area: { id: string; name: string }) => {
     setRenamingArea(area);
     areaRenameForm.setFieldsValue({ name: area.name });
-  };
-
-  const viewTableQr = async (table: AreaTable) => {
-    setQrGeneratingTableId(table.id);
-    try {
-      const result = await apiRequest<{ path: string; version: number; enabled: boolean }>(
-        `/api/v1/owner/catalog/tables/${table.id}/qr-code`,
-      );
-      const url = new URL(result.path, window.location.origin).toString();
-      const { default: QRCode } = await import('qrcode');
-      setQrPreview({
-        tableName: table.name,
-        url,
-        image: await QRCode.toDataURL(url, { width: 640, margin: 2 }),
-      });
-    } catch (error) {
-      messageApi.error(errorMessage(error, 'Không thể lấy mã QR.'));
-    } finally {
-      setQrGeneratingTableId(null);
-    }
-  };
-
-  const rotateTableQr = (table: AreaTable) => {
-    Modal.confirm({
-      title: 'Thu hồi mã QR hiện tại?',
-      content:
-        'Mã QR đang được in hoặc dán tại bàn sẽ ngừng hoạt động. Sau khi tạo mã mới, bạn cần in và thay mã QR tại bàn.',
-      okText: 'Thu hồi & tạo mới',
-      cancelText: 'Hủy',
-      okButtonProps: { danger: true },
-      onOk: async () => {
-        setQrGeneratingTableId(table.id);
-        try {
-          const result = await apiRequest<{ path: string }>(
-            `/api/v1/owner/catalog/tables/${table.id}/qr-code/rotate`,
-            {
-              method: 'POST',
-              headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' },
-            },
-          );
-          const url = new URL(result.path, window.location.origin).toString();
-          const { default: QRCode } = await import('qrcode');
-          setQrPreview({
-            tableName: table.name,
-            url,
-            image: await QRCode.toDataURL(url, { width: 640, margin: 2 }),
-          });
-          messageApi.success('Đã tạo mã QR mới. Mã cũ của bàn không còn hiệu lực.');
-        } catch (error) {
-          messageApi.error(errorMessage(error, 'Không thể tạo mã QR mới.'));
-        } finally {
-          setQrGeneratingTableId(null);
-        }
-      },
-    });
   };
 
   const saveAreaName = async ({ name }: { name: string }) => {
@@ -694,25 +629,6 @@ export function OwnerAreaSettingsPage() {
                     </div>
 
                     <div className="owner-area-modal-table-col owner-area-modal-table-col--actions">
-                      <Tooltip title="Xem mã QR Order">
-                        <Button
-                          type="text"
-                          size="small"
-                          aria-label={`Xem QR Order cho ${table.name}`}
-                          icon={<QrcodeOutlined />}
-                          loading={qrGeneratingTableId === table.id}
-                          onClick={() => void viewTableQr(table)}
-                        />
-                      </Tooltip>
-                      <Tooltip title="Thu hồi & tạo mã QR mới">
-                        <Button
-                          type="text"
-                          size="small"
-                          aria-label={`Thu hồi QR của ${table.name}`}
-                          icon={<ReloadOutlined style={{ color: '#faad14' }} />}
-                          onClick={() => rotateTableQr(table)}
-                        />
-                      </Tooltip>
                       {table.status === 'DISABLED' ? (
                         <Popconfirm
                           title="Mở lại bàn này?"
@@ -832,17 +748,6 @@ export function OwnerAreaSettingsPage() {
           </div>
         ) : null}
       </Modal>
-
-      {qrPreview && (
-        <TableQrModal
-          open={qrPreview !== null}
-          onClose={() => setQrPreview(null)}
-          tableName={qrPreview.tableName}
-          url={qrPreview.url}
-          qrImageSrc={qrPreview.image}
-          storeName={authContext.data?.device?.storeName ?? 'PRO POS'}
-        />
-      )}
 
       {/* MODAL: SỬA TÊN BÀN */}
       <Modal

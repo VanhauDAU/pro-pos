@@ -28,10 +28,11 @@ bàn → tính giờ/thêm món → thanh toán → phiếu bán hàng`
 - Mở/chuyển/hủy bàn, pause/resume, thêm món, quote và checkout.
 - Cash và bank transfer xác nhận thủ công.
 - Phiếu bán hàng nội bộ, browser print 58/80 mm.
+- QR Order theo bàn với xác minh vị trí, gọi món, gọi nhân viên và yêu cầu thanh toán.
 - R2 ảnh private, audit log và structured logs.
 
 ## Hoãn
 
-- Payment gateway, hóa đơn điện tử, email, CRM, promotion, QR Order.
+- Payment gateway, hóa đơn điện tử, email, CRM và promotion nâng cao.
 - API địa chỉ, silent print/Print Agent, offline mutation và báo cáo nâng cao.
 - Gộp/tách bill và inventory.

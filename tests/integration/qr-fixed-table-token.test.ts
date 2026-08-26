@@ -5,6 +5,7 @@ import { CatalogService } from '@server/services/catalog-service';
 import { PlatformService } from '@server/services/platform-service';
 import { PosService } from '@server/services/pos-service';
 import { QrOrderService } from '@server/services/qr-order-service';
+import { OwnerQrOrderService } from '@server/services/owner-qr-order-service';
 
 describe('QR Fixed Table Token', () => {
   let storeId: string;
@@ -209,82 +210,73 @@ describe('QR Fixed Table Token', () => {
     expect(qrAfter.path).toBe(qrResult.path);
   });
 
-  // CASE 6: Owner rotate QR → A invalid → B valid → version + 1
-  it('CASE 6: rotate creates new token, old one invalid, version incremented', async () => {
+  // CASE 6: Tắt rồi bật lại QR vẫn giữ nguyên mã cố định.
+  it('CASE 6: disabling and re-enabling QR preserves the fixed token', async () => {
     const qr = new QrOrderService(env);
+    const ownerQr = new OwnerQrOrderService(env);
     const before = await qr.getOrCreateQrCode(storeId, table2Id, ownerUserId);
     const tokenA = before.path.replace('/q/', '');
-
-    const rotated = await qr.rotateQrCode(storeId, table2Id, ownerUserId);
-    const tokenB = rotated.path.replace('/q/', '');
-
-    expect(tokenB).not.toBe(tokenA);
-
-    const after = await qr.getOrCreateQrCode(storeId, table2Id, ownerUserId);
-    expect(after.path).toBe(rotated.path);
-    expect(after.version).toBe(before.version + 1);
-
-    // Old token should not resolve
+    await ownerQr.setTableEnabled({
+      storeId,
+      tableId: table2Id,
+      enabled: false,
+      auditContext: {
+        actorUserId: ownerUserId,
+        actorSessionId: null,
+        deviceId: null,
+        requestId: 'disable-fixed-qr',
+      },
+    });
     await expect(
       qr.resolveQr({ rawQrToken: tokenA, ip: '127.0.0.1', deviceNonce: 'device-case6' }),
-    ).rejects.toThrow();
-
-    // New token should resolve
+    ).rejects.toMatchObject({ code: 'QR_ORDER_TABLE_DISABLED' });
+    await ownerQr.setTableEnabled({
+      storeId,
+      tableId: table2Id,
+      enabled: true,
+      auditContext: {
+        actorUserId: ownerUserId,
+        actorSessionId: null,
+        deviceId: null,
+        requestId: 'enable-fixed-qr',
+      },
+    });
+    const after = await qr.getOrCreateQrCode(storeId, table2Id, ownerUserId);
+    expect(after.path).toBe(before.path);
     const resolved = await qr.resolveQr({
-      rawQrToken: tokenB,
+      rawQrToken: tokenA,
       ip: '127.0.0.1',
       deviceNonce: 'device-case6b',
     });
     expect(resolved.context.tableStatus).toBe('AVAILABLE');
   });
 
-  // CASE 7: Rotate QR → guest session thuộc QR/session cũ bị revoke
-  it('CASE 7: rotate revokes active guest sessions', async () => {
-    const qr = new QrOrderService(env);
-
-    // Ensure table1 has open order from CASE 5
-    const qrResult = await qr.getOrCreateQrCode(storeId, table1Id, ownerUserId);
-    const token = qrResult.path.replace('/q/', '');
-
-    // Create guest session
-    const resolved = await qr.resolveQr({
-      rawQrToken: token,
-      ip: '127.0.0.1',
-      deviceNonce: 'device-case7',
-    });
-    const rawGuest = resolved.rawGuest;
-    expect(rawGuest).toBeTruthy();
-
-    // Guest session should be usable
-    const context = await qr.getContext(rawGuest);
-    expect(context.tableStatus).toBe('OPEN');
-
-    // Rotate QR
-    await qr.rotateQrCode(storeId, table1Id, ownerUserId);
-
-    // Old guest session should be revoked
-    await expect(qr.getContext(rawGuest)).rejects.toThrow(/Phiên gọi món đã hết hạn/u);
+  // CASE 7: Không được tắt QR của bàn đang phục vụ.
+  it('CASE 7: occupied tables cannot have QR Order disabled', async () => {
+    const ownerQr = new OwnerQrOrderService(env);
+    await expect(
+      ownerQr.setTableEnabled({
+        storeId,
+        tableId: table1Id,
+        enabled: false,
+        auditContext: {
+          actorUserId: ownerUserId,
+          actorSessionId: null,
+          deviceId: null,
+          requestId: 'disable-occupied-qr',
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'QR_ORDER_TABLE_OCCUPIED' });
   });
 
-  // CASE 8: Employee chỉ có table.view → GET QR được → rotate QR bị 403
-  // This is tested at the route level. Here we verify:
-  // - getOrCreateQrCode works (simulating table.view permission)
-  // - rotateQrCode works (simulating table.manage permission)
-  // The actual permission check is in middleware — we verify the methods themselves are separate.
-  it('CASE 8: getOrCreateQrCode and rotateQrCode are separate methods', async () => {
-    const qr = new QrOrderService(env);
-
-    // getOrCreateQrCode is read-only (used by table.view)
-    const result = await qr.getOrCreateQrCode(storeId, table2Id, ownerUserId);
-    expect(result.path).toMatch(/^\/q\//u);
-
-    // rotateQrCode is destructive (used by table.manage)
-    const rotated = await qr.rotateQrCode(storeId, table2Id, ownerUserId);
-    expect(rotated.path).not.toBe(result.path);
-
-    // Verify they call different DB operations
-    const afterRotate = await qr.getOrCreateQrCode(storeId, table2Id, ownerUserId);
-    expect(afterRotate.path).toBe(rotated.path);
+  it('CASE 8: newly created tables have QR Order enabled by default', async () => {
+    const tables = await new OwnerQrOrderService(env).listTables(storeId);
+    expect(tables).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: table1Id, qrOrderEnabled: true }),
+        expect.objectContaining({ id: table2Id, qrOrderEnabled: true }),
+      ]),
+    );
   });
 
   // CASE 9: QR của bàn A không thể resolve thành bàn B

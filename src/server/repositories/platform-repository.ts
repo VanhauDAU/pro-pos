@@ -114,6 +114,22 @@ export class PlatformRepository {
            VALUES (?, 'VND', 0, ?)`,
         )
         .bind(input.storeId, input.now),
+      ...['Thêm chén/đũa/muỗng', 'Thêm nước/đá', 'Dọn bàn', 'Hỗ trợ món ăn'].map((label, index) =>
+        this.db
+          .prepare(
+            `INSERT INTO qr_order_quick_reasons (
+               id, store_id, label, status, sort_order, created_at, updated_at
+             ) VALUES (?, ?, ?, 'ACTIVE', ?, ?, ?)`,
+          )
+          .bind(
+            `${input.storeId}:qr-reason:${index + 1}`,
+            input.storeId,
+            label,
+            index,
+            input.now,
+            input.now,
+          ),
+      ),
       this.db
         .prepare(
           `INSERT INTO roles (id, store_id, code, name, is_system, created_at, updated_at)
@@ -1038,6 +1054,8 @@ export class PlatformRepository {
         .prepare('DELETE FROM reject_guest_order_request_commands WHERE store_id = ?')
         .bind(storeId),
       this.db.prepare('DELETE FROM service_requests WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM qr_order_quick_reasons WHERE store_id = ?').bind(storeId),
+      this.db.prepare('DELETE FROM qr_order_sales_hours WHERE store_id = ?').bind(storeId),
       this.db.prepare('DELETE FROM push_subscriptions WHERE store_id = ?').bind(storeId),
       this.db.prepare('DELETE FROM staff_notification_events WHERE store_id = ?').bind(storeId),
       this.db.prepare('DELETE FROM table_open_requests WHERE store_id = ?').bind(storeId),

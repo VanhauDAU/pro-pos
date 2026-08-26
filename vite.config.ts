@@ -25,7 +25,7 @@ export default defineConfig({
       srcDir: 'src/client',
       filename: 'sw.js',
       registerType: 'prompt',
-      includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'sounds/*.ogg'],
+      includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'sounds/*.mp3'],
       manifest: {
         id: '/',
         name: 'Pro POS',
@@ -55,7 +55,7 @@ export default defineConfig({
           'manifest.webmanifest',
           'favicon.svg',
           'apple-touch-icon.png',
-          'sounds/*.ogg',
+          'sounds/*.mp3',
           'pwa-*.png',
           'assets/index-*.css',
           'assets/index-*.js',

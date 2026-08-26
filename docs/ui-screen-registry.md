@@ -18,6 +18,7 @@ Không có mẫu thì không triển khai visual cuối. Mẫu được người
 | Owner unit list      | User-provided unit settings reference, only unit and product usage columns                           | loading/list/search/empty/error                   | desktop/tablet/mobile | IN_PROGRESS | PRO-014     |
 | Owner unit detail    | User-provided unit edit reference, product usage list and safe delete                                | loading/edit/pagination/error                     | desktop/tablet/mobile | IN_PROGRESS | PRO-014     |
 | Owner table pricing  | Billiards table-level time product assignment reference                                              | loading/available/occupied/error                  | desktop/tablet/mobile | IN_PROGRESS | PRO-016     |
+| Owner QR Order       | User-approved functional specification using the existing Owner/Ant Design visual system             | loading/config/sales-paused/empty/error           | desktop/tablet/mobile | IMPLEMENTED | —           |
 | POS tables/orders    | Chưa nhận                                                                                            | Chưa chốt                                         | Chưa chốt             | BLOCKED     | —           |
 | Checkout/receipt     | Chưa nhận                                                                                            | Chưa chốt                                         | Chưa chốt             | BLOCKED     | —           |
 

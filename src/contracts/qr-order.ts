@@ -24,11 +24,30 @@ export const submitGuestOrderSchema = z.object({
   location: verifyGuestLocationSchema.optional(),
 });
 
-export const createServiceRequestSchema = z.object({
-  type: z.enum(['CALL_STAFF', 'CHECKOUT_REQUEST']),
-  customerName: z.string().trim().max(100).nullable().optional(),
-  location: verifyGuestLocationSchema.optional(),
-});
+export const createServiceRequestSchema = z
+  .object({
+    type: z.enum(['CALL_STAFF', 'CHECKOUT_REQUEST']),
+    customerName: z.string().trim().max(100).nullable().optional(),
+    reasonId: z.string().trim().min(1).max(160).nullable().optional(),
+    customReason: z.string().trim().min(1).max(300).nullable().optional(),
+    location: verifyGuestLocationSchema.optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.type === 'CHECKOUT_REQUEST' && (value.reasonId || value.customReason)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['reasonId'],
+        message: 'Yêu cầu thanh toán không nhận lý do gọi nhân viên.',
+      });
+    }
+    if (value.type === 'CALL_STAFF' && Boolean(value.reasonId) === Boolean(value.customReason)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['reasonId'],
+        message: 'Vui lòng chọn một lý do hoặc nhập lý do khác.',
+      });
+    }
+  });
 
 export const acceptGuestOrderSchema = z.object({
   expectedOrderVersion: z.number().int().positive(),
@@ -50,6 +69,8 @@ export interface GuestMenuVariant {
   id: string;
   name: string;
   salePriceVnd: number;
+  /** Present for Owner menu configuration; guest data only includes enabled variants. */
+  qrOrderEnabled?: boolean;
 }
 
 export interface GuestMenuProduct {
@@ -62,6 +83,8 @@ export interface GuestMenuProduct {
   avatarType: 'COLOR' | 'IMAGE';
   avatarColor: string | null;
   mediaId: string | null;
+  /** Present for Owner menu configuration; guest data only includes enabled products. */
+  qrOrderEnabled?: boolean;
   variants: GuestMenuVariant[];
 }
 
@@ -162,6 +185,17 @@ export interface GuestOrderContext {
     createdAt: number;
   } | null;
   locationRequirement: GuestLocationRequirementDto;
+  salesAvailability: {
+    acceptingOrders: boolean;
+    reason: 'OPEN' | 'MANUALLY_PAUSED' | 'OUTSIDE_SCHEDULE';
+    nextOpenAt: number | null;
+  };
+  cooldowns: {
+    orderSeconds: number;
+    callStaffSeconds: number;
+    checkoutSeconds: number;
+  };
+  quickStaffReasons: Array<{ id: string; label: string }>;
   activeOrder?: GuestActiveOrderDto | null;
   menu: GuestMenuProduct[];
   storeInfo?: GuestStoreInfoDto | null;
@@ -215,6 +249,7 @@ export interface ServiceRequestDto {
   createdAt: number;
   acknowledgedAt: number | null;
   customerName?: string | null;
+  reason: string | null;
 }
 
 export type StaffNotificationEventType =

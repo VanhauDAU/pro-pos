@@ -1,14 +1,8 @@
 /**
- * Centralized POS Sound Service
+ * Centralized POS sound service backed by a single Web Audio API context.
  *
- * Provides optimized, resilient, preloaded audio notifications for POS.
- * - Preloads and reuses HTMLAudioElement instances (no new Audio() per event).
- * - Handles autoplay restrictions across Chrome, Safari/iOS, Android and PWA.
- * - Deduplicates events by event/request ID to prevent duplicate alerts.
- * - Ignores old/replayed events upon realtime reconnection.
- * - Smoothly throttles and queues audio plays to avoid overlapping cacophony.
- * - Safely catches all play() promise rejections to prevent unhandled errors.
- * - Falls back to synthesized Web Audio API chimes if file loading fails.
+ * Loading and decoding never starts playback. Audio is unlocked only by resuming
+ * the context from a user gesture and playing a genuinely silent, one-frame buffer.
  */
 
 export type PosSoundType =
@@ -22,196 +16,257 @@ export type PosSoundType =
   | 'GUEST_CHECKOUT_REQUEST_SENT'
   | 'GUEST_QR_OPEN_REQUESTED';
 
-const SOUND_FILES: Record<Exclude<PosSoundType, 'NOTIFICATION_CHIME'>, string> = {
-  NEW_QR_ORDER: '/sounds/sound_goimonmoi.ogg',
-  PAYMENT_SUCCESS: '/sounds/sound_thanhtoanthanhcong.ogg',
-  TABLE_OPEN_REQUEST: '/sounds/sound_yeuccaumoban.ogg',
-  CALL_STAFF: '/sounds/sound_yeuccaumoban.ogg',
-  CHECKOUT_REQUEST: '/sounds/sound_yeucauthanhtoan.ogg',
-  GUEST_ORDER_SENT: '/sounds/guest_order_sent.ogg',
-  GUEST_CHECKOUT_REQUEST_SENT: '/sounds/guest_checkout_request_sent.ogg',
-  GUEST_QR_OPEN_REQUESTED: '/sounds/guest_qr_open_requested.ogg',
+export const SOUND_FILES: Record<Exclude<PosSoundType, 'NOTIFICATION_CHIME'>, string> = {
+  NEW_QR_ORDER: '/sounds/sound_goimonmoi.mp3',
+  PAYMENT_SUCCESS: '/sounds/sound_thanhtoanthanhcong.mp3',
+  TABLE_OPEN_REQUEST: '/sounds/sound_yeuccaumoban.mp3',
+  CALL_STAFF: '/sounds/sound_yeuccaumoban.mp3',
+  CHECKOUT_REQUEST: '/sounds/sound_yeucauthanhtoan.mp3',
+  GUEST_ORDER_SENT: '/sounds/guest-order-sent.mp3',
+  GUEST_CHECKOUT_REQUEST_SENT: '/sounds/guest-checkout-request-sent.mp3',
+  GUEST_QR_OPEN_REQUESTED: '/sounds/guest_qr_open_requested.mp3',
 };
 
 interface QueueItem {
   type: PosSoundType;
   volume: number | undefined;
+  enqueuedAt: number;
 }
 
-class SoundManager {
-  private static instance: SoundManager | null = null;
+type AudioContextWindow = Window & {
+  webkitAudioContext?: typeof AudioContext;
+};
 
-  private audioElements = new Map<string, HTMLAudioElement>();
-  private loadedElements = new Set<string>();
+const GESTURE_EVENTS: Array<keyof WindowEventMap> = ['pointerdown', 'touchend', 'click', 'keydown'];
+
+export class SoundManager {
   private audioContext: AudioContext | null = null;
+  private readonly audioBuffers = new Map<PosSoundType, AudioBuffer>();
+  private readonly preloadByPath = new Map<string, Promise<AudioBuffer | null>>();
   private isUnlocked = false;
   private unlockPromise: Promise<boolean> | null = null;
+  private silentWarmupComplete = false;
+  private initialized = false;
+  private gestureListenersArmed = false;
+  private lastForegroundResumeAttempt = 0;
 
-  // Deduplication cache with TTL
-  private seenKeys = new Map<string, number>();
-  private readonly DEDUPE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+  private readonly seenKeys = new Map<string, number>();
+  private readonly DEDUPE_TTL_MS = 5 * 60 * 1000;
 
-  // Playback queue & throttling
-  private playQueue: QueueItem[] = [];
+  private readonly playQueue: QueueItem[] = [];
   private isPlaying = false;
+  private queueTimer: number | null = null;
   private lastPlayTime = 0;
   private readonly MIN_INTERVAL_MS = 350;
+  private readonly SOUND_TTL_MS = 5_000;
   private readonly DEFAULT_VOLUME = 0.5;
+  private readonly MAX_QUEUE_SIZE = 4;
 
-  // Mute setting
   private isMuted = false;
 
-  private constructor() {
-    if (typeof window !== 'undefined') {
-      try {
-        this.isMuted = localStorage.getItem('propos:sound:muted') === 'true';
-      } catch {
-        this.isMuted = false;
-      }
-      this.initAutoplayUnlock();
-      this.preloadAll();
-    }
-  }
-
-  static getInstance(): SoundManager {
-    if (!SoundManager.instance) {
-      SoundManager.instance = new SoundManager();
-    }
-    return SoundManager.instance;
+  constructor() {
+    this.initialize();
   }
 
   get muted(): boolean {
     return this.isMuted;
   }
 
-  setMuted(muted: boolean) {
+  /** Idempotent so React remounts and HMR cannot duplicate browser listeners or fetches. */
+  initialize(): void {
+    if (this.initialized || typeof window === 'undefined') return;
+    this.initialized = true;
+
+    try {
+      this.isMuted = window.localStorage.getItem('propos:sound:muted') === 'true';
+    } catch {
+      this.isMuted = false;
+    }
+
+    this.getAudioContext();
+    this.armGestureUnlock();
+    document.addEventListener('visibilitychange', this.handleVisibilityChange);
+    window.addEventListener('pageshow', this.handleForeground);
+    window.addEventListener('focus', this.handleForeground);
+    this.preloadAll();
+  }
+
+  setMuted(muted: boolean): void {
     this.isMuted = muted;
     try {
-      localStorage.setItem('propos:sound:muted', String(muted));
+      window.localStorage.setItem('propos:sound:muted', String(muted));
     } catch {
-      // Ignore storage errors
+      // Storage may be disabled in private browsing or an embedded webview.
     }
   }
 
-  private preloadAll() {
-    if (typeof window === 'undefined' || typeof Audio === 'undefined') return;
+  private getAudioContext(): AudioContext | null {
+    if (this.audioContext) return this.audioContext;
+    if (typeof window === 'undefined') return null;
 
-    for (const [key, path] of Object.entries(SOUND_FILES)) {
-      if (!this.audioElements.has(key)) {
-        try {
-          const audio = new Audio();
-          audio.preload = 'auto';
-          audio.addEventListener(
-            'canplaythrough',
-            () => {
-              this.loadedElements.add(key);
-            },
-            { once: true },
-          );
-          audio.addEventListener(
-            'error',
-            () => {
-              // Mark as not loaded, will use chime fallback
-            },
-            { once: true },
-          );
-          audio.src = path;
-          audio.load();
-          this.audioElements.set(key, audio);
-        } catch {
-          // Graceful fallback to Web Audio
-        }
-      }
+    const AudioContextConstructor =
+      window.AudioContext ?? (window as AudioContextWindow).webkitAudioContext;
+    if (!AudioContextConstructor) return null;
+
+    try {
+      this.audioContext = new AudioContextConstructor();
+      this.audioContext.addEventListener?.('statechange', this.handleContextStateChange);
+      return this.audioContext;
+    } catch {
+      return null;
     }
   }
 
-  private initAutoplayUnlock() {
-    if (typeof window === 'undefined') return;
-
-    const unlockHandler = () => {
-      void this.unlock();
-      window.removeEventListener('pointerdown', unlockHandler, true);
-      window.removeEventListener('touchstart', unlockHandler, true);
-      window.removeEventListener('keydown', unlockHandler, true);
-      window.removeEventListener('click', unlockHandler, true);
-    };
-
-    window.addEventListener('pointerdown', unlockHandler, {
-      once: true,
-      passive: true,
-      capture: true,
-    });
-    window.addEventListener('touchstart', unlockHandler, {
-      once: true,
-      passive: true,
-      capture: true,
-    });
-    window.addEventListener('keydown', unlockHandler, { once: true, passive: true, capture: true });
-    window.addEventListener('click', unlockHandler, { once: true, passive: true, capture: true });
+  private preloadAll(): void {
+    for (const type of Object.keys(SOUND_FILES) as Array<keyof typeof SOUND_FILES>) {
+      void this.preload(type);
+    }
   }
 
+  private preload(type: Exclude<PosSoundType, 'NOTIFICATION_CHIME'>): Promise<AudioBuffer | null> {
+    const cached = this.audioBuffers.get(type);
+    if (cached) return Promise.resolve(cached);
+
+    const path = SOUND_FILES[type];
+    let promise = this.preloadByPath.get(path);
+    if (!promise) {
+      promise = this.fetchAndDecode(path);
+      this.preloadByPath.set(path, promise);
+    }
+
+    return promise.then((buffer) => {
+      if (buffer) this.audioBuffers.set(type, buffer);
+      return buffer;
+    });
+  }
+
+  private async fetchAndDecode(path: string): Promise<AudioBuffer | null> {
+    const context = this.getAudioContext();
+    if (!context || typeof fetch !== 'function') return null;
+
+    try {
+      const response = await fetch(path, { cache: 'force-cache' });
+      if (!response.ok) return null;
+      const encoded = await response.arrayBuffer();
+      return await context.decodeAudioData(encoded.slice(0));
+    } catch {
+      return null;
+    }
+  }
+
+  private armGestureUnlock(): void {
+    if (this.gestureListenersArmed || typeof window === 'undefined') return;
+    this.gestureListenersArmed = true;
+    for (const eventName of GESTURE_EVENTS) {
+      window.addEventListener(eventName, this.handleGesture, {
+        capture: true,
+        passive: true,
+      });
+    }
+  }
+
+  private disarmGestureUnlock(): void {
+    if (!this.gestureListenersArmed || typeof window === 'undefined') return;
+    this.gestureListenersArmed = false;
+    for (const eventName of GESTURE_EVENTS) {
+      window.removeEventListener(eventName, this.handleGesture, true);
+    }
+  }
+
+  private readonly handleGesture = (): void => {
+    void this.unlock();
+  };
+
+  /**
+   * Resume calls are serialized. The only warm-up source is a zero-filled,
+   * one-frame AudioBuffer; notification files are never used for unlocking.
+   */
   async unlock(): Promise<boolean> {
-    if (this.isUnlocked) return true;
+    if (this.isUnlocked && this.audioContext?.state === 'running') return true;
     if (this.unlockPromise) return this.unlockPromise;
 
     this.unlockPromise = (async () => {
-      try {
-        // 1. Unlock Web Audio Context
-        const AudioCtx =
-          window.AudioContext ||
-          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        if (AudioCtx) {
-          if (!this.audioContext) {
-            this.audioContext = new AudioCtx();
-          }
-          if (this.audioContext.state === 'suspended') {
-            await this.audioContext.resume();
-          }
-        }
+      const context = this.getAudioContext();
+      if (!context || context.state === 'closed') return false;
 
-        // 2. Warm up preloaded Audio instances with silent play
-        const warmups: Promise<void>[] = [];
-        for (const audio of this.audioElements.values()) {
-          const originalVolume = audio.volume;
-          audio.volume = 0;
-          const promise = audio
-            .play()
-            .then(() => {
-              audio.pause();
-              audio.currentTime = 0;
-              audio.volume = originalVolume;
-            })
-            .catch(() => {
-              audio.volume = originalVolume;
-            });
-          warmups.push(promise);
+      try {
+        if (context.state !== 'running') await context.resume();
+        if (context.state !== 'running') return false;
+
+        if (!this.silentWarmupComplete) {
+          const silentBuffer = context.createBuffer(1, 1, context.sampleRate);
+          const silentSource = context.createBufferSource();
+          silentSource.buffer = silentBuffer;
+          silentSource.connect(context.destination);
+          silentSource.start(0);
+          this.silentWarmupComplete = true;
         }
-        await Promise.allSettled(warmups);
 
         this.isUnlocked = true;
+        this.disarmGestureUnlock();
         return true;
       } catch {
+        this.isUnlocked = false;
+        this.armGestureUnlock();
         return false;
-      } finally {
-        this.unlockPromise = null;
       }
-    })();
+    })().finally(() => {
+      this.unlockPromise = null;
+    });
 
     return this.unlockPromise;
   }
 
-  private cleanOldDedupeKeys() {
+  private readonly handleContextStateChange = (): void => {
+    const running = this.audioContext?.state === 'running';
+    this.isUnlocked = running;
+    if (running) {
+      this.disarmGestureUnlock();
+    } else if (this.isForeground()) {
+      this.armGestureUnlock();
+    }
+  };
+
+  private readonly handleVisibilityChange = (): void => {
+    if (!this.isForeground()) {
+      this.dropQueuedSounds();
+      return;
+    }
+    this.tryResumeOnForeground();
+  };
+
+  private readonly handleForeground = (): void => {
+    if (this.isForeground()) this.tryResumeOnForeground();
+  };
+
+  private tryResumeOnForeground(): void {
+    const context = this.audioContext;
+    if (!context || context.state === 'running' || context.state === 'closed') return;
+
+    // visibilitychange, pageshow and focus often arrive together on mobile.
     const now = Date.now();
-    for (const [key, timestamp] of this.seenKeys.entries()) {
-      if (now - timestamp > this.DEDUPE_TTL_MS) {
-        this.seenKeys.delete(key);
-      }
+    if (now - this.lastForegroundResumeAttempt < 1_000) {
+      this.armGestureUnlock();
+      return;
+    }
+    this.lastForegroundResumeAttempt = now;
+    void this.unlock().then((unlocked) => {
+      if (!unlocked) this.armGestureUnlock();
+    });
+  }
+
+  private isForeground(): boolean {
+    if (typeof document === 'undefined') return false;
+    return document.visibilityState === 'visible' && !document.hidden;
+  }
+
+  private cleanOldDedupeKeys(): void {
+    const now = Date.now();
+    for (const [key, timestamp] of this.seenKeys) {
+      if (now - timestamp > this.DEDUPE_TTL_MS) this.seenKeys.delete(key);
     }
   }
 
-  /**
-   * Play a sound notification with optional deduplication and priority.
-   */
   play(
     type: PosSoundType,
     options?: {
@@ -219,125 +274,171 @@ class SoundManager {
       volume?: number;
       force?: boolean;
     },
-  ) {
+  ): void {
     if (typeof window === 'undefined' || (this.isMuted && !options?.force)) return;
 
-    // Deduplicate by ID/Key
+    // Mark the event before checking foreground/audio state. A background event
+    // must remain silent if polling or realtime delivers it again after resume.
     if (options?.dedupeKey) {
       this.cleanOldDedupeKeys();
-      if (this.seenKeys.has(options.dedupeKey)) {
-        return; // Already played for this event/request
-      }
+      if (this.seenKeys.has(options.dedupeKey)) return;
       this.seenKeys.set(options.dedupeKey, Date.now());
     }
 
-    // Enqueue
-    if (this.playQueue.length >= 4) {
-      // Limit queue to prevent lagging sound backlog
-      this.playQueue.shift();
+    if (!this.canPlayNow()) {
+      this.dropQueuedSounds();
+      if (this.audioContext?.state !== 'running') this.armGestureUnlock();
+      return;
     }
-    const vol = options?.volume;
-    this.playQueue.push({ type, volume: vol });
+
+    if (this.playQueue.length >= this.MAX_QUEUE_SIZE) this.playQueue.shift();
+    this.playQueue.push({ type, volume: options?.volume, enqueuedAt: Date.now() });
     void this.processQueue();
   }
 
-  private async processQueue() {
-    if (this.isPlaying || this.playQueue.length === 0) return;
+  private canPlayNow(enqueuedAt?: number): boolean {
+    if (!this.isForeground() || this.audioContext?.state !== 'running' || !this.isUnlocked) {
+      return false;
+    }
+    return enqueuedAt === undefined || Date.now() - enqueuedAt <= this.SOUND_TTL_MS;
+  }
 
+  private dropQueuedSounds(): void {
+    this.playQueue.length = 0;
+    if (this.queueTimer !== null) {
+      window.clearTimeout(this.queueTimer);
+      this.queueTimer = null;
+    }
+  }
+
+  private async processQueue(): Promise<void> {
+    if (this.isPlaying || this.queueTimer !== null) return;
+
+    let firstItem = this.playQueue.at(0);
+    while (firstItem && !this.canPlayNow(firstItem.enqueuedAt)) {
+      this.playQueue.shift();
+      firstItem = this.playQueue.at(0);
+    }
+    if (this.playQueue.length === 0) return;
+    if (!this.canPlayNow()) {
+      this.dropQueuedSounds();
+      return;
+    }
+
+    const delay = Math.max(0, this.MIN_INTERVAL_MS - (Date.now() - this.lastPlayTime));
+    if (delay > 0) {
+      this.queueTimer = window.setTimeout(() => {
+        this.queueTimer = null;
+        void this.processQueue();
+      }, delay);
+      return;
+    }
+
+    const item = this.playQueue.shift();
+    if (!item) return;
     this.isPlaying = true;
-    const item = this.playQueue.shift()!;
-
     try {
-      // Ensure autoplay is unlocked before trying to play
-      if (!this.isUnlocked) {
-        await this.unlock();
-      }
-
-      const now = Date.now();
-      const timeSinceLast = now - this.lastPlayTime;
-      if (timeSinceLast < this.MIN_INTERVAL_MS) {
-        await new Promise((resolve) => setTimeout(resolve, this.MIN_INTERVAL_MS - timeSinceLast));
-      }
-
-      await this.executePlay(item.type, item.volume);
-      this.lastPlayTime = Date.now();
+      if (await this.executePlay(item)) this.lastPlayTime = Date.now();
     } catch {
-      // Never throw from audio processing
+      // Sound must never break the notification UI.
     } finally {
       this.isPlaying = false;
       if (this.playQueue.length > 0) {
-        window.setTimeout(() => void this.processQueue(), 50);
+        this.queueTimer = window.setTimeout(() => {
+          this.queueTimer = null;
+          void this.processQueue();
+        }, 0);
       }
     }
   }
 
-  private async executePlay(type: PosSoundType, customVolume?: number): Promise<void> {
-    if (type === 'NOTIFICATION_CHIME') {
-      await this.playSynthesizedChime();
-      return;
+  private async executePlay(item: QueueItem): Promise<boolean> {
+    const context = this.audioContext;
+    if (!context || !this.canPlayNow(item.enqueuedAt)) return false;
+
+    if (item.type === 'NOTIFICATION_CHIME') {
+      return this.playSynthesizedChime(item.volume, item.enqueuedAt);
     }
 
-    const audio = this.audioElements.get(type);
-    if (!audio || !this.loadedElements.has(type)) {
-      // Audio file not loaded, fallback to synthesized chime
-      await this.playSynthesizedChime();
-      return;
-    }
+    const buffer =
+      this.audioBuffers.get(item.type) ??
+      (await this.preload(item.type as Exclude<PosSoundType, 'NOTIFICATION_CHIME'>));
+    if (!this.canPlayNow(item.enqueuedAt)) return false;
+    if (!buffer) return this.playSynthesizedChime(item.volume, item.enqueuedAt);
+
+    const source = context.createBufferSource();
+    const gain = context.createGain();
+    source.buffer = buffer;
+    gain.gain.setValueAtTime(this.clampVolume(item.volume), context.currentTime);
+    source.connect(gain);
+    gain.connect(context.destination);
+    source.start(0);
+    return true;
+  }
+
+  private playSynthesizedChime(customVolume?: number, enqueuedAt?: number): boolean {
+    const context = this.audioContext;
+    if (!context || !this.canPlayNow(enqueuedAt)) return false;
 
     try {
-      audio.currentTime = 0;
-      audio.volume = Math.max(0, Math.min(1, customVolume ?? this.DEFAULT_VOLUME));
-      await audio.play();
+      const now = context.currentTime;
+      const volume = this.clampVolume(customVolume);
+      if (volume === 0) return false;
+
+      const oscillatorOne = context.createOscillator();
+      const gainOne = context.createGain();
+      oscillatorOne.type = 'sine';
+      oscillatorOne.frequency.setValueAtTime(587.33, now);
+      gainOne.gain.setValueAtTime(Math.max(0.001, 0.12 * volume), now);
+      gainOne.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+      oscillatorOne.connect(gainOne);
+      gainOne.connect(context.destination);
+      oscillatorOne.start(now);
+      oscillatorOne.stop(now + 0.25);
+
+      const oscillatorTwo = context.createOscillator();
+      const gainTwo = context.createGain();
+      oscillatorTwo.type = 'sine';
+      oscillatorTwo.frequency.setValueAtTime(880, now + 0.08);
+      gainTwo.gain.setValueAtTime(Math.max(0.001, 0.16 * volume), now + 0.08);
+      gainTwo.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+      oscillatorTwo.connect(gainTwo);
+      gainTwo.connect(context.destination);
+      oscillatorTwo.start(now + 0.08);
+      oscillatorTwo.stop(now + 0.35);
+      return true;
     } catch {
-      // If browser rejected play (autoplay blocked), try synthesized chime
-      await this.playSynthesizedChime();
+      return false;
     }
   }
 
-  private async playSynthesizedChime() {
-    try {
-      const AudioCtx =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      if (!AudioCtx) return;
+  private clampVolume(volume?: number): number {
+    return Math.max(0, Math.min(1, volume ?? this.DEFAULT_VOLUME));
+  }
 
-      if (!this.audioContext) {
-        this.audioContext = new AudioCtx();
-      }
-      const ctx = this.audioContext;
-      if (ctx.state === 'suspended') {
-        await ctx.resume();
-      }
-      const now = ctx.currentTime;
-
-      const osc1 = ctx.createOscillator();
-      const gain1 = ctx.createGain();
-      osc1.type = 'sine';
-      osc1.frequency.setValueAtTime(587.33, now); // D5
-      gain1.gain.setValueAtTime(0.06, now);
-      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
-      osc1.connect(gain1);
-      gain1.connect(ctx.destination);
-      osc1.start(now);
-      osc1.stop(now + 0.25);
-
-      const osc2 = ctx.createOscillator();
-      const gain2 = ctx.createGain();
-      osc2.type = 'sine';
-      osc2.frequency.setValueAtTime(880, now + 0.08); // A5
-      gain2.gain.setValueAtTime(0.08, now + 0.08);
-      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
-      osc2.connect(gain2);
-      gain2.connect(ctx.destination);
-      osc2.start(now + 0.08);
-      osc2.stop(now + 0.35);
-    } catch {
-      // Audio completely disabled / restricted on this environment
+  /** Removes long-lived browser hooks; primarily useful for isolated tests. */
+  destroy(): void {
+    this.disarmGestureUnlock();
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.handleVisibilityChange);
     }
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('pageshow', this.handleForeground);
+      window.removeEventListener('focus', this.handleForeground);
+      this.dropQueuedSounds();
+    }
+    this.audioContext?.removeEventListener?.('statechange', this.handleContextStateChange);
+    this.initialized = false;
   }
 }
 
-export const posSound = SoundManager.getInstance();
+const singletonHost = globalThis as typeof globalThis & {
+  proPosSoundManager?: SoundManager;
+};
+
+// Storing the instance outside the module prevents duplicate contexts/listeners on Vite HMR.
+export const posSound = singletonHost.proPosSoundManager ?? new SoundManager();
+singletonHost.proPosSoundManager = posSound;
 
 export function playPosSound(
   type: PosSoundType,
@@ -346,6 +447,6 @@ export function playPosSound(
     volume?: number;
     force?: boolean;
   },
-) {
+): void {
   posSound.play(type, options);
 }

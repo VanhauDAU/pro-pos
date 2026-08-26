@@ -52,6 +52,7 @@ import {
 } from '@client/lib/qz-tray-service';
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 import { ReceiptPreviewPaper } from '@client/features/pos/ReceiptPreviewModal';
+import { ThermalHourlySegmentsPreview } from '@client/components/ThermalHourlySegmentsPreview';
 import {
   OWNER_PRINT_PREVIEW_TOTAL_VND,
   buildOwnerPrintPreviewSample,
@@ -1292,136 +1293,12 @@ export function OwnerPrintSettingsPage() {
                             )}
                           </>
                         ) : (
-                          <div className="thermal-receipt-item-sub">
-                            {/* Segment 1: Giờ đầu */}
-                            <div style={{ marginTop: 3 }}>
-                              <div>
-                                {templateConfig.showHourlyTimeWithSeconds
-                                  ? '18:00:00 - 18:30:00'
-                                  : '18:00 - 18:30'}
-                              </div>
-                              <div style={{ display: 'flex', alignItems: 'baseline' }}>
-                                <span style={{ flex: 1 }}>20/06/2024</span>
-                                {previewPaperSize === 'K80' &&
-                                  templateConfig.showHourlyUnitPrice && (
-                                    <span style={{ width: 65, textAlign: 'right' }}>60,000</span>
-                                  )}
-                                <span
-                                  style={{
-                                    width: previewPaperSize === 'K58' ? 48 : 65,
-                                    textAlign: 'right',
-                                    fontWeight: 600,
-                                  }}
-                                >
-                                  60,000
-                                </span>
-                              </div>
-                              <div style={{ display: 'flex', alignItems: 'baseline' }}>
-                                <span style={{ flex: 1, color: '#64748b' }}>=Giờ đầu</span>
-                                {previewPaperSize === 'K80' &&
-                                  templateConfig.showHourlyUnitPrice &&
-                                  templateConfig.showHourlyUnitDuration && (
-                                    <span
-                                      style={{ width: 65, textAlign: 'right', color: '#64748b' }}
-                                    >
-                                      /1h
-                                    </span>
-                                  )}
-                                <span style={{ width: previewPaperSize === 'K58' ? 48 : 65 }} />
-                              </div>
-                              {previewPaperSize === 'K58' && templateConfig.showHourlyUnitPrice && (
-                                <div className="thermal-receipt-item-sub">
-                                  Đ.Giá: 60,000{templateConfig.showHourlyUnitDuration ? '/1h' : ''}
-                                </div>
-                              )}
-                            </div>
-
-                            {/* Segment 2: Giá thường */}
-                            <div style={{ marginTop: 6 }}>
-                              <div>
-                                {templateConfig.showHourlyTimeWithSeconds
-                                  ? '18:30:00 - 19:30:00'
-                                  : '18:30 - 19:30'}
-                              </div>
-                              <div style={{ display: 'flex', alignItems: 'baseline' }}>
-                                <span style={{ flex: 1 }}>20/06/2024</span>
-                                {previewPaperSize === 'K80' &&
-                                  templateConfig.showHourlyUnitPrice && (
-                                    <span style={{ width: 65, textAlign: 'right' }}>40,000</span>
-                                  )}
-                                <span
-                                  style={{
-                                    width: previewPaperSize === 'K58' ? 48 : 65,
-                                    textAlign: 'right',
-                                    fontWeight: 600,
-                                  }}
-                                >
-                                  40,000
-                                </span>
-                              </div>
-                              <div style={{ display: 'flex', alignItems: 'baseline' }}>
-                                <span style={{ flex: 1, color: '#64748b' }}>=1 giờ</span>
-                                {previewPaperSize === 'K80' &&
-                                  templateConfig.showHourlyUnitPrice &&
-                                  templateConfig.showHourlyUnitDuration && (
-                                    <span
-                                      style={{ width: 65, textAlign: 'right', color: '#64748b' }}
-                                    >
-                                      /1h
-                                    </span>
-                                  )}
-                                <span style={{ width: previewPaperSize === 'K58' ? 48 : 65 }} />
-                              </div>
-                              {previewPaperSize === 'K58' && templateConfig.showHourlyUnitPrice && (
-                                <div className="thermal-receipt-item-sub">
-                                  Đ.Giá: 40,000{templateConfig.showHourlyUnitDuration ? '/1h' : ''}
-                                </div>
-                              )}
-                            </div>
-
-                            {/* Segment 3: Khung giờ tối */}
-                            <div style={{ marginTop: 6 }}>
-                              <div>
-                                {templateConfig.showHourlyTimeWithSeconds
-                                  ? '19:30:00 - 20:30:00'
-                                  : '19:30 - 20:30'}
-                              </div>
-                              <div style={{ display: 'flex', alignItems: 'baseline' }}>
-                                <span style={{ flex: 1 }}>20/06/2024</span>
-                                {previewPaperSize === 'K80' &&
-                                  templateConfig.showHourlyUnitPrice && (
-                                    <span style={{ width: 65, textAlign: 'right' }}>50,000</span>
-                                  )}
-                                <span
-                                  style={{
-                                    width: previewPaperSize === 'K58' ? 48 : 65,
-                                    textAlign: 'right',
-                                    fontWeight: 600,
-                                  }}
-                                >
-                                  50,000
-                                </span>
-                              </div>
-                              <div style={{ display: 'flex', alignItems: 'baseline' }}>
-                                <span style={{ flex: 1, color: '#64748b' }}>=1 giờ</span>
-                                {previewPaperSize === 'K80' &&
-                                  templateConfig.showHourlyUnitPrice &&
-                                  templateConfig.showHourlyUnitDuration && (
-                                    <span
-                                      style={{ width: 65, textAlign: 'right', color: '#64748b' }}
-                                    >
-                                      /1h
-                                    </span>
-                                  )}
-                                <span style={{ width: previewPaperSize === 'K58' ? 48 : 65 }} />
-                              </div>
-                              {previewPaperSize === 'K58' && templateConfig.showHourlyUnitPrice && (
-                                <div className="thermal-receipt-item-sub">
-                                  Đ.Giá: 50,000{templateConfig.showHourlyUnitDuration ? '/1h' : ''}
-                                </div>
-                              )}
-                            </div>
-                          </div>
+                          <ThermalHourlySegmentsPreview
+                            paperSize={previewPaperSize}
+                            showUnitPrice={templateConfig.showHourlyUnitPrice}
+                            showUnitDuration={templateConfig.showHourlyUnitDuration}
+                            showSeconds={templateConfig.showHourlyTimeWithSeconds}
+                          />
                         )}
                       </div>
 

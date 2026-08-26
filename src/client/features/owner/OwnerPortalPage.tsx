@@ -14,6 +14,7 @@ import {
   PhoneOutlined,
   PrinterOutlined,
   QuestionCircleOutlined,
+  QrcodeOutlined,
   SettingOutlined,
   ShopOutlined,
   ShoppingOutlined,
@@ -69,6 +70,7 @@ import {
   OwnerCustomerListPage,
 } from './OwnerCustomerPages';
 import { OwnerPromotionFormPage, OwnerPromotionListPage } from './OwnerPromotionPages';
+import { OwnerQrOrderSettingsPage } from './OwnerQrOrderSettingsPage';
 
 const OwnerPrintSettingsPage = lazy(async () => {
   const module = await import('./OwnerPrintSettingsPage');
@@ -154,6 +156,7 @@ const menuItems: OwnerMenuItem[] = [
     ],
   },
   { key: '/owner/promotions', label: 'Khuyến mại', icon: <GiftOutlined /> },
+  { key: '/owner/qr-order/settings', label: 'QR Order', icon: <QrcodeOutlined /> },
 ];
 
 const settingsItems: OwnerMenuItem[] = [
@@ -756,6 +759,8 @@ export function OwnerPortalPage() {
               <OwnerDashboardPage settings={settings.data} />
             ) : location.pathname === '/owner/settings/store' ? (
               <OwnerStoreSettingsPage />
+            ) : location.pathname === '/owner/qr-order/settings' ? (
+              <OwnerQrOrderSettingsPage />
             ) : location.pathname === '/owner/settings/account' ? (
               <OwnerAccountSettingsPage />
             ) : location.pathname === '/owner/settings/areas' ? (

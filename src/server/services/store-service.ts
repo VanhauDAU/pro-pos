@@ -210,13 +210,19 @@ export class StoreService {
     const now = Date.now();
     await this.repository.updateSettings({
       ...input,
-      locationVerificationEnabled: Boolean(input.locationVerificationEnabled),
-      latitude: input.latitude ?? null,
-      longitude: input.longitude ?? null,
-      allowedRadiusMeters: input.allowedRadiusMeters ?? 300,
-      maxAccuracyMeters: input.maxAccuracyMeters ?? 100,
       now,
     });
+    if (input.locationVerificationEnabled !== undefined) {
+      await this.repository.updateLocationSettings({
+        storeId: input.storeId,
+        locationVerificationEnabled: input.locationVerificationEnabled,
+        latitude: input.latitude ?? null,
+        longitude: input.longitude ?? null,
+        allowedRadiusMeters: input.allowedRadiusMeters ?? 300,
+        maxAccuracyMeters: input.maxAccuracyMeters ?? 100,
+        now,
+      });
+    }
     if (input.auditContext) {
       const after = await this.repository.getSettings(input.storeId);
       await new AuditRepository(this.env.DB).record({

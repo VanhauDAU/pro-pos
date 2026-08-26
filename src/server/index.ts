@@ -114,6 +114,20 @@ app.notFound((c) => failure(c, { code: 'NOT_FOUND', message: 'Không tìm thấy
 
 app.onError((error, c) => {
   if (error instanceof AppError) {
+    if (error.status === 409 || error.status === 422 || error.status >= 500) {
+      console[error.status >= 500 ? 'error' : 'warn'](
+        JSON.stringify({
+          level: error.status >= 500 ? 'error' : 'warn',
+          message: 'api application error',
+          requestId: c.get('requestId'),
+          actionId: c.get('actionId'),
+          method: c.req.method,
+          path: c.req.path,
+          status: error.status,
+          code: error.code,
+        }),
+      );
+    }
     if (error.status === 429 && typeof error.details === 'object' && error.details) {
       const retryAfter = (error.details as { retryAfterSeconds?: number }).retryAfterSeconds;
       if (retryAfter) c.header('Retry-After', String(retryAfter));

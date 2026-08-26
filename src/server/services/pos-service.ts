@@ -12,6 +12,7 @@ import type { OrderCallBatchDto, OrderCallBatchPageDto } from '@contracts/pos';
 import type { BankAccountDto } from '@contracts/store';
 import { calculateTimePrice } from '@domain/pricing/engine';
 import { AppError } from '@server/lib/app-error';
+import { readStableVersionedSnapshot } from '@server/lib/consistent-read';
 import { PosRepository } from '@server/repositories/pos-repository';
 import { AuditRepository } from '@server/repositories/audit-repository';
 import { AuthorizationRepository } from '@server/repositories/authorization-repository';
@@ -235,25 +236,18 @@ export class PosService {
             itemCount: 0,
           });
         }
-        try {
-          const quote = await this.quote(storeId, table.activeOrderId, now);
-          const itemCount = quote.items.reduce(
-            (sum, item) =>
-              sum + (item.productType === 'TIME' ? 0 : Number(item.quantityMilli) / 1000),
-            0,
-          );
-          return Object.assign({}, table, {
-            totalVnd: quote.totalVnd,
-            itemCount,
-            guestCount: quote.order?.guestCount ?? table.guestCount ?? 1,
-            timeSessionStatus: quote.time?.status ?? table.timeSessionStatus ?? null,
-          });
-        } catch {
-          return Object.assign({}, table, {
-            totalVnd: 0,
-            itemCount: 0,
-          });
-        }
+        const quote = await this.quote(storeId, table.activeOrderId, now);
+        const itemCount = quote.items.reduce(
+          (sum, item) =>
+            sum + (item.productType === 'TIME' ? 0 : Number(item.quantityMilli) / 1000),
+          0,
+        );
+        return Object.assign({}, table, {
+          totalVnd: quote.totalVnd,
+          itemCount,
+          guestCount: quote.order?.guestCount ?? table.guestCount ?? 1,
+          timeSessionStatus: quote.time?.status ?? table.timeSessionStatus ?? null,
+        });
       }),
     );
   }
@@ -262,85 +256,63 @@ export class PosService {
     const result = await this.repository.listActiveOrders(storeId);
     return Promise.all(
       result.results.map(async (order) => {
-        try {
-          const quote = await this.quote(storeId, order.id, now);
-          return {
-            id: order.id,
-            displayCode: order.display_code,
-            orderType: order.order_type,
-            status: order.status,
-            version: order.version,
-            openedAt: order.opened_at,
-            tableId: order.table_id,
-            tableName: order.table_name,
-            areaId: order.area_id,
-            areaName: order.area_name,
-            itemCount: quote.items.reduce(
-              (sum, item) => sum + Number(item.quantityMilli) / 1000,
-              0,
-            ),
-            totalVnd: quote.totalVnd,
-            timeStatus: quote.time?.status ?? null,
-          };
-        } catch {
-          return {
-            id: order.id,
-            displayCode: order.display_code,
-            orderType: order.order_type,
-            status: order.status,
-            version: order.version,
-            openedAt: order.opened_at,
-            tableId: order.table_id,
-            tableName: order.table_name,
-            areaId: order.area_id,
-            areaName: order.area_name,
-            itemCount: 0,
-            totalVnd: 0,
-            timeStatus: null,
-          };
-        }
+        const quote = await this.quote(storeId, order.id, now);
+        return {
+          id: quote.order.id,
+          displayCode: quote.order.displayCode ?? order.display_code,
+          orderType: quote.order.orderType,
+          status: quote.order.status,
+          version: quote.order.version,
+          openedAt: quote.order.openedAt,
+          tableId: quote.order.tableId,
+          tableName: quote.order.tableName,
+          areaId: quote.order.areaId,
+          areaName: quote.order.areaName,
+          itemCount: quote.items.reduce((sum, item) => sum + Number(item.quantityMilli) / 1000, 0),
+          totalVnd: quote.totalVnd,
+          timeStatus: quote.time?.status ?? null,
+        };
       }),
     );
   }
 
-  async overview(storeId: string, now = Date.now(), timing?: TimingCallback) {
+  async overview(storeId: string, now = Date.now(), timing?: TimingCallback, requestId?: string) {
     const [tableRows, orderRows] = await measurePhase(timing, 'overview_base', () =>
       Promise.all([this.repository.listTables(storeId), this.repository.listActiveOrders(storeId)]),
     );
     const quoteEntries = await measurePhase(timing, 'overview_quotes', () =>
       Promise.all(
-        orderRows.results.map(async (order) => {
-          try {
-            return [order.id, await this.quote(storeId, order.id, now)] as const;
-          } catch {
-            return [order.id, null] as const;
-          }
-        }),
+        orderRows.results.map(
+          async (order) =>
+            [
+              order.id,
+              await this.quote(storeId, order.id, now, requestId ? { requestId } : undefined),
+            ] as const,
+        ),
       ),
     );
     const quotes = new Map(quoteEntries);
     const orders = orderRows.results.map((order) => {
       const quote = quotes.get(order.id);
+      if (!quote) throw new Error(`Missing quote for active order ${order.id}`);
       return {
-        id: order.id,
-        displayCode: order.display_code,
-        orderType: order.order_type,
-        status: order.status,
-        version: order.version,
-        openedAt: order.opened_at,
-        tableId: order.table_id,
-        tableName: order.table_name,
-        areaId: order.area_id,
-        areaName: order.area_name,
-        itemCount: quote
-          ? quote.items.reduce(
-              (sum, item) =>
-                sum + (item.productType === 'TIME' ? 0 : Number(item.quantityMilli) / 1000),
-              0,
-            )
-          : 0,
-        totalVnd: quote?.totalVnd ?? 0,
-        timeStatus: quote?.time?.status ?? null,
+        id: quote.order.id,
+        displayCode: quote.order.displayCode ?? order.display_code,
+        orderType: quote.order.orderType,
+        status: quote.order.status,
+        version: quote.order.version,
+        openedAt: quote.order.openedAt,
+        tableId: quote.order.tableId,
+        tableName: quote.order.tableName,
+        areaId: quote.order.areaId,
+        areaName: quote.order.areaName,
+        itemCount: quote.items.reduce(
+          (sum, item) =>
+            sum + (item.productType === 'TIME' ? 0 : Number(item.quantityMilli) / 1000),
+          0,
+        ),
+        totalVnd: quote.totalVnd,
+        timeStatus: quote.time?.status ?? null,
       };
     });
     const tables = tableRows.results.map((table) => {
@@ -2313,7 +2285,44 @@ export class PosService {
     };
   }
 
-  async quote(storeId: string, orderId: string, now = Date.now()) {
+  async quote(
+    storeId: string,
+    orderId: string,
+    now = Date.now(),
+    context?: { requestId?: string },
+  ) {
+    const quote = await readStableVersionedSnapshot({
+      build: () => this.buildQuote(storeId, orderId, now),
+      latestVersion: async () => {
+        const latest =
+          (await this.repository.findOrder(storeId, orderId)) ??
+          (await this.repository.findTakeawayOrder(storeId, orderId));
+        return latest?.version ?? null;
+      },
+      onVersionChange: ({ attempt, quotedVersion, latestVersion }) =>
+        console.warn(
+          JSON.stringify({
+            level: 'warn',
+            message: 'pos quote changed during read',
+            requestId: context?.requestId ?? null,
+            storeId,
+            orderId,
+            attempt,
+            quotedVersion,
+            latestVersion,
+          }),
+        ),
+    });
+    if (quote) return quote;
+    throw new AppError(
+      'ORDER_VERSION_CONFLICT',
+      'Đơn hàng đang được cập nhật. Vui lòng tải lại.',
+      409,
+      { retryable: true },
+    );
+  }
+
+  private async buildQuote(storeId: string, orderId: string, now: number) {
     const order =
       (await this.repository.findOrder(storeId, orderId)) ??
       (await this.repository.findTakeawayOrder(storeId, orderId));

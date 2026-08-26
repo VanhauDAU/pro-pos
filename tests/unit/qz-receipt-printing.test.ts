@@ -26,7 +26,12 @@ vi.mock('qz-tray', () => ({
 }));
 
 import { printEscPosReceipt } from '../../src/client/lib/qz-tray-service';
-import { generateThermalReceiptHtml } from '../../src/client/lib/pos-receipt-printer';
+import {
+  buildPrintDataFromQuote,
+  formatSegmentDurationLabel,
+  generateThermalReceiptHtml,
+  printReceipt,
+} from '../../src/client/lib/pos-receipt-printer';
 import { buildEscPosReceipt } from '../../src/domain/receipt/receipt-generator';
 import { defaultPrintTemplateConfig } from '../../src/contracts/store';
 import type { StorePrintSettings } from '../../src/contracts/store';
@@ -42,7 +47,10 @@ const baseOptions = {
 };
 
 describe('QZ receipt dispatch', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    qzMocks.isActive.mockReturnValue(true);
+  });
 
   it('uses pixel HTML with all real copies for a system printer', async () => {
     const result = await printEscPosReceipt({
@@ -58,6 +66,48 @@ describe('QZ receipt dispatch', () => {
     const firstJob = data[0]!;
     expect(firstJob).toMatchObject({ type: 'pixel', format: 'html' });
     expect(firstJob.data).toContain('REAL-ORDER-1');
+  });
+
+  it('automatically connects QZ Tray before dispatching a configured payment receipt', async () => {
+    qzMocks.isActive.mockReturnValueOnce(false).mockReturnValueOnce(false).mockReturnValue(true);
+    const result = await printReceipt({
+      data: {
+        receiptType: 'PAYMENT',
+        orderCode: 'HD-AUTO-PRINT-001',
+        orderType: 'TAKEAWAY',
+        issuedAtMs: Date.now(),
+        subtotal: 50_000,
+        discountTotal: 0,
+        total: 50_000,
+        lines: [],
+      },
+      printSettings: {
+        storeId: 'store-auto-print',
+        updatedAt: Date.now(),
+        maxReceiptReprintCount: 0,
+        paymentCopyCount: 1,
+        allowProvisionalPrint: true,
+        provisionalCopyCount: 1,
+        logoHorizontalLayout: false,
+        bottomImageType: 'NONE',
+        customAddressEnabled: false,
+        footerLine1Bold: false,
+        footerLine2Bold: true,
+        printWifiEnabled: false,
+        paperSize: 'K80',
+        printersJson: JSON.stringify({
+          connectionType: 'SYSTEM',
+          printerName: 'Thermal Printer',
+          paperSize: 'K80',
+          autoCut: true,
+          openCashDrawer: false,
+        }),
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(qzMocks.connect).toHaveBeenCalledOnce();
+    expect(qzMocks.print).toHaveBeenCalledOnce();
   });
 
   it('renders the real receipt safely with copy and totals metadata', () => {
@@ -102,6 +152,61 @@ describe('QZ receipt dispatch', () => {
     expect(html).toContain('Quán &amp; Cafe');
     expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
     expect(html).not.toContain('<script>alert(1)</script>');
+  });
+
+  it('prints checkout stop/resume time as one continuous pricing row', () => {
+    const startedAtMs = Date.UTC(2026, 7, 26, 6, 2, 0);
+    const data = buildPrintDataFromQuote({
+      order: {
+        id: 'order-continuous-time',
+        displayCode: 'D-CONTINUOUS',
+        orderType: 'DINE_IN',
+        tableName: 'Líp 01',
+        openedAt: startedAtMs,
+      },
+      items: [],
+      time: {
+        startedAtMs,
+        endedAtMs: startedAtMs + 90_000,
+        elapsedSeconds: 75,
+        amountAfterRoundingVnd: 1_000,
+        pricingConfig: { basePriceVnd: 40_000 },
+        segments: [
+          {
+            name: 'Giá thường',
+            type: 'BASE',
+            startedAtMs,
+            endedAtMs: startedAtMs + 30_000,
+            elapsedSeconds: 30,
+            priceVnd: 40_000,
+            amountBeforeRoundingVnd: 333,
+          },
+          {
+            name: 'Giá thường',
+            type: 'BASE',
+            startedAtMs: startedAtMs + 45_000,
+            endedAtMs: startedAtMs + 90_000,
+            elapsedSeconds: 45,
+            priceVnd: 40_000,
+            amountBeforeRoundingVnd: 500,
+          },
+        ],
+      },
+      totalVnd: 1_000,
+    });
+
+    expect(data.lines[0]?.timeSegments).toEqual([
+      expect.objectContaining({
+        startedAtMs,
+        endedAtMs: startedAtMs + 90_000,
+        elapsedSeconds: 75,
+        amount: 833,
+      }),
+    ]);
+    expect(formatSegmentDurationLabel(data.lines[0]!.timeSegments![0]!)).toBe('=1 phút');
+    expect(
+      formatSegmentDurationLabel({ name: 'Giá thường', type: 'BASE', elapsedSeconds: 27 }),
+    ).toBe('=27 giây');
   });
 
   it('marks provisional receipts unpaid in HTML and ESC/POS, but not payment receipts', () => {

@@ -61,7 +61,6 @@ export default defineConfig({
           'assets/index-*.js',
           'assets/rolldown-runtime-*.js',
           'assets/api-*.js',
-          'assets/result-*.js',
           'assets/typography-*.js',
           'assets/spin-*.js',
           'assets/ShopOutlined-*.js',

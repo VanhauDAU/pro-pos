@@ -150,6 +150,49 @@ export interface OrderCallBatchPageDto {
   nextBeforeSequence: number | null;
 }
 
+export interface PosOverviewTable {
+  id: string;
+  name: string;
+  status: 'AVAILABLE' | 'OCCUPIED' | 'DISABLED';
+  version: number;
+  areaId: string;
+  areaName: string;
+  areaSortOrder: number;
+  sortOrder: number;
+  timeProductId?: string | null;
+  timeProductName?: string | null;
+  defaultPriceVnd?: number | null;
+  defaultDurationSeconds?: number | null;
+  activeOrderId: string | null;
+  occupiedSince: number | null;
+  timeSessionStatus?: 'RUNNING' | 'PAUSED' | 'ENDED' | null;
+  totalVnd?: number;
+  itemCount?: number;
+  guestCount?: number | null;
+}
+
+export interface PosOverviewOrder {
+  id: string;
+  displayCode: string;
+  orderType: 'DINE_IN' | 'TAKEAWAY';
+  status: string;
+  version: number;
+  openedAt: number;
+  itemCount: number;
+  totalVnd: number;
+  tableId?: string | null;
+  tableName?: string | null;
+  areaId?: string | null;
+  areaName?: string | null;
+  timeStatus?: string | null;
+}
+
+export interface PosOverviewSnapshot {
+  tables: PosOverviewTable[];
+  orders: PosOverviewOrder[];
+  serverNowMs: number;
+}
+
 export const updateOrderItemSchema = z.object({
   expectedOrderVersion: z.number().int().positive(),
   quantityMilli: z.number().int().positive().max(1_000_000_000),

@@ -11,7 +11,7 @@ import {
   formatTimeOnly,
   type PosReceiptPrintOptions,
 } from '@domain/receipt/receipt-generator';
-import { checkQzTrayStatus, printEscPosReceipt } from './qz-tray-service';
+import { checkQzTrayStatus, connectQzTray, printEscPosReceipt } from './qz-tray-service';
 
 export * from '@domain/receipt/receipt-generator';
 
@@ -694,7 +694,13 @@ export async function printReceipt(options: PosReceiptPrintOptions): Promise<{
 
   // Check if QZ Tray is active
   try {
-    const qzStatus = await checkQzTrayStatus();
+    let qzStatus = await checkQzTrayStatus();
+    const hasDirectPrinterConfig =
+      (printerConfig.connectionType === 'SYSTEM' && Boolean(printerConfig.printerName?.trim())) ||
+      (printerConfig.connectionType === 'NETWORK_TCP' && Boolean(printerConfig.networkIp?.trim()));
+    if (!qzStatus.connected && hasDirectPrinterConfig) {
+      qzStatus = await connectQzTray();
+    }
     if (qzStatus.connected) {
       const profile = getReceiptPrintProfile(paperSize, printerConfig.printableDots);
       const escPosCopies =

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { verifyGuestLocationSchema } from '../../src/contracts/qr-order';
-import { updateStoreSettingsSchema } from '../../src/contracts/store';
+import { updateOwnerQrOrderSettingsSchema } from '../../src/contracts/owner-qr-order';
 import {
   calculateHaversineDistanceMeters,
   verifyLocationCoordinates,
@@ -150,32 +150,37 @@ describe('verifyLocationCoordinates core engine', () => {
   });
 });
 
-describe('Store Settings & Location Zod schema validation', () => {
-  it('rejects store update if location verification enabled without coordinates', () => {
+describe('Owner QR Order location schema validation', () => {
+  const baseSettings = {
+    allowedRadiusMeters: 300,
+    maxAccuracyMeters: 100,
+    locationMemoryMinutes: 60,
+    orderCooldownSeconds: 3,
+    callStaffCooldownSeconds: 60,
+    checkoutCooldownSeconds: 60,
+    salesScheduleEnabled: false,
+    salesHours: [],
+  };
+
+  it('rejects QR configuration if location verification is enabled without coordinates', () => {
     const invalidInput = {
-      name: 'Billiard Club',
-      address: '123 Le Duan',
-      businessDayCutoffMinutes: 0,
+      ...baseSettings,
       locationVerificationEnabled: true,
       latitude: null,
       longitude: null,
     };
-    const parsed = updateStoreSettingsSchema.safeParse(invalidInput);
+    const parsed = updateOwnerQrOrderSettingsSchema.safeParse(invalidInput);
     expect(parsed.success).toBe(false);
   });
 
-  it('accepts store update with valid location configuration and coordinates', () => {
+  it('accepts QR configuration with valid location coordinates', () => {
     const validInput = {
-      name: 'Billiard Club',
-      address: '123 Le Duan',
-      businessDayCutoffMinutes: 0,
+      ...baseSettings,
       locationVerificationEnabled: true,
       latitude: 16.0544,
       longitude: 108.2022,
-      allowedRadiusMeters: 300,
-      maxAccuracyMeters: 100,
     };
-    const parsed = updateStoreSettingsSchema.safeParse(validInput);
+    const parsed = updateOwnerQrOrderSettingsSchema.safeParse(validInput);
     expect(parsed.success).toBe(true);
   });
 

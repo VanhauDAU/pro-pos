@@ -324,6 +324,64 @@ paths:
         '403': { description: Cross-store device cookie rejected without tenant disclosure }
   /pos/tables:
     get: { summary: List POS tables, responses: { '200': { description: Table list } } }
+  /owner/qr-order/settings:
+    get:
+      summary: Get Owner QR Order location, cooldown, schedule and effective availability settings
+      responses: { '200': { description: QR Order settings } }
+    put:
+      summary: Replace Owner QR Order location, cooldown and weekly sales schedule settings
+      responses:
+        '200': { description: QR Order settings updated }
+        '422': { description: Invalid location, cooldown or overlapping sales windows }
+  /owner/qr-order/sales-status:
+    patch:
+      summary: Pause or resume QR opening and ordering manually
+      responses: { '200': { description: Effective QR sales availability updated } }
+  /owner/qr-order/tables:
+    get:
+      summary: List tables with QR Order status and fixed QR path metadata
+      responses: { '200': { description: QR table list } }
+  /owner/qr-order/tables/bulk:
+    patch:
+      summary: Enable or disable QR Order for selected non-occupied tables
+      responses:
+        '200': { description: QR table states updated }
+        '409': { description: At least one selected table is occupied }
+  /owner/qr-order/tables/{tableId}:
+    patch:
+      summary: Enable or disable QR Order for one table without rotating its fixed token
+      responses:
+        '200': { description: QR table state updated }
+        '409': { description: Occupied table cannot be disabled }
+  /owner/qr-order/tables/{tableId}/qr-code:
+    get:
+      summary: Get or initialize the table fixed QR code
+      responses: { '200': { description: Fixed QR path } }
+  /owner/qr-order/menu:
+    get:
+      summary: List fixed-price active products eligible for QR ordering, including their Owner visibility state
+      responses: { '200': { description: Read-only QR menu } }
+  /owner/qr-order/menu/products/{productId}:
+    patch:
+      summary: Show or hide one eligible product in the guest QR menu
+      responses:
+        '200': { description: QR menu visibility updated }
+        '404': { description: Product is not eligible in the current store }
+  /owner/qr-order/menu/variants/{variantId}:
+    patch:
+      summary: Show or hide one eligible price variant in the guest QR menu
+      responses:
+        '200': { description: QR menu price-variant visibility updated }
+        '404': { description: Price variant is not eligible in the current store }
+  /owner/qr-order/quick-reasons:
+    get:
+      summary: List ordered Owner-configurable quick staff-call reasons
+      responses: { '200': { description: Quick reasons } }
+    put:
+      summary: Replace up to twenty quick staff-call reasons
+      responses:
+        '200': { description: Quick reasons updated }
+        '422': { description: Invalid or duplicate reasons }
   /pos/tables/open:
     post:
       {

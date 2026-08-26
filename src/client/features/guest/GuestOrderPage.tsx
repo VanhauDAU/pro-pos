@@ -23,11 +23,13 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Button,
+  Alert,
   Drawer,
   Empty,
   Input,
   Modal,
   Popconfirm,
+  Radio,
   Result,
   Spin,
   Switch,
@@ -163,6 +165,9 @@ export function GuestOrderPage() {
   // Anti-spam cooldowns (seconds)
   const [callStaffCooldown, setCallStaffCooldown] = useState(0);
   const [checkoutCooldown, setCheckoutCooldown] = useState(0);
+  const [callStaffReasonOpen, setCallStaffReasonOpen] = useState(false);
+  const [selectedStaffReasonId, setSelectedStaffReasonId] = useState<string | null>(null);
+  const [customStaffReason, setCustomStaffReason] = useState('');
   const lastVerifiedCoords = useRef<{
     latitude: number;
     longitude: number;
@@ -570,8 +575,12 @@ export function GuestOrderPage() {
     mutationFn: ({
       type,
       coords,
+      reasonId,
+      customReason,
     }: {
       type: 'CALL_STAFF' | 'CHECKOUT_REQUEST';
+      reasonId?: string;
+      customReason?: string;
       coords?:
         | {
             latitude: number;
@@ -585,15 +594,19 @@ export function GuestOrderPage() {
       return jsonRequest('/api/v1/guest-order/service-requests', {
         type,
         customerName: customerName.trim() || undefined,
+        ...(reasonId ? { reasonId } : {}),
+        ...(customReason ? { customReason } : {}),
         ...(loc ? { location: loc } : {}),
       });
     },
     onSuccess: (_, { type }) => {
       if (type === 'CALL_STAFF') {
-        setCallStaffCooldown(60);
+        setCallStaffCooldown(context.data?.cooldowns?.callStaffSeconds ?? 60);
+        setCallStaffReasonOpen(false);
+        setCustomStaffReason('');
       } else {
         playPosSound('GUEST_CHECKOUT_REQUEST_SENT');
-        setCheckoutCooldown(60);
+        setCheckoutCooldown(context.data?.cooldowns?.checkoutSeconds ?? 60);
       }
       messageApi.success(
         type === 'CALL_STAFF'
@@ -808,13 +821,32 @@ export function GuestOrderPage() {
       return;
     }
     if (action === 'OPEN_TABLE') {
+      if (context.data?.salesAvailability?.acceptingOrders === false) {
+        messageApi.warning('Cửa hàng hiện đang ngừng nhận mở bàn và gọi món.');
+        return;
+      }
       if (!requestTableOpen.isPending && !isWaitingForOpen) {
         void executeWithLocationCheck((coords) => requestTableOpen.mutate(coords));
       }
       return;
     }
     if (!isTableOpen) return;
-    const type = action === 'CALL_STAFF' ? 'CALL_STAFF' : 'CHECKOUT_REQUEST';
+    if (action === 'CALL_STAFF') {
+      if (callStaffCooldown > 0) {
+        messageApi.warning(`Vui lòng chờ ${callStaffCooldown}s trước khi gọi nhân viên lại.`);
+        return;
+      }
+      const firstReason = context.data?.quickStaffReasons?.[0];
+      setSelectedStaffReasonId(firstReason?.id ?? 'CUSTOM');
+      setCustomStaffReason('');
+      setCallStaffReasonOpen(true);
+      return;
+    }
+    if (checkoutCooldown > 0) {
+      messageApi.warning(`Vui lòng chờ ${checkoutCooldown}s trước khi yêu cầu thanh toán lại.`);
+      return;
+    }
+    const type = 'CHECKOUT_REQUEST';
     void executeWithLocationCheck((coords) =>
       submitService.mutate({ type, ...(coords ? { coords } : {}) }),
     );
@@ -967,6 +999,20 @@ export function GuestOrderPage() {
               </p>
             </div>
           </div>
+        ) : null}
+
+        {context.data.salesAvailability?.acceptingOrders === false ? (
+          <Alert
+            showIcon
+            type="warning"
+            title="Cửa hàng đang tạm ngừng nhận mở bàn và gọi món"
+            description={
+              context.data.salesAvailability.nextOpenAt
+                ? `Dự kiến mở lại lúc ${new Date(context.data.salesAvailability.nextOpenAt).toLocaleString('vi-VN')}. Bạn vẫn có thể gọi nhân viên hoặc yêu cầu thanh toán nếu bàn đang phục vụ.`
+                : 'Bạn vẫn có thể xem thực đơn, gọi nhân viên hoặc yêu cầu thanh toán nếu bàn đang phục vụ.'
+            }
+            style={{ marginBottom: 14 }}
+          />
         ) : null}
 
         <GuestRobotAssistant
@@ -1537,7 +1583,11 @@ export function GuestOrderPage() {
                 <button
                   type="button"
                   className="qr-cart-submit-btn"
-                  disabled={submitOrder.isPending || !isTableOpen}
+                  disabled={
+                    submitOrder.isPending ||
+                    !isTableOpen ||
+                    context.data?.salesAvailability?.acceptingOrders === false
+                  }
                   onClick={() => executeWithLocationCheck((coords) => submitOrder.mutate(coords))}
                 >
                   <div className="qr-cart-submit-btn__content">
@@ -1547,9 +1597,11 @@ export function GuestOrderPage() {
                     <span className="qr-cart-submit-btn__text">
                       {submitOrder.isPending
                         ? 'Đang gửi yêu cầu...'
-                        : isTableOpen
-                          ? 'Gửi yêu cầu gọi món'
-                          : 'Chờ nhân viên mở bàn'}
+                        : context.data?.salesAvailability?.acceptingOrders === false
+                          ? 'Cửa hàng đang ngừng nhận gọi món'
+                          : isTableOpen
+                            ? 'Gửi yêu cầu gọi món'
+                            : 'Chờ nhân viên mở bàn'}
                     </span>
                     <span className="qr-cart-submit-btn__badge">{formatVnd(totalAmount)}</span>
                   </div>
@@ -1562,6 +1614,55 @@ export function GuestOrderPage() {
             </div>
           )}
         </Drawer>
+
+        <Modal
+          open={callStaffReasonOpen}
+          title="Bạn cần nhân viên hỗ trợ gì?"
+          okText="Gọi nhân viên"
+          cancelText="Hủy"
+          confirmLoading={submitService.isPending}
+          okButtonProps={{
+            disabled: selectedStaffReasonId === 'CUSTOM' && !customStaffReason.trim(),
+          }}
+          onCancel={() => setCallStaffReasonOpen(false)}
+          onOk={() => {
+            if (!selectedStaffReasonId) return;
+            void executeWithLocationCheck((coords) =>
+              submitService.mutate({
+                type: 'CALL_STAFF',
+                ...(coords ? { coords } : {}),
+                ...(selectedStaffReasonId === 'CUSTOM'
+                  ? { customReason: customStaffReason.trim() }
+                  : { reasonId: selectedStaffReasonId }),
+              }),
+            );
+          }}
+        >
+          <Radio.Group
+            value={selectedStaffReasonId}
+            onChange={(event) => setSelectedStaffReasonId(event.target.value as string)}
+            style={{ display: 'flex', flexDirection: 'column', gap: 10 }}
+          >
+            {(context.data?.quickStaffReasons ?? []).map((reason) => (
+              <Radio key={reason.id} value={reason.id}>
+                {reason.label}
+              </Radio>
+            ))}
+            <Radio value="CUSTOM">Khác</Radio>
+          </Radio.Group>
+          {selectedStaffReasonId === 'CUSTOM' ? (
+            <Input.TextArea
+              autoFocus
+              rows={3}
+              maxLength={300}
+              showCount
+              value={customStaffReason}
+              placeholder="Nhập nội dung cần hỗ trợ"
+              onChange={(event) => setCustomStaffReason(event.target.value)}
+              style={{ marginTop: 12 }}
+            />
+          ) : null}
+        </Modal>
 
         {/* ── 8. Product Customization Bottom Sheet Modal ─────────────────── */}
         <Modal

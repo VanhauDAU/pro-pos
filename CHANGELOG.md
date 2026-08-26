@@ -30,6 +30,11 @@
 
 ### Added
 
+- Owner QR ORDER configuration: a dedicated sidebar module now manages fixed per-table QR codes,
+  location verification and memory duration, per-request cooldowns, editable quick staff-call
+  reasons, read-only QR menu visibility, weekly sales hours and manual pause/resume. Guest requests
+  enforce these settings server-side; POS notifications retain the selected support reason.
+
 - Area settings UI revamp: dedicated full-screen/spacious Area Detail Modal with quick-add table,
   reordering, per-table pricing selector, table rename/delete, area rename and clean 2-column layout.
 

@@ -32,7 +32,11 @@ import {
   generateThermalReceiptHtml,
   printReceipt,
 } from '../../src/client/lib/pos-receipt-printer';
-import { buildEscPosReceipt } from '../../src/domain/receipt/receipt-generator';
+import {
+  buildEscPosReceipt,
+  formatDateOnly,
+  formatTimeOnly,
+} from '../../src/domain/receipt/receipt-generator';
 import { defaultPrintTemplateConfig } from '../../src/contracts/store';
 import type { StorePrintSettings } from '../../src/contracts/store';
 import { buildOwnerPrintPreviewSample } from '../../src/client/features/owner/print-preview-sample';
@@ -487,6 +491,27 @@ describe('QZ receipt dispatch', () => {
       expect(output).toContain('9.000');
       expect(output).toContain('12.000');
     }
+  });
+
+  it('aligns time-segment price and amount on the time-range row', () => {
+    const options = { data: buildOwnerPrintPreviewSample('PAYMENT', Date.now()) };
+    const html = generateThermalReceiptHtml(options);
+    const escPos = buildEscPosReceipt(options).escPosData;
+    const segment = options.data.lines[0]!.timeSegments![0]!;
+    const timeRange = `${formatTimeOnly(segment.startedAtMs)} - ${formatTimeOnly(segment.endedAtMs!)}`;
+    const date = formatDateOnly(segment.startedAtMs);
+    const timeRangeIndex = html.indexOf(timeRange);
+    const dateIndex = html.indexOf(date, timeRangeIndex);
+    const firstAmountIndex = html.indexOf('60.000', timeRangeIndex);
+    expect(timeRangeIndex).toBeGreaterThan(-1);
+    expect(firstAmountIndex).toBeGreaterThan(timeRangeIndex);
+    expect(firstAmountIndex).toBeLessThan(dateIndex);
+
+    const rawLines = escPos.split('\n');
+    const rangeLine = rawLines.find((line) => line.includes(timeRange));
+    const rawDateLine = rawLines.find((line) => line.includes(date));
+    expect(rangeLine).toContain('60.000/1h');
+    expect(rawDateLine).not.toContain('60.000');
   });
 
   it('keeps payment and customer visibility switches identical in HTML and ESC/POS', () => {

@@ -23,7 +23,6 @@ import {
   Row,
   Select,
   Spin,
-  Switch,
   Tag,
   Typography,
   message,
@@ -35,7 +34,6 @@ import type { AuthContextResponse } from '@contracts/auth';
 import type { BankAccountDto } from '@contracts/store';
 import { VIETNAM_PHONE_REGEX } from '@contracts/store';
 
-import { StoreLocationMapPicker } from './StoreLocationMapPicker';
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 
 const LOCATION_API = 'https://provinces.open-api.vn/api/v2';
@@ -73,11 +71,6 @@ interface StoreSettings {
   provinceName: string | null;
   wardCode: number | null;
   wardName: string | null;
-  locationVerificationEnabled: number | boolean;
-  latitude: number | null;
-  longitude: number | null;
-  allowedRadiusMeters: number;
-  maxAccuracyMeters: number;
 }
 
 interface StoreFormValues {
@@ -87,11 +80,6 @@ interface StoreFormValues {
   address: string;
   provinceCode: number;
   wardCode: number;
-  locationVerificationEnabled: boolean;
-  latitude: number | null;
-  longitude: number | null;
-  allowedRadiusMeters: number;
-  maxAccuracyMeters: number;
 }
 
 interface BankAccountFormValues {
@@ -127,13 +115,6 @@ export function OwnerStoreSettingsPage() {
   const queryClient = useQueryClient();
   const [form] = Form.useForm<StoreFormValues>();
   const [provinceCode, setProvinceCode] = useState<number | undefined>();
-  const [locationVerificationEnabled, setLocationVerificationEnabled] = useState(false);
-  const [coords, setCoords] = useState<{ latitude: number | null; longitude: number | null }>({
-    latitude: null,
-    longitude: null,
-  });
-  const [allowedRadius, setAllowedRadius] = useState<number>(300);
-  const [maxAccuracy, setMaxAccuracy] = useState<number>(100);
   const [saving, setSaving] = useState(false);
   const [messageApi, contextHolder] = message.useMessage();
   const [bankAccountModalOpen, setBankAccountModalOpen] = useState(false);
@@ -198,16 +179,6 @@ export function OwnerStoreSettingsPage() {
     if (!settings.data) return;
     const data = settings.data;
     setProvinceCode(data.provinceCode ?? undefined);
-    const isLocEnabled =
-      data.locationVerificationEnabled === 1 || data.locationVerificationEnabled === true;
-    setLocationVerificationEnabled(isLocEnabled);
-    setCoords({
-      latitude: data.latitude ?? null,
-      longitude: data.longitude ?? null,
-    });
-    setAllowedRadius(data.allowedRadiusMeters || 300);
-    setMaxAccuracy(data.maxAccuracyMeters || 100);
-
     form.setFieldsValue({
       name: data.name,
       phone: normalizePhone(data.phone),
@@ -215,11 +186,6 @@ export function OwnerStoreSettingsPage() {
       address: data.address ?? '',
       ...(data.provinceCode === null ? {} : { provinceCode: data.provinceCode }),
       ...(data.wardCode === null ? {} : { wardCode: data.wardCode }),
-      locationVerificationEnabled: isLocEnabled,
-      latitude: data.latitude ?? null,
-      longitude: data.longitude ?? null,
-      allowedRadiusMeters: data.allowedRadiusMeters || 300,
-      maxAccuracyMeters: data.maxAccuracyMeters || 100,
     });
   }, [form, settings.data]);
 
@@ -325,11 +291,6 @@ export function OwnerStoreSettingsPage() {
     const ward = wards.data?.find((item) => item.code === values.wardCode);
     const defaultBankAccount = settings.data?.bankAccounts.find((account) => account.isDefault);
 
-    if (locationVerificationEnabled && (coords.latitude === null || coords.longitude === null)) {
-      messageApi.error('Vui lòng chọn vị trí cửa hàng trên bản đồ khi bật xác minh vị trí.');
-      return;
-    }
-
     setSaving(true);
     try {
       await apiRequest('/api/v1/owner/store/settings', {
@@ -351,11 +312,6 @@ export function OwnerStoreSettingsPage() {
           provinceName: province?.name ?? null,
           wardCode: ward?.code ?? null,
           wardName: ward?.name ?? null,
-          locationVerificationEnabled,
-          latitude: coords.latitude,
-          longitude: coords.longitude,
-          allowedRadiusMeters: allowedRadius,
-          maxAccuracyMeters: maxAccuracy,
         }),
       });
       await queryClient.invalidateQueries({ queryKey: ['owner-settings'] });
@@ -584,68 +540,6 @@ export function OwnerStoreSettingsPage() {
                 ))}
               </div>
             )}
-          </Card>
-
-          <aside className="owner-store-settings-intro">
-            <Typography.Title level={4}>Vị trí cửa hàng & Xác minh QR Order</Typography.Title>
-            <Typography.Paragraph type="secondary">
-              Thiết lập tọa độ vị trí cửa hàng và bán kính cho phép khách hàng gọi món tại bàn qua
-              QR.
-            </Typography.Paragraph>
-          </aside>
-          <Card className="owner-store-settings-card">
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                flexWrap: 'wrap',
-                gap: 12,
-                marginBottom: 16,
-              }}
-            >
-              <div>
-                <Typography.Text strong style={{ fontSize: 15 }}>
-                  Xác minh vị trí khách hàng khi gọi món qua QR
-                </Typography.Text>
-                <br />
-                <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-                  Khách hàng chỉ có thể gửi món hoặc gửi yêu cầu khi đang có mặt trong phạm vi cho
-                  phép của cửa hàng.
-                </Typography.Text>
-              </div>
-              <Switch
-                checked={locationVerificationEnabled}
-                onChange={(checked) => {
-                  setLocationVerificationEnabled(checked);
-                  form.setFieldValue('locationVerificationEnabled', checked);
-                }}
-              />
-            </div>
-
-            {locationVerificationEnabled ? (
-              <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #f0f0f0' }}>
-                <StoreLocationMapPicker
-                  latitude={coords.latitude}
-                  longitude={coords.longitude}
-                  radiusMeters={allowedRadius}
-                  maxAccuracyMeters={maxAccuracy}
-                  initialAddress={settings.data.address}
-                  onChange={(c) => {
-                    setCoords(c);
-                    form.setFieldsValue({ latitude: c.latitude, longitude: c.longitude });
-                  }}
-                  onRadiusChange={(r) => {
-                    setAllowedRadius(r);
-                    form.setFieldValue('allowedRadiusMeters', r);
-                  }}
-                  onMaxAccuracyChange={(a) => {
-                    setMaxAccuracy(a);
-                    form.setFieldValue('maxAccuracyMeters', a);
-                  }}
-                />
-              </div>
-            ) : null}
           </Card>
 
           <aside className="owner-store-settings-intro">

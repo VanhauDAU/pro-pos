@@ -97,6 +97,17 @@ describe('guest active order dto & helpers', () => {
         isVerified: true,
         verifiedExpiresAt: null,
       },
+      salesAvailability: {
+        acceptingOrders: true,
+        reason: 'OPEN',
+        nextOpenAt: null,
+      },
+      cooldowns: {
+        orderSeconds: 3,
+        callStaffSeconds: 60,
+        checkoutSeconds: 60,
+      },
+      quickStaffReasons: [],
       activeOrder: {
         id: 'ord-01',
         displayCode: 'D-1001',

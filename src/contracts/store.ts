@@ -36,49 +36,26 @@ export interface StoreLocationConfig {
   maxAccuracyMeters: number;
 }
 
-export const updateStoreSettingsSchema = z
-  .object({
-    name: z.string().trim().min(1).max(160),
-    phone: z
-      .string()
-      .trim()
-      .max(11)
-      .regex(VIETNAM_PHONE_REGEX, 'Số điện thoại không đúng định dạng Việt Nam.')
-      .nullable()
-      .optional(),
-    address: z.string().trim().min(1).max(500),
-    provinceCode: z.number().int().positive().nullable().optional(),
-    provinceName: z.string().trim().max(120).nullable().optional(),
-    wardCode: z.number().int().positive().nullable().optional(),
-    wardName: z.string().trim().max(120).nullable().optional(),
-    businessDayCutoffMinutes: z.number().int().min(0).max(1439),
-    bankName: z.string().trim().max(120).nullable().optional(),
-    bankAccountNumber: z.string().trim().max(64).nullable().optional(),
-    bankAccountName: z.string().trim().max(160).nullable().optional(),
-    bankQrMediaId: z.string().uuid().nullable().optional(),
-    // Location verification settings
-    locationVerificationEnabled: z.boolean().default(false),
-    latitude: z.number().min(-90).max(90).nullable().optional(),
-    longitude: z.number().min(-180).max(180).nullable().optional(),
-    allowedRadiusMeters: z.number().min(30).max(5000).default(300),
-    maxAccuracyMeters: z.number().min(20).max(300).default(100),
-  })
-  .superRefine((val, ctx) => {
-    if (val.locationVerificationEnabled) {
-      if (
-        val.latitude === null ||
-        val.latitude === undefined ||
-        val.longitude === null ||
-        val.longitude === undefined
-      ) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['latitude'],
-          message: 'Vui lòng thiết lập tọa độ vị trí (vĩ độ và kinh độ) khi bật xác minh vị trí.',
-        });
-      }
-    }
-  });
+export const updateStoreSettingsSchema = z.object({
+  name: z.string().trim().min(1).max(160),
+  phone: z
+    .string()
+    .trim()
+    .max(11)
+    .regex(VIETNAM_PHONE_REGEX, 'Số điện thoại không đúng định dạng Việt Nam.')
+    .nullable()
+    .optional(),
+  address: z.string().trim().min(1).max(500),
+  provinceCode: z.number().int().positive().nullable().optional(),
+  provinceName: z.string().trim().max(120).nullable().optional(),
+  wardCode: z.number().int().positive().nullable().optional(),
+  wardName: z.string().trim().max(120).nullable().optional(),
+  businessDayCutoffMinutes: z.number().int().min(0).max(1439),
+  bankName: z.string().trim().max(120).nullable().optional(),
+  bankAccountNumber: z.string().trim().max(64).nullable().optional(),
+  bankAccountName: z.string().trim().max(160).nullable().optional(),
+  bankQrMediaId: z.string().uuid().nullable().optional(),
+});
 
 export type UpdateStoreSettingsInput = z.infer<typeof updateStoreSettingsSchema>;
 

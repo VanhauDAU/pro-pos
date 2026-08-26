@@ -35,11 +35,6 @@ ownerStoreRoutes.put('/settings', requirePermission('store.manage'), async (c) =
     provinceName: body.provinceName ?? null,
     wardCode: body.wardCode ?? null,
     wardName: body.wardName ?? null,
-    locationVerificationEnabled: body.locationVerificationEnabled,
-    latitude: body.latitude ?? null,
-    longitude: body.longitude ?? null,
-    allowedRadiusMeters: body.allowedRadiusMeters,
-    maxAccuracyMeters: body.maxAccuracyMeters,
     auditContext: {
       actorUserId: c.get('actor').id,
       actorSessionId: c.get('sessionId'),

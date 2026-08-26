@@ -68,9 +68,9 @@ describe('QR Order Customer Location Verification', () => {
       .run();
 
     const qr = new QrOrderService(env);
-    const code1 = await qr.rotateQrCode(storeId, table1Id, ownerUserId);
-    await qr.rotateQrCode(storeId, table2Id, ownerUserId);
-    qrToken1 = code1.token;
+    const code1 = await qr.getOrCreateQrCode(storeId, table1Id, ownerUserId);
+    await qr.getOrCreateQrCode(storeId, table2Id, ownerUserId);
+    qrToken1 = code1.path.replace('/q/', '');
   });
 
   it('allows guest to order freely when location verification is disabled', async () => {
@@ -109,7 +109,15 @@ describe('QR Order Customer Location Verification', () => {
     expect(orderRes.replayed).toBe(false);
 
     // Call staff without location verification
-    const reqRes = await qr.createServiceRequest(resolved.rawGuest, 'CALL_STAFF');
+    const reqRes = await qr.createServiceRequest(
+      resolved.rawGuest,
+      'CALL_STAFF',
+      null,
+      null,
+      null,
+      null,
+      'Cần hỗ trợ',
+    );
     expect(reqRes.status).toBe('OPEN');
   });
 

@@ -21,6 +21,7 @@ export interface QrActiveContextRow {
   longitude: number | null;
   allowedRadiusMeters: number;
   maxAccuracyMeters: number;
+  qrOrderEnabled: number;
 }
 
 export interface QrTableContextRow {
@@ -37,6 +38,7 @@ export interface QrTableContextRow {
   longitude: number | null;
   allowedRadiusMeters: number;
   maxAccuracyMeters: number;
+  qrOrderEnabled: number;
 }
 
 export interface GuestSessionRow extends QrActiveContextRow {
@@ -92,7 +94,8 @@ export class QrOrderRepository {
                 ss.location_verification_enabled AS locationVerificationEnabled,
                 ss.latitude AS latitude, ss.longitude AS longitude,
                 ss.allowed_radius_meters AS allowedRadiusMeters,
-                ss.max_accuracy_meters AS maxAccuracyMeters
+                ss.max_accuracy_meters AS maxAccuracyMeters,
+                st.qr_order_enabled AS qrOrderEnabled
          FROM table_qr_codes qr
          JOIN stores s ON s.id = qr.store_id AND s.status = 'ACTIVE'
          JOIN store_settings ss ON ss.store_id = s.id
@@ -114,7 +117,8 @@ export class QrOrderRepository {
                 ss.location_verification_enabled AS locationVerificationEnabled,
                 ss.latitude AS latitude, ss.longitude AS longitude,
                 ss.allowed_radius_meters AS allowedRadiusMeters,
-                ss.max_accuracy_meters AS maxAccuracyMeters
+                ss.max_accuracy_meters AS maxAccuracyMeters,
+                st.qr_order_enabled AS qrOrderEnabled
          FROM table_qr_codes qr
          JOIN stores s ON s.id = qr.store_id AND s.status = 'ACTIVE'
          JOIN store_settings ss ON ss.store_id = s.id
@@ -261,7 +265,8 @@ export class QrOrderRepository {
                 ss.location_verification_enabled AS locationVerificationEnabled,
                 ss.latitude AS latitude, ss.longitude AS longitude,
                 ss.allowed_radius_meters AS allowedRadiusMeters,
-                ss.max_accuracy_meters AS maxAccuracyMeters
+                ss.max_accuracy_meters AS maxAccuracyMeters,
+                st.qr_order_enabled AS qrOrderEnabled
          FROM guest_order_sessions gs
          JOIN table_qr_codes qr ON qr.id = gs.qr_code_id AND qr.enabled = 1
          JOIN stores s ON s.id = gs.store_id AND s.status = 'ACTIVE'
@@ -340,7 +345,7 @@ export class QrOrderRepository {
       .run();
   }
 
-  async listMenu(storeId: string): Promise<GuestMenuProduct[]> {
+  async listMenu(storeId: string, includeHidden = false): Promise<GuestMenuProduct[]> {
     const result = await this.db
       .prepare(
         `SELECT p.id AS productId, p.name AS productName, p.product_type AS productType,
@@ -348,7 +353,7 @@ export class QrOrderRepository {
                 c.name AS categoryName, p.avatar_type AS avatarType,
                 p.avatar_color AS avatarColor, p.media_id AS mediaId,
                 u.name AS unitName, pv.id AS variantId, pv.name AS variantName,
-                pv.sale_price AS salePriceVnd
+                pv.sale_price AS salePriceVnd, pv.qr_order_enabled AS qrOrderEnabled
          FROM products p
          JOIN product_variants pv ON pv.product_id = p.id AND pv.store_id = p.store_id
            AND pv.status = 'ACTIVE' AND pv.prompt_price = 0 AND pv.sale_price IS NOT NULL
@@ -356,9 +361,10 @@ export class QrOrderRepository {
          LEFT JOIN units u ON u.id = p.unit_id AND u.store_id = p.store_id
          WHERE p.store_id = ? AND p.status = 'ACTIVE' AND p.is_system = 0
            AND p.product_type IN ('QUANTITY', 'WEIGHT')
+           AND (? = 1 OR pv.qr_order_enabled = 1)
          ORDER BY c.sort_order, p.name COLLATE NOCASE, pv.name COLLATE NOCASE`,
       )
-      .bind(storeId)
+      .bind(storeId, includeHidden ? 1 : 0)
       .all<{
         productId: string;
         productName: string;
@@ -368,6 +374,7 @@ export class QrOrderRepository {
         avatarType: 'COLOR' | 'IMAGE';
         avatarColor: string | null;
         mediaId: string | null;
+        qrOrderEnabled: 0 | 1;
         unitName: string | null;
         variantId: string;
         variantName: string;
@@ -391,6 +398,7 @@ export class QrOrderRepository {
         id: row.variantId,
         name: row.variantName,
         salePriceVnd: row.salePriceVnd,
+        qrOrderEnabled: row.qrOrderEnabled === 1,
       });
       products.set(row.productId, product);
     }
@@ -408,7 +416,8 @@ export class QrOrderRepository {
            AND pv.status = 'ACTIVE' AND pv.prompt_price = 0 AND pv.sale_price IS NOT NULL
          LEFT JOIN units u ON u.id = p.unit_id AND u.store_id = p.store_id
          WHERE p.store_id = ? AND p.id = ? AND p.status = 'ACTIVE'
-           AND p.product_type IN ('QUANTITY', 'WEIGHT') AND (? IS NULL OR pv.id = ?)
+           AND p.product_type IN ('QUANTITY', 'WEIGHT') AND pv.qr_order_enabled = 1
+           AND (? IS NULL OR pv.id = ?)
          ORDER BY pv.created_at LIMIT 1`,
       )
       .bind(storeId, productId, variantId, variantId)
@@ -431,6 +440,16 @@ export class QrOrderRepository {
       )
       .bind(guestSessionId, clientRequestId)
       .first<{ id: string }>();
+  }
+
+  findLatestGuestRequest(guestSessionId: string) {
+    return this.db
+      .prepare(
+        `SELECT id, created_at AS createdAt FROM guest_order_requests
+         WHERE guest_session_id = ? ORDER BY created_at DESC LIMIT 1`,
+      )
+      .bind(guestSessionId)
+      .first<{ id: string; createdAt: number }>();
   }
 
   async createGuestOrder(input: {
@@ -738,6 +757,8 @@ export class QrOrderRepository {
     session: GuestSessionRow;
     type: 'CALL_STAFF' | 'CHECKOUT_REQUEST';
     customerName?: string | null;
+    reasonId?: string | null;
+    reasonSnapshot?: string | null;
     now: number;
     notificationExpiresAt: number;
   }) {
@@ -746,8 +767,8 @@ export class QrOrderRepository {
         .prepare(
           `INSERT INTO service_requests (
             id, store_id, table_id, time_session_id, order_id, guest_session_id,
-            type, status, created_at, customer_name
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?)`,
+            type, status, created_at, customer_name, reason_id, reason_snapshot
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?)`,
         )
         .bind(
           input.id,
@@ -759,6 +780,8 @@ export class QrOrderRepository {
           input.type,
           input.now,
           input.customerName ?? null,
+          input.reasonId ?? null,
+          input.reasonSnapshot ?? null,
         ),
       this.db
         .prepare(
@@ -786,8 +809,8 @@ export class QrOrderRepository {
           `INSERT INTO staff_notification_events (
             id, store_id, source_type, source_id, event_type, status,
             order_id, table_id, table_name_snapshot, area_name_snapshot,
-            summary, item_count, total_vnd, created_at, expires_at
-          ) VALUES (?, ?, 'SERVICE_REQUEST', ?, ?, 'OPEN', ?, ?, ?, ?, ?, 0, 0, ?, ?)
+            summary, note, item_count, total_vnd, created_at, expires_at
+          ) VALUES (?, ?, 'SERVICE_REQUEST', ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
           ON CONFLICT(store_id, source_type, source_id) DO NOTHING`,
         )
         .bind(
@@ -806,6 +829,7 @@ export class QrOrderRepository {
             : input.customerName
               ? `Khách (${input.customerName}) yêu cầu thanh toán`
               : 'Khách yêu cầu thanh toán',
+          input.reasonSnapshot ?? null,
           input.now,
           input.notificationExpiresAt,
         ),
@@ -831,7 +855,8 @@ export class QrOrderRepository {
                 COALESCE(st.display_name, st.name) AS tableName,
                 a.name AS areaName, sr.created_at AS createdAt,
                 sr.acknowledged_at AS acknowledgedAt,
-                COALESCE(sr.customer_name, o.customer_name) AS customerName
+                COALESCE(sr.customer_name, o.customer_name) AS customerName,
+                sr.reason_snapshot AS reason
          FROM service_requests sr
          JOIN service_tables st ON st.id = sr.table_id
          JOIN areas a ON a.id = st.area_id
@@ -1053,7 +1078,7 @@ export class QrOrderRepository {
       .first<{ id: string }>();
   }
 
-  rotateQrCode(input: {
+  upsertQrCode(input: {
     id: string;
     storeId: string;
     tableId: string;

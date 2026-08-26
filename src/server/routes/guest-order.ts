@@ -225,6 +225,8 @@ guestOrderRoutes.post('/service-requests', async (c) => {
     clientIp(c),
     body.location,
     body.customerName,
+    body.reasonId,
+    body.customReason,
   );
   c.executionCtx.waitUntil(
     Promise.all([
@@ -241,7 +243,7 @@ guestOrderRoutes.post('/service-requests', async (c) => {
           result.areaName,
           result.customerName ? `Khách: ${result.customerName}` : null,
           body.type === 'CALL_STAFF'
-            ? 'Khách đang chờ nhân viên hỗ trợ'
+            ? (result.reason ?? 'Khách đang chờ nhân viên hỗ trợ')
             : 'Khách đã sẵn sàng thanh toán',
           `Gửi lúc ${new Intl.DateTimeFormat('vi-VN', {
             hour: '2-digit',

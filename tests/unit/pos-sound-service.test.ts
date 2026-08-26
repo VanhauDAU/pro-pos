@@ -1,122 +1,297 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mockStorage: Record<string, string> = {};
+import { SOUND_FILES, SoundManager } from '@client/lib/sound';
+
+class MockDocument extends EventTarget {
+  visibilityState: DocumentVisibilityState = 'visible';
+  hidden = false;
+
+  setVisible(visible: boolean): void {
+    this.visibilityState = visible ? 'visible' : 'hidden';
+    this.hidden = !visible;
+    this.dispatchEvent(new Event('visibilitychange'));
+  }
+}
+
+interface MockSource {
+  buffer: AudioBuffer | null;
+  connect: ReturnType<typeof vi.fn>;
+  start: ReturnType<typeof vi.fn>;
+}
+
+const decodedBuffer = { length: 128, sampleRate: 44_100 } as AudioBuffer;
+
+class MockAudioContext extends EventTarget {
+  static initialState: AudioContextState = 'suspended';
+  static decodeFails = false;
+  static instances: MockAudioContext[] = [];
+
+  state = MockAudioContext.initialState;
+  currentTime = 10;
+  sampleRate = 44_100;
+  destination = {} as AudioDestinationNode;
+  sources: MockSource[] = [];
+  oscillatorStarts: Array<ReturnType<typeof vi.fn>> = [];
+
+  resume = vi.fn(async () => {
+    this.state = 'running';
+    this.dispatchEvent(new Event('statechange'));
+  });
+
+  decodeAudioData = vi.fn(async () => {
+    if (MockAudioContext.decodeFails) throw new Error('decode failed');
+    return decodedBuffer;
+  });
+
+  createBuffer = vi.fn((channels: number, length: number, sampleRate: number) => {
+    return { numberOfChannels: channels, length, sampleRate } as AudioBuffer;
+  });
+
+  createBufferSource = vi.fn(() => {
+    const source: MockSource = {
+      buffer: null,
+      connect: vi.fn(),
+      start: vi.fn(),
+    };
+    this.sources.push(source);
+    return source as unknown as AudioBufferSourceNode;
+  });
+
+  createGain = vi.fn(
+    () =>
+      ({
+        gain: {
+          setValueAtTime: vi.fn(),
+          exponentialRampToValueAtTime: vi.fn(),
+        },
+        connect: vi.fn(),
+      }) as unknown as GainNode,
+  );
+
+  createOscillator = vi.fn(() => {
+    const start = vi.fn();
+    this.oscillatorStarts.push(start);
+    return {
+      type: 'sine',
+      frequency: { setValueAtTime: vi.fn() },
+      connect: vi.fn(),
+      start,
+      stop: vi.fn(),
+    } as unknown as OscillatorNode;
+  });
+
+  constructor() {
+    super();
+    MockAudioContext.instances.push(this);
+  }
+}
+
+const storage = new Map<string, string>();
 const mockLocalStorage = {
-  getItem: vi.fn((key: string) => mockStorage[key] ?? null),
-  setItem: vi.fn((key: string, val: string) => {
-    mockStorage[key] = val;
-  }),
-  clear: vi.fn(() => {
-    for (const key of Object.keys(mockStorage)) delete mockStorage[key];
-  }),
+  getItem: vi.fn((key: string) => storage.get(key) ?? null),
+  setItem: vi.fn((key: string, value: string) => storage.set(key, value)),
 };
 
-class MockAudio {
-  src = '';
-  preload = '';
-  volume = 1;
-  currentTime = 0;
-  load = vi.fn();
-  play = vi.fn(async () => undefined);
-  pause = vi.fn();
+const audioElementPlay = vi.fn();
+const audioElementConstructor = vi.fn(() => ({ play: audioElementPlay }));
+const fetchMock = vi.fn(async (_path: string, _options?: RequestInit) => {
+  return {
+    ok: true,
+    arrayBuffer: async () => new ArrayBuffer(8),
+  };
+});
+
+let documentMock: MockDocument;
+let windowMock: EventTarget;
+let managers: SoundManager[];
+
+function createManager(state: AudioContextState = 'suspended'): {
+  manager: SoundManager;
+  context: MockAudioContext;
+} {
+  MockAudioContext.initialState = state;
+  const manager = new SoundManager();
+  managers.push(manager);
+  const context = MockAudioContext.instances.at(-1);
+  if (!context) throw new Error('AudioContext was not created');
+
+  // Unit tests do not need to wait for the production overlap throttle.
+  (manager as unknown as { MIN_INTERVAL_MS: number }).MIN_INTERVAL_MS = 0;
+  return { manager, context };
 }
 
-class MockAudioContext {
-  state = 'running';
-  currentTime = 0;
-  resume = vi.fn(async () => undefined);
-  createOscillator = vi.fn(() => ({
-    type: 'sine',
-    frequency: { setValueAtTime: vi.fn() },
-    connect: vi.fn(),
-    start: vi.fn(),
-    stop: vi.fn(),
-  }));
-  createGain = vi.fn(() => ({
-    gain: { setValueAtTime: vi.fn(), exponentialRampToValueAtTime: vi.fn() },
-    connect: vi.fn(),
-  }));
-  destination = {};
+async function unlockAndIgnoreSilentSource(
+  manager: SoundManager,
+  context: MockAudioContext,
+): Promise<void> {
+  await expect(manager.unlock()).resolves.toBe(true);
+  context.sources.length = 0;
+  context.oscillatorStarts.length = 0;
 }
 
-// @ts-expect-error Mock globals
-globalThis.window = globalThis as unknown as Window;
-// @ts-expect-error Mock globals
-globalThis.localStorage = mockLocalStorage;
-// @ts-expect-error Mock globals
-globalThis.Audio = MockAudio;
-// @ts-expect-error Mock globals
-globalThis.AudioContext = MockAudioContext;
-globalThis.window.addEventListener = vi.fn();
-globalThis.window.removeEventListener = vi.fn();
+function startedDecodedSources(context: MockAudioContext): MockSource[] {
+  return context.sources.filter(
+    (source) => source.buffer === decodedBuffer && source.start.mock.calls.length > 0,
+  );
+}
 
-import { playPosSound, posSound } from '@client/lib/sound';
+beforeEach(() => {
+  managers = [];
+  storage.clear();
+  MockAudioContext.instances = [];
+  MockAudioContext.decodeFails = false;
+  fetchMock.mockClear();
+  audioElementPlay.mockClear();
+  audioElementConstructor.mockClear();
 
-describe('POS Sound Service', () => {
-  beforeEach(() => {
-    vi.restoreAllMocks();
-    mockLocalStorage.clear();
-    posSound.setMuted(false);
+  documentMock = new MockDocument();
+  windowMock = Object.assign(new EventTarget(), {
+    AudioContext: MockAudioContext,
+    localStorage: mockLocalStorage,
+    setTimeout,
+    clearTimeout,
   });
 
-  it('preloads and reuses audio instances without error', () => {
-    expect(posSound).toBeDefined();
-    expect(posSound.muted).toBe(false);
+  vi.stubGlobal('document', documentMock);
+  vi.stubGlobal('window', windowMock);
+  vi.stubGlobal('fetch', fetchMock);
+  vi.stubGlobal('Audio', audioElementConstructor);
+});
+
+afterEach(() => {
+  for (const manager of managers) manager.destroy();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+describe('POS Web Audio sound service', () => {
+  it('initializes and preloads without playing any real notification sound', () => {
+    const { context } = createManager();
+
+    expect(fetchMock).toHaveBeenCalled();
+    expect(context.sources).toHaveLength(0);
+    expect(audioElementConstructor).not.toHaveBeenCalled();
+    expect(audioElementPlay).not.toHaveBeenCalled();
   });
 
-  it('deduplicates playback when given the same dedupeKey', async () => {
-    const playSpy = vi.spyOn(
-      posSound as unknown as { executePlay: () => Promise<void> },
-      'executePlay',
-    );
+  it('unlocks without calling HTMLAudioElement.play()', async () => {
+    const { manager } = createManager();
 
-    // First call with key
-    playPosSound('NEW_QR_ORDER', { dedupeKey: 'order-123' });
-    // Duplicate call with identical key
-    playPosSound('NEW_QR_ORDER', { dedupeKey: 'order-123' });
-    // Duplicate call with identical key
-    playPosSound('NEW_QR_ORDER', { dedupeKey: 'order-123' });
+    await manager.unlock();
 
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    // Should only enqueue / execute once
-    expect(playSpy).toHaveBeenCalledTimes(1);
+    expect(audioElementConstructor).not.toHaveBeenCalled();
+    expect(audioElementPlay).not.toHaveBeenCalled();
   });
 
-  it('plays different sound types or different dedupeKeys', async () => {
-    const playSpy = vi.spyOn(
-      posSound as unknown as { executePlay: () => Promise<void> },
-      'executePlay',
-    );
+  it('uses a genuinely silent one-frame AudioBuffer for warm-up', async () => {
+    const { manager, context } = createManager();
 
-    playPosSound('NEW_QR_ORDER', { dedupeKey: 'order-1' });
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    playPosSound('PAYMENT_SUCCESS', { dedupeKey: 'payment-1' });
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    await manager.unlock();
 
-    expect(playSpy).toHaveBeenCalledTimes(2);
+    expect(context.createBuffer).toHaveBeenCalledWith(1, 1, context.sampleRate);
+    expect(context.sources).toHaveLength(1);
+    expect(context.sources[0]?.buffer?.length).toBe(1);
+    expect(context.sources[0]?.start).toHaveBeenCalledWith(0);
   });
 
-  it('respects mute setting', async () => {
-    posSound.setMuted(true);
-    expect(posSound.muted).toBe(true);
+  it('serializes resume while moving a suspended context to running', async () => {
+    const { manager, context } = createManager('suspended');
 
-    const playSpy = vi.spyOn(
-      posSound as unknown as { executePlay: () => Promise<void> },
-      'executePlay',
-    );
-    playPosSound('NEW_QR_ORDER', { dedupeKey: 'order-2' });
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    const results = await Promise.all([manager.unlock(), manager.unlock(), manager.unlock()]);
 
-    expect(playSpy).not.toHaveBeenCalled();
-
-    // Unless forced
-    playPosSound('NEW_QR_ORDER', { dedupeKey: 'order-3', force: true });
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    expect(playSpy).toHaveBeenCalledTimes(1);
+    expect(results).toEqual([true, true, true]);
+    expect(context.resume).toHaveBeenCalledTimes(1);
+    expect(context.state).toBe('running');
   });
 
-  it('unlocks audio on user interaction gracefully', async () => {
-    const unlocked = await posSound.unlock();
-    expect(typeof unlocked).toBe('boolean');
+  it('does not play while muted', async () => {
+    const { manager, context } = createManager();
+    await unlockAndIgnoreSilentSource(manager, context);
+    manager.setMuted(true);
+
+    manager.play('NEW_QR_ORDER', { dedupeKey: 'muted-order' });
+    await Promise.resolve();
+
+    expect(startedDecodedSources(context)).toHaveLength(0);
+    expect(context.oscillatorStarts).toHaveLength(0);
+  });
+
+  it('plays a duplicate dedupeKey only once', async () => {
+    const { manager, context } = createManager();
+    await unlockAndIgnoreSilentSource(manager, context);
+
+    manager.play('NEW_QR_ORDER', { dedupeKey: 'order-123' });
+    manager.play('NEW_QR_ORDER', { dedupeKey: 'order-123' });
+    manager.play('NEW_QR_ORDER', { dedupeKey: 'order-123' });
+
+    await vi.waitFor(() => expect(startedDecodedSources(context)).toHaveLength(1));
+  });
+
+  it('plays two distinct events independently', async () => {
+    const { manager, context } = createManager();
+    await unlockAndIgnoreSilentSource(manager, context);
+
+    manager.play('NEW_QR_ORDER', { dedupeKey: 'order-1' });
+    manager.play('PAYMENT_SUCCESS', { dedupeKey: 'payment-1' });
+
+    await vi.waitFor(() => expect(startedDecodedSources(context)).toHaveLength(2));
+  });
+
+  it('drops hidden/background events instead of queueing a foreground backlog', async () => {
+    const { manager, context } = createManager();
+    await unlockAndIgnoreSilentSource(manager, context);
+    documentMock.setVisible(false);
+
+    manager.play('NEW_QR_ORDER', { dedupeKey: 'background-order' });
+    documentMock.setVisible(true);
+    await Promise.resolve();
+
+    expect(startedDecodedSources(context)).toHaveLength(0);
+
+    manager.play('NEW_QR_ORDER', { dedupeKey: 'foreground-order' });
+    await vi.waitFor(() => expect(startedDecodedSources(context)).toHaveLength(1));
+  });
+
+  it('discards a queued event after its five-second TTL', async () => {
+    const { manager, context } = createManager();
+    await unlockAndIgnoreSilentSource(manager, context);
+    const internals = manager as unknown as {
+      isPlaying: boolean;
+      playQueue: Array<{ enqueuedAt: number }>;
+      processQueue: () => Promise<void>;
+    };
+    internals.isPlaying = true;
+    manager.play('NEW_QR_ORDER', { dedupeKey: 'stale-order' });
+    internals.playQueue[0]!.enqueuedAt = Date.now() - 5_001;
+    internals.isPlaying = false;
+
+    await internals.processQueue();
+
+    expect(startedDecodedSources(context)).toHaveLength(0);
+    expect(internals.playQueue).toHaveLength(0);
+  });
+
+  it('uses a synthesized chime when fetch/decode fails', async () => {
+    MockAudioContext.decodeFails = true;
+    const { manager, context } = createManager();
+    await unlockAndIgnoreSilentSource(manager, context);
+
+    manager.play('NEW_QR_ORDER', { dedupeKey: 'decode-error' });
+
+    await vi.waitFor(() => expect(context.oscillatorStarts).toHaveLength(2));
+    expect(startedDecodedSources(context)).toHaveLength(0);
+  });
+
+  it('fetches and decodes each unique sound path only once', async () => {
+    const { manager } = createManager();
+    manager.initialize();
+    const uniquePaths = new Set(Object.values(SOUND_FILES));
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(uniquePaths.size));
+    for (const path of uniquePaths) {
+      expect(fetchMock.mock.calls.filter(([requestedPath]) => requestedPath === path)).toHaveLength(
+        1,
+      );
+    }
   });
 });

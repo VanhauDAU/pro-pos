@@ -2985,10 +2985,11 @@ describe('online POS vertical slice', () => {
       sortOrder: 119,
     });
     const qr = new QrOrderService(env);
-    const code = await qr.rotateQrCode(storeId, table.id, ownerUserId);
+    const code = await qr.getOrCreateQrCode(storeId, table.id, ownerUserId);
+    const qrToken = code.path.replace('/q/', '');
 
     const closed = await qr.resolveQr({
-      rawQrToken: code.token,
+      rawQrToken: code.path.replace('/q/', ''),
       ip: '127.0.0.1',
       deviceNonce: 'waiting-device',
     });
@@ -3001,8 +3002,8 @@ describe('online POS vertical slice', () => {
     });
     expect(closed.context.menu.some((item) => item.id === productId)).toBe(true);
 
-    const requested = await qr.requestTableOpen(code.token, '127.0.0.1');
-    const replay = await qr.requestTableOpen(code.token, '127.0.0.1');
+    const requested = await qr.requestTableOpen(qrToken, '127.0.0.1');
+    const replay = await qr.requestTableOpen(qrToken, '127.0.0.1');
     expect(requested).toMatchObject({ alreadyOpen: false, replayed: false });
     expect(replay).toMatchObject({
       alreadyOpen: false,
@@ -3014,13 +3015,13 @@ describe('online POS vertical slice', () => {
       .bind(Date.now() - 11 * 60_000, requested.requestId)
       .run();
     const expired = await qr.resolveQr({
-      rawQrToken: code.token,
+      rawQrToken: qrToken,
       ip: '127.0.0.1',
       deviceNonce: 'waiting-device',
     });
     expect(expired.context.tableStatus).toBe('AVAILABLE');
 
-    const freshRequested = await qr.requestTableOpen(code.token, '127.0.0.1');
+    const freshRequested = await qr.requestTableOpen(qrToken, '127.0.0.1');
     expect(freshRequested).toMatchObject({ alreadyOpen: false, replayed: false });
     expect(freshRequested.requestId).not.toBe(requested.requestId);
     const createdRealtime = await env.DB.prepare(
@@ -3041,7 +3042,7 @@ describe('online POS vertical slice', () => {
     });
 
     const waiting = await qr.resolveQr({
-      rawQrToken: code.token,
+      rawQrToken: qrToken,
       ip: '127.0.0.1',
       deviceNonce: 'waiting-device',
     });
@@ -3084,7 +3085,7 @@ describe('online POS vertical slice', () => {
     });
 
     const active = await qr.resolveQr({
-      rawQrToken: code.token,
+      rawQrToken: qrToken,
       ip: '127.0.0.1',
       deviceNonce: 'waiting-device',
     });
@@ -3119,16 +3120,25 @@ describe('online POS vertical slice', () => {
       expectedTableVersion: 1,
     });
     const qr = new QrOrderService(env);
-    const code = await qr.rotateQrCode(storeId, table.id, ownerUserId);
+    const code = await qr.getOrCreateQrCode(storeId, table.id, ownerUserId);
+    const qrToken = code.path.replace('/q/', '');
     const resolved = await qr.resolveQr({
-      rawQrToken: code.token,
+      rawQrToken: qrToken,
       ip: '127.0.0.1',
       deviceNonce: 'test-device',
     });
     expect(resolved.context.tableName).toBe('Bàn QR Order');
     expect(resolved.context.menu.some((item) => item.id === productId)).toBe(true);
 
-    const assistance = await qr.createServiceRequest(resolved.rawGuest, 'CALL_STAFF');
+    const assistance = await qr.createServiceRequest(
+      resolved.rawGuest,
+      'CALL_STAFF',
+      null,
+      null,
+      null,
+      null,
+      'Cần hỗ trợ',
+    );
     const [openAssistance] = await qr.listServiceRequests(storeId);
     expect(openAssistance).toMatchObject({
       id: assistance.id,
@@ -3262,7 +3272,7 @@ describe('online POS vertical slice', () => {
     ).toMatchObject({ status: 'ACCEPTED', actorName: 'POS Owner' });
 
     const secondGuest = await qr.resolveQr({
-      rawQrToken: code.token,
+      rawQrToken: qrToken,
       ip: '127.0.0.2',
       deviceNonce: 'test-device-2',
     });

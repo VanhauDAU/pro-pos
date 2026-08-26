@@ -330,40 +330,42 @@ export function buildEscPosReceipt(
           const timeRange = `${startStr} - ${endStr}`;
           const dateStr = formatDateOnly(seg.startedAtMs);
           const durLabel = formatSegmentDurationLabel(seg);
-          const priceStr = formatVnd(seg.priceVnd);
-          const unitStr = template.showHourlyUnitDuration ? '/1h' : '';
+          const priceStr = `${formatVnd(seg.priceVnd)}${template.showHourlyUnitDuration ? '/1h' : ''}`;
           const totalStr = formatVnd(seg.amount);
 
           if (profile.layoutMode === 'MULTI_COLUMN') {
-            raw += `${timeRange}\n`;
             if (template.showHourlyUnitPrice) {
-              const leftCol1 = dateStr.padEnd(28).slice(0, 28);
+              const leftCol1 = timeRange.padEnd(28).slice(0, 28);
               const priceCol1 = priceStr.padStart(10);
               const totCol1 = totalStr.padStart(10);
               raw += `${leftCol1} ${priceCol1} ${totCol1}\n`;
 
-              const leftCol2 = durLabel.padEnd(28).slice(0, 28);
-              const priceCol2 = unitStr.padStart(10);
+              const leftCol2 = dateStr.padEnd(28).slice(0, 28);
+              raw += `${leftCol2}\n`;
+
+              const leftCol3 = durLabel.padEnd(28).slice(0, 28);
+              const priceCol2 = ''.padStart(10);
               const totCol2 = ''.padStart(10);
-              raw += `${leftCol2} ${priceCol2} ${totCol2}\n`;
+              raw += `${leftCol3} ${priceCol2} ${totCol2}\n`;
             } else {
-              const leftCol1 = dateStr.padEnd(36).slice(0, 36);
+              const leftCol1 = timeRange.padEnd(36).slice(0, 36);
               const totCol1 = totalStr.padStart(12);
               raw += `${leftCol1} ${totCol1}\n`;
 
+              raw += `${dateStr}\n`;
               const leftCol2 = durLabel.padEnd(36).slice(0, 36);
               raw += `${leftCol2}\n`;
             }
             raw += '\n';
           } else {
             // K58 single column
-            raw += `${timeRange}\n`;
-            const leftCol1 = dateStr.padEnd(22).slice(0, 22);
+            const leftCol1 = timeRange.padEnd(22).slice(0, 22);
             const totCol1 = totalStr.padStart(11);
             raw += `${leftCol1} ${totCol1}\n`;
+            raw += `${dateStr}\n`;
             raw += `${durLabel}\n`;
             if (template.showHourlyUnitPrice) {
-              raw += `   Đ.Giá: ${priceStr}${unitStr}\n`;
+              raw += `   Đ.Giá: ${priceStr}\n`;
             }
             raw += '\n';
           }

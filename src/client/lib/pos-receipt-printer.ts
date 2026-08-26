@@ -378,15 +378,15 @@ export function generateThermalReceiptHtml(
                 const durationLabel = formatSegmentDurationLabel(seg);
                 return `
                   <div class="thermal-receipt-time-segment" style="margin-top: ${sIdx > 0 ? '6px' : '3px'};">
-                    <div>${timeRangeStr}</div>
                     <div style="display: flex; align-items: baseline;">
-                      <span style="flex: 1;">${dateStr}</span>
-                      ${!isK58 && template.showHourlyUnitPrice ? `<span style="width: 65px; text-align: right;">${formatVnd(seg.priceVnd)}</span>` : ''}
+                      <span style="flex: 1;">${timeRangeStr}</span>
+                      ${!isK58 && template.showHourlyUnitPrice ? `<span style="width: 65px; text-align: right; white-space: nowrap;">${formatVnd(seg.priceVnd)}${template.showHourlyUnitDuration ? '/1h' : ''}</span>` : ''}
                       <span style="width: ${isK58 ? '48px' : '65px'}; text-align: right; font-weight: 600;">${formatVnd(seg.amount)}</span>
                     </div>
+                    <div>${dateStr}</div>
                     <div style="display: flex; align-items: baseline;">
                       <span style="flex: 1; color: #64748b;">${durationLabel}</span>
-                      ${!isK58 && template.showHourlyUnitPrice && template.showHourlyUnitDuration ? `<span style="width: 65px; text-align: right; color: #64748b;">/1h</span>` : ''}
+                      ${!isK58 && template.showHourlyUnitPrice ? `<span style="width: 65px;"></span>` : ''}
                       <span style="width: ${isK58 ? '48px' : '65px'};"></span>
                     </div>
                     ${isK58 && template.showHourlyUnitPrice ? `<div class="thermal-receipt-item-sub">Đ.Giá: ${formatVnd(seg.priceVnd)}${template.showHourlyUnitDuration ? '/1h' : ''}</div>` : ''}

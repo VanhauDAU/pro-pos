@@ -10,10 +10,7 @@ import type {
 import { AppError } from '@server/lib/app-error';
 import { hashOpaqueToken, randomOpaqueToken } from '@server/lib/crypto';
 import { requireSecret } from '@server/lib/env';
-import {
-  LOCATION_VERIFICATION_SESSION_TTL_MS,
-  verifyLocationCoordinates,
-} from '@server/lib/location';
+import { verifyLocationCoordinates } from '@server/lib/location';
 import {
   QrOrderRepository,
   type GuestSessionRow,
@@ -22,6 +19,7 @@ import {
 import { MediaService } from '@server/services/media-service';
 import { PosService } from '@server/services/pos-service';
 import { StoreService } from '@server/services/store-service';
+import { OwnerQrOrderService } from '@server/services/owner-qr-order-service';
 
 const STAFF_NOTIFICATION_RETENTION_DAYS = 3 as const;
 const STAFF_NOTIFICATION_RETENTION_MS = STAFF_NOTIFICATION_RETENTION_DAYS * 24 * 60 * 60_000;
@@ -143,7 +141,7 @@ function mapDatabaseError(error: unknown): never {
     ],
     [
       'GUEST_ORDER_TOO_FAST',
-      'GUEST_ORDER_TOO_FAST',
+      'REQUEST_COOLDOWN',
       'Vui lòng chờ vài giây trước khi gọi thêm món.',
       429,
     ],
@@ -227,7 +225,24 @@ export class QrOrderService {
         401,
       );
     }
+    if (session.qrOrderEnabled !== 1) {
+      throw new AppError('QR_ORDER_TABLE_DISABLED', 'Bàn hiện đang tắt QR Order.', 409);
+    }
     return session;
+  }
+
+  private runtimeConfig(storeId: string) {
+    return new OwnerQrOrderService(this.env).getRuntimeConfig(storeId);
+  }
+
+  private assertAcceptingOrders(
+    availability: Awaited<ReturnType<OwnerQrOrderService['getSettings']>>['availability'],
+  ) {
+    if (availability.acceptingOrders) return;
+    throw new AppError('QR_ORDER_SALES_CLOSED', 'Cửa hàng hiện đang ngừng nhận gọi món.', 409, {
+      reason: availability.reason,
+      nextOpenAt: availability.nextOpenAt,
+    });
   }
 
   async getActiveOrder(
@@ -309,6 +324,9 @@ export class QrOrderService {
     if (!context) {
       throw new AppError('QR_TABLE_SESSION_INVALID', 'Bàn hiện chưa có đơn hàng đang mở.', 404);
     }
+    if (context.qrOrderEnabled !== 1) {
+      throw new AppError('QR_ORDER_TABLE_DISABLED', 'Bàn hiện đang tắt QR Order.', 409);
+    }
     const order = await this.getActiveOrder(context.storeId, context.orderId);
     if (!order) {
       throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn hàng của bàn.', 404);
@@ -360,9 +378,10 @@ export class QrOrderService {
       );
 
     const storeService = new StoreService(this.env);
-    const [storeSettings, printSettings] = await Promise.all([
+    const [storeSettings, printSettings, runtime] = await Promise.all([
       storeService.getSettings(session.storeId),
       storeService.getPrintSettings(session.storeId),
+      this.runtimeConfig(session.storeId),
     ]);
 
     return {
@@ -386,6 +405,20 @@ export class QrOrderService {
         verifiedExpiresAt: session.locationExpiresAt ?? null,
         distanceMeters: session.locationDistanceMeters ?? null,
       },
+      salesAvailability: {
+        acceptingOrders: runtime.settings.availability.acceptingOrders,
+        reason: runtime.settings.availability.reason,
+        nextOpenAt: runtime.settings.availability.nextOpenAt,
+      },
+      cooldowns: {
+        orderSeconds: runtime.settings.orderCooldownSeconds,
+        callStaffSeconds: runtime.settings.callStaffCooldownSeconds,
+        checkoutSeconds: runtime.settings.checkoutCooldownSeconds,
+      },
+      quickStaffReasons: runtime.quickReasons.map((reason) => ({
+        id: reason.id,
+        label: reason.label,
+      })),
       activeOrder: await this.getActiveOrder(session.storeId, session.orderId, now),
       menu: await this.repository.listMenu(session.storeId),
       storeInfo: storeSettings
@@ -419,6 +452,9 @@ export class QrOrderService {
         409,
       );
     }
+    if (tableContext.qrOrderEnabled !== 1) {
+      throw new AppError('QR_ORDER_TABLE_DISABLED', 'Bàn hiện đang tắt QR Order.', 409);
+    }
     if (tableContext.tableStatus === 'AVAILABLE') {
       await this.repository.expireTableOpenRequests(
         tableContext.storeId,
@@ -437,9 +473,10 @@ export class QrOrderService {
         tableContext.longitude !== undefined;
 
       const storeService = new StoreService(this.env);
-      const [storeSettings, printSettings] = await Promise.all([
+      const [storeSettings, printSettings, runtime] = await Promise.all([
         storeService.getSettings(tableContext.storeId),
         storeService.getPrintSettings(tableContext.storeId),
+        this.runtimeConfig(tableContext.storeId),
       ]);
 
       return {
@@ -464,6 +501,20 @@ export class QrOrderService {
             isVerified: !isLocationRequired,
             verifiedExpiresAt: null,
           },
+          salesAvailability: {
+            acceptingOrders: runtime.settings.availability.acceptingOrders,
+            reason: runtime.settings.availability.reason,
+            nextOpenAt: runtime.settings.availability.nextOpenAt,
+          },
+          cooldowns: {
+            orderSeconds: runtime.settings.orderCooldownSeconds,
+            callStaffSeconds: runtime.settings.callStaffCooldownSeconds,
+            checkoutSeconds: runtime.settings.checkoutCooldownSeconds,
+          },
+          quickStaffReasons: runtime.quickReasons.map((reason) => ({
+            id: reason.id,
+            label: reason.label,
+          })),
           menu: await this.repository.listMenu(tableContext.storeId),
           storeInfo: storeSettings
             ? {
@@ -537,6 +588,11 @@ export class QrOrderService {
     if (!context || context.tableStatus === 'DISABLED') {
       throw new AppError('QR_TABLE_NOT_ACTIVE', 'Mã QR không còn hiệu lực.', 409);
     }
+    if (context.qrOrderEnabled !== 1) {
+      throw new AppError('QR_ORDER_TABLE_DISABLED', 'Bàn hiện đang tắt QR Order.', 409);
+    }
+    const runtime = await this.runtimeConfig(context.storeId);
+    this.assertAcceptingOrders(runtime.settings.availability);
     if (context.locationVerificationEnabled === 1) {
       if (!location) {
         throw new AppError(
@@ -713,6 +769,9 @@ export class QrOrderService {
     if (!context || context.tableStatus === 'DISABLED') {
       throw new AppError('QR_TABLE_NOT_ACTIVE', 'Mã QR không còn hiệu lực.', 409);
     }
+    if (context.qrOrderEnabled !== 1) {
+      throw new AppError('QR_ORDER_TABLE_DISABLED', 'Bàn hiện đang tắt QR Order.', 409);
+    }
     return new MediaService(this.env).get(context.storeId, mediaId);
   }
 
@@ -721,6 +780,7 @@ export class QrOrderService {
     input: VerifyGuestLocationInput,
   ): Promise<VerifyGuestLocationResponse> {
     const session = await this.contextFromSession(rawGuest);
+    const runtime = await this.runtimeConfig(session.storeId);
     const now = Date.now();
     const result = verifyLocationCoordinates({
       storeSettings: {
@@ -732,7 +792,7 @@ export class QrOrderService {
       },
       input,
       serverNow: now,
-      sessionTtlMs: LOCATION_VERIFICATION_SESSION_TTL_MS,
+      sessionTtlMs: runtime.settings.locationMemoryMinutes * 60_000,
     });
     await this.repository.updateGuestLocationVerification({
       guestSessionId: session.guestSessionId,
@@ -759,6 +819,10 @@ export class QrOrderService {
     if (!tableContext || tableContext.tableStatus === 'DISABLED') {
       throw new AppError('QR_TABLE_NOT_ACTIVE', 'Mã QR đã bị thay đổi hoặc không hoạt động.', 409);
     }
+    if (tableContext.qrOrderEnabled !== 1) {
+      throw new AppError('QR_ORDER_TABLE_DISABLED', 'Bàn hiện đang tắt QR Order.', 409);
+    }
+    const runtime = await this.runtimeConfig(tableContext.storeId);
     const now = Date.now();
     const result = verifyLocationCoordinates({
       storeSettings: {
@@ -770,7 +834,7 @@ export class QrOrderService {
       },
       input,
       serverNow: now,
-      sessionTtlMs: LOCATION_VERIFICATION_SESSION_TTL_MS,
+      sessionTtlMs: runtime.settings.locationMemoryMinutes * 60_000,
     });
 
     let returnRawGuest = rawGuest;
@@ -829,6 +893,8 @@ export class QrOrderService {
     ip: string | null,
   ): Promise<SubmitOrderResult> {
     const session = await this.contextFromSession(rawGuest);
+    const runtime = await this.runtimeConfig(session.storeId);
+    this.assertAcceptingOrders(runtime.settings.availability);
     if (input.location) {
       const now = Date.now();
       const result = verifyLocationCoordinates({
@@ -841,7 +907,7 @@ export class QrOrderService {
         },
         input: input.location,
         serverNow: now,
-        sessionTtlMs: LOCATION_VERIFICATION_SESSION_TTL_MS,
+        sessionTtlMs: runtime.settings.locationMemoryMinutes * 60_000,
       });
       await this.repository.updateGuestLocationVerification({
         guestSessionId: session.guestSessionId,
@@ -867,6 +933,19 @@ export class QrOrderService {
         storeId: session.storeId,
         tableName: session.tableName,
       };
+    }
+    const latestRequest = await this.repository.findLatestGuestRequest(session.guestSessionId);
+    if (latestRequest) {
+      const elapsedSeconds = Math.floor((Date.now() - latestRequest.createdAt) / 1000);
+      const retryAfterSeconds = runtime.settings.orderCooldownSeconds - elapsedSeconds;
+      if (retryAfterSeconds > 0) {
+        throw new AppError(
+          'REQUEST_COOLDOWN',
+          `Vui lòng chờ ${retryAfterSeconds}s trước khi gọi thêm món.`,
+          429,
+          { retryAfterSeconds },
+        );
+      }
     }
 
     const items = await Promise.all(
@@ -936,6 +1015,20 @@ export class QrOrderService {
           customerName: input.customerName?.trim() || null,
         };
       }
+      if (String(error).includes('GUEST_ORDER_TOO_FAST')) {
+        const latest = await this.repository.findLatestGuestRequest(session.guestSessionId);
+        const elapsedSeconds = latest ? Math.floor((Date.now() - latest.createdAt) / 1000) : 0;
+        const retryAfterSeconds = Math.max(
+          1,
+          runtime.settings.orderCooldownSeconds - elapsedSeconds,
+        );
+        throw new AppError(
+          'REQUEST_COOLDOWN',
+          `Vui lòng chờ ${retryAfterSeconds}s trước khi gọi thêm món.`,
+          429,
+          { retryAfterSeconds },
+        );
+      }
       mapDatabaseError(error);
     }
     return {
@@ -969,8 +1062,11 @@ export class QrOrderService {
     _ip?: string | null,
     location?: VerifyGuestLocationInput | null,
     customerName?: string | null,
+    reasonId?: string | null,
+    customReason?: string | null,
   ) {
     const session = await this.contextFromSession(rawGuest);
+    const runtime = await this.runtimeConfig(session.storeId);
     if (location) {
       const now = Date.now();
       const result = verifyLocationCoordinates({
@@ -983,7 +1079,7 @@ export class QrOrderService {
         },
         input: location,
         serverNow: now,
-        sessionTtlMs: LOCATION_VERIFICATION_SESSION_TTL_MS,
+        sessionTtlMs: runtime.settings.locationMemoryMinutes * 60_000,
       });
       await this.repository.updateGuestLocationVerification({
         guestSessionId: session.guestSessionId,
@@ -999,14 +1095,18 @@ export class QrOrderService {
     }
     this.assertLocationVerified(session);
     const now = Date.now();
+    const cooldownSeconds =
+      type === 'CALL_STAFF'
+        ? runtime.settings.callStaffCooldownSeconds
+        : runtime.settings.checkoutCooldownSeconds;
     const existing = await this.repository.findOpenServiceRequest(
       session.timeSessionId,
       type,
-      now - 60_000,
+      now - cooldownSeconds * 1000,
     );
     if (existing) {
       const elapsedSec = existing.createdAt ? Math.floor((now - existing.createdAt) / 1000) : 0;
-      const remainingSec = Math.max(1, 60 - elapsedSec);
+      const remainingSec = Math.max(1, cooldownSeconds - elapsedSec);
       throw new AppError(
         'REQUEST_COOLDOWN',
         `Yêu cầu đã được gửi. Vui lòng chờ ${remainingSec}s trước khi gửi lại.`,
@@ -1017,6 +1117,25 @@ export class QrOrderService {
         },
       );
     }
+    let resolvedReasonId: string | null = null;
+    let reasonSnapshot: string | null = null;
+    if (type === 'CALL_STAFF') {
+      if (reasonId) {
+        const reason = await new OwnerQrOrderService(this.env).findQuickReason(
+          session.storeId,
+          reasonId,
+        );
+        if (!reason) {
+          throw new AppError('QUICK_REASON_INVALID', 'Lý do gọi nhân viên không hợp lệ.', 422);
+        }
+        resolvedReasonId = reason.id;
+        reasonSnapshot = reason.label;
+      } else if (customReason?.trim()) {
+        reasonSnapshot = customReason.trim();
+      } else {
+        throw new AppError('QUICK_REASON_INVALID', 'Vui lòng chọn lý do gọi nhân viên.', 422);
+      }
+    }
     const id = crypto.randomUUID();
     try {
       await this.repository.createServiceRequest({
@@ -1024,10 +1143,31 @@ export class QrOrderService {
         session,
         type,
         customerName: customerName?.trim() || null,
+        reasonId: resolvedReasonId,
+        reasonSnapshot,
         now,
         notificationExpiresAt: now + STAFF_NOTIFICATION_RETENTION_MS,
       });
     } catch (error) {
+      if (String(error).includes('UNIQUE constraint failed')) {
+        const concurrent = await this.repository.findOpenServiceRequest(
+          session.timeSessionId,
+          type,
+          now - cooldownSeconds * 1000,
+        );
+        if (concurrent) {
+          const elapsedSeconds = concurrent.createdAt
+            ? Math.floor((now - concurrent.createdAt) / 1000)
+            : 0;
+          const retryAfterSeconds = Math.max(1, cooldownSeconds - elapsedSeconds);
+          throw new AppError(
+            'REQUEST_COOLDOWN',
+            `Yêu cầu đã được gửi. Vui lòng chờ ${retryAfterSeconds}s trước khi gửi lại.`,
+            429,
+            { requestId: concurrent.id, retryAfterSeconds },
+          );
+        }
+      }
       mapDatabaseError(error);
     }
     return {
@@ -1037,6 +1177,7 @@ export class QrOrderService {
       tableName: session.tableName,
       areaName: session.areaName,
       customerName: customerName?.trim() || null,
+      reason: reasonSnapshot,
       orderId: session.orderId,
       createdAt: now,
     };
@@ -1154,7 +1295,7 @@ export class QrOrderService {
     // No QR yet or legacy row without public_token — initialize once
     const rawToken = randomOpaqueToken(24);
     try {
-      await this.repository.rotateQrCode({
+      await this.repository.upsertQrCode({
         id: crypto.randomUUID(),
         storeId,
         tableId,
@@ -1175,32 +1316,5 @@ export class QrOrderService {
       version: created?.version ?? 1,
       enabled: created ? created.enabled === 1 : true,
     };
-  }
-
-  async rotateQrCode(storeId: string, tableId: string, actorId: string) {
-    if (!(await this.repository.findTable(storeId, tableId))) {
-      throw new AppError('TABLE_NOT_FOUND', 'Không tìm thấy bàn trong cửa hàng.', 404);
-    }
-    const rawToken = randomOpaqueToken(24);
-    const now = Date.now();
-    try {
-      await this.repository.rotateQrCode({
-        id: crypto.randomUUID(),
-        storeId,
-        tableId,
-        tokenHash: await hashOpaqueToken(rawToken, this.pepper),
-        publicToken: rawToken,
-        actorId,
-        now,
-      });
-    } catch (error) {
-      if (String(error).includes('FOREIGN KEY')) {
-        throw new AppError('TABLE_NOT_FOUND', 'Không tìm thấy bàn trong cửa hàng.', 404);
-      }
-      throw error;
-    }
-    // Security: revoke all active guest sessions for this table
-    await this.repository.revokeGuestSessionsByTable(storeId, tableId);
-    return { token: rawToken, path: `/q/${rawToken}` };
   }
 }

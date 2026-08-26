@@ -15,6 +15,13 @@
   của Owner settings.
 - `0008_area_table_setup.sql`: bổ sung layout khu vực/bàn phòng và các ràng buộc trạng thái cho POS.
 - `0009_staff_roles_permissions.sql`: bổ sung vai trò tùy chỉnh, quyền nhân viên và liên kết user-role.
+- `0061_owner_qr_order_settings.sql`: bổ sung trạng thái QR theo bàn, cấu hình cooldown/vị trí và
+  lịch bán QR theo cửa hàng, lý do gọi nhân viên có thứ tự, reason snapshot và trigger cooldown
+  gọi món động. Migration backfill QR-enabled cùng bốn lý do mặc định cho store hiện có.
+- `0062_qr_order_product_visibility.sql`: thêm cờ hiển thị QR Order theo từng mặt hàng; mặc định
+  bật để không làm thay đổi thực đơn QR hiện có khi nâng cấp.
+- `0063_qr_order_reason_archive_and_variant_visibility.sql`: thêm cờ archive tương thích cho lý do
+  gọi nhân viên và chuyển trạng thái hiển thị QR Order xuống từng phiên bản giá.
 
 Quy tắc:
 

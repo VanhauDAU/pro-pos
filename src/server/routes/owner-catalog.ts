@@ -21,38 +21,11 @@ import { parseJson } from '@server/lib/validation';
 import { requireActor, requirePermission } from '@server/middleware/authorization';
 import { CatalogService } from '@server/services/catalog-service';
 import { CatalogImportService } from '@server/services/catalog-import-service';
-import { QrOrderService } from '@server/services/qr-order-service';
 import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
 import type { AppEnv } from '@server/types';
 
 const ownerCatalogRoutes = new Hono<AppEnv>();
 ownerCatalogRoutes.use('*', requireActor('OWNER', 'EMPLOYEE'));
-
-ownerCatalogRoutes.get('/tables/:tableId/qr-code', requirePermission('table.manage'), async (c) =>
-  success(
-    c,
-    await new QrOrderService(c.env).getOrCreateQrCode(
-      c.get('actor').storeId!,
-      c.req.param('tableId'),
-      c.get('actor').id,
-    ),
-  ),
-);
-
-ownerCatalogRoutes.post(
-  '/tables/:tableId/qr-code/rotate',
-  requirePermission('table.manage'),
-  async (c) =>
-    success(
-      c,
-      await new QrOrderService(c.env).rotateQrCode(
-        c.get('actor').storeId!,
-        c.req.param('tableId'),
-        c.get('actor').id,
-      ),
-      201,
-    ),
-);
 
 function auditContext(c: Parameters<typeof success>[0]) {
   return {

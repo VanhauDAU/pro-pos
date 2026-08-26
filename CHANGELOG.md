@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- Mobile product selection now exposes “Lưu đơn” as the primary action; “Xem đơn” remains a
+  secondary review action.
+- POS payment now saves pending item and promotion changes automatically before opening checkout,
+  removing the routine “Lưu thay đổi và thanh toán” confirmation step.
+- POS/PWA notifications now use one Web Audio context with MP3 buffer caching, silent gesture
+  unlock, foreground resume handling, short-lived throttling, and no background sound backlog.
+  Initial polling/realtime snapshots are marked as seen without replaying old requests.
 - POS quote consistency: Order Editor and Payment now verify an authoritative quote whenever they
   mount, including after an inactive cache entry was invalidated by realtime. Overview order
   versions and totals come from the same stable quote, and quote calculation retries once if an
@@ -22,6 +29,11 @@
   unlabeled ellipsis.
 
 ### Added
+
+- Owner QR ORDER configuration: a dedicated sidebar module now manages fixed per-table QR codes,
+  location verification and memory duration, per-request cooldowns, editable quick staff-call
+  reasons, read-only QR menu visibility, weekly sales hours and manual pause/resume. Guest requests
+  enforce these settings server-side; POS notifications retain the selected support reason.
 
 - Area settings UI revamp: dedicated full-screen/spacious Area Detail Modal with quick-add table,
   reordering, per-table pricing selector, table rename/delete, area rename and clean 2-column layout.

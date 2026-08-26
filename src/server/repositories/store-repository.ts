@@ -241,11 +241,6 @@ export class StoreRepository {
     provinceName: string | null;
     wardCode: number | null;
     wardName: string | null;
-    locationVerificationEnabled: boolean;
-    latitude: number | null;
-    longitude: number | null;
-    allowedRadiusMeters: number;
-    maxAccuracyMeters: number;
     now: number;
   }) {
     return this.db.batch([
@@ -259,8 +254,6 @@ export class StoreRepository {
                bank_name = ?, bank_account_number = ?, bank_account_name = ?,
                bank_qr_media_id = ?, province_code = ?, province_name = ?,
                ward_code = ?, ward_name = ?,
-               location_verification_enabled = ?, latitude = ?, longitude = ?,
-               allowed_radius_meters = ?, max_accuracy_meters = ?,
                updated_at = ?
            WHERE store_id = ?`,
         )
@@ -276,15 +269,37 @@ export class StoreRepository {
           input.provinceName,
           input.wardCode,
           input.wardName,
-          input.locationVerificationEnabled ? 1 : 0,
-          input.latitude,
-          input.longitude,
-          input.allowedRadiusMeters,
-          input.maxAccuracyMeters,
           input.now,
           input.storeId,
         ),
     ]);
+  }
+
+  updateLocationSettings(input: {
+    storeId: string;
+    locationVerificationEnabled: boolean;
+    latitude: number | null;
+    longitude: number | null;
+    allowedRadiusMeters: number;
+    maxAccuracyMeters: number;
+    now: number;
+  }) {
+    return this.db
+      .prepare(
+        `UPDATE store_settings SET location_verification_enabled = ?, latitude = ?, longitude = ?,
+           allowed_radius_meters = ?, max_accuracy_meters = ?, updated_at = ?
+         WHERE store_id = ?`,
+      )
+      .bind(
+        input.locationVerificationEnabled ? 1 : 0,
+        input.latitude,
+        input.longitude,
+        input.allowedRadiusMeters,
+        input.maxAccuracyMeters,
+        input.now,
+        input.storeId,
+      )
+      .run();
   }
 
   async listAuditLogs(storeId: string, limit: number) {

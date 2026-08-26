@@ -154,6 +154,7 @@ import {
 } from './payment-return-state';
 import { canonicalPaymentPath } from './payment-navigation';
 import { posErrorText } from './pos-error';
+import { PosNotificationTracker } from './pos-notification-tracker';
 import { orderQuoteQueryOptions, overviewRefreshInterval } from './pos-order-query';
 
 const BRAND = '#0975f7';
@@ -633,6 +634,7 @@ interface EditingOrderItem {
   discountInputValue: number | null;
   discountReason: string | null;
   netLineTotalVnd: number;
+  enteredUnitPriceVnd?: number;
   discardOnCancel?: boolean | undefined;
 }
 
@@ -918,27 +920,17 @@ const PosNotificationsContext = createContext<PosNotificationsContextValue | nul
 function PosNotificationWatcher() {
   const navigate = useNavigate();
   const notifications = usePosNotifications();
-  const initializedRef = useRef(false);
-  const seenGuestOrderIds = useRef<Set<string>>(new Set());
-  const seenServiceRequestIds = useRef<Set<string>>(new Set());
-  const seenTableOpenRequestIds = useRef<Set<string>>(new Set());
+  const trackerRef = useRef(new PosNotificationTracker());
 
   useEffect(() => {
     const data = notifications.data;
     if (!data) return;
 
-    if (!initializedRef.current) {
-      initializedRef.current = true;
-      seenGuestOrderIds.current = new Set(data.guestOrders.map((g) => g.id));
-      seenServiceRequestIds.current = new Set(data.serviceRequests.map((s) => s.id));
-      seenTableOpenRequestIds.current = new Set(data.tableOpenRequests.map((t) => t.id));
-      return;
-    }
+    for (const event of trackerRef.current.observe(data)) {
+      playPosSound(event.sound, { dedupeKey: event.dedupeKey });
 
-    for (const req of data.guestOrders) {
-      if (!seenGuestOrderIds.current.has(req.id) && req.status === 'PENDING') {
-        seenGuestOrderIds.current.add(req.id);
-        playPosSound('NEW_QR_ORDER', { dedupeKey: `qr-order:${req.id}` });
+      if (event.kind === 'GUEST_ORDER') {
+        const req = event.request;
         // Automatically pop up the QR order confirmation modal
         notifications.setQrConfirmModalOpen(true);
         const itemCount =
@@ -956,14 +948,9 @@ function PosNotificationWatcher() {
             },
           },
         );
-      }
-    }
-
-    for (const sr of data.serviceRequests) {
-      if (!seenServiceRequestIds.current.has(sr.id) && sr.status === 'OPEN') {
-        seenServiceRequestIds.current.add(sr.id);
+      } else if (event.kind === 'SERVICE_REQUEST') {
+        const sr = event.request;
         if (sr.type === 'CALL_STAFF') {
-          playPosSound('CALL_STAFF', { dedupeKey: `service-req:${sr.id}` });
           toast.warning(
             `🔔 Gọi nhân viên - ${sr.tableName}${sr.customerName ? ` (${sr.customerName})` : ''}`,
             {
@@ -976,7 +963,6 @@ function PosNotificationWatcher() {
             },
           );
         } else if (sr.type === 'CHECKOUT_REQUEST') {
-          playPosSound('CHECKOUT_REQUEST', { dedupeKey: `service-req:${sr.id}` });
           toast.info(
             `💳 Yêu cầu thanh toán - ${sr.tableName}${sr.customerName ? ` (${sr.customerName})` : ''}`,
             {
@@ -989,13 +975,8 @@ function PosNotificationWatcher() {
             },
           );
         }
-      }
-    }
-
-    for (const tor of data.tableOpenRequests) {
-      if (!seenTableOpenRequestIds.current.has(tor.id) && tor.status === 'OPEN') {
-        seenTableOpenRequestIds.current.add(tor.id);
-        playPosSound('TABLE_OPEN_REQUEST', { dedupeKey: `table-open:${tor.id}` });
+      } else {
+        const tor = event.request;
         toast.info(
           `🪑 Yêu cầu mở bàn - ${tor.tableName}${tor.customerName ? ` (${tor.customerName})` : ''}`,
           {
@@ -1829,6 +1810,8 @@ function QrOrderPage() {
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [updatingServiceId, setUpdatingServiceId] = useState<string | null>(null);
   const [updatingTableOpenId, setUpdatingTableOpenId] = useState<string | null>(null);
+  const [filterTab, setFilterTab] = useState<'ALL' | 'TABLE_OPEN' | 'SERVICE' | 'ORDERS'>('ALL');
+
   const auth = useQuery({
     queryKey: ['auth-context'],
     queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
@@ -1864,7 +1847,15 @@ function QrOrderPage() {
       }),
     [serviceRequests.data],
   );
-  const openServiceCount = activeServiceRequests.filter((item) => item.status === 'OPEN').length;
+  const tableOpenList = useMemo(
+    () => (tableOpenRequests.data ?? []).toSorted((a, b) => a.createdAt - b.createdAt),
+    [tableOpenRequests.data],
+  );
+
+  const pendingCount = pendingRequests.length;
+  const serviceCount = activeServiceRequests.length;
+  const tableOpenCount = tableOpenList.length;
+  const totalActionableCount = pendingCount + serviceCount + tableOpenCount;
   const totalPendingValue = pendingRequests.reduce(
     (sum, request) => sum + request.items.reduce((itemSum, item) => itemSum + item.lineTotalVnd, 0),
     0,
@@ -1878,9 +1869,6 @@ function QrOrderPage() {
     ]);
 
   const refreshAreasAfterTableOpen = async () => {
-    // Areas intentionally uses refetchOnMount=false to avoid a request storm.
-    // Fetching the authoritative overview here prevents it from rendering a
-    // stale AVAILABLE table after the operator returns from QR Order.
     const overview = await queryClient.fetchQuery<PosOverviewSnapshot>({
       queryKey: ['pos-overview'],
       queryFn: ({ signal }) => apiRequest<PosOverviewSnapshot>('/api/v1/pos/overview', { signal }),
@@ -1893,6 +1881,7 @@ function QrOrderPage() {
       queryClient.invalidateQueries({ queryKey: ['pos-staff-all-qr-orders'] }),
     ]);
   };
+
   const accept = useMutation({
     mutationFn: (request: GuestOrderRequestDto) =>
       jsonRequest(
@@ -1909,6 +1898,7 @@ function QrOrderPage() {
       await refresh();
     },
   });
+
   const rejectRequest = (request: GuestOrderRequestDto) => {
     let reason = '';
     modal.confirm({
@@ -1943,6 +1933,7 @@ function QrOrderPage() {
       },
     });
   };
+
   const updateService = async (request: ServiceRequestDto, action: 'ACKNOWLEDGE' | 'COMPLETE') => {
     setUpdatingServiceId(request.id);
     try {
@@ -1958,6 +1949,7 @@ function QrOrderPage() {
       setUpdatingServiceId(null);
     }
   };
+
   const acceptTableOpen = async (request: TableOpenRequestDto) => {
     setUpdatingTableOpenId(request.id);
     try {
@@ -1975,6 +1967,7 @@ function QrOrderPage() {
       setUpdatingTableOpenId(null);
     }
   };
+
   const cancelTableOpen = (request: TableOpenRequestDto) => {
     let reason = '';
     modal.confirm({
@@ -2010,342 +2003,438 @@ function QrOrderPage() {
     });
   };
 
-  const realtimeLabel =
-    realtime.status === 'CONNECTED'
-      ? 'Realtime đang hoạt động'
-      : realtime.status === 'CONNECTING'
-        ? 'Đang kết nối realtime'
-        : realtime.status === 'RECONNECTING'
-          ? 'Đang kết nối lại'
-          : 'Realtime đang tắt';
-  const realtimeColor = realtime.status === 'CONNECTED' ? 'success' : 'warning';
   const isRefreshing =
     requests.isFetching || serviceRequests.isFetching || tableOpenRequests.isFetching;
+  const isLoading = requests.isLoading || serviceRequests.isLoading || tableOpenRequests.isLoading;
+
+  const showTableOpen = filterTab === 'ALL' || filterTab === 'TABLE_OPEN';
+  const showService = filterTab === 'ALL' || filterTab === 'SERVICE';
+  const showOrders = filterTab === 'ALL' || filterTab === 'ORDERS';
 
   return (
     <main className="staff-qr-order-page">
       {holder}
       {modalHolder}
 
-      <section className="staff-qr-order-hero">
-        <div>
-          <div className="staff-qr-order-hero__eyebrow">
-            <QrcodeOutlined /> Trung tâm yêu cầu tại bàn
+      {/* Top Banner & Control Bar */}
+      <div className="staff-qr-hero-card" aria-label="Tổng quan QR Order">
+        <div className="staff-qr-hero-card__main">
+          <div className="staff-qr-hero-card__title-wrap">
+            <div className="staff-qr-hero-card__icon-badge">
+              <QrcodeOutlined />
+            </div>
+            <div>
+              <div className="staff-qr-hero-card__heading">
+                <h2>Yêu cầu QR Order</h2>
+                <span className={`staff-qr-live-pill is-${realtime.status.toLowerCase()}`}>
+                  <span className="staff-qr-live-dot" />
+                  {realtime.status === 'CONNECTED' ? 'Trực tiếp' : 'Đang kết nối'}
+                </span>
+                {totalActionableCount > 0 ? (
+                  <span className="staff-qr-badge-counter">{totalActionableCount} cần xử lý</span>
+                ) : (
+                  <span className="staff-qr-badge-counter is-clean">Đã xử lý hết</span>
+                )}
+              </div>
+              <p className="staff-qr-hero-card__desc">
+                Tự động nhận yêu cầu mở bàn, gọi phục vụ và đơn gọi món trực tiếp từ mã QR tại bàn.
+              </p>
+            </div>
+          </div>
+
+          <div className="staff-qr-hero-card__actions">
+            <Button
+              type="default"
+              size="middle"
+              className="staff-qr-refresh-btn"
+              icon={<SyncOutlined spin={isRefreshing} />}
+              disabled={isRefreshing}
+              onClick={() => void refresh()}
+            >
+              Làm mới
+            </Button>
           </div>
         </div>
-        <div className="staff-qr-order-hero__actions">
-          <Tag color={realtimeColor} className="staff-qr-realtime-tag">
-            <span className={`staff-qr-realtime-dot is-${realtime.status.toLowerCase()}`} />
-            {realtimeLabel}
-          </Tag>
-          <Button
-            icon={<SyncOutlined spin={isRefreshing} />}
-            disabled={isRefreshing}
-            onClick={() => void refresh()}
-          >
-            Làm mới
-          </Button>
-        </div>
-      </section>
 
-      <section className="staff-qr-order-summary" aria-label="Tổng quan QR Order">
-        <article>
-          <span>Đơn chờ xác nhận</span>
-          <strong>{pendingRequests.length}</strong>
-          <small>{formatMoney(totalPendingValue)}</small>
-        </article>
-        <article>
-          <span>Yêu cầu tại bàn</span>
-          <strong>{openServiceCount + (tableOpenRequests.data?.length ?? 0)}</strong>
-          <small>{tableOpenRequests.data?.length ?? 0} bàn chờ mở</small>
-        </article>
-        <article>
-          <span>Đồng bộ dữ liệu</span>
-          <strong>{realtime.status === 'CONNECTED' ? 'Tức thì' : '15 giây'}</strong>
-          <small>Giờ máy chủ {formatPreciseTime(now)}</small>
-        </article>
-      </section>
+        {/* Filter Navigation Tabs */}
+        {totalActionableCount > 0 ? (
+          <div className="staff-qr-tab-filter-bar">
+            <button
+              type="button"
+              className={`staff-qr-tab-btn ${filterTab === 'ALL' ? 'is-active' : ''}`}
+              onClick={() => setFilterTab('ALL')}
+            >
+              Tất cả
+              <span className="staff-qr-tab-count">{totalActionableCount}</span>
+            </button>
 
+            {pendingCount > 0 ? (
+              <button
+                type="button"
+                className={`staff-qr-tab-btn staff-qr-tab-btn--orders ${filterTab === 'ORDERS' ? 'is-active' : ''}`}
+                onClick={() => setFilterTab('ORDERS')}
+              >
+                <ShoppingOutlined /> Đơn gọi món
+                <span className="staff-qr-tab-count">{pendingCount}</span>
+              </button>
+            ) : null}
+
+            {serviceCount > 0 ? (
+              <button
+                type="button"
+                className={`staff-qr-tab-btn staff-qr-tab-btn--service ${filterTab === 'SERVICE' ? 'is-active' : ''}`}
+                onClick={() => setFilterTab('SERVICE')}
+              >
+                <BellOutlined /> Gọi phục vụ
+                <span className="staff-qr-tab-count">{serviceCount}</span>
+              </button>
+            ) : null}
+
+            {tableOpenCount > 0 ? (
+              <button
+                type="button"
+                className={`staff-qr-tab-btn staff-qr-tab-btn--table ${filterTab === 'TABLE_OPEN' ? 'is-active' : ''}`}
+                onClick={() => setFilterTab('TABLE_OPEN')}
+              >
+                <UnlockOutlined /> Mở bàn
+                <span className="staff-qr-tab-count">{tableOpenCount}</span>
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+
+      {/* Errors alert if any */}
       {requests.isError || serviceRequests.isError || tableOpenRequests.isError ? (
         <Alert
           type="error"
           showIcon
-          title="Không thể tải đầy đủ yêu cầu"
-          description="Hệ thống vẫn sẽ tự thử lại. Bạn có thể bấm Làm mới để kiểm tra ngay."
-          className="staff-qr-order-error"
+          title="Không thể tải đầy đủ dữ liệu"
+          description="Hệ thống vẫn đang tự kết nối lại. Bạn có thể bấm Làm mới để thử ngay."
+          style={{ marginBottom: 16, borderRadius: 12 }}
         />
       ) : null}
 
-      <section className="staff-qr-order-section">
-        <div className="staff-qr-order-section__heading">
-          <div>
-            <Typography.Title level={3}>Yêu cầu mở bàn</Typography.Title>
-            <Typography.Text type="secondary">
-              Khách đã quét QR và đang chọn món trong lúc chờ.
-            </Typography.Text>
-          </div>
-          <Tag color={(tableOpenRequests.data?.length ?? 0) > 0 ? 'processing' : 'default'}>
-            {tableOpenRequests.data?.length ?? 0} đang chờ
-          </Tag>
-        </div>
-
-        {tableOpenRequests.isLoading ? (
-          <Skeleton active paragraph={{ rows: 2 }} />
-        ) : (tableOpenRequests.data?.length ?? 0) === 0 ? (
-          <div className="staff-qr-order-empty staff-qr-order-empty--compact">
-            <CheckCircleOutlined /> Không có bàn đang chờ mở
-          </div>
-        ) : (
-          <div className="staff-qr-service-grid">
-            {tableOpenRequests.data?.map((request) => {
-              const urgency = requestUrgency(request.createdAt, now);
-              const isUpdating = updatingTableOpenId === request.id;
-              return (
-                <article key={request.id} className={`staff-qr-service-card ${urgency.className}`}>
-                  <div className="staff-qr-service-card__icon">
-                    <UnlockOutlined />
-                  </div>
-                  <div className="staff-qr-service-card__body">
-                    <div className="staff-qr-service-card__title">
-                      <strong>Yêu cầu mở bàn</strong>
-                      <Tag color={urgency.color}>{urgency.label}</Tag>
-                    </div>
-                    <b>
-                      {request.tableName} · {request.areaName}
-                    </b>
-                    <div className="staff-qr-request-timing">
-                      <ClockCircleOutlined /> Gửi lúc {formatPreciseTime(request.createdAt)} · chờ{' '}
-                      <strong>{formatRequestAge(request.createdAt, now)}</strong>
-                    </div>
-                  </div>
-                  <div className="staff-qr-service-card__actions">
-                    <Button
-                      danger
-                      disabled={updatingTableOpenId !== null}
-                      onClick={() => cancelTableOpen(request)}
-                    >
-                      Từ chối
-                    </Button>
-                    <Button
-                      type="primary"
-                      icon={<UnlockOutlined />}
-                      loading={isUpdating}
-                      disabled={updatingTableOpenId !== null && !isUpdating}
-                      onClick={() => void acceptTableOpen(request)}
-                    >
-                      Mở bàn
-                    </Button>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      <section className="staff-qr-order-section">
-        <div className="staff-qr-order-section__heading">
-          <div>
-            <Typography.Title level={3}>Yêu cầu hỗ trợ</Typography.Title>
-            <Typography.Text type="secondary">
-              Ưu tiên yêu cầu chưa có nhân viên tiếp nhận.
-            </Typography.Text>
-          </div>
-          <Tag>{activeServiceRequests.length} đang mở</Tag>
-        </div>
-
-        {serviceRequests.isLoading ? (
-          <Skeleton active paragraph={{ rows: 2 }} />
-        ) : activeServiceRequests.length === 0 ? (
-          <div className="staff-qr-order-empty staff-qr-order-empty--compact">
-            <CheckCircleOutlined /> Không có yêu cầu hỗ trợ đang chờ
-          </div>
-        ) : (
-          <div className="staff-qr-service-grid">
-            {activeServiceRequests.map((request) => {
-              const urgency = requestUrgency(request.createdAt, now);
-              const isUpdating = updatingServiceId === request.id;
-              return (
-                <article key={request.id} className={`staff-qr-service-card ${urgency.className}`}>
-                  <div className="staff-qr-service-card__icon">
-                    {request.type === 'CALL_STAFF' ? <BellOutlined /> : <CreditCardOutlined />}
-                  </div>
-                  <div className="staff-qr-service-card__body">
-                    <div className="staff-qr-service-card__title">
-                      <strong>
-                        {request.type === 'CALL_STAFF' ? 'Gọi nhân viên' : 'Yêu cầu thanh toán'}
-                      </strong>
-                      <Tag color={request.status === 'OPEN' ? urgency.color : 'success'}>
-                        {request.status === 'OPEN' ? urgency.label : 'Đã tiếp nhận'}
-                      </Tag>
-                    </div>
-                    <b>
-                      {request.tableName} · {request.areaName}
-                    </b>
-                    <div className="staff-qr-request-timing">
-                      <ClockCircleOutlined /> Gửi lúc {formatPreciseTime(request.createdAt)} · chờ{' '}
-                      <strong>{formatRequestAge(request.createdAt, now)}</strong>
-                    </div>
-                    {request.acknowledgedAt ? (
-                      <small>Tiếp nhận lúc {formatPreciseTime(request.acknowledgedAt)}</small>
-                    ) : null}
-                  </div>
-                  <div className="staff-qr-service-card__actions">
-                    <Button size="small" onClick={() => navigate(`/pos/orders/${request.orderId}`)}>
-                      Mở đơn
-                    </Button>
-                    {request.status === 'OPEN' ? (
-                      <Button
-                        type="primary"
-                        loading={isUpdating}
-                        disabled={updatingServiceId !== null && !isUpdating}
-                        onClick={() => void updateService(request, 'ACKNOWLEDGE')}
-                      >
-                        Tiếp nhận
-                      </Button>
-                    ) : (
-                      <Button
-                        type="primary"
-                        loading={isUpdating}
-                        disabled={updatingServiceId !== null && !isUpdating}
-                        onClick={() => void updateService(request, 'COMPLETE')}
-                      >
-                        Hoàn tất
-                      </Button>
-                    )}
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      <section className="staff-qr-order-section staff-qr-order-section--orders">
-        <div className="staff-qr-order-section__heading">
-          <div>
-            <Typography.Title level={3}>Đơn chờ xác nhận</Typography.Title>
-            <Typography.Text type="secondary">
-              Xếp theo thời gian chờ lâu nhất để không bỏ sót yêu cầu.
-            </Typography.Text>
-          </div>
-          <Tag color={pendingRequests.length > 0 ? 'processing' : 'default'}>
-            {pendingRequests.length} yêu cầu
-          </Tag>
-        </div>
-
-        {requests.isLoading ? (
+      {/* Loading state */}
+      {isLoading ? (
+        <div style={{ padding: '36px 0' }}>
           <Skeleton active paragraph={{ rows: 6 }} />
-        ) : pendingRequests.length === 0 ? (
-          <Empty
-            className="staff-qr-order-empty"
-            image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description="Chưa có yêu cầu gọi món mới"
-          />
-        ) : (
-          <div className="staff-qr-request-list">
-            {pendingRequests.map((request) => {
-              const urgency = requestUrgency(request.createdAt, now);
-              const itemQuantity = request.items.reduce((sum, item) => sum + item.quantity, 0);
-              const requestTotal = request.items.reduce((sum, item) => sum + item.lineTotalVnd, 0);
-              const isAccepting = accept.isPending && accept.variables?.id === request.id;
-              const isRejecting = rejectingId === request.id;
-              const anotherActionPending =
-                (accept.isPending && !isAccepting) || (rejectingId !== null && !isRejecting);
-
-              return (
-                <article key={request.id} className={`staff-qr-request-card ${urgency.className}`}>
-                  <header className="staff-qr-request-card__header">
-                    <div className="staff-qr-request-card__table">
-                      <span className="staff-qr-request-card__table-icon">
-                        <ShopOutlined />
-                      </span>
-                      <div>
-                        <Typography.Title level={4}>{request.tableName}</Typography.Title>
-                        <span>{request.areaName}</span>
-                      </div>
-                    </div>
-                    <div className="staff-qr-request-card__status">
-                      <Tag color={urgency.color}>{urgency.label}</Tag>
-                      <div className="staff-qr-request-card__age">
-                        <ClockCircleOutlined />
-                        <strong>{formatRequestAge(request.createdAt, now)}</strong>
-                      </div>
-                      <small>Gửi lúc {formatPreciseTime(request.createdAt)}</small>
-                    </div>
-                  </header>
-
-                  <div className="staff-qr-request-card__meta">
-                    <span>{request.items.length} dòng món</span>
-                    <span>{formatDecimal(itemQuantity)} sản phẩm</span>
-                    <span>Mã #{request.id.slice(0, 8).toUpperCase()}</span>
-                  </div>
-
-                  <div className="staff-qr-request-items">
-                    {request.items.map((item) => (
-                      <div key={item.id} className="staff-qr-request-item">
-                        <strong className="staff-qr-request-item__quantity">
-                          {item.quantity}×
-                        </strong>
-                        <div className="staff-qr-request-item__name">
-                          <b>{item.productName}</b>
-                          {item.variantName && item.variantName !== 'Mặc định' ? (
-                            <span>{item.variantName}</span>
-                          ) : null}
-                          {item.note ? <small>Ghi chú món: {item.note}</small> : null}
-                        </div>
-                        <div className="staff-qr-request-item__price">
-                          <span>{formatMoney(item.unitPriceVnd)} / đơn vị</span>
-                          <strong>{formatMoney(item.lineTotalVnd)}</strong>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {request.note ? (
-                    <div className="staff-qr-request-note">
-                      <MessageOutlined />
-                      <div>
-                        <span>Ghi chú toàn đơn</span>
-                        <strong>{request.note}</strong>
-                      </div>
-                    </div>
-                  ) : null}
-
-                  <footer className="staff-qr-request-card__footer">
-                    <div className="staff-qr-request-total">
-                      <span>Tổng yêu cầu</span>
-                      <strong>{formatMoney(requestTotal)}</strong>
-                    </div>
-                    <div className="staff-qr-request-actions">
-                      <Button onClick={() => navigate(`/pos/orders/${request.orderId}`)}>
-                        Xem đơn hiện tại
-                      </Button>
-                      <Button
-                        danger
-                        loading={isRejecting}
-                        disabled={anotherActionPending || isAccepting}
-                        onClick={() => rejectRequest(request)}
-                      >
-                        Từ chối
-                      </Button>
-                      <Button
-                        type="primary"
-                        icon={<CheckCircleOutlined />}
-                        loading={isAccepting}
-                        disabled={anotherActionPending || isRejecting}
-                        onClick={() => accept.mutate(request)}
-                      >
-                        Xác nhận vào hóa đơn
-                      </Button>
-                    </div>
-                  </footer>
-                </article>
-              );
-            })}
+        </div>
+      ) : totalActionableCount === 0 ? (
+        /* Empty State: Sleek & Clean */
+        <div className="staff-qr-empty-hero">
+          <div className="staff-qr-empty-hero__icon">
+            <CheckCircleOutlined />
           </div>
-        )}
-      </section>
+          <h3>Không có yêu cầu chờ xử lý</h3>
+          <p>
+            Tất cả yêu cầu mở bàn, gọi món và gọi nhân viên từ khách qua mã QR đã được xử lý xong.
+          </p>
+          <div className="staff-qr-empty-hero__time">
+            <span>Cập nhật gần nhất lúc {formatPreciseTime(now)}</span>
+          </div>
+        </div>
+      ) : (
+        /* Actionable Tickets Board */
+        <div className="staff-qr-tickets-board">
+          {/* Section 1: Table Open Requests */}
+          {showTableOpen && tableOpenCount > 0 ? (
+            <div className="staff-qr-tickets-section">
+              <div className="staff-qr-tickets-section__heading">
+                <h4>Yêu cầu mở bàn ({tableOpenCount})</h4>
+              </div>
+
+              <div className="staff-qr-tickets-grid">
+                {tableOpenList.map((request) => {
+                  const urgency = requestUrgency(request.createdAt, now);
+                  const isUpdating = updatingTableOpenId === request.id;
+
+                  return (
+                    <article key={request.id} className="staff-qr-ticket-card">
+                      <div className="staff-qr-ticket-header">
+                        <div className="staff-qr-ticket-table-badge">
+                          <div className="staff-qr-table-icon-wrap">
+                            <UnlockOutlined />
+                          </div>
+                          <div>
+                            <div className="staff-qr-table-title">{request.tableName}</div>
+                            <div className="staff-qr-table-sub">{request.areaName}</div>
+                          </div>
+                        </div>
+
+                        <div className="staff-qr-ticket-timing">
+                          <span className="staff-qr-type-badge">Mở bàn</span>
+                          <span className={`staff-qr-time-text ${urgency.className}`}>
+                            <ClockCircleOutlined /> {formatRequestAge(request.createdAt, now)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="staff-qr-ticket-body">
+                        <div className="staff-qr-callout-box">
+                          <span className="staff-qr-callout-label">Trạng thái:</span>
+                          <strong className="staff-qr-callout-value">
+                            Khách đã quét QR và đang chọn món trong lúc chờ mở bàn
+                          </strong>
+                        </div>
+                        <div className="staff-qr-ticket-subtime">
+                          Gửi lúc {formatPreciseTime(request.createdAt)}
+                        </div>
+                      </div>
+
+                      <div className="staff-qr-ticket-footer">
+                        <Button
+                          size="large"
+                          danger
+                          className="staff-qr-action-btn staff-qr-action-btn--reject"
+                          disabled={updatingTableOpenId !== null}
+                          onClick={() => cancelTableOpen(request)}
+                        >
+                          Từ chối
+                        </Button>
+                        <Button
+                          type="primary"
+                          size="large"
+                          icon={<UnlockOutlined />}
+                          className="staff-qr-action-btn staff-qr-action-btn--primary"
+                          loading={isUpdating}
+                          disabled={updatingTableOpenId !== null && !isUpdating}
+                          onClick={() => void acceptTableOpen(request)}
+                        >
+                          Mở bàn ngay
+                        </Button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
+          {/* Section 2: Support & Checkout Requests */}
+          {showService && serviceCount > 0 ? (
+            <div className="staff-qr-tickets-section">
+              <div className="staff-qr-tickets-section__heading">
+                <h4>Yêu cầu phục vụ & thanh toán ({serviceCount})</h4>
+              </div>
+
+              <div className="staff-qr-tickets-grid">
+                {activeServiceRequests.map((request) => {
+                  const urgency = requestUrgency(request.createdAt, now);
+                  const isUpdating = updatingServiceId === request.id;
+                  const isCallStaff = request.type === 'CALL_STAFF';
+
+                  return (
+                    <article key={request.id} className="staff-qr-ticket-card">
+                      <div className="staff-qr-ticket-header">
+                        <div className="staff-qr-ticket-table-badge">
+                          <div className="staff-qr-table-icon-wrap">
+                            {isCallStaff ? <BellOutlined /> : <CreditCardOutlined />}
+                          </div>
+                          <div>
+                            <div className="staff-qr-table-title">{request.tableName}</div>
+                            <div className="staff-qr-table-sub">{request.areaName}</div>
+                          </div>
+                        </div>
+
+                        <div className="staff-qr-ticket-timing">
+                          <span className="staff-qr-type-badge">
+                            {isCallStaff ? 'Gọi nhân viên' : 'Thanh toán'}
+                          </span>
+                          <span className={`staff-qr-time-text ${urgency.className}`}>
+                            <ClockCircleOutlined /> {formatRequestAge(request.createdAt, now)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="staff-qr-ticket-body">
+                        <div className="staff-qr-callout-box">
+                          <span className="staff-qr-callout-label">
+                            {isCallStaff ? 'Nội dung yêu cầu:' : 'Hình thức:'}
+                          </span>
+                          <strong className="staff-qr-callout-value">
+                            {request.reason ||
+                              (isCallStaff
+                                ? 'Khách cần nhân viên hỗ trợ tại bàn'
+                                : 'Khách yêu cầu thanh toán hóa đơn')}
+                          </strong>
+                        </div>
+                        <div className="staff-qr-ticket-subtime">
+                          Gửi lúc {formatPreciseTime(request.createdAt)}
+                          {request.acknowledgedAt
+                            ? ` · Tiếp nhận lúc ${formatPreciseTime(request.acknowledgedAt)}`
+                            : ''}
+                        </div>
+                      </div>
+
+                      <div className="staff-qr-ticket-footer">
+                        <Button
+                          size="large"
+                          className="staff-qr-action-btn staff-qr-action-btn--secondary"
+                          onClick={() => navigate(`/pos/orders/${request.orderId}`)}
+                        >
+                          Xem đơn
+                        </Button>
+                        {request.status === 'OPEN' ? (
+                          <Button
+                            type="primary"
+                            size="large"
+                            className="staff-qr-action-btn staff-qr-action-btn--primary"
+                            loading={isUpdating}
+                            disabled={updatingServiceId !== null && !isUpdating}
+                            onClick={() => void updateService(request, 'ACKNOWLEDGE')}
+                          >
+                            Tiếp nhận ngay
+                          </Button>
+                        ) : (
+                          <Button
+                            type="primary"
+                            size="large"
+                            className="staff-qr-action-btn staff-qr-action-btn--primary"
+                            loading={isUpdating}
+                            disabled={updatingServiceId !== null && !isUpdating}
+                            onClick={() => void updateService(request, 'COMPLETE')}
+                          >
+                            Đã hoàn tất
+                          </Button>
+                        )}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
+          {/* Section 3: Food Orders Requests */}
+          {showOrders && pendingCount > 0 ? (
+            <div className="staff-qr-tickets-section">
+              <div className="staff-qr-tickets-section__heading">
+                <h4>Đơn gọi món chờ xác nhận ({pendingCount})</h4>
+                <span className="staff-qr-section-count">
+                  Tổng: {formatMoney(totalPendingValue)}
+                </span>
+              </div>
+
+              <div className="staff-qr-tickets-grid staff-qr-tickets-grid--orders">
+                {pendingRequests.map((request) => {
+                  const urgency = requestUrgency(request.createdAt, now);
+                  const itemQuantity = request.items.reduce((sum, item) => sum + item.quantity, 0);
+                  const requestTotal = request.items.reduce(
+                    (sum, item) => sum + item.lineTotalVnd,
+                    0,
+                  );
+                  const isAccepting = accept.isPending && accept.variables?.id === request.id;
+                  const isRejecting = rejectingId === request.id;
+                  const anotherActionPending =
+                    (accept.isPending && !isAccepting) || (rejectingId !== null && !isRejecting);
+
+                  return (
+                    <article key={request.id} className="staff-qr-ticket-card">
+                      <div className="staff-qr-ticket-header">
+                        <div className="staff-qr-ticket-table-badge">
+                          <div className="staff-qr-table-icon-wrap">
+                            <ShopOutlined />
+                          </div>
+                          <div>
+                            <div className="staff-qr-table-title">{request.tableName}</div>
+                            <div className="staff-qr-table-sub">
+                              {request.areaName} · #{request.id.slice(0, 8).toUpperCase()}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="staff-qr-ticket-timing">
+                          <span className="staff-qr-type-badge">Đơn mới</span>
+                          <span className={`staff-qr-time-text ${urgency.className}`}>
+                            <ClockCircleOutlined /> {formatRequestAge(request.createdAt, now)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="staff-qr-ticket-body">
+                        {/* Food items list */}
+                        <div className="staff-qr-ticket-items-list">
+                          {request.items.map((item) => (
+                            <div key={item.id} className="staff-qr-ticket-item-row">
+                              <div className="staff-qr-ticket-item-left">
+                                <span className="staff-qr-ticket-item-qty">{item.quantity}×</span>
+                                <div className="staff-qr-ticket-item-info">
+                                  <div className="staff-qr-ticket-item-name">
+                                    {item.productName}
+                                  </div>
+                                  {item.variantName && item.variantName !== 'Mặc định' ? (
+                                    <span className="staff-qr-ticket-item-variant">
+                                      {item.variantName}
+                                    </span>
+                                  ) : null}
+                                  {item.note ? (
+                                    <span className="staff-qr-ticket-item-note">
+                                      Ghi chú: {item.note}
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </div>
+
+                              <div className="staff-qr-ticket-item-price">
+                                <strong>{formatMoney(item.lineTotalVnd)}</strong>
+                                <small>{formatMoney(item.unitPriceVnd)}/món</small>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        {request.note ? (
+                          <div className="staff-qr-callout-box">
+                            <span className="staff-qr-callout-label">Ghi chú đơn:</span>
+                            <strong className="staff-qr-callout-value">{request.note}</strong>
+                          </div>
+                        ) : null}
+
+                        <div className="staff-qr-ticket-total-bar">
+                          <span>Tổng cộng ({formatDecimal(itemQuantity)} món):</span>
+                          <strong>{formatMoney(requestTotal)}</strong>
+                        </div>
+                      </div>
+
+                      <div className="staff-qr-ticket-footer staff-qr-ticket-footer--order">
+                        <Button
+                          size="large"
+                          className="staff-qr-action-btn staff-qr-action-btn--secondary"
+                          onClick={() => navigate(`/pos/orders/${request.orderId}`)}
+                        >
+                          Xem đơn
+                        </Button>
+                        <Button
+                          size="large"
+                          danger
+                          className="staff-qr-action-btn staff-qr-action-btn--reject"
+                          loading={isRejecting}
+                          disabled={anotherActionPending || isAccepting}
+                          onClick={() => rejectRequest(request)}
+                        >
+                          Từ chối
+                        </Button>
+                        <Button
+                          type="primary"
+                          size="large"
+                          icon={<CheckCircleOutlined />}
+                          className="staff-qr-action-btn staff-qr-action-btn--primary"
+                          loading={isAccepting}
+                          disabled={anotherActionPending || isRejecting}
+                          onClick={() => accept.mutate(request)}
+                        >
+                          Xác nhận món
+                        </Button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      )}
     </main>
   );
 }
@@ -3200,6 +3289,201 @@ function StaffTableTransferModal({
   );
 }
 
+interface StaffPromptPriceModalProps {
+  target: {
+    product: CatalogProduct;
+    variant: CatalogVariant;
+  } | null;
+  onCancel: () => void;
+  onConfirm: (enteredPrice: number) => void;
+}
+
+function StaffPromptPriceModal({ target, onCancel, onConfirm }: StaffPromptPriceModalProps) {
+  const [price, setPrice] = useState<number | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (target) {
+      const initial = target.variant.salePriceVnd ?? null;
+      setPrice(initial);
+      setErrorMsg(null);
+    }
+  }, [target]);
+
+  if (!target) return null;
+
+  const MAX_PRICE = 1_000_000_000;
+
+  const validatePrice = (
+    val: number | null,
+  ): { valid: boolean; error: string | null; cleanValue: number } => {
+    if (val === null || val === undefined || isNaN(val)) {
+      return { valid: false, error: 'Vui lòng nhập giá bán.', cleanValue: 0 };
+    }
+    if (val < 0) {
+      return { valid: false, error: 'Giá bán không được nhỏ hơn 0đ.', cleanValue: 0 };
+    }
+    if (val > MAX_PRICE) {
+      return { valid: false, error: 'Giá bán tối đa là 1.000.000.000đ.', cleanValue: MAX_PRICE };
+    }
+    return { valid: true, error: null, cleanValue: Math.floor(val) };
+  };
+
+  const handlePriceChange = (val: number | null) => {
+    if (val === null || isNaN(Number(val))) {
+      setPrice(null);
+      setErrorMsg('Vui lòng nhập giá bán.');
+      return;
+    }
+    const num = Math.floor(Number(val));
+    setPrice(num);
+    const { error } = validatePrice(num);
+    setErrorMsg(error);
+  };
+
+  const handleConfirm = () => {
+    const { valid, error, cleanValue } = validatePrice(price);
+    if (!valid) {
+      setErrorMsg(error);
+      return;
+    }
+    onConfirm(cleanValue);
+  };
+
+  const handleAddAmount = (amount: number) => {
+    const current = price ?? 0;
+    const next = Math.min(MAX_PRICE, Math.max(0, current + amount));
+    setPrice(next);
+    setErrorMsg(null);
+  };
+
+  const handleSetAmount = (amount: number) => {
+    setPrice(amount);
+    setErrorMsg(null);
+  };
+
+  const isValid = price !== null && !isNaN(price) && price >= 0 && price <= MAX_PRICE;
+
+  const hasCustomVariantName =
+    target.variant.name &&
+    target.variant.name !== 'Giá mặc định' &&
+    target.variant.name !== 'Mặc định' &&
+    target.variant.name !== 'default';
+
+  return (
+    <Modal
+      open={Boolean(target)}
+      title={
+        <div className="staff-prompt-modal-title">
+          <EditOutlined className="staff-prompt-modal-icon" />
+          <span>Nhập giá bán · {target.product.productName}</span>
+        </div>
+      }
+      okText="Thêm vào đơn"
+      cancelText="Hủy"
+      okButtonProps={{ disabled: !isValid }}
+      onOk={handleConfirm}
+      onCancel={onCancel}
+      centered
+      width={460}
+      className="staff-prompt-price-dialog"
+      destroyOnHidden
+    >
+      <div className="staff-prompt-modal-content">
+        {hasCustomVariantName ? (
+          <div className="staff-prompt-variant-tag">
+            <span>Phiên bản:</span>
+            <strong>{target.variant.name}</strong>
+          </div>
+        ) : null}
+
+        <div className="staff-prompt-field">
+          <label className="staff-prompt-label">Đơn giá bán (VNĐ):</label>
+          <InputNumber
+            ref={(node) => {
+              if (node) {
+                setTimeout(() => node.focus(), 50);
+              }
+            }}
+            autoFocus
+            min={0}
+            max={MAX_PRICE}
+            step={1000}
+            value={price}
+            status={errorMsg ? 'error' : ''}
+            onFocus={(e) => e.target.select()}
+            onPressEnter={handleConfirm}
+            formatter={(value) =>
+              value === null || value === undefined
+                ? ''
+                : `${value}`.replace(/\B(?=(\d{3})+(?!\d))/gu, '.')
+            }
+            parser={(value) => {
+              const cleaned = (value ?? '').replace(/\D/g, '');
+              return cleaned ? Number(cleaned) : 0;
+            }}
+            onChange={handlePriceChange}
+            suffix="đ"
+            placeholder="0"
+            className="staff-prompt-input"
+            style={{ width: '100%' }}
+          />
+          {errorMsg ? <div className="staff-prompt-error-msg">{errorMsg}</div> : null}
+        </div>
+
+        {/* Quick presets for rapid touch input */}
+        <div className="staff-prompt-presets">
+          <div className="staff-prompt-presets-label">Gợi ý nhanh:</div>
+          <div className="staff-prompt-presets-grid">
+            <button
+              type="button"
+              className="staff-prompt-preset-btn"
+              onClick={() => handleAddAmount(10000)}
+            >
+              +10k
+            </button>
+            <button
+              type="button"
+              className="staff-prompt-preset-btn"
+              onClick={() => handleAddAmount(20000)}
+            >
+              +20k
+            </button>
+            <button
+              type="button"
+              className="staff-prompt-preset-btn"
+              onClick={() => handleAddAmount(50000)}
+            >
+              +50k
+            </button>
+            <button
+              type="button"
+              className="staff-prompt-preset-btn"
+              onClick={() => handleAddAmount(100000)}
+            >
+              +100k
+            </button>
+            <button
+              type="button"
+              className="staff-prompt-preset-btn"
+              onClick={() => handleAddAmount(200000)}
+            >
+              +200k
+            </button>
+            <button
+              type="button"
+              className="staff-prompt-preset-btn is-clear"
+              onClick={() => handleSetAmount(0)}
+            >
+              0đ (Xóa)
+            </button>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 interface StaffItemDetailModalProps {
   item: EditingOrderItem | null;
   catalog: CatalogProduct[];
@@ -3608,13 +3892,35 @@ function OrderItemDetailModal({
   );
 
   const currentVariant = variants.find((v) => v.id === selectedVariantId) ?? variants[0];
-  const unitPriceVnd = currentVariant?.salePriceVnd ?? item.unitPriceVnd;
+  const isPromptPrice = Boolean(
+    currentVariant?.promptPrice === 1 ||
+    item.enteredUnitPriceVnd !== undefined ||
+    (currentVariant && currentVariant.salePriceVnd === null),
+  );
+  const [promptUnitPrice, setPromptUnitPrice] = useState<number | null>(() => {
+    return item.unitPriceVnd ?? currentVariant?.salePriceVnd ?? null;
+  });
+
+  const unitPriceVnd =
+    isPromptPrice && promptUnitPrice !== null
+      ? promptUnitPrice
+      : (currentVariant?.salePriceVnd ?? item.unitPriceVnd);
 
   const grossTotal = calculateLineTotal(unitPriceVnd, itemQuantityMilli);
   const discountAmount = calculateDiscountAmount(grossTotal, discountType, discountValue);
   const netTotal = grossTotal - discountAmount;
 
   const handleSave = () => {
+    if (
+      isPromptPrice &&
+      (promptUnitPrice === null ||
+        promptUnitPrice < 0 ||
+        isNaN(promptUnitPrice) ||
+        promptUnitPrice > 1_000_000_000)
+    ) {
+      toast.warning('Vui lòng nhập đơn giá hợp lệ (từ 0đ đến 1.000.000.000đ)');
+      return;
+    }
     if (item.productType === 'WEIGHT' && itemQuantityMilli <= 0) {
       toast.warning('Vui lòng nhập trọng lượng lớn hơn 0');
       return;
@@ -3716,6 +4022,37 @@ function OrderItemDetailModal({
                   );
                 })}
               </div>
+            </div>
+          ) : null}
+
+          {/* Custom Unit Price for Prompt-Price / Surcharge items */}
+          {isPromptPrice ? (
+            <div className="staff-item-modal__section">
+              <div className="staff-item-modal__section-title">Đơn giá bán (Nhập giá khi bán)</div>
+              <InputNumber
+                min={0}
+                max={1_000_000_000}
+                step={1000}
+                value={promptUnitPrice}
+                onFocus={(e) => e.target.select()}
+                formatter={(val) =>
+                  val === null || val === undefined
+                    ? ''
+                    : `${val}`.replace(/\B(?=(\d{3})+(?!\d))/gu, '.')
+                }
+                parser={(val) => {
+                  const cleaned = (val ?? '').replace(/\D/g, '');
+                  return cleaned ? Number(cleaned) : 0;
+                }}
+                onChange={(val) =>
+                  setPromptUnitPrice(
+                    val === null || isNaN(Number(val)) ? null : Math.floor(Number(val)),
+                  )
+                }
+                suffix="đ"
+                placeholder="0"
+                style={{ width: '100%' }}
+              />
             </div>
           ) : null}
 
@@ -4467,7 +4804,6 @@ function OrderEditor({
     product: CatalogProduct;
     variant: CatalogVariant;
   } | null>(null);
-  const [promptPrice, setPromptPrice] = useState<number | null>(null);
   const [orderNoteOpen, setOrderNoteOpen] = useState(false);
   const [orderNote, setOrderNote] = useState('');
   const [editingItem, setEditingItem] = useState<EditingOrderItem | null>(null);
@@ -5328,17 +5664,9 @@ function OrderEditor({
     setVariantProduct(null);
     if (variant.promptPrice === 1 || variant.salePriceVnd === null) {
       setPromptTarget({ product, variant });
-      setPromptPrice(null);
     } else {
       addDraftVariant(product, variant);
     }
-  };
-
-  const confirmPromptPrice = () => {
-    if (!promptTarget || promptPrice === null || promptPrice < 0) return;
-    addDraftVariant(promptTarget.product, promptTarget.variant, promptPrice);
-    setPromptTarget(null);
-    setPromptPrice(null);
   };
 
   const commandsV2Enabled = staffContext.data?.capabilities?.posCommandsV2 !== false;
@@ -5898,25 +6226,14 @@ function OrderEditor({
     }
   };
 
-  const beginCheckout = async (confirmedPending = false) => {
+  const beginCheckout = async () => {
     if (isNew && orderType === 'TAKEAWAY' && draftLines.length === 0) {
       messageApi.warning('Vui lòng chọn ít nhất một mặt hàng cho đơn mang đi.');
       return;
     }
     if (!isNew) {
-      if (quote.data) markPaymentNavigationStarted(quote.data.order.id);
       const hasPendingChanges =
         draftLines.length > 0 || hasPendingSavedItemChanges() || manualPromotionIds !== null;
-      if (hasPendingChanges && !confirmedPending) {
-        Modal.confirm({
-          title: 'Lưu thay đổi và thanh toán?',
-          content: `Đơn còn ${draftLines.length + updatedItemsPayload().length} dòng thay đổi chưa lưu. Hệ thống sẽ chốt đợt này trước khi chuyển sang thanh toán.`,
-          okText: 'Lưu và thanh toán',
-          cancelText: 'Kiểm tra lại',
-          onOk: () => void beginCheckout(true),
-        });
-        return;
-      }
       if (isPaymentPending) {
         navigateToPayment(quote.data!.order.id);
         return;
@@ -7023,15 +7340,17 @@ function OrderEditor({
               )}
             </main>
 
-            {/* Bottom Bar: [ 🛒 6 ] | 370,000đ | [ Tiếp tục ] */}
+            {/* Bottom Bar: secondary cart review + primary direct save */}
             <div className="staff-product-picker-mobile__bottom-bar">
               <button
                 type="button"
                 className="staff-product-picker-mobile__cart-btn"
                 ref={cartIconRef}
                 onClick={() => setMobileView('CART')}
+                aria-label="Xem đơn"
               >
                 <ShoppingCartOutlined />
+                <span className="staff-product-picker-mobile__cart-label">Xem đơn</span>
                 <span className="staff-product-picker-mobile__cart-count">
                   {pendingChangeRows.length}
                 </span>
@@ -7045,12 +7364,14 @@ function OrderEditor({
                 <Button
                   type="primary"
                   size="large"
-                  onClick={() => {
-                    setMobileView('CART');
-                  }}
+                  disabled={
+                    isNew ? orderType === 'TAKEAWAY' && draftLines.length === 0 : !hasUnsavedChanges
+                  }
+                  loading={saving}
+                  onClick={isNew ? saveOrder : () => void saveAdditionalItems(false)}
                   className="staff-product-picker-mobile__done-btn"
                 >
-                  Tiếp tục
+                  Lưu đơn
                 </Button>
               </div>
             </div>
@@ -8626,28 +8947,15 @@ function OrderEditor({
           })}
         </div>
       </Modal>
-      <Modal
-        open={Boolean(promptTarget)}
-        title={`Nhập giá bán · ${promptTarget?.product.productName ?? ''}`}
-        okText="Thêm vào đơn"
-        cancelText="Hủy"
-        okButtonProps={{ disabled: promptPrice === null || promptPrice < 0 }}
-        onOk={confirmPromptPrice}
+      <StaffPromptPriceModal
+        target={promptTarget}
         onCancel={() => setPromptTarget(null)}
-      >
-        <InputNumber
-          autoFocus
-          min={0}
-          step={1000}
-          value={promptPrice}
-          onFocus={(e) => e.target.select()}
-          formatter={(value) => `${value ?? ''}`.replace(/\B(?=(\d{3})+(?!\d))/gu, '.')}
-          parser={(value) => Number((value ?? '').replaceAll('.', ''))}
-          onChange={(value) => setPromptPrice(value === null ? null : Number(value))}
-          suffix="đ"
-          style={{ width: '100%' }}
-        />
-      </Modal>
+        onConfirm={(enteredPrice) => {
+          if (!promptTarget) return;
+          addDraftVariant(promptTarget.product, promptTarget.variant, enteredPrice);
+          setPromptTarget(null);
+        }}
+      />
       <StaffTablePickerModal
         open={tableModalOpen}
         initialTableId={preselectedTableId}

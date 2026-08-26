@@ -1,5 +1,5 @@
 import { AimOutlined, EnvironmentOutlined, SearchOutlined } from '@ant-design/icons';
-import { AutoComplete, Button, Input, InputNumber, Space, Spin, Typography, message } from 'antd';
+import { AutoComplete, Button, Input, InputNumber, Spin, Typography, message } from 'antd';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { useEffect, useRef, useState } from 'react';
@@ -213,7 +213,10 @@ export function StoreLocationMapPicker({
   return (
     <div className="store-location-picker-container">
       {contextHolder}
-      <div className="store-location-picker-toolbar">
+      <div
+        className="store-location-picker-toolbar"
+        style={{ display: 'flex', gap: 10, alignItems: 'center' }}
+      >
         <AutoComplete
           style={{ flex: 1, minWidth: 240 }}
           options={searchResults.map((item) => ({
@@ -263,103 +266,94 @@ export function StoreLocationMapPicker({
         ref={mapContainerRef}
         className="store-location-map-canvas"
         style={{
-          height: 320,
+          height: 280,
           width: '100%',
           borderRadius: 8,
-          border: '1px solid #d9d9d9',
-          marginTop: 12,
+          border: '1px solid #e2e8f0',
+          marginTop: 10,
           zIndex: 1,
         }}
       />
 
-      <div className="store-location-coords-bar">
-        <Space orientation="horizontal" wrap style={{ marginTop: 12, width: '100%' }}>
-          <Space>
-            <Typography.Text strong style={{ fontSize: 12 }}>
-              Vĩ độ (Lat):
-            </Typography.Text>
-            <InputNumber
-              value={latitude ?? null}
-              precision={6}
-              min={-90}
-              max={90}
-              step={0.0001}
-              style={{ width: 130 }}
-              placeholder="VD: 16.0544"
-              onChange={(val) => {
-                if (typeof val === 'number' && typeof longitude === 'number') {
-                  onChange({ latitude: val, longitude });
-                }
-              }}
-            />
-          </Space>
+      <div className="owner-qr-location-coords-grid">
+        <div className="owner-qr-coord-item">
+          <label>Vĩ độ (Lat)</label>
+          <InputNumber
+            value={latitude ?? null}
+            precision={6}
+            min={-90}
+            max={90}
+            step={0.0001}
+            style={{ width: '100%' }}
+            placeholder="VD: 16.0544"
+            onChange={(val) => {
+              if (typeof val === 'number' && typeof longitude === 'number') {
+                onChange({ latitude: val, longitude });
+              }
+            }}
+          />
+        </div>
 
-          <Space>
-            <Typography.Text strong style={{ fontSize: 12 }}>
-              Kinh độ (Lng):
-            </Typography.Text>
-            <InputNumber
-              value={longitude ?? null}
-              precision={6}
-              min={-180}
-              max={180}
-              step={0.0001}
-              style={{ width: 130 }}
-              placeholder="VD: 108.2022"
-              onChange={(val) => {
-                if (typeof latitude === 'number' && typeof val === 'number') {
-                  onChange({ latitude, longitude: val });
-                }
-              }}
-            />
-          </Space>
+        <div className="owner-qr-coord-item">
+          <label>Kinh độ (Lng)</label>
+          <InputNumber
+            value={longitude ?? null}
+            precision={6}
+            min={-180}
+            max={180}
+            step={0.0001}
+            style={{ width: '100%' }}
+            placeholder="VD: 108.2022"
+            onChange={(val) => {
+              if (typeof latitude === 'number' && typeof val === 'number') {
+                onChange({ latitude, longitude: val });
+              }
+            }}
+          />
+        </div>
 
-          <Space>
-            <Typography.Text strong style={{ fontSize: 12 }}>
-              Bán kính cho phép:
-            </Typography.Text>
-            <InputNumber
-              value={radiusMeters}
-              min={30}
-              max={5000}
-              step={50}
-              addonAfter="m"
-              style={{ width: 130 }}
-              onChange={(val) => {
-                if (typeof val === 'number' && onRadiusChange) {
-                  onRadiusChange(val);
-                }
-              }}
-            />
-          </Space>
+        <div className="owner-qr-coord-item">
+          <label>Bán kính cho phép</label>
+          <InputNumber
+            value={radiusMeters}
+            min={30}
+            max={5000}
+            step={50}
+            addonAfter="m"
+            style={{ width: '100%' }}
+            onChange={(val) => {
+              if (typeof val === 'number' && onRadiusChange) {
+                onRadiusChange(val);
+              }
+            }}
+          />
+        </div>
 
-          <Space>
-            <Typography.Text strong style={{ fontSize: 12 }}>
-              Sai số GPS tối đa:
-            </Typography.Text>
-            <InputNumber
-              value={maxAccuracyMeters}
-              min={20}
-              max={300}
-              step={10}
-              addonAfter="m"
-              style={{ width: 130 }}
-              onChange={(val) => {
-                if (typeof val === 'number' && onMaxAccuracyChange) {
-                  onMaxAccuracyChange(val);
-                }
-              }}
-            />
-          </Space>
-        </Space>
-        <Typography.Paragraph
-          type="secondary"
-          style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}
-        >
-          💡 <em>Mẹo:</em> Nhấp chuột trực tiếp lên bản đồ hoặc kéo ghim màu xanh để tinh chỉnh vị
-          trí quán chính xác nhất. Vòng tròn màu xanh đại diện cho bán kính cho phép khách gọi món.
-        </Typography.Paragraph>
+        <div className="owner-qr-coord-item">
+          <label>Sai số GPS tối đa</label>
+          <InputNumber
+            value={maxAccuracyMeters}
+            min={20}
+            max={300}
+            step={10}
+            addonAfter="m"
+            style={{ width: '100%' }}
+            onChange={(val) => {
+              if (typeof val === 'number' && onMaxAccuracyChange) {
+                onMaxAccuracyChange(val);
+              }
+            }}
+          />
+        </div>
       </div>
+
+      <Typography.Paragraph
+        type="secondary"
+        style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}
+      >
+        💡 <em>Mẹo:</em> Nhấp chuột trực tiếp lên bản đồ hoặc kéo ghim màu xanh để tinh chỉnh vị trí
+        quán chính xác nhất. Vòng tròn đại diện cho phạm vi cho phép khách gọi món.
+      </Typography.Paragraph>
     </div>
   );
 }

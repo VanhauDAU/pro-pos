@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- POS quote consistency: Order Editor and Payment now verify an authoritative quote whenever they
+  mount, including after an inactive cache entry was invalidated by realtime. Overview order
+  versions and totals come from the same stable quote, and quote calculation retries once if an
+  order changes during the read.
+- Running table totals refresh from the server every 15 seconds while realtime remains connected;
+  paused/ended and idle table boards remain event-driven. Quote/overview failures no longer render
+  a misleading zero total.
+- POS validation/conflict messages now preserve the first field issue and request ID for log
+  correlation. Payment version/snapshot conflicts clear the stale snapshot and reload the order
+  before payment can continue.
+- The payment-success popup now remains open until the operator explicitly returns to the table
+  board and includes an invoice print/reprint action using the frozen successful-payment receipt.
+- The primary checkout action is now one-click “Thanh toán & in”: printing starts in the background
+  after server confirmation and attempts to connect a configured QZ Tray automatically. Explicit
+  “Thanh toán không in” and a visible “Tùy chọn” menu remain available without hiding behind an
+  unlabeled ellipsis.
+
 ### Added
 
 - Area settings UI revamp: dedicated full-screen/spacious Area Detail Modal with quick-add table,

@@ -1,7 +1,10 @@
 # Kế hoạch tổng thể, trạng thái và checklist phần mềm
 
-Cập nhật: 2026-08-21. Baseline đánh giá: nhánh `feat/PRO-017-product-filters`, đối chiếu trực tiếp code,
-migrations, OpenAPI, test và runbook trong repository.
+Cập nhật: 2026-08-26. Baseline đánh giá: nhánh `main`, đối chiếu trực tiếp code, migrations, test,
+authenticated E2E và runbook trong repository. POS portal/checkout/realtime đã được triển khai; kế
+hoạch hardening tính nhất quán tiền/version được theo dõi tại
+[pos-data-consistency-hardening.md](pos-data-consistency-hardening.md); audit các module còn lại tại
+[system-hardening-audit.md](system-hardening-audit.md).
 
 Tài liệu này là nguồn theo dõi cấp dự án cho ba câu hỏi:
 
@@ -67,40 +70,41 @@ Trạng thái production tại lần kiểm tra 2026-08-20:
 - Cloudflare Access `All traffic` cho auth bridge đã hoàn tất với policy exact-email + One-time PIN.
 - Owner/SUPER_ADMIN OTP, Employee PIN, D1/R2 và critical production smoke đã đạt theo xác nhận vận
   hành.
-- Production runtime baseline đang hoạt động ổn định. Sản phẩm vẫn chưa đạt `GA` cho đến khi Owner
-  Portal, POS, checkout UI, E2E và các drill vận hành hoàn tất.
+- Production runtime baseline đã từng được smoke. Mã nguồn hiện có Owner Portal, POS, checkout,
+  receipt, realtime và authenticated E2E; vẫn chưa đạt `GA` cho đến khi hardening dữ liệu POS được
+  smoke trên staging và các drill vận hành hoàn tất.
 
 ## 3. Bảng trạng thái theo năng lực
 
-| Năng lực                 | Trạng thái    | Đã có                                                                                                                 | Còn thiếu chính                                                         |
-| ------------------------ | ------------- | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| Foundation               | `COMPLETE`    | React/Vite/PWA, Hono Worker, D1/R2, TypeScript, CI                                                                    | Theo dõi dependency/compatibility định kỳ                               |
-| Database schema          | `COMPLETE`    | 9 migrations cho identity, catalog, POS, billing, Access bridge, hardening, Owner location, area/table và staff/roles | Migration mới theo feature; kiểm tra upgrade path mỗi release           |
-| Auth và device           | `COMPLETE`    | Owner/SUPER_ADMIN OTP, Employee PIN, activation/revoke/reissue                                                        | Duy trì policy email và smoke định kỳ                                   |
-| Access bridge            | `COMPLETE`    | Worker riêng, one-time code, replay protection, D1 chung, Access                                                      | Theo dõi Access logs và đồng bộ exact-email policy                      |
-| SUPER_ADMIN              | `COMPLETE`    | Bootstrap, login, dashboard, list/create/lock store + Owner                                                           | Pagination/search/audit UX nếu dữ liệu tăng                             |
-| Owner backend            | `PARTIAL`     | Settings, staff/roles, catalog CRUD, table pricing assignment, pricing, audit                                         | Pricing read/edit đầy đủ, media, pagination/search, contract hoàn chỉnh |
-| Owner portal UI          | `IN_PROGRESS` | Shell, settings, area/table, table pricing, staff/roles, catalog, đơn vị, multi-filter and special-hours/media flows  | Pricing editor nâng cao, visual approval và data states                 |
-| Pricing engine           | `COMPLETE`    | Actual time/block, first period, special window, pause, rounding                                                      | UI editor/preview và E2E với dữ liệu thật                               |
-| POS backend              | `PARTIAL`     | Tables, open, quote, items, pause/resume, transfer/cancel, checkout                                                   | Contract đầy đủ, edge cases, UI và E2E                                  |
-| POS portal UI            | `BLOCKED`     | Route placeholder                                                                                                     | UI reference, table board, order workspace, auth guard                  |
-| Checkout/invoice backend | `PARTIAL`     | Idempotent checkout, invoice list/detail baseline                                                                     | Payment UX, receipt/reprint, reconciliation test                        |
-| Checkout/receipt UI      | `PLANNED`     | Scope 58/80 mm đã xác định                                                                                            | Reference, implementation, browser print validation                     |
-| Media/R2                 | `PARTIAL`     | Private upload/read/delete service và binding                                                                         | Owner UI, validation/limits, orphan cleanup, production smoke           |
-| OpenAPI                  | `PARTIAL`     | Auth và một số platform/owner/POS paths                                                                               | Đồng bộ toàn bộ routes, schemas, errors và examples                     |
-| Unit tests               | `COMPLETE`    | 18 tests Pricing Engine/state machine                                                                                 | Mở rộng theo domain mới                                                 |
-| Worker integration tests | `COMPLETE`    | 9 files, 43 tests auth/device/database/POS/security/Owner catalog/unit/table-pricing vertical slice                   | Bổ sung media failure/recovery và browser E2E coverage                  |
-| Browser E2E              | `PLANNED`     | Có script/dependency Playwright                                                                                       | Chưa có test suite/config/happy path                                    |
-| Observability            | `PARTIAL`     | Structured logs, request ID, Worker observability                                                                     | Alert, dashboard, retention, runbook truy vấn                           |
-| Backup/rollback/incident | `PARTIAL`     | Có runbook                                                                                                            | Chưa ghi nhận restore/rollback/incident drill                           |
-| Production readiness     | `PARTIAL`     | Worker/D1/R2/secrets, Access OTP và production smoke đã hoạt động                                                     | Backup record, rollback target, tag/release, monitoring và GA gates     |
+| Năng lực                 | Trạng thái    | Đã có                                                                                                                | Còn thiếu chính                                                         |
+| ------------------------ | ------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Foundation               | `COMPLETE`    | React/Vite/PWA, Hono Worker, D1/R2, TypeScript, CI                                                                   | Theo dõi dependency/compatibility định kỳ                               |
+| Database schema          | `COMPLETE`    | 60 migrations; identity, catalog, POS, payment snapshot, realtime, import và vận hành                                | Migration mới theo feature; kiểm tra upgrade path mỗi release           |
+| Auth và device           | `COMPLETE`    | Owner/SUPER_ADMIN OTP, Employee PIN, activation/revoke/reissue                                                       | Duy trì policy email và smoke định kỳ                                   |
+| Access bridge            | `COMPLETE`    | Worker riêng, one-time code, replay protection, D1 chung, Access                                                     | Theo dõi Access logs và đồng bộ exact-email policy                      |
+| SUPER_ADMIN              | `COMPLETE`    | Bootstrap, login, dashboard, list/create/lock store + Owner                                                          | Pagination/search/audit UX nếu dữ liệu tăng                             |
+| Owner backend            | `PARTIAL`     | Settings, staff/roles, catalog CRUD, table pricing assignment, pricing, audit                                        | Pricing read/edit đầy đủ, media, pagination/search, contract hoàn chỉnh |
+| Owner portal UI          | `IN_PROGRESS` | Shell, settings, area/table, table pricing, staff/roles, catalog, đơn vị, multi-filter and special-hours/media flows | Pricing editor nâng cao, visual approval và data states                 |
+| Pricing engine           | `COMPLETE`    | Actual time/block, first period, special window, pause, rounding                                                     | UI editor/preview và E2E với dữ liệu thật                               |
+| POS backend              | `IN_PROGRESS` | Overview/quote, command v2, payment snapshot, realtime replay/full-sync và optimistic concurrency                    | Staging consistency smoke và audit edge case còn lại                    |
+| POS portal UI            | `IN_PROGRESS` | Table board, order workspace responsive, QR order, customer, promotion và realtime                                   | Staging UAT, accessibility và browser matrix                            |
+| Checkout/invoice backend | `IN_PROGRESS` | Idempotent checkout, frozen snapshot, allocation/công nợ, invoice list/detail                                        | Reconciliation/incident drill                                           |
+| Checkout/receipt UI      | `IN_PROGRESS` | Payment page/drawer, receipt preview, QZ/browser print và reprint                                                    | Printer/browser matrix staging                                          |
+| Media/R2                 | `PARTIAL`     | Private upload/read/delete service và binding                                                                        | Owner UI, validation/limits, orphan cleanup, production smoke           |
+| OpenAPI                  | `PARTIAL`     | Auth và một số platform/owner/POS paths                                                                              | Đồng bộ toàn bộ routes, schemas, errors và examples                     |
+| Unit tests               | `COMPLETE`    | Pricing, state machine, POS cache/error/consistent-read và các helper nghiệp vụ                                      | Duy trì regression theo lỗi mới                                         |
+| Worker integration tests | `COMPLETE`    | Auth/device/database/POS/security/Owner/QR/import và migration-upgrade coverage                                      | Bổ sung failure injection theo module                                   |
+| Browser E2E              | `IN_PROGRESS` | Authenticated Chromium: login, realtime budget, cache consistency, payment và QR                                     | Mobile viewport, Safari/iPhone và multi-tab transport                   |
+| Observability            | `PARTIAL`     | Structured logs, request ID, Worker observability                                                                    | Alert, dashboard, retention, runbook truy vấn                           |
+| Backup/rollback/incident | `PARTIAL`     | Có runbook                                                                                                           | Chưa ghi nhận restore/rollback/incident drill                           |
+| Production readiness     | `PARTIAL`     | Worker/D1/R2/secrets, Access OTP và production smoke đã hoạt động                                                    | Backup record, rollback target, tag/release, monitoring và GA gates     |
 
 Quality evidence tại lần cập nhật:
 
-- Unit: 2 files, 18 tests pass.
-- Worker integration: 9 files, 43 tests pass; migration `0005 → 0009` upgrade script cũng pass.
+- Unit local: 18 files, 99 tests pass.
+- Worker integration local: 19 files, 142 tests pass; migration `0005 → 0060` pass.
 - CI có format, lint, type generation cho main/auth, typecheck, unit, integration và build.
-- Chưa có browser E2E được triển khai.
+- Authenticated browser E2E đã có; các case cần credential/dữ liệu staging không chạy trong local CI.
 
 ## 4. Những gì đã hoàn thành
 
@@ -180,11 +184,10 @@ Quality evidence tại lần cập nhật:
 ### 5.2 Product/UI
 
 - [x] Nhận UI reference Owner shell/dashboard và catalog list/form; triển khai MVP responsive có chọn lọc.
-- [ ] Nhận/duyệt UI reference POS table board/order desktop/mobile/tablet.
-- [ ] Nhận/duyệt UI reference checkout/receipt 58/80 mm.
+- [x] Có POS table board/order desktop/mobile/tablet và checkout/receipt implementation.
 - [x] Thay `/owner/*` placeholder bằng Owner shell/dashboard, area/table, staff/roles, catalog MVP và đơn vị.
-- [ ] Thay `/pos/*` placeholder bằng portal thật.
-- [ ] Xây receipt preview/print/reprint.
+- [x] Thay `/pos/*` placeholder bằng portal thật.
+- [x] Xây receipt preview/print/reprint.
 - [ ] Hoàn thiện empty/loading/error/403/session-expired/conflict/offline states.
 
 ### 5.3 API/backend
@@ -194,14 +197,14 @@ Quality evidence tại lần cập nhật:
 - [ ] Chuẩn hóa permission catalog dùng khi tạo/sửa Employee.
 - [x] Pagination/search cho danh sách đơn vị và mặt hàng thuộc đơn vị; các list lớn khác tiếp tục mở rộng.
 - [ ] Audit đầy đủ cho mọi mutation Owner/POS/platform quan trọng.
-- [ ] Chuẩn hóa error contract và map field errors cho UI.
+- [x] POS map validation issue/conflict và request ID; các portal khác tiếp tục chuẩn hóa.
 - [ ] Đồng bộ OpenAPI với toàn bộ routes thực tế.
 - [ ] Hoàn thiện media constraints: MIME, size, dimensions, orphan cleanup và soft-delete policy.
 - [ ] Bổ sung rate limiting/abuse protection cho auth/PIN và mutation rủi ro.
 
 ### 5.4 Quality và vận hành
 
-- [ ] Playwright E2E: platform → store/owner → activation → employee → order → checkout → invoice.
+- [x] Playwright authenticated POS: activation/login, order, checkout, cache/realtime và QR baseline.
 - [ ] Browser matrix tối thiểu: Chrome desktop, mobile viewport và Safari/iPhone smoke.
 - [ ] Accessibility: keyboard, labels, focus, contrast và automated smoke.
 - [ ] Performance budget: startup, bundle, API latency và Core Web Vitals.

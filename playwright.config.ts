@@ -6,6 +6,10 @@ const authStatePath = 'playwright/.auth/pos.json';
 export default defineConfig({
   testDir: './tests/e2e',
   timeout: 60_000,
+  // Authenticated POS scenarios mutate one dedicated staging store. Serial
+  // execution prevents fixtures from changing table/overview state underneath
+  // another financial-consistency assertion.
+  workers: 1,
   use: {
     baseURL: externalBaseUrl ?? 'http://127.0.0.1:4173',
     trace: 'retain-on-failure',

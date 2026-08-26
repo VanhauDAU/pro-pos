@@ -36,6 +36,7 @@ export interface OrderQuote {
     tableId: string | null;
   };
   items: Array<{ id: string }>;
+  time?: { status: 'RUNNING' | 'PAUSED' | 'ENDED' } | null;
 }
 
 interface OpenOrderResult {
@@ -114,6 +115,18 @@ export async function createTimedDineInOrder(page: Page) {
 
 export async function quote(page: Page, orderId: string) {
   return api<OrderQuote>(page, `/api/v1/pos/orders/${orderId}/quote`);
+}
+
+export async function updateOrderNote(
+  page: Page,
+  orderId: string,
+  expectedOrderVersion: number,
+  note: string,
+) {
+  return api<{ orderId: string }>(page, `/api/v1/pos/orders/${orderId}/note`, {
+    method: 'PATCH',
+    data: { expectedOrderVersion, note },
+  });
 }
 
 export async function cancelOrder(page: Page, orderId: string) {

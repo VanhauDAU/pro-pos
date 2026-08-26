@@ -3,6 +3,8 @@
 - [Scope MVP](product/scope.md)
 - [Kế hoạch tổng thể, trạng thái và checklist](project/status-roadmap.md)
 - [Quy trình phát triển, staging và production](project/development-release-workflow.md)
+- [POS data consistency hardening](project/pos-data-consistency-hardening.md)
+- [System hardening audit](project/system-hardening-audit.md)
 - [Kế hoạch Owner Operations Portal](product/owner-portal-plan.md)
 - [Đặc tả Pricing Engine](product/pricing.md)
 - [Kiến trúc hệ thống](architecture/system.md)

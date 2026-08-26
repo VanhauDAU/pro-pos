@@ -83,7 +83,13 @@ import {
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
-import type { OrderCallBatchDto, OrderCallBatchPageDto } from '@contracts/pos';
+import type {
+  OrderCallBatchDto,
+  OrderCallBatchPageDto,
+  PosOverviewOrder,
+  PosOverviewSnapshot,
+  PosOverviewTable,
+} from '@contracts/pos';
 import type {
   GuestOrderRequestDto,
   ServiceRequestDto,
@@ -99,6 +105,7 @@ import {
   buildPrintDataFromInvoice,
   buildPrintDataFromQuote,
   printReceipt,
+  type PosReceiptPrintOptions,
 } from '@client/lib/pos-receipt-printer';
 import logoBlack from '@client/assets/logo-black.svg?url';
 import { OrderDetailPage } from './OrderDetailPage';
@@ -146,6 +153,8 @@ import {
   markPaymentNavigationStarted,
 } from './payment-return-state';
 import { canonicalPaymentPath } from './payment-navigation';
+import { posErrorText } from './pos-error';
+import { orderQuoteQueryOptions, overviewRefreshInterval } from './pos-order-query';
 
 const BRAND = '#0975f7';
 
@@ -168,26 +177,7 @@ interface StaffContext {
   };
 }
 
-interface PosTable {
-  id: string;
-  name: string;
-  status: 'AVAILABLE' | 'OCCUPIED' | 'DISABLED';
-  version: number;
-  areaId: string;
-  areaName: string;
-  areaSortOrder: number;
-  sortOrder: number;
-  timeProductId?: string | null;
-  timeProductName?: string | null;
-  defaultPriceVnd?: number | null;
-  defaultDurationSeconds?: number | null;
-  activeOrderId: string | null;
-  occupiedSince: number | null;
-  timeSessionStatus?: 'RUNNING' | 'PAUSED' | 'ENDED' | null;
-  totalVnd?: number;
-  itemCount?: number;
-  guestCount?: number | null;
-}
+type PosTable = PosOverviewTable;
 
 interface CatalogVariant {
   id: string;
@@ -311,27 +301,6 @@ interface OrderMutationSnapshot {
   serverNowMs: number;
   callBatch?: OrderCallBatchDto;
   paymentSnapshot?: PaymentSnapshotResult;
-}
-
-interface PosOverviewOrder {
-  id: string;
-  displayCode: string;
-  orderType: 'DINE_IN' | 'TAKEAWAY';
-  status: string;
-  openedAt: number;
-  itemCount: number;
-  totalVnd: number;
-  tableId?: string | null;
-  tableName?: string | null;
-  areaId?: string | null;
-  areaName?: string | null;
-  timeStatus?: string | null;
-}
-
-interface PosOverviewSnapshot {
-  tables: PosTable[];
-  orders: PosOverviewOrder[];
-  serverNowMs: number;
 }
 
 interface PaymentSnapshotResult {
@@ -915,9 +884,7 @@ function formatDateTime(timestamp: number) {
 }
 
 function errorText(error: unknown) {
-  return error instanceof Error && error.message
-    ? error.message
-    : 'Không thể xử lý yêu cầu. Vui lòng thử lại.';
+  return posErrorText(error);
 }
 
 function mutationHeaders(csrfToken: string) {
@@ -1364,26 +1331,18 @@ function AreasPage() {
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
-  const [now, setNow] = useState(() => Date.now());
-  const pollingInterval = usePosPollingInterval(20_000);
-  const overview = useQuery({
+  const { status: realtimeStatus, serverTimeOffsetMs } = useRealtime();
+  const [now, setNow] = useState(() => Date.now() + serverTimeOffsetMs);
+  const overview = useQuery<PosOverviewSnapshot>({
     queryKey: ['pos-overview'],
-    queryFn: ({ signal }) =>
-      apiRequest<{
-        tables: PosTable[];
-        orders: Array<{
-          id: string;
-          displayCode: string;
-          orderType: 'DINE_IN' | 'TAKEAWAY';
-          status: string;
-          openedAt: number;
-          itemCount: number;
-          totalVnd: number;
-        }>;
-        serverNowMs: number;
-      }>('/api/v1/pos/overview', { signal }),
-    refetchInterval: pollingInterval,
+    queryFn: ({ signal }) => apiRequest<PosOverviewSnapshot>('/api/v1/pos/overview', { signal }),
+    refetchInterval: (query) =>
+      overviewRefreshInterval(
+        query.state.data?.tables.some((table) => table.timeSessionStatus === 'RUNNING') ?? false,
+        realtimeStatus,
+      ),
     refetchOnMount: false,
+    refetchOnWindowFocus: 'always',
   });
   const tables = {
     data: overview.data?.tables,
@@ -1408,12 +1367,14 @@ function AreasPage() {
   }, [posOrders.data]);
 
   useEffect(() => {
-    const hasOccupied =
-      tables.data?.some((t) => t.status === 'OCCUPIED') || activeTakeaways.length > 0;
-    if (!hasOccupied) return undefined;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    const hasActiveOrder =
+      tables.data?.some((table) => table.status === 'OCCUPIED') || activeTakeaways.length > 0;
+    if (!hasActiveOrder) return undefined;
+    const update = () => setNow(Date.now() + serverTimeOffsetMs);
+    update();
+    const timer = window.setInterval(update, 1_000);
     return () => window.clearInterval(timer);
-  }, [tables.data, activeTakeaways.length]);
+  }, [activeTakeaways.length, serverTimeOffsetMs, tables.data]);
 
   const areas = useMemo(() => {
     const map = new Map<string, { id: string; name: string; tables: PosTable[] }>();
@@ -1454,6 +1415,16 @@ function AreasPage() {
     <div className="staff-areas-page">
       {tables.isLoading ? <Spin fullscreen description="Đang tải khu vực" /> : null}
       {tables.isError ? <Alert type="error" showIcon title="Chưa tải được khu vực và bàn" /> : null}
+      {overview.isRefetchError && overview.data ? (
+        <Alert
+          type="warning"
+          showIcon
+          title="Dữ liệu Khu vực chưa được cập nhật"
+          description={errorText(overview.error)}
+          action={<Button onClick={() => void overview.refetch()}>Thử lại</Button>}
+          style={{ margin: '12px 16px' }}
+        />
+      ) : null}
 
       {/* Mobile/iPad Top Bar: Status tabs on top, Area pills + Takeaway below */}
       <div className="staff-areas-mobile-header">
@@ -4469,8 +4440,7 @@ function OrderEditor({
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const quotePollingInterval = usePosPollingInterval(5_000);
-  const { serverTimeOffsetMs } = useRealtime();
+  const { serverTimeOffsetMs, status: realtimeStatus } = useRealtime();
   const messageApi = toast;
   const holder = null;
   const preselectedTableId = searchParams.get('tableId');
@@ -4639,6 +4609,7 @@ function OrderEditor({
       displayCode: snapshot.order.displayCode ?? '',
       orderType: snapshot.order.orderType,
       status: snapshot.order.status,
+      version: snapshot.order.version,
       openedAt: snapshot.order.openedAt,
       itemCount,
       totalVnd: snapshot.quote.totalVnd,
@@ -4788,16 +4759,36 @@ function OrderEditor({
     staleTime: 5 * 60_000,
     refetchOnMount: false,
   });
-  const quote = useQuery({
-    queryKey: ['pos-order-quote', orderId],
-    queryFn: ({ signal }) =>
-      apiRequest<OrderQuote>(`/api/v1/pos/orders/${orderId}/quote`, { signal }),
-    enabled: !isNew && Boolean(orderId),
-    staleTime: 30_000,
-    refetchOnMount: false,
-    refetchInterval: (query) =>
-      query.state.data?.order.status === 'PAYMENT_PENDING' ? false : quotePollingInterval,
-  });
+  const quote = useQuery(
+    orderQuoteQueryOptions<OrderQuote>({
+      orderId: orderId ?? '',
+      enabled: !isNew && Boolean(orderId),
+      realtimeStatus,
+    }),
+  );
+  const [verifiedQuoteOrderId, setVerifiedQuoteOrderId] = useState<string | null>(null);
+  useEffect(() => {
+    if (
+      !isNew &&
+      orderId &&
+      quote.data?.order.id === orderId &&
+      quote.isFetchedAfterMount &&
+      quote.isSuccess &&
+      !quote.isFetching &&
+      !quote.isRefetchError
+    ) {
+      setVerifiedQuoteOrderId(orderId);
+    }
+  }, [
+    isNew,
+    orderId,
+    quote.data?.order.id,
+    quote.isFetchedAfterMount,
+    quote.isFetching,
+    quote.isRefetchError,
+    quote.isSuccess,
+  ]);
+  const quoteReady = isNew || (Boolean(orderId) && verifiedQuoteOrderId === orderId);
   const callHistory = useQuery({
     queryKey: ['pos-order-call-batches', orderId],
     queryFn: ({ signal }) =>
@@ -5736,8 +5727,12 @@ function OrderEditor({
         const latestQuote = (error.details as { quote?: OrderQuote } | null)?.quote;
         if (latestQuote) {
           queryClient.setQueryData(['pos-order-quote', quote.data.order.id], latestQuote);
+        } else {
+          await quote.refetch();
         }
-        messageApi.warning('Đơn vừa thay đổi trên thiết bị khác. Nháp đã được giữ để đối chiếu.');
+        messageApi.warning(
+          `${errorText(error)} Nháp đã được giữ để bạn đối chiếu trước khi lưu lại.`,
+        );
       } else {
         messageApi.error(errorText(error));
       }
@@ -5776,13 +5771,20 @@ function OrderEditor({
           `/api/v1/pos/orders/${frozenQuote.order.id}/quote`,
         );
         if (!refreshed.time || refreshed.order.status === 'OPEN') {
-          queryClient.setQueryData<OrderQuote>(['pos-order-quote', orderId], (cached) =>
-            !cached || refreshed.order.version >= cached.order.version ? refreshed : cached,
-          );
+          queryClient.setQueryData<OrderQuote>(['pos-order-quote', orderId], refreshed);
+          queryClient.removeQueries({ queryKey: ['pos-payment-snapshot', frozenQuote.order.id] });
           clearPaymentPageActive(frozenQuote.order.id);
-          void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
+          await queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
+          await queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
+          if (!automatic) {
+            if (refreshed.time?.status === 'RUNNING') {
+              messageApi.success(`Đã tiếp tục tính giờ cho ${frozenQuote.order.tableName}.`);
+            } else {
+              messageApi.info('Đã quay lại đơn. Thời gian vẫn đang dừng.');
+            }
+          }
           setResumeModalOpen(false);
-          return true;
+          return refreshed.order.status === 'OPEN';
         }
         if (
           refreshed.order.status !== 'PAYMENT_PENDING' ||
@@ -5792,22 +5794,24 @@ function OrderEditor({
         }
         result = await sendResume(refreshed.order.version);
       }
-      const openQuote: OrderQuote = {
-        ...result.quote,
-        order: {
-          ...result.quote.order,
-          status: 'OPEN',
-        },
-      };
-      queryClient.setQueryData<OrderQuote>(['pos-order-quote', orderId], (cached) =>
-        !cached || openQuote.order.version >= cached.order.version ? openQuote : cached,
+      queryClient.setQueryData<OrderQuote>(['pos-order-quote', orderId], result.quote);
+      queryClient.removeQueries({ queryKey: ['pos-payment-snapshot', frozenQuote.order.id] });
+      const verifiedQuote = await apiRequest<OrderQuote>(
+        `/api/v1/pos/orders/${frozenQuote.order.id}/quote`,
       );
+      queryClient.setQueryData<OrderQuote>(['pos-order-quote', orderId], verifiedQuote);
       clearPaymentPageActive(frozenQuote.order.id);
-      void queryClient.invalidateQueries({ queryKey: ['pos-order-quote', orderId] });
-      void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
-      messageApi.success(`Đã tiếp tục tính giờ cho ${frozenQuote.order.tableName}`);
+      await queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
+      await queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
+      if (!automatic) {
+        if (verifiedQuote.time?.status === 'RUNNING') {
+          messageApi.success(`Đã tiếp tục tính giờ cho ${frozenQuote.order.tableName}.`);
+        } else {
+          messageApi.info('Đã quay lại đơn. Thời gian vẫn đang dừng.');
+        }
+      }
       setResumeModalOpen(false);
-      return true;
+      return verifiedQuote.order.status === 'OPEN';
     } catch (error) {
       if (!automatic) messageApi.error(errorText(error));
       return false;
@@ -5821,6 +5825,7 @@ function OrderEditor({
     if (
       suppressPaymentAutoResume ||
       desktopCheckoutOpen ||
+      !quoteReady ||
       !currentQuote?.time ||
       currentQuote.order.status !== 'PAYMENT_PENDING' ||
       !isReturningFromPayment(currentQuote.order.id, currentQuote.order.version) ||
@@ -5845,7 +5850,13 @@ function OrderEditor({
     return () => {
       if (retryTimer !== null) window.clearTimeout(retryTimer);
     };
-  }, [autoResumeRetryToken, desktopCheckoutOpen, quote.data, suppressPaymentAutoResume]);
+  }, [
+    autoResumeRetryToken,
+    desktopCheckoutOpen,
+    quote.data,
+    quoteReady,
+    suppressPaymentAutoResume,
+  ]);
 
   const handleOpenTableQrModal = async () => {
     const tableId = quote.data?.order.tableId ?? selectedTable?.id ?? preselectedTableId;
@@ -6705,6 +6716,34 @@ function OrderEditor({
     }
     setPromotionModalOpen(false);
   };
+
+  if (!quoteReady) {
+    const failed = !quote.isFetching && (quote.isError || quote.isRefetchError);
+    return (
+      <div className="staff-order-editor" style={{ padding: 40 }}>
+        {failed ? (
+          <Alert
+            type="error"
+            showIcon
+            title="Không thể xác minh dữ liệu đơn hàng"
+            description={errorText(quote.error)}
+            action={
+              <Space>
+                <Button onClick={() => navigate('/pos/areas')}>Về khu vực</Button>
+                <Button type="primary" onClick={() => void quote.refetch()}>
+                  Thử lại
+                </Button>
+              </Space>
+            }
+          />
+        ) : (
+          <div style={{ textAlign: 'center' }}>
+            <Spin size="large" description="Đang xác minh dữ liệu mới nhất của đơn..." />
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="staff-order-editor">
@@ -10006,7 +10045,7 @@ function PaymentPage({
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const quotePollingInterval = usePosPollingInterval(5_000);
+  const { status: realtimeStatus } = useRealtime();
   const messageApi = toast;
   const holder = null;
   const [selectedMethod, setSelectedMethod] = useState<PaymentMethodType>('CASH');
@@ -10023,13 +10062,18 @@ function PaymentPage({
   const [preparingCheckout, setPreparingCheckout] = useState(false);
   const [prepareCheckoutError, setPrepareCheckoutError] = useState<string | null>(null);
   const [returningToOrder, setReturningToOrder] = useState(false);
+  const returningToOrderRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
   const [paymentSuccessData, setPaymentSuccessData] = useState<{
+    orderId: string;
+    orderType: 'DINE_IN' | 'TAKEAWAY';
     invoiceCode: string;
     tableName: string;
     totalVnd: number;
     method: 'CASH' | 'BANK_TRANSFER';
-    andPrint: boolean;
+    printStatus: 'PRINTING' | 'PRINTED' | 'FAILED' | 'SKIPPED';
+    printError: string | null;
+    receiptOptions: PosReceiptPrintOptions;
   } | null>(null);
   const [paymentSnapshotId, setPaymentSnapshotId] = useState<string | null>(() => {
     const cached = queryClient.getQueryData<PaymentSnapshotResult>([
@@ -10042,15 +10086,33 @@ function PaymentPage({
   const completionInFlightRef = useRef(false);
   const csrf = auth.csrfToken!;
 
-  const quote = useQuery({
-    queryKey: ['pos-order-quote', orderId],
-    queryFn: ({ signal }) =>
-      apiRequest<OrderQuote>(`/api/v1/pos/orders/${orderId}/quote`, { signal }),
-    staleTime: 30_000,
-    refetchOnMount: false,
-    refetchInterval: (query) =>
-      query.state.data?.order.status === 'PAYMENT_PENDING' ? false : quotePollingInterval,
-  });
+  const quote = useQuery(
+    orderQuoteQueryOptions<OrderQuote>({
+      orderId,
+      enabled: true,
+      realtimeStatus,
+    }),
+  );
+  const [verifiedQuoteOrderId, setVerifiedQuoteOrderId] = useState<string | null>(null);
+  useEffect(() => {
+    if (
+      quote.data?.order.id === orderId &&
+      quote.isFetchedAfterMount &&
+      quote.isSuccess &&
+      !quote.isFetching &&
+      !quote.isRefetchError
+    ) {
+      setVerifiedQuoteOrderId(orderId);
+    }
+  }, [
+    orderId,
+    quote.data?.order.id,
+    quote.isFetchedAfterMount,
+    quote.isFetching,
+    quote.isRefetchError,
+    quote.isSuccess,
+  ]);
+  const quoteReady = verifiedQuoteOrderId === orderId;
 
   const printSettings = useQuery({
     queryKey: ['pos-print-settings'],
@@ -10067,10 +10129,30 @@ function PaymentPage({
   });
   const paymentSnapshotV2Enabled = staffContext.data?.capabilities?.posPaymentSnapshotV2 !== false;
 
+  useEffect(() => {
+    if (returningToOrderRef.current || !quoteReady || !quote.data || !paymentSnapshotId) return;
+    const snapshot = queryClient.getQueryData<PaymentSnapshotResult>([
+      'pos-payment-snapshot',
+      orderId,
+    ]);
+    if (
+      !snapshot ||
+      snapshot.orderId !== orderId ||
+      snapshot.orderVersion !== quote.data.order.version
+    ) {
+      queryClient.removeQueries({ queryKey: ['pos-payment-snapshot', orderId] });
+      setPaymentSnapshotId(null);
+      checkoutPreparationStartedRef.current = false;
+    }
+  }, [orderId, paymentSnapshotId, queryClient, quote.data, quoteReady]);
+
   const handleCelebrationComplete = useCallback(async () => {
     if (completionInFlightRef.current) return;
-    const completedOrder = quote.data?.order;
-    if (!completedOrder) return;
+    if (!paymentSuccessData) return;
+    const completedOrder = {
+      id: paymentSuccessData.orderId,
+      orderType: paymentSuccessData.orderType,
+    };
     completionInFlightRef.current = true;
     clearPaymentPageActive(completedOrder.id);
     queryClient.removeQueries({ queryKey: ['pos-order-quote', completedOrder.id] });
@@ -10103,15 +10185,14 @@ function PaymentPage({
     } else {
       navigate('/pos/areas', { replace: true });
     }
-  }, [navigate, queryClient, quote.data?.order]);
+  }, [navigate, paymentSuccessData, queryClient]);
 
   useEffect(() => {
-    if (!paymentSuccessData) return;
-    const timer = setTimeout(() => {
-      handleCelebrationComplete();
-    }, 1400);
-    return () => clearTimeout(timer);
-  }, [paymentSuccessData, handleCelebrationComplete]);
+    if (!paymentSuccessData || paymentSuccessData.printStatus === 'PRINTING') return undefined;
+    const delayMs = paymentSuccessData.printStatus === 'FAILED' ? 3_500 : 1_800;
+    const timer = window.setTimeout(() => void handleCelebrationComplete(), delayMs);
+    return () => window.clearTimeout(timer);
+  }, [handleCelebrationComplete, paymentSuccessData]);
 
   const resumeFrozenCheckout = async (frozenQuote: OrderQuote, notify: boolean) => {
     const sendResume = (expectedOrderVersion: number) =>
@@ -10136,11 +10217,21 @@ function PaymentPage({
         `/api/v1/pos/orders/${frozenQuote.order.id}/quote`,
       );
       if (!refreshed.time || refreshed.order.status === 'OPEN') {
-        queryClient.setQueryData<OrderQuote>(['pos-order-quote', orderId], (cached) =>
-          !cached || refreshed.order.version >= cached.order.version ? refreshed : cached,
-        );
+        queryClient.removeQueries({ queryKey: ['pos-payment-snapshot', orderId] });
+        setPaymentSnapshotId(null);
+        checkoutPreparationStartedRef.current = true;
+        queryClient.setQueryData<OrderQuote>(['pos-order-quote', orderId], refreshed);
         clearPaymentPageActive(frozenQuote.order.id);
-        return true;
+        await queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
+        await queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
+        if (notify) {
+          if (refreshed.time?.status === 'RUNNING') {
+            messageApi.success(`Đã tiếp tục tính giờ cho ${frozenQuote.order.tableName ?? 'bàn'}.`);
+          } else {
+            messageApi.info('Đã quay lại đơn. Thời gian vẫn đang dừng.');
+          }
+        }
+        return refreshed.order.status === 'OPEN';
       }
       if (
         refreshed.order.status !== 'PAYMENT_PENDING' ||
@@ -10151,27 +10242,36 @@ function PaymentPage({
       result = await sendResume(refreshed.order.version);
     }
 
-    queryClient.setQueryData<OrderQuote>(['pos-order-quote', orderId], (cached) =>
-      !cached || result.quote.order.version >= cached.order.version ? result.quote : cached,
+    queryClient.removeQueries({ queryKey: ['pos-payment-snapshot', orderId] });
+    setPaymentSnapshotId(null);
+    checkoutPreparationStartedRef.current = true;
+    queryClient.setQueryData<OrderQuote>(['pos-order-quote', orderId], result.quote);
+    const verifiedQuote = await apiRequest<OrderQuote>(
+      `/api/v1/pos/orders/${frozenQuote.order.id}/quote`,
     );
+    queryClient.setQueryData<OrderQuote>(['pos-order-quote', orderId], verifiedQuote);
     clearPaymentPageActive(frozenQuote.order.id);
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['pos-order-quote', orderId] }),
-      queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
-    ]);
+    await queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
+    await queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
     if (notify) {
-      messageApi.success(
-        `Đã tự động tiếp tục tính giờ cho ${frozenQuote.order.tableName ?? 'bàn'}.`,
-      );
+      if (verifiedQuote.time?.status === 'RUNNING') {
+        messageApi.success(`Đã tiếp tục tính giờ cho ${frozenQuote.order.tableName ?? 'bàn'}.`);
+      } else {
+        messageApi.info(
+          `Đã quay lại đơn ${frozenQuote.order.tableName ?? ''}. Thời gian vẫn đang dừng.`,
+        );
+      }
     }
-    return true;
+    return verifiedQuote.order.status === 'OPEN';
   };
 
   // Payment must always use a server-frozen quote. Several screens can navigate
   // directly to this route, so the payment page is the final safety boundary.
   useEffect(() => {
     const currentQuote = quote.data;
-    if (!staffContext.isSuccess) return;
+    if (returningToOrderRef.current || returningToOrder || !quoteReady || !staffContext.isSuccess) {
+      return;
+    }
     if (
       currentQuote?.order.status === 'PAYMENT_PENDING' &&
       (!paymentSnapshotV2Enabled || paymentSnapshotId)
@@ -10204,6 +10304,7 @@ function PaymentPage({
       { headers: mutationHeaders(csrf) },
     )
       .then(async (result) => {
+        if (returningToOrderRef.current) return;
         const cachedQuote = queryClient.getQueryData<OrderQuote>(['pos-order-quote', orderId]);
         if (!cachedQuote || result.quote.order.version >= cachedQuote.order.version) {
           queryClient.setQueryData(['pos-order-quote', orderId], result.quote);
@@ -10245,15 +10346,17 @@ function PaymentPage({
     preparingCheckout,
     queryClient,
     quote.data,
+    quoteReady,
+    returningToOrder,
     staffContext.isSuccess,
   ]);
 
   // Mặc định tiền khách đưa điền đúng giá tiền khách phải trả
   useEffect(() => {
-    if (quote.data && cashReceived === null) {
+    if (quoteReady && quote.data && cashReceived === null) {
       setCashReceived(quote.data.totalVnd);
     }
-  }, [quote.data, cashReceived]);
+  }, [quote.data, quoteReady, cashReceived]);
 
   useEffect(() => {
     const bankAccounts = quote.data?.bankAccounts ?? [];
@@ -10336,10 +10439,13 @@ function PaymentPage({
 
   const resumeCheckoutForReturn = async () => {
     if (!quote.data?.time || quote.data.order.status !== 'PAYMENT_PENDING') return true;
+    returningToOrderRef.current = true;
+    checkoutPreparationStartedRef.current = true;
     setReturningToOrder(true);
     try {
       return await resumeFrozenCheckout(quote.data, true);
     } catch (error) {
+      returningToOrderRef.current = false;
       messageApi.error(errorText(error));
       return false;
     } finally {
@@ -10439,44 +10545,91 @@ function PaymentPage({
         result.displayCode ||
         quote.data.order.displayCode ||
         (quote.data.order.id ? `HD-${quote.data.order.id.slice(0, 8).toUpperCase()}` : '—');
+      const completedOrderId = quote.data.order.id;
 
-      if (andPrint) {
-        const printData = buildCurrentPaymentPrintData()!;
-        printData.orderCode = resolvedCode;
-        printData.invoiceCode = resolvedCode;
-        const printResult = await printReceipt({
-          data: printData,
-          printSettings: printSettings.data,
-          storeInfo: {
-            storeName: staffContext.data?.storeName ?? null,
-            phone: staffContext.data?.storePhone ?? null,
-            address: staffContext.data?.storeAddress ?? null,
-            bankName: selectedBankAccount?.bankBin ?? staffContext.data?.bankName ?? null,
-            bankAccountNumber:
-              selectedBankAccount?.accountNumber ?? staffContext.data?.bankAccountNumber ?? null,
-            bankAccountName:
-              selectedBankAccount?.accountName ?? staffContext.data?.bankAccountName ?? null,
-          },
-        });
-        if (!printResult.success) {
-          messageApi.warning(
-            `Thanh toán thành công nhưng chưa in được hóa đơn: ${printResult.message ?? 'Không rõ lỗi'}`,
-          );
-        }
-      }
-
+      const printData = buildCurrentPaymentPrintData()!;
+      printData.orderCode = resolvedCode;
+      printData.invoiceCode = resolvedCode;
+      const receiptOptions: PosReceiptPrintOptions = {
+        data: printData,
+        printSettings: printSettings.data,
+        storeInfo: {
+          storeName: staffContext.data?.storeName ?? null,
+          phone: staffContext.data?.storePhone ?? null,
+          address: staffContext.data?.storeAddress ?? null,
+          bankName: selectedBankAccount?.bankBin ?? staffContext.data?.bankName ?? null,
+          bankAccountNumber:
+            selectedBankAccount?.accountNumber ?? staffContext.data?.bankAccountNumber ?? null,
+          bankAccountName:
+            selectedBankAccount?.accountName ?? staffContext.data?.bankAccountName ?? null,
+        },
+      };
       playPosSound('PAYMENT_SUCCESS', { dedupeKey: `payment:${resolvedCode}` });
       setPaymentSuccessData({
+        orderId: quote.data.order.id,
+        orderType: quote.data.order.orderType,
         invoiceCode: resolvedCode,
         tableName:
           quote.data.order.tableName ||
           (quote.data.order.orderType === 'TAKEAWAY' ? 'Mang về' : 'Đơn hàng'),
         totalVnd: quote.data.totalVnd,
         method: currentMethodItem.backendMethod,
-        andPrint: Boolean(andPrint),
+        printStatus: andPrint ? 'PRINTING' : 'SKIPPED',
+        printError: null,
+        receiptOptions,
       });
+      if (andPrint) {
+        void printReceipt(receiptOptions)
+          .then((printResult) => {
+            setPaymentSuccessData((current) =>
+              current?.orderId === completedOrderId
+                ? {
+                    ...current,
+                    printStatus: printResult.success ? 'PRINTED' : 'FAILED',
+                    printError: printResult.success
+                      ? null
+                      : (printResult.message ?? 'Không thể in hóa đơn.'),
+                  }
+                : current,
+            );
+            if (!printResult.success) {
+              messageApi.warning(
+                `Thanh toán thành công nhưng chưa in được hóa đơn: ${printResult.message ?? 'Không rõ lỗi'}`,
+              );
+            }
+          })
+          .catch((error: unknown) => {
+            setPaymentSuccessData((current) =>
+              current?.orderId === completedOrderId
+                ? {
+                    ...current,
+                    printStatus: 'FAILED',
+                    printError: errorText(error),
+                  }
+                : current,
+            );
+            messageApi.warning(
+              `Thanh toán thành công nhưng chưa in được hóa đơn: ${errorText(error)}`,
+            );
+          });
+      }
     } catch (error) {
-      messageApi.error(errorText(error));
+      if (
+        error instanceof ApiError &&
+        (error.code === 'ORDER_VERSION_CONFLICT' || error.code === 'PAYMENT_SNAPSHOT_INVALID')
+      ) {
+        queryClient.removeQueries({ queryKey: ['pos-payment-snapshot', orderId] });
+        setPaymentSnapshotId(null);
+        checkoutPreparationStartedRef.current = false;
+        const refreshed = await quote.refetch();
+        setPrepareCheckoutError(
+          refreshed.data
+            ? errorText(error)
+            : `Không thể tải lại đơn hàng. ${errorText(refreshed.error)}`,
+        );
+      } else {
+        messageApi.error(errorText(error));
+      }
     } finally {
       setSubmitting(false);
     }
@@ -10573,7 +10726,7 @@ function PaymentPage({
   const advancedPaymentMenu: MenuProps = {
     items: [
       { key: 'preview', label: 'Xem trước hóa đơn', icon: <FileTextOutlined /> },
-      { key: 'pay-print', label: 'Thanh toán & in', icon: <PrinterOutlined /> },
+      { key: 'pay-only', label: 'Thanh toán không in', icon: <CheckCircleOutlined /> },
       {
         key: 'multi',
         label: isMultiMethod ? 'Tắt thanh toán kết hợp' : 'Thanh toán kết hợp',
@@ -10582,7 +10735,7 @@ function PaymentPage({
     ],
     onClick: ({ key }) => {
       if (key === 'preview') setPaymentPreviewOpen(true);
-      if (key === 'pay-print') void handleConfirmPayment(true);
+      if (key === 'pay-only') void handleConfirmPayment(false);
       if (key === 'multi') {
         const enabled = !isMultiMethod;
         setIsMultiMethod(enabled);
@@ -10763,9 +10916,26 @@ function PaymentPage({
         )}
       </header>
 
-      {quote.isLoading ? (
+      {!quoteReady ? (
         <div style={{ padding: 40, textAlign: 'center' }}>
-          <Spin size="large" description="Đang tải dữ liệu thanh toán..." />
+          {!quote.isFetching && (quote.isError || quote.isRefetchError) ? (
+            <Alert
+              type="error"
+              showIcon
+              title="Không thể xác minh dữ liệu thanh toán"
+              description={errorText(quote.error)}
+              action={
+                <Space>
+                  <Button onClick={() => navigate('/pos/areas')}>Về khu vực</Button>
+                  <Button type="primary" onClick={() => void quote.refetch()}>
+                    Thử lại
+                  </Button>
+                </Space>
+              }
+            />
+          ) : (
+            <Spin size="large" description="Đang xác minh số tiền mới nhất..." />
+          )}
         </div>
       ) : quote.isError || !quote.data ? (
         <div style={{ padding: 40 }}>
@@ -10862,11 +11032,9 @@ function PaymentPage({
                 <div className="payment-workspace__section-heading">
                   <strong>Chi tiết giao dịch</strong>
                   <Dropdown menu={advancedPaymentMenu} trigger={['click']}>
-                    <Button
-                      type="text"
-                      icon={<EllipsisOutlined />}
-                      aria-label="Thao tác nâng cao"
-                    />
+                    <Button icon={<EllipsisOutlined />} aria-label="Tùy chọn thanh toán">
+                      Tùy chọn
+                    </Button>
                   </Dropdown>
                 </div>
                 <div className="payment-workspace__summary">
@@ -10913,9 +11081,11 @@ function PaymentPage({
                     size="large"
                     loading={submitting}
                     disabled={primaryActionDisabled}
-                    onClick={() => void handleConfirmPayment(false)}
+                    icon={<PrinterOutlined />}
+                    onClick={() => void handleConfirmPayment(true)}
                   >
-                    {selectedMethod === 'DEBT' ? 'Ghi nợ' : 'Thanh toán'}: {formatMoney(totalVnd)}
+                    {selectedMethod === 'DEBT' ? 'Ghi nợ & in' : 'Thanh toán & in'}:{' '}
+                    {formatMoney(totalVnd)}
                   </Button>
                 </div>
               </section>
@@ -10965,10 +11135,12 @@ function PaymentPage({
                   <strong>PHƯƠNG THỨC THANH TOÁN</strong>
                   <Dropdown menu={advancedPaymentMenu} trigger={['click']}>
                     <Button
-                      type="text"
+                      size="small"
                       icon={<EllipsisOutlined />}
-                      aria-label="Thao tác nâng cao"
-                    />
+                      aria-label="Tùy chọn thanh toán"
+                    >
+                      Tùy chọn
+                    </Button>
                   </Dropdown>
                 </div>
                 <div className="payment-workspace__method-radios is-vertical">
@@ -11014,9 +11186,10 @@ function PaymentPage({
                   size="large"
                   loading={submitting}
                   disabled={primaryActionDisabled}
-                  onClick={() => void handleConfirmPayment(false)}
+                  icon={<PrinterOutlined />}
+                  onClick={() => void handleConfirmPayment(true)}
                 >
-                  {selectedMethod === 'DEBT' && !isMultiMethod ? 'Ghi nợ' : 'Thanh toán'}:{' '}
+                  {selectedMethod === 'DEBT' && !isMultiMethod ? 'Ghi nợ & in' : 'Thanh toán & in'}:{' '}
                   {formatMoney(totalVnd)}
                 </Button>
               </footer>
@@ -11133,21 +11306,22 @@ function PaymentPage({
                   {paymentSuccessData.method === 'BANK_TRANSFER' ? 'Chuyển khoản' : 'Tiền mặt'}
                 </strong>
               </div>
-              {paymentSuccessData.andPrint ? (
-                <div className="pos-payment-celebration__row">
-                  <span>Hóa đơn</span>
-                  <span className="pos-payment-celebration__print-badge">Đang in hóa đơn...</span>
-                </div>
-              ) : null}
+              <div className="pos-payment-celebration__row">
+                <span>Hóa đơn</span>
+                <span
+                  className={`pos-payment-celebration__print-badge is-${paymentSuccessData.printStatus.toLowerCase()}`}
+                  title={paymentSuccessData.printError ?? undefined}
+                >
+                  {paymentSuccessData.printStatus === 'PRINTING'
+                    ? 'Đang in tự động...'
+                    : paymentSuccessData.printStatus === 'PRINTED'
+                      ? 'Đã in'
+                      : paymentSuccessData.printStatus === 'FAILED'
+                        ? 'Chưa in được'
+                        : 'Chưa in'}
+                </span>
+              </div>
             </div>
-
-            <button
-              type="button"
-              className="pos-payment-celebration__btn"
-              onClick={handleCelebrationComplete}
-            >
-              Về sơ đồ bàn
-            </button>
           </div>
         </div>
       ) : null}

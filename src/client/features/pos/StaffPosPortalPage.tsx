@@ -10226,9 +10226,7 @@ function PaymentPage({
         await queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
         if (notify) {
           if (refreshed.time?.status === 'RUNNING') {
-            messageApi.success(
-              `Đã tiếp tục tính giờ cho ${frozenQuote.order.tableName ?? 'bàn'}.`,
-            );
+            messageApi.success(`Đã tiếp tục tính giờ cho ${frozenQuote.order.tableName ?? 'bàn'}.`);
           } else {
             messageApi.info('Đã quay lại đơn. Thời gian vẫn đang dừng.');
           }
@@ -10271,12 +10269,7 @@ function PaymentPage({
   // directly to this route, so the payment page is the final safety boundary.
   useEffect(() => {
     const currentQuote = quote.data;
-    if (
-      returningToOrderRef.current ||
-      returningToOrder ||
-      !quoteReady ||
-      !staffContext.isSuccess
-    ) {
+    if (returningToOrderRef.current || returningToOrder || !quoteReady || !staffContext.isSuccess) {
       return;
     }
     if (
@@ -11329,7 +11322,6 @@ function PaymentPage({
                 </span>
               </div>
             </div>
-
           </div>
         </div>
       ) : null}

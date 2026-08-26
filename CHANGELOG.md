@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- Mobile product selection now exposes “Lưu đơn” as the primary action; “Xem đơn” remains a
+  secondary review action.
+- POS payment now saves pending item and promotion changes automatically before opening checkout,
+  removing the routine “Lưu thay đổi và thanh toán” confirmation step.
+- POS/PWA notifications now use one Web Audio context with MP3 buffer caching, silent gesture
+  unlock, foreground resume handling, short-lived throttling, and no background sound backlog.
+  Initial polling/realtime snapshots are marked as seen without replaying old requests.
 - POS quote consistency: Order Editor and Payment now verify an authoritative quote whenever they
   mount, including after an inactive cache entry was invalidated by realtime. Overview order
   versions and totals come from the same stable quote, and quote calculation retries once if an

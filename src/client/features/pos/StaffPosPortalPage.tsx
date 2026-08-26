@@ -154,6 +154,7 @@ import {
 } from './payment-return-state';
 import { canonicalPaymentPath } from './payment-navigation';
 import { posErrorText } from './pos-error';
+import { PosNotificationTracker } from './pos-notification-tracker';
 import { orderQuoteQueryOptions, overviewRefreshInterval } from './pos-order-query';
 
 const BRAND = '#0975f7';
@@ -918,27 +919,17 @@ const PosNotificationsContext = createContext<PosNotificationsContextValue | nul
 function PosNotificationWatcher() {
   const navigate = useNavigate();
   const notifications = usePosNotifications();
-  const initializedRef = useRef(false);
-  const seenGuestOrderIds = useRef<Set<string>>(new Set());
-  const seenServiceRequestIds = useRef<Set<string>>(new Set());
-  const seenTableOpenRequestIds = useRef<Set<string>>(new Set());
+  const trackerRef = useRef(new PosNotificationTracker());
 
   useEffect(() => {
     const data = notifications.data;
     if (!data) return;
 
-    if (!initializedRef.current) {
-      initializedRef.current = true;
-      seenGuestOrderIds.current = new Set(data.guestOrders.map((g) => g.id));
-      seenServiceRequestIds.current = new Set(data.serviceRequests.map((s) => s.id));
-      seenTableOpenRequestIds.current = new Set(data.tableOpenRequests.map((t) => t.id));
-      return;
-    }
+    for (const event of trackerRef.current.observe(data)) {
+      playPosSound(event.sound, { dedupeKey: event.dedupeKey });
 
-    for (const req of data.guestOrders) {
-      if (!seenGuestOrderIds.current.has(req.id) && req.status === 'PENDING') {
-        seenGuestOrderIds.current.add(req.id);
-        playPosSound('NEW_QR_ORDER', { dedupeKey: `qr-order:${req.id}` });
+      if (event.kind === 'GUEST_ORDER') {
+        const req = event.request;
         // Automatically pop up the QR order confirmation modal
         notifications.setQrConfirmModalOpen(true);
         const itemCount =
@@ -956,14 +947,9 @@ function PosNotificationWatcher() {
             },
           },
         );
-      }
-    }
-
-    for (const sr of data.serviceRequests) {
-      if (!seenServiceRequestIds.current.has(sr.id) && sr.status === 'OPEN') {
-        seenServiceRequestIds.current.add(sr.id);
+      } else if (event.kind === 'SERVICE_REQUEST') {
+        const sr = event.request;
         if (sr.type === 'CALL_STAFF') {
-          playPosSound('CALL_STAFF', { dedupeKey: `service-req:${sr.id}` });
           toast.warning(
             `🔔 Gọi nhân viên - ${sr.tableName}${sr.customerName ? ` (${sr.customerName})` : ''}`,
             {
@@ -976,7 +962,6 @@ function PosNotificationWatcher() {
             },
           );
         } else if (sr.type === 'CHECKOUT_REQUEST') {
-          playPosSound('CHECKOUT_REQUEST', { dedupeKey: `service-req:${sr.id}` });
           toast.info(
             `💳 Yêu cầu thanh toán - ${sr.tableName}${sr.customerName ? ` (${sr.customerName})` : ''}`,
             {
@@ -989,13 +974,8 @@ function PosNotificationWatcher() {
             },
           );
         }
-      }
-    }
-
-    for (const tor of data.tableOpenRequests) {
-      if (!seenTableOpenRequestIds.current.has(tor.id) && tor.status === 'OPEN') {
-        seenTableOpenRequestIds.current.add(tor.id);
-        playPosSound('TABLE_OPEN_REQUEST', { dedupeKey: `table-open:${tor.id}` });
+      } else {
+        const tor = event.request;
         toast.info(
           `🪑 Yêu cầu mở bàn - ${tor.tableName}${tor.customerName ? ` (${tor.customerName})` : ''}`,
           {
@@ -5898,25 +5878,14 @@ function OrderEditor({
     }
   };
 
-  const beginCheckout = async (confirmedPending = false) => {
+  const beginCheckout = async () => {
     if (isNew && orderType === 'TAKEAWAY' && draftLines.length === 0) {
       messageApi.warning('Vui lòng chọn ít nhất một mặt hàng cho đơn mang đi.');
       return;
     }
     if (!isNew) {
-      if (quote.data) markPaymentNavigationStarted(quote.data.order.id);
       const hasPendingChanges =
         draftLines.length > 0 || hasPendingSavedItemChanges() || manualPromotionIds !== null;
-      if (hasPendingChanges && !confirmedPending) {
-        Modal.confirm({
-          title: 'Lưu thay đổi và thanh toán?',
-          content: `Đơn còn ${draftLines.length + updatedItemsPayload().length} dòng thay đổi chưa lưu. Hệ thống sẽ chốt đợt này trước khi chuyển sang thanh toán.`,
-          okText: 'Lưu và thanh toán',
-          cancelText: 'Kiểm tra lại',
-          onOk: () => void beginCheckout(true),
-        });
-        return;
-      }
       if (isPaymentPending) {
         navigateToPayment(quote.data!.order.id);
         return;
@@ -7023,15 +6992,17 @@ function OrderEditor({
               )}
             </main>
 
-            {/* Bottom Bar: [ 🛒 6 ] | 370,000đ | [ Tiếp tục ] */}
+            {/* Bottom Bar: secondary cart review + primary direct save */}
             <div className="staff-product-picker-mobile__bottom-bar">
               <button
                 type="button"
                 className="staff-product-picker-mobile__cart-btn"
                 ref={cartIconRef}
                 onClick={() => setMobileView('CART')}
+                aria-label="Xem đơn"
               >
                 <ShoppingCartOutlined />
+                <span className="staff-product-picker-mobile__cart-label">Xem đơn</span>
                 <span className="staff-product-picker-mobile__cart-count">
                   {pendingChangeRows.length}
                 </span>
@@ -7045,12 +7016,14 @@ function OrderEditor({
                 <Button
                   type="primary"
                   size="large"
-                  onClick={() => {
-                    setMobileView('CART');
-                  }}
+                  disabled={
+                    isNew ? orderType === 'TAKEAWAY' && draftLines.length === 0 : !hasUnsavedChanges
+                  }
+                  loading={saving}
+                  onClick={isNew ? saveOrder : () => void saveAdditionalItems(false)}
                   className="staff-product-picker-mobile__done-btn"
                 >
-                  Tiếp tục
+                  Lưu đơn
                 </Button>
               </div>
             </div>

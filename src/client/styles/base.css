@@ -14143,7 +14143,7 @@ body {
   text-align: center;
 }
 
-/* Bottom Bar: [ 🛒 6 ] | 370,000đ | [ Tiếp tục ] */
+/* Bottom Bar: [ Xem đơn ] | tổng tiền | [ Lưu đơn ] */
 .staff-product-picker-mobile__bottom-bar {
   position: fixed;
   left: 0;
@@ -14157,7 +14157,7 @@ body {
   padding: 10px 16px calc(12px + env(safe-area-inset-bottom, 0px));
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   box-shadow: 0 -4px 18px rgba(15, 23, 42, 0.08);
 }
 
@@ -14165,14 +14165,14 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
   height: 42px;
-  padding: 0 14px;
+  padding: 0 10px;
   border: 1.5px solid #0975f7;
   border-radius: 12px;
   background: #eff6ff;
   color: #0975f7;
-  font-size: 18px;
+  font-size: 15px;
   cursor: pointer;
   touch-action: manipulation;
   transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -14189,17 +14189,25 @@ body {
   color: #0975f7;
 }
 
+.staff-product-picker-mobile__cart-label {
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .staff-product-picker-mobile__bottom-actions {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .staff-product-picker-mobile__bottom-price {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 800;
   color: #0975f7;
   letter-spacing: -0.2px;
+  white-space: nowrap;
 }
 
 .staff-product-picker-mobile__done-btn {
@@ -14208,7 +14216,7 @@ body {
   font-size: 14.5px !important;
   border-radius: 12px !important;
   background: #0975f7 !important;
-  padding: 0 18px !important;
+  padding: 0 14px !important;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════

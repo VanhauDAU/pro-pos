@@ -15,14 +15,30 @@ registerRoute(
   new NavigationRoute(createHandlerBoundToURL('/index.html'), { denylist: [/^\/api(?:\/|$)/] }),
 );
 
-const RUNTIME_ASSET_CACHE = 'propos-runtime-assets-v1';
+const RUNTIME_ASSET_CACHE = 'propos-runtime-assets-v2';
+const LEGACY_RUNTIME_ASSET_CACHES = new Set(['propos-runtime-assets-v1']);
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches
+      .keys()
+      .then((cacheNames) =>
+        Promise.all(
+          cacheNames
+            .filter((cacheName) => LEGACY_RUNTIME_ASSET_CACHES.has(cacheName))
+            .map((cacheName) => caches.delete(cacheName)),
+        ),
+      ),
+  );
+});
+
 registerRoute(
   ({ request, url }) =>
     request.method === 'GET' &&
     url.origin === self.location.origin &&
     !url.pathname.startsWith('/api/') &&
     (['script', 'style', 'image', 'audio'].includes(request.destination) ||
-      url.pathname.endsWith('.ogg') ||
+      url.pathname.endsWith('.mp3') ||
       url.pathname.startsWith('/sounds/')),
   async ({ request }) => {
     const cache = await caches.open(RUNTIME_ASSET_CACHE);

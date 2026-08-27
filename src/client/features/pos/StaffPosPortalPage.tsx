@@ -112,7 +112,6 @@ import logoBlack from '@client/assets/logo-black.svg?url';
 import { OrderDetailPage } from './OrderDetailPage';
 import { StaffOnboarding } from './StaffOnboarding';
 import { PosCustomerSelector } from './PosCustomerSelector';
-import { ReceiptPreviewModal, ReceiptPreviewPaper } from './ReceiptPreviewModal';
 import { TableQrModal } from '@client/components/TableQrModal';
 import { PosAppSplash } from './PosAppSplash';
 import { toast } from 'sonner';
@@ -185,6 +184,16 @@ const QrOrderConfirmModal = lazy(async () => {
   return { default: module.QrOrderConfirmModal };
 });
 
+const ReceiptPreviewModal = lazy(async () => {
+  const module = await import('./ReceiptPreviewModal');
+  return { default: module.ReceiptPreviewModal };
+});
+
+const ReceiptPreviewPaper = lazy(async () => {
+  const module = await import('./ReceiptPreviewModal');
+  return { default: module.ReceiptPreviewPaper };
+});
+
 const StaffPrinterSettingsPage = lazy(async () => {
   const module = await import('./StaffPrinterSettingsPage');
   return { default: module.StaffPrinterSettingsPage };
@@ -195,6 +204,14 @@ function PosRouteLoadingFallback() {
     <div aria-label="Đang tải nội dung" style={{ minHeight: 320, padding: 24, background: '#fff' }}>
       <Skeleton active title={{ width: '36%' }} paragraph={{ rows: 6 }} />
     </div>
+  );
+}
+
+function ReceiptPreviewLoadingModal({ title, onCancel }: { title: string; onCancel: () => void }) {
+  return (
+    <Modal open title={title} footer={null} width={650} centered onCancel={onCancel}>
+      <Skeleton active title={false} paragraph={{ rows: 10 }} />
+    </Modal>
   );
 }
 
@@ -9549,22 +9566,24 @@ function OrderEditor({
           </Button>,
         ]}
       >
-        {quote.data ? (
+        {provisionalBillOpen && quote.data ? (
           <div className="staff-provisional-bill-content">
-            <ReceiptPreviewPaper
-              options={{
-                data: buildPrintDataFromQuote(quote.data, 'PROVISIONAL'),
-                printSettings: printSettings.data,
-                storeInfo: {
-                  storeName: staffContext.data?.storeName ?? null,
-                  phone: staffContext.data?.storePhone ?? null,
-                  address: staffContext.data?.storeAddress ?? null,
-                  bankName: staffContext.data?.bankName ?? null,
-                  bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
-                  bankAccountName: staffContext.data?.bankAccountName ?? null,
-                },
-              }}
-            />
+            <Suspense fallback={<Skeleton active title={false} paragraph={{ rows: 10 }} />}>
+              <ReceiptPreviewPaper
+                options={{
+                  data: buildPrintDataFromQuote(quote.data, 'PROVISIONAL'),
+                  printSettings: printSettings.data,
+                  storeInfo: {
+                    storeName: staffContext.data?.storeName ?? null,
+                    phone: staffContext.data?.storePhone ?? null,
+                    address: staffContext.data?.storeAddress ?? null,
+                    bankName: staffContext.data?.bankName ?? null,
+                    bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
+                    bankAccountName: staffContext.data?.bankAccountName ?? null,
+                  },
+                }}
+              />
+            </Suspense>
           </div>
         ) : null}
       </Modal>
@@ -10354,13 +10373,24 @@ function InvoicePage() {
           In hóa đơn
         </Button>
       </div>
-      <ReceiptPreviewModal
-        open={printPreviewOpen}
-        title={`Xem trước hóa đơn ${data.invoice.displayCode}`}
-        options={invoicePrintOptions}
-        onCancel={() => setPrintPreviewOpen(false)}
-        previewOnly
-      />
+      {printPreviewOpen ? (
+        <Suspense
+          fallback={
+            <ReceiptPreviewLoadingModal
+              title={`Xem trước hóa đơn ${data.invoice.displayCode}`}
+              onCancel={() => setPrintPreviewOpen(false)}
+            />
+          }
+        >
+          <ReceiptPreviewModal
+            open
+            title={`Xem trước hóa đơn ${data.invoice.displayCode}`}
+            options={invoicePrintOptions}
+            onCancel={() => setPrintPreviewOpen(false)}
+            previewOnly
+          />
+        </Suspense>
+      ) : null}
     </main>
   );
 }
@@ -11629,13 +11659,24 @@ function PaymentPage({
           );
         })()}
       </Modal>
-      <ReceiptPreviewModal
-        open={paymentPreviewOpen}
-        title="Xem trước hóa đơn thanh toán"
-        options={paymentPreviewOptions}
-        onCancel={() => setPaymentPreviewOpen(false)}
-        previewOnly
-      />
+      {paymentPreviewOpen ? (
+        <Suspense
+          fallback={
+            <ReceiptPreviewLoadingModal
+              title="Xem trước hóa đơn thanh toán"
+              onCancel={() => setPaymentPreviewOpen(false)}
+            />
+          }
+        >
+          <ReceiptPreviewModal
+            open
+            title="Xem trước hóa đơn thanh toán"
+            options={paymentPreviewOptions}
+            onCancel={() => setPaymentPreviewOpen(false)}
+            previewOnly
+          />
+        </Suspense>
+      ) : null}
 
       <Modal
         open={customerModalOpen}

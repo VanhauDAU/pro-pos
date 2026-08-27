@@ -1,5 +1,6 @@
 import {
   AppstoreOutlined,
+  BankOutlined,
   BellFilled,
   BellOutlined,
   CheckCircleOutlined,
@@ -7,11 +8,13 @@ import {
   CloseCircleFilled,
   CloseCircleOutlined,
   CloseOutlined,
+  CopyOutlined,
   CreditCardOutlined,
   DeleteOutlined,
   DownOutlined,
   EditOutlined,
   EllipsisOutlined,
+  EnvironmentOutlined,
   FileTextOutlined,
   GiftOutlined,
   HistoryOutlined,
@@ -2884,15 +2887,69 @@ function MorePage({
       <Card
         className="staff-store-card"
         loading={context.isLoading}
-        style={{ borderRadius: 12, border: '1px solid #e2e8f0' }}
+        style={{ borderRadius: 14, border: '1px solid #e2e8f0' }}
       >
-        <ShopOutlined />
-        <div>
-          <strong>{context.data?.storeName ?? 'Cửa hàng'}</strong>
-          <span>Mã cửa hàng: {context.data?.storeId ?? '—'}</span>
-          {context.data?.storeAddress ? <span>Địa chỉ: {context.data.storeAddress}</span> : null}
-          {context.data?.storePhone ? <span>Điện thoại: {context.data.storePhone}</span> : null}
+        <div className="staff-store-card__header">
+          <div className="staff-store-card__icon-wrap">
+            <ShopOutlined />
+          </div>
+          <div className="staff-store-card__header-info">
+            <strong className="staff-store-card__name">
+              {context.data?.storeName ?? 'Cửa hàng'}
+            </strong>
+            {context.data?.storeId ? (
+              <div className="staff-store-card__code-row">
+                <Tooltip title="Bấm để sao chép mã cửa hàng">
+                  <Tag
+                    color="blue"
+                    className="staff-store-card__code-tag"
+                    onClick={() => {
+                      if (context.data?.storeId) {
+                        navigator.clipboard.writeText(context.data.storeId);
+                        messageApi.success('Đã sao chép mã cửa hàng!');
+                      }
+                    }}
+                  >
+                    <CopyOutlined style={{ marginRight: 4 }} />
+                    Mã: #{context.data.storeId.slice(0, 8).toUpperCase()}
+                  </Tag>
+                </Tooltip>
+              </div>
+            ) : null}
+          </div>
         </div>
+
+        {context.data?.storeAddress ||
+        context.data?.storePhone ||
+        context.data?.bankAccountNumber ? (
+          <div className="staff-store-card__details">
+            {context.data?.storeAddress ? (
+              <div className="staff-store-card__detail-item">
+                <EnvironmentOutlined className="staff-store-card__detail-icon" />
+                <span className="staff-store-card__detail-text">
+                  Địa chỉ: {context.data.storeAddress}
+                </span>
+              </div>
+            ) : null}
+            {context.data?.storePhone ? (
+              <div className="staff-store-card__detail-item">
+                <PhoneOutlined className="staff-store-card__detail-icon" />
+                <span className="staff-store-card__detail-text">
+                  Điện thoại: {context.data.storePhone}
+                </span>
+              </div>
+            ) : null}
+            {context.data?.bankAccountNumber && context.data?.bankName ? (
+              <div className="staff-store-card__detail-item">
+                <BankOutlined className="staff-store-card__detail-icon" />
+                <span className="staff-store-card__detail-text">
+                  Tài khoản: {context.data.bankName} · {context.data.bankAccountNumber}
+                  {context.data.bankAccountName ? ` (${context.data.bankAccountName})` : ''}
+                </span>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </Card>
 
       {/* ── Logout Section ───────────────────────────────────────────── */}

@@ -11,6 +11,13 @@ import { apiRequest } from '@client/lib/api';
 
 export type RealtimeConnectionStatus = 'DISABLED' | 'CONNECTING' | 'CONNECTED' | 'RECONNECTING';
 
+export function pollingIntervalForRealtime(
+  status: RealtimeConnectionStatus,
+  fallbackMs: number,
+): number | false {
+  return status === 'CONNECTED' ? false : fallbackMs;
+}
+
 const BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 15_000, 30_000];
 
 function logRealtime(
@@ -294,6 +301,14 @@ export class PosRealtimeClient {
           }),
         );
       }
+      if (topics.has('guest.orders')) {
+        invalidations.push(
+          this.queryClient.invalidateQueries({
+            queryKey: ['pos-staff-all-qr-orders'],
+            refetchType: 'active',
+          }),
+        );
+      }
       if (
         topics.has('pos.orders') ||
         topics.has('guest.orders') ||
@@ -335,6 +350,7 @@ export class PosRealtimeClient {
           root === 'pos-tables' ||
           root === 'pos-overview' ||
           root === 'pos-notification-summary' ||
+          root === 'pos-staff-all-qr-orders' ||
           root === 'pos-order-quote' ||
           root === 'pos-order-detail' ||
           root === 'guest-order-requests' ||

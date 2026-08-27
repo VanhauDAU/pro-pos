@@ -35,6 +35,7 @@
     "src/client/features/pos/pos-error.ts",
     "src/client/features/pos/pos-order-query.ts",
     "src/client/features/pos/pos-notification-tracker.ts",
+    "src/client/realtime/client.ts",
     "src/client/features/owner/catalog-excel.ts",
     "src/client/features/owner/print-preview-sample.ts",
     "src/client/lib/qz-tray-service.ts",

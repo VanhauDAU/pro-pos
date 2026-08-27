@@ -2,7 +2,11 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 
 import { apiRequest } from '@client/lib/api';
-import { PosRealtimeClient, type RealtimeConnectionStatus } from './client';
+import {
+  pollingIntervalForRealtime,
+  PosRealtimeClient,
+  type RealtimeConnectionStatus,
+} from './client';
 import type { RealtimeEventV1 } from '@contracts/realtime';
 
 interface RealtimeStaffContext {
@@ -175,6 +179,5 @@ export function useRealtime() {
 
 export function usePosPollingInterval(fallbackMs: number): number | false {
   const { status } = useRealtime();
-  if (status === 'CONNECTED') return false;
-  return fallbackMs;
+  return pollingIntervalForRealtime(status, fallbackMs);
 }

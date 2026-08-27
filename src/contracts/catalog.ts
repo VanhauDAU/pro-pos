@@ -187,6 +187,16 @@ export const reorderServiceTablesSchema = z
     }
   });
 
+export const reorderAreasSchema = z
+  .object({
+    areaIds: z.array(z.uuid()).min(1).max(100),
+  })
+  .superRefine((value, context) => {
+    if (new Set(value.areaIds).size !== value.areaIds.length) {
+      context.addIssue({ code: 'custom', message: 'Danh sách khu vực không được trùng.' });
+    }
+  });
+
 export const CATALOG_IMPORT_MAX_ROWS = 2_000;
 export const CATALOG_IMPORT_MAX_VARIANTS = 20;
 

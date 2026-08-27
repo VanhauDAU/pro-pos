@@ -1563,13 +1563,26 @@ function AreasPage() {
   }, [activeTakeaways.length, serverTimeOffsetMs, tables.data]);
 
   const areas = useMemo(() => {
-    const map = new Map<string, { id: string; name: string; tables: PosTable[] }>();
+    const map = new Map<
+      string,
+      { id: string; name: string; sortOrder: number; tables: PosTable[] }
+    >();
     for (const table of tables.data ?? []) {
-      const area = map.get(table.areaId) ?? { id: table.areaId, name: table.areaName, tables: [] };
-      area.tables.push(table);
-      map.set(table.areaId, area);
+      const existing = map.get(table.areaId);
+      if (existing) {
+        existing.tables.push(table);
+      } else {
+        map.set(table.areaId, {
+          id: table.areaId,
+          name: table.areaName,
+          sortOrder: table.areaSortOrder ?? 0,
+          tables: [table],
+        });
+      }
     }
-    return [...map.values()];
+    return [...map.values()].toSorted(
+      (a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'vi', { numeric: true }),
+    );
   }, [tables.data]);
 
   const initialArea =

@@ -120,6 +120,8 @@ export function OwnerAreaSettingsPage() {
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [bulkAddingTables, setBulkAddingTables] = useState(false);
   const [orderingAreaId, setOrderingAreaId] = useState<string | null>(null);
+  const [orderingAreas, setOrderingAreas] = useState(false);
+  const [draggedAreaId, setDraggedAreaId] = useState<string | null>(null);
   const [pricingTableId, setPricingTableId] = useState<string | null>(null);
   const [togglingStatusTableId, setTogglingStatusTableId] = useState<string | null>(null);
   const [draggedTable, setDraggedTable] = useState<{ areaId: string; tableId: string } | null>(
@@ -325,6 +327,33 @@ export function OwnerAreaSettingsPage() {
     }
   };
 
+  const saveAreaOrder = async (orderedAreas: AreaLayout[]) => {
+    if (!layouts.data) return;
+    if (orderedAreas.every((area, index) => area.id === layouts.data?.[index]?.id)) return;
+    setOrderingAreas(true);
+    try {
+      await jsonRequest(
+        '/api/v1/owner/catalog/area-layouts/area-order',
+        { areaIds: orderedAreas.map((area) => area.id) },
+        {
+          method: 'PUT',
+          headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' },
+        },
+      );
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: AREA_LAYOUTS_QUERY }),
+        queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-overview'] }),
+      ]);
+      messageApi.success('Đã cập nhật thứ tự khu vực.');
+    } catch (error) {
+      messageApi.error(errorMessage(error, 'Không thể cập nhật thứ tự khu vực.'));
+    } finally {
+      setOrderingAreas(false);
+      setDraggedAreaId(null);
+    }
+  };
+
   const saveTableOrder = async (area: AreaLayout, orderedTables: AreaTable[]) => {
     if (orderedTables.every((table, index) => table.id === area.tables[index]?.id)) return;
     setOrderingAreaId(area.id);
@@ -337,7 +366,11 @@ export function OwnerAreaSettingsPage() {
           headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' },
         },
       );
-      await queryClient.invalidateQueries({ queryKey: AREA_LAYOUTS_QUERY });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: AREA_LAYOUTS_QUERY }),
+        queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-overview'] }),
+      ]);
       messageApi.success('Đã cập nhật thứ tự bàn/phòng.');
     } catch (error) {
       messageApi.error(errorMessage(error, 'Không thể cập nhật thứ tự bàn/phòng.'));
@@ -421,6 +454,7 @@ export function OwnerAreaSettingsPage() {
         <Card className="owner-area-list-card" styles={{ body: { padding: 0 } }}>
           <div className="owner-area-list-card__tab">Tất cả khu vực</div>
           <div className="owner-area-table__header">
+            <span>Thứ tự</span>
             <span>Tên khu vực</span>
             <span style={{ textAlign: 'center' }}>Số lượng bàn/phòng</span>
             <span style={{ textAlign: 'right' }}>Thao tác</span>
@@ -441,16 +475,31 @@ export function OwnerAreaSettingsPage() {
             <div className="owner-area-table">
               {layouts.data.map((area, index) => (
                 <div className="owner-area-table__group" key={area.id}>
-                  <div className="owner-area-table__row">
+                  <div
+                    className={`owner-area-table__row ${orderingAreas ? 'owner-area-table__row--ordering' : ''}`}
+                    draggable={!orderingAreas}
+                    onDragStart={() => setDraggedAreaId(area.id)}
+                    onDragEnd={() => setDraggedAreaId(null)}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={() => {
+                      if (!draggedAreaId || !layouts.data) return;
+                      void saveAreaOrder(moveItemToTarget(layouts.data, draggedAreaId, area.id));
+                    }}
+                  >
+                    <div className="owner-area-table__order-col">
+                      <span className="owner-area-drag-handle" title="Kéo để sắp xếp thứ tự khu vực">
+                        <MenuOutlined />
+                      </span>
+                      <span className="owner-area-index">
+                        #{String(index + 1).padStart(2, '0')}
+                      </span>
+                    </div>
                     <button
                       type="button"
                       className="owner-area-table__name"
                       title="Bấm để xem chi tiết và quản lý bàn"
                       onClick={() => setDetailAreaId(area.id)}
                     >
-                      <span className="owner-area-index">
-                        {String(index + 1).padStart(2, '0')}.
-                      </span>
                       <strong className="owner-area-name-text">{area.name}</strong>
                     </button>
                     <div style={{ textAlign: 'center' }}>
@@ -459,6 +508,28 @@ export function OwnerAreaSettingsPage() {
                       </Tag>
                     </div>
                     <div className="owner-area-row-actions">
+                      <Button
+                        type="text"
+                        size="small"
+                        disabled={index === 0 || orderingAreas}
+                        aria-label={`Đưa khu vực ${area.name} lên`}
+                        icon={<ArrowUpOutlined />}
+                        title="Đưa lên trên"
+                        onClick={() =>
+                          layouts.data && void saveAreaOrder(moveItem(layouts.data, index, index - 1))
+                        }
+                      />
+                      <Button
+                        type="text"
+                        size="small"
+                        disabled={index === layouts.data.length - 1 || orderingAreas}
+                        aria-label={`Đưa khu vực ${area.name} xuống`}
+                        icon={<ArrowDownOutlined />}
+                        title="Đưa xuống dưới"
+                        onClick={() =>
+                          layouts.data && void saveAreaOrder(moveItem(layouts.data, index, index + 1))
+                        }
+                      />
                       <Button
                         type="primary"
                         ghost

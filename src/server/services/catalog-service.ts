@@ -417,6 +417,42 @@ export class CatalogService {
     return { id: tableId, deleted: true };
   }
 
+  async reorderAreas(
+    storeId: string,
+    areaIds: string[],
+    auditContext?: AuditContext,
+  ) {
+    const current = await this.repository.listActiveAreaIds(storeId);
+    const currentIds = current.results.map((area) => area.id);
+    const requestedIds = new Set(areaIds);
+    if (
+      currentIds.length === 0 ||
+      currentIds.length !== areaIds.length ||
+      currentIds.some((areaId) => !requestedIds.has(areaId))
+    ) {
+      throw new AppError(
+        'AREA_ORDER_INVALID',
+        'Danh sách sắp xếp phải chứa đầy đủ các khu vực.',
+        422,
+      );
+    }
+    const now = Date.now();
+    await this.repository.reorderAreas({ storeId, areaIds, now });
+    if (auditContext) {
+      await new AuditRepository(this.env.DB).record({
+        storeId,
+        context: auditContext,
+        action: 'AREAS_REORDERED',
+        entityType: 'AREA',
+        entityId: storeId,
+        before: { areaIds: currentIds },
+        after: { areaIds },
+        now,
+      });
+    }
+    return { areaIds };
+  }
+
   async reorderTables(
     storeId: string,
     areaId: string,

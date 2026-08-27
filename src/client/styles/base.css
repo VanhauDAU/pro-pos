@@ -8611,8 +8611,19 @@ body {
 .owner-area-table__header,
 .owner-area-table__row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 150px 170px;
+  grid-template-columns: 80px minmax(0, 1fr) 140px 240px;
   align-items: center;
+}
+
+.owner-area-table__order-col {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.owner-area-table__row--ordering {
+  opacity: 0.6;
+  pointer-events: none;
 }
 
 .owner-area-table__header {
@@ -11120,7 +11131,7 @@ body {
 
   .owner-area-table__header,
   .owner-area-table__row {
-    grid-template-columns: minmax(0, 1fr) 95px 110px;
+    grid-template-columns: 70px minmax(0, 1fr) 95px 210px;
   }
 
   .owner-area-table__header {

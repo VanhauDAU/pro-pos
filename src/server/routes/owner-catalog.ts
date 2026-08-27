@@ -10,6 +10,7 @@ import {
   createBatchServiceTablesSchema,
   namedResourceSchema,
   pricingConfigSchema,
+  reorderAreasSchema,
   reorderServiceTablesSchema,
   updateProductSchema,
   updateServiceTableSchema,
@@ -237,6 +238,18 @@ ownerCatalogRoutes.post('/area-layouts', requirePermission('table.manage'), asyn
       auditContext(c),
     ),
     201,
+  );
+});
+
+ownerCatalogRoutes.put('/area-layouts/area-order', requirePermission('table.manage'), async (c) => {
+  const body = await parseJson(c.req.raw, reorderAreasSchema);
+  return success(
+    c,
+    await new CatalogService(c.env).reorderAreas(
+      c.get('actor').storeId!,
+      body.areaIds,
+      auditContext(c),
+    ),
   );
 });
 

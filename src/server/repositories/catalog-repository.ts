@@ -5,7 +5,7 @@ type NamedTable = 'areas' | 'categories' | 'units';
 
 const namedSelects: Record<NamedTable, string> = {
   areas:
-    'SELECT id, name, sort_order AS sortOrder, status FROM areas WHERE store_id = ? ORDER BY sort_order, name COLLATE NOCASE',
+    'SELECT id, name, sort_order AS sortOrder, status FROM areas WHERE store_id = ? ORDER BY sort_order, name COLLATE NOCASE, created_at, id',
   categories: `SELECT c.id, c.name, c.sort_order AS sortOrder, c.status,
             (SELECT COUNT(*) FROM products p
              WHERE p.category_id = c.id AND p.store_id = c.store_id AND p.status = 'ACTIVE') AS productCount
@@ -331,7 +331,7 @@ export class CatalogRepository {
         LEFT JOIN products tp
           ON tp.id = st.time_product_id AND tp.store_id = st.store_id
         WHERE a.store_id = ? AND a.status = 'ACTIVE'
-        ORDER BY a.sort_order, a.name COLLATE NOCASE, st.sort_order, st.created_at, st.id`,
+        ORDER BY a.sort_order, a.name COLLATE NOCASE, a.created_at, a.id, st.sort_order, COALESCE(st.display_name, st.name) COLLATE NOCASE, st.created_at, st.id`,
       )
       .bind(storeId)
       .all<AreaLayoutRow>();
@@ -357,9 +357,13 @@ export class CatalogRepository {
         .prepare(
           `INSERT INTO areas (
             id, store_id, name, sort_order, status, created_at, updated_at
-          ) VALUES (?, ?, ?, 0, 'ACTIVE', ?, ?)`,
+          ) VALUES (
+            ?, ?, ?,
+            (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM areas WHERE store_id = ? AND status = 'ACTIVE'),
+            'ACTIVE', ?, ?
+          )`,
         )
-        .bind(input.areaId, input.storeId, input.name, input.now, input.now),
+        .bind(input.areaId, input.storeId, input.name, input.storeId, input.now, input.now),
       ...input.tables.map((table) =>
         this.db
           .prepare(
@@ -461,6 +465,31 @@ export class CatalogRepository {
       )
       .bind(now, tableId, storeId)
       .run();
+  }
+
+  listActiveAreaIds(storeId: string) {
+    return this.db
+      .prepare(
+        `SELECT id FROM areas
+         WHERE store_id = ? AND status = 'ACTIVE'
+         ORDER BY sort_order, name COLLATE NOCASE, created_at, id`,
+      )
+      .bind(storeId)
+      .all<{ id: string }>();
+  }
+
+  reorderAreas(input: { storeId: string; areaIds: string[]; now: number }) {
+    return this.db.batch(
+      input.areaIds.map((areaId, sortOrder) =>
+        this.db
+          .prepare(
+            `UPDATE areas
+             SET sort_order = ?, updated_at = ?
+             WHERE id = ? AND store_id = ? AND status = 'ACTIVE'`,
+          )
+          .bind(sortOrder, input.now, areaId, input.storeId),
+      ),
+    );
   }
 
   listActiveServiceTableIds(storeId: string, areaId: string) {
@@ -1278,7 +1307,7 @@ export class CatalogRepository {
         JOIN areas a ON a.id = st.area_id AND a.store_id = st.store_id
         JOIN products p ON p.id = st.time_product_id AND p.store_id = st.store_id
         WHERE st.store_id = ?
-        ORDER BY a.sort_order, st.sort_order, COALESCE(st.display_name, st.name) COLLATE NOCASE`,
+        ORDER BY a.sort_order, a.name COLLATE NOCASE, a.created_at, a.id, st.sort_order, COALESCE(st.display_name, st.name) COLLATE NOCASE, st.created_at, st.id`,
       )
       .bind(storeId)
       .all();

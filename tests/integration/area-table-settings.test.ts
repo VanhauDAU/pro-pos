@@ -1,9 +1,10 @@
 import { env } from 'cloudflare:workers';
 import { beforeAll, describe, expect, it } from 'vitest';
 
-import { createAreaLayoutSchema } from '@contracts/catalog';
+import { createAreaLayoutSchema, reorderAreasSchema } from '@contracts/catalog';
 import { CatalogService } from '@server/services/catalog-service';
 import { PlatformService } from '@server/services/platform-service';
+import { PosService } from '@server/services/pos-service';
 
 describe('Owner area and table settings', () => {
   let storeId: string;
@@ -189,5 +190,51 @@ describe('Owner area and table settings', () => {
     expect(updated!.name).toBe('Tầng 1 VIP');
     expect(updated!.tables).toHaveLength(2);
     expect(updated!.tables.some((t) => t.name === 'Bàn thêm mới')).toBe(true);
+  });
+
+  it('validates reorderAreasSchema correctly', () => {
+    const validId1 = crypto.randomUUID();
+    const validId2 = crypto.randomUUID();
+    expect(reorderAreasSchema.safeParse({ areaIds: [] }).success).toBe(false);
+    expect(reorderAreasSchema.safeParse({ areaIds: [validId1, validId1] }).success).toBe(false);
+    expect(reorderAreasSchema.safeParse({ areaIds: [validId1, validId2] }).success).toBe(true);
+  });
+
+  it('persists area order, automatically increments sort_order on create, and updates POS table listing order', async () => {
+    // Create second area "Tầng 2"
+    await catalog.createAreaLayout(storeId, {
+      name: 'Tầng 2',
+      tables: [{ name: 'Bàn 201' }, { name: 'Bàn 202' }],
+    });
+    // Create third area "Sân thượng"
+    await catalog.createAreaLayout(storeId, {
+      name: 'Sân thượng',
+      tables: [{ name: 'Bàn VIP 01' }],
+    });
+
+    const layoutsBefore = await catalog.listAreaLayouts(storeId);
+    expect(layoutsBefore.length).toBe(3);
+    const [firstArea, secondArea, thirdArea] = layoutsBefore;
+    expect(firstArea!.sortOrder).toBeLessThan(secondArea!.sortOrder);
+    expect(secondArea!.sortOrder).toBeLessThan(thirdArea!.sortOrder);
+
+    // Reorder: Move Tầng 2 to first, Sân thượng to second, Tầng 1 to last
+    const desiredOrder = [secondArea!.id, thirdArea!.id, firstArea!.id];
+    await catalog.reorderAreas(storeId, desiredOrder);
+
+    const layoutsAfter = await catalog.listAreaLayouts(storeId);
+    expect(layoutsAfter.map((a) => a.id)).toEqual(desiredOrder);
+    expect(layoutsAfter.map((a) => a.sortOrder)).toEqual([0, 1, 2]);
+
+    // Check PosService listTables respects the new area sort order
+    const pos = new PosService(env);
+    const posTables = await pos.listTables(storeId);
+    const areaSequenceInPos = [...new Set(posTables.map((t) => t.areaId))];
+    expect(areaSequenceInPos).toEqual(desiredOrder);
+
+    // Rejects incomplete list
+    await expect(catalog.reorderAreas(storeId, [secondArea!.id])).rejects.toMatchObject({
+      code: 'AREA_ORDER_INVALID',
+    });
   });
 });

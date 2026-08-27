@@ -112,7 +112,6 @@ import logoBlack from '@client/assets/logo-black.svg?url';
 import { OrderDetailPage } from './OrderDetailPage';
 import { StaffOnboarding } from './StaffOnboarding';
 import { PosCustomerSelector } from './PosCustomerSelector';
-import { TableQrModal } from '@client/components/TableQrModal';
 import { PosAppSplash } from './PosAppSplash';
 import { toast } from 'sonner';
 import type { CustomerSummary } from '@contracts/customer';
@@ -192,6 +191,11 @@ const ReceiptPreviewModal = lazy(async () => {
 const ReceiptPreviewPaper = lazy(async () => {
   const module = await import('./ReceiptPreviewModal');
   return { default: module.ReceiptPreviewPaper };
+});
+
+const TableQrModal = lazy(async () => {
+  const module = await import('@client/components/TableQrModal');
+  return { default: module.TableQrModal };
 });
 
 const StaffPrinterSettingsPage = lazy(async () => {
@@ -10053,17 +10057,33 @@ function OrderEditor({
       </Modal>
 
       {/* Modal hiển thị mã QR Order của bàn (Standee & Frame đẹp) */}
-      {tableQrData && (
-        <TableQrModal
-          open={tableQrModalOpen}
-          onClose={() => setTableQrModalOpen(false)}
-          tableName={tableQrData.tableName}
-          url={tableQrData.url}
-          qrImageSrc={tableQrData.image}
-          storeName={staffContext.data?.storeName ?? 'PRO POS'}
-          orderCode={tableQrData.orderCode}
-        />
-      )}
+      {tableQrModalOpen && tableQrData ? (
+        <Suspense
+          fallback={
+            <Modal
+              open
+              title={`Mã QR Order · ${tableQrData.tableName}`}
+              footer={null}
+              centered
+              onCancel={() => setTableQrModalOpen(false)}
+            >
+              <div style={{ minHeight: 220, display: 'grid', placeItems: 'center' }}>
+                <Spin tip="Đang chuẩn bị mã QR..." />
+              </div>
+            </Modal>
+          }
+        >
+          <TableQrModal
+            open
+            onClose={() => setTableQrModalOpen(false)}
+            tableName={tableQrData.tableName}
+            url={tableQrData.url}
+            qrImageSrc={tableQrData.image}
+            storeName={staffContext.data?.storeName ?? 'PRO POS'}
+            orderCode={tableQrData.orderCode}
+          />
+        </Suspense>
+      ) : null}
 
       {canManageCatalog && (
         <QuickAddProductModal

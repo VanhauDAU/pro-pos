@@ -5,6 +5,29 @@ import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
+  environments: {
+    client: {
+      build: {
+        rolldownOptions: {
+          output: {
+            codeSplitting: {
+              groups: [
+                {
+                  name: 'vendor',
+                  test: /node_modules[\\/]/,
+                  priority: 10,
+                  entriesAware: true,
+                  entriesAwareMergeThreshold: 50_000,
+                  minSize: 20_000,
+                  maxSize: 500_000,
+                },
+              ],
+            },
+          },
+        },
+      },
+    },
+  },
   server: {
     host: '127.0.0.1',
     port: 5173,

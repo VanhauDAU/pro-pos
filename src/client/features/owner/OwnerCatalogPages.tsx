@@ -2112,8 +2112,8 @@ export function OwnerProductFormPage({
                             type="secondary"
                             style={{ fontSize: 13, display: 'block', marginBottom: 12 }}
                           >
-                            Chỉ lưu 1 ảnh duy nhất. Bạn có thể dán link URL, chụp từ camera hoặc tải ảnh
-                            từ máy.
+                            Chỉ lưu 1 ảnh duy nhất. Bạn có thể dán link URL, chụp từ camera hoặc tải
+                            ảnh từ máy.
                           </Typography.Text>
                           <div className="owner-image-upload-cta-row">
                             <Button

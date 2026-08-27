@@ -44,9 +44,9 @@ describe('MediaService.fetchFromUrl', () => {
     await expect(service.fetchFromUrl('http://192.168.1.100/image.png')).rejects.toThrowError(
       /Địa chỉ máy chủ không được phép truy cập/,
     );
-    await expect(service.fetchFromUrl('http://169.254.169.254/latest/meta-data')).rejects.toThrowError(
-      /Địa chỉ máy chủ không được phép truy cập/,
-    );
+    await expect(
+      service.fetchFromUrl('http://169.254.169.254/latest/meta-data'),
+    ).rejects.toThrowError(/Địa chỉ máy chủ không được phép truy cập/);
   });
 
   it('successfully fetches image and converts to Data URL', async () => {
@@ -116,9 +116,9 @@ describe('MediaService.fetchFromUrl', () => {
       }),
     );
 
-    await expect(
-      service.fetchFromUrl('https://example.com/page.html'),
-    ).rejects.toThrowError(/Định dạng ảnh không được hỗ trợ/);
+    await expect(service.fetchFromUrl('https://example.com/page.html')).rejects.toThrowError(
+      /Định dạng ảnh không được hỗ trợ/,
+    );
   });
 
   it('handles HTTP error status from remote host', async () => {
@@ -131,8 +131,8 @@ describe('MediaService.fetchFromUrl', () => {
       }),
     );
 
-    await expect(
-      service.fetchFromUrl('https://example.com/non-existent.jpg'),
-    ).rejects.toThrowError(/Không thể tải ảnh từ URL \(Mã lỗi 404/);
+    await expect(service.fetchFromUrl('https://example.com/non-existent.jpg')).rejects.toThrowError(
+      /Không thể tải ảnh từ URL \(Mã lỗi 404/,
+    );
   });
 });

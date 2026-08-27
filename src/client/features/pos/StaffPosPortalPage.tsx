@@ -4917,6 +4917,7 @@ function OrderEditor({
   const [transferOpen, setTransferOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
+  const [cancellingOrder, setCancellingOrder] = useState(false);
   const [deleteItemModalOpen, setDeleteItemModalOpen] = useState(false);
   const [deleteItemTarget, setDeleteItemTarget] = useState<{
     id: string;
@@ -6679,8 +6680,9 @@ function OrderEditor({
   };
 
   const cancelOrder = async () => {
-    if (!quote.data || !cancelReason.trim()) return;
+    if (cancellingOrder || !quote.data || !cancelReason.trim()) return;
     try {
+      setCancellingOrder(true);
       await jsonRequest(
         `/api/v1/pos/orders/${quote.data.order.id}/cancel`,
         { expectedOrderVersion: quote.data.order.version, reason: cancelReason.trim() },
@@ -6700,6 +6702,8 @@ function OrderEditor({
       }
     } catch (error) {
       messageApi.error(errorText(error));
+    } finally {
+      setCancellingOrder(false);
     }
   };
 
@@ -9727,10 +9731,22 @@ function OrderEditor({
           </div>
         }
         okText="Xác nhận hủy"
-        okButtonProps={{ danger: true, disabled: !cancelReason.trim() }}
+        confirmLoading={cancellingOrder}
+        okButtonProps={{
+          danger: true,
+          disabled: !cancelReason.trim() || cancellingOrder,
+          loading: cancellingOrder,
+        }}
+        cancelButtonProps={{ disabled: cancellingOrder }}
         cancelText="Quay lại"
-        onOk={cancelOrder}
-        onCancel={() => setCancelOpen(false)}
+        onOk={() => void cancelOrder()}
+        onCancel={() => {
+          if (!cancellingOrder) {
+            setCancelOpen(false);
+          }
+        }}
+        closable={!cancellingOrder}
+        maskClosable={!cancellingOrder}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 6 }}>
           <Alert
@@ -9750,6 +9766,7 @@ function OrderEditor({
                 <Button
                   key={tag}
                   size="small"
+                  disabled={cancellingOrder}
                   onClick={() => setCancelReason(tag)}
                   style={{
                     borderRadius: 12,
@@ -9768,6 +9785,7 @@ function OrderEditor({
               maxLength={500}
               placeholder="Nhập lý do hủy đơn..."
               value={cancelReason}
+              disabled={cancellingOrder}
               onChange={(event) => setCancelReason(event.target.value)}
             />
           </div>

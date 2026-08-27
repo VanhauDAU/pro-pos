@@ -73,6 +73,7 @@ import dayjs, { type Dayjs } from 'dayjs';
 import {
   createContext,
   lazy,
+  memo,
   Suspense,
   type ReactNode,
   useCallback,
@@ -4867,6 +4868,72 @@ function QuickAddProductModal({
   );
 }
 
+interface PosProductCardProps {
+  product: CatalogProduct;
+  isPriority: boolean;
+  onSelect: (product: CatalogProduct, event?: React.MouseEvent) => void;
+}
+
+const PosProductCard = memo(function PosProductCard({
+  product,
+  isPriority,
+  onSelect,
+}: PosProductCardProps) {
+  const [imgLoaded, setImgLoaded] = useState(false);
+  const [imgError, setImgError] = useState(false);
+
+  const prices = product.variants
+    .map((variant) => variant.salePriceVnd)
+    .filter((price): price is number => price !== null);
+  const minPrice = prices.length > 0 ? Math.min(...prices) : null;
+  const maxPrice = prices.length > 0 ? Math.max(...prices) : null;
+
+  const hasImage = product.avatarType === 'IMAGE' && Boolean(product.mediaId) && !imgError;
+
+  return (
+    <button
+      type="button"
+      className={`staff-product-card ${hasImage ? 'has-image-card' : 'has-color-card'}`}
+      onClick={(e) => onSelect(product, e)}
+    >
+      <span
+        className={`staff-product-card__visual ${hasImage ? 'has-image' : 'has-color'}`}
+        style={{
+          background: hasImage ? undefined : product.avatarColor || '#0975f7',
+        }}
+      >
+        {hasImage ? (
+          <img
+            src={`/api/v1/media/${product.mediaId}`}
+            alt={product.productName}
+            loading={isPriority ? 'eager' : 'lazy'}
+            fetchPriority={isPriority ? 'high' : 'low'}
+            decoding="async"
+            className={`staff-product-card__img ${imgLoaded ? 'is-loaded' : ''}`}
+            onLoad={() => setImgLoaded(true)}
+            onError={() => setImgError(true)}
+          />
+        ) : (
+          getProductInitials(product.productName)
+        )}
+      </span>
+      <div className="staff-product-card__info">
+        <strong className="staff-product-card__name">{product.productName}</strong>
+        <div className="staff-product-card__meta">
+          {product.variants.length > 1 ? <small>{product.variants.length} phiên bản</small> : null}
+        </div>
+        <b className="staff-product-card__price">
+          {minPrice === null
+            ? 'Nhập giá'
+            : minPrice === maxPrice
+              ? `${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`
+              : `Từ ${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`}
+        </b>
+      </div>
+    </button>
+  );
+});
+
 function OrderEditor({
   auth,
   orderIdOverride,
@@ -7332,7 +7399,7 @@ function OrderEditor({
                 </Empty>
               ) : (
                 <div className="staff-product-compact-list">
-                  {visibleCatalog.map((product) => {
+                  {visibleCatalog.map((product, index) => {
                     const prices = product.variants
                       .map((v) => v.salePriceVnd)
                       .filter((p): p is number => p !== null);
@@ -7363,7 +7430,13 @@ function OrderEditor({
                           }}
                         >
                           {product.avatarType === 'IMAGE' && product.mediaId ? (
-                            <img src={`/api/v1/media/${product.mediaId}`} alt="" loading="lazy" />
+                            <img
+                              src={`/api/v1/media/${product.mediaId}`}
+                              alt=""
+                              loading={index < 12 ? 'eager' : 'lazy'}
+                              fetchPriority={index < 12 ? 'high' : 'low'}
+                              decoding="async"
+                            />
                           ) : (
                             getProductInitials(product.productName)
                           )}
@@ -8292,59 +8365,14 @@ function OrderEditor({
                 </Empty>
               ) : (
                 <div className="staff-product-grid">
-                  {visibleCatalog.map((product) => {
-                    const prices = product.variants
-                      .map((variant) => variant.salePriceVnd)
-                      .filter((price): price is number => price !== null);
-                    const minPrice = prices.length > 0 ? Math.min(...prices) : null;
-                    const maxPrice = prices.length > 0 ? Math.max(...prices) : null;
-                    return (
-                      <button
-                        type="button"
-                        key={product.productId}
-                        className={`staff-product-card ${product.avatarType === 'IMAGE' && product.mediaId ? 'has-image-card' : 'has-color-card'}`}
-                        onClick={(e) => chooseProduct(product, e)}
-                      >
-                        <span
-                          className={`staff-product-card__visual ${product.avatarType === 'IMAGE' && product.mediaId ? 'has-image' : 'has-color'}`}
-                          style={{
-                            background:
-                              product.avatarType === 'IMAGE' && product.mediaId
-                                ? undefined
-                                : product.avatarColor || '#0975f7',
-                          }}
-                        >
-                          {product.avatarType === 'IMAGE' && product.mediaId ? (
-                            <img
-                              src={`/api/v1/media/${product.mediaId}`}
-                              alt=""
-                              loading="lazy"
-                              decoding="async"
-                            />
-                          ) : (
-                            getProductInitials(product.productName)
-                          )}
-                        </span>
-                        <div className="staff-product-card__info">
-                          <strong className="staff-product-card__name">
-                            {product.productName}
-                          </strong>
-                          <div className="staff-product-card__meta">
-                            {product.variants.length > 1 ? (
-                              <small>{product.variants.length} phiên bản</small>
-                            ) : null}
-                          </div>
-                          <b className="staff-product-card__price">
-                            {minPrice === null
-                              ? 'Nhập giá'
-                              : minPrice === maxPrice
-                                ? `${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`
-                                : `Từ ${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`}
-                          </b>
-                        </div>
-                      </button>
-                    );
-                  })}
+                  {visibleCatalog.map((product, index) => (
+                    <PosProductCard
+                      key={product.productId}
+                      product={product}
+                      isPriority={index < 12}
+                      onSelect={chooseProduct}
+                    />
+                  ))}
                 </div>
               )}
             </section>

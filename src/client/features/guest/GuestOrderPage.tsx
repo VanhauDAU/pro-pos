@@ -1186,7 +1186,7 @@ export function GuestOrderPage() {
               </div>
 
               <div className="qr-guest-grid">
-                {items.map((product) => {
+                {items.map((product, productIndex) => {
                   const defaultVariant = product.variants[0];
                   const hasMultiVariants = product.variants.length > 1;
 
@@ -1211,7 +1211,9 @@ export function GuestOrderPage() {
                             src={mediaUrl(product.mediaId)}
                             alt={product.name}
                             className="qr-guest-card__img"
-                            loading="lazy"
+                            loading={productIndex < 10 ? 'eager' : 'lazy'}
+                            fetchPriority={productIndex < 10 ? 'high' : 'low'}
+                            decoding="async"
                           />
                         ) : (
                           <div className="qr-guest-card__avatar-letter">

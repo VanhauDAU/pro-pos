@@ -9,6 +9,7 @@ import { AppError } from '@server/lib/app-error';
 import { CatalogRepository } from '@server/repositories/catalog-repository';
 import { validatePricingConfig } from '@domain/pricing/validation';
 import { AuditRepository, type AuditContext } from '@server/repositories/audit-repository';
+import { MediaService } from '@server/services/media-service';
 
 type ProductInput = z.input<typeof createProductSchema>;
 type PricingInput = z.infer<typeof pricingConfigSchema>;
@@ -634,6 +635,11 @@ export class CatalogService {
       }),
       now,
     });
+    const oldMediaId = before.mediaId;
+    const newMediaId = input.mediaId ?? null;
+    if (oldMediaId && oldMediaId !== newMediaId) {
+      new MediaService(this.env).remove(storeId, oldMediaId).catch(() => {});
+    }
     if (auditContext) {
       await new AuditRepository(this.env.DB).record({
         storeId,

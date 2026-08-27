@@ -256,6 +256,7 @@ export class MediaService {
       throw new AppError('MEDIA_NOT_FOUND', 'Không tìm thấy ảnh.', 404);
     }
     await this.repository.markDeleted(storeId, mediaId, Date.now());
+    await this.env.MEDIA.delete(media.object_key).catch(() => {});
     const result = { mediaId, deleted: true };
     if (auditContext) {
       await new AuditRepository(this.env.DB).record({

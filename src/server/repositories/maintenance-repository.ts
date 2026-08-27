@@ -68,6 +68,11 @@ export class MaintenanceRepository {
       'DELETE FROM realtime_event_requests WHERE occurred_at < ?',
       cutoff,
     );
+    await remove(
+      'media_objects',
+      "DELETE FROM media_objects WHERE status = 'DELETED' AND deleted_at < ?",
+      cutoff,
+    );
 
     // Remove terminal QR-order data child-first. Pending requests are always retained.
     const terminalGuestRequests = `

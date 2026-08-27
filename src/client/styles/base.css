@@ -1292,12 +1292,18 @@ body,
   padding: 6px 8px;
   filter: drop-shadow(0 3px 6px rgba(15, 23, 42, 0.08));
   display: block;
+  opacity: 0;
   transition:
+    opacity 0.2s ease-in,
     transform 0.25s cubic-bezier(0.16, 1, 0.3, 1),
     filter 0.25s ease;
 }
 
-.staff-product-grid button:hover .staff-product-card__visual.has-image img {
+.staff-product-card__visual img.is-loaded {
+  opacity: 1;
+}
+
+.staff-product-grid button:hover .staff-product-card__visual.has-image img.is-loaded {
   transform: scale(1.08);
   filter: drop-shadow(0 6px 14px rgba(15, 23, 42, 0.14));
 }

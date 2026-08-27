@@ -424,7 +424,7 @@ export class OwnerDashboardService {
       },
       {
         key: 'TAKEAWAY',
-        label: 'Mang đi',
+        label: 'Mang về',
         value: takeawayRev,
         percentage: Number(((takeawayRev / totalRev) * 100).toFixed(1)),
         color: '#F59E0B',
@@ -441,7 +441,7 @@ export class OwnerDashboardService {
       },
       {
         key: 'TAKEAWAY',
-        label: 'Mang đi',
+        label: 'Mang về',
         value: takeawayCount,
         percentage: Number(((takeawayCount / totalCount) * 100).toFixed(1)),
         color: '#F59E0B',

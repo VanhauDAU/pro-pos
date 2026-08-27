@@ -748,6 +748,77 @@ export class CatalogService {
     return result;
   }
 
+  async createTablesBatch(input: {
+    storeId: string;
+    areaId: string;
+    timeProductId?: string | null | undefined;
+    tables: Array<{ name: string; sortOrder?: number | undefined }>;
+    auditContext?: AuditContext | undefined;
+  }) {
+    const now = Date.now();
+    const timeProductId = input.timeProductId || `area-layout-product:${input.storeId}`;
+
+    if (timeProductId === `area-layout-product:${input.storeId}`) {
+      await this.env.DB.prepare(
+        `INSERT OR IGNORE INTO products (
+          id, store_id, name, product_type, status, is_system, created_at, updated_at
+        ) VALUES (?, ?, 'Cấu hình bàn/phòng', 'TIME', 'ACTIVE', 1, ?, ?)`,
+      )
+        .bind(timeProductId, input.storeId, now, now)
+        .run();
+    }
+
+    const tableItems = input.tables.map((table, index) => ({
+      id: crypto.randomUUID(),
+      name: table.name.trim(),
+      sortOrder: table.sortOrder ?? index + 1,
+    }));
+
+    const results = await this.repository.createServiceTablesBatch({
+      storeId: input.storeId,
+      areaId: input.areaId,
+      timeProductId,
+      tables: tableItems,
+      now,
+    });
+
+    const totalCreated = results.reduce(
+      (sum, item) => sum + (item.meta?.changes ?? 0),
+      0,
+    );
+    if (totalCreated !== tableItems.length) {
+      throw new AppError(
+        'TABLE_REFERENCE_INVALID',
+        'Khu vực hoặc mặt hàng tính giờ không khả dụng.',
+        422,
+      );
+    }
+
+    if (input.auditContext) {
+      await new AuditRepository(this.env.DB).record({
+        storeId: input.storeId,
+        context: input.auditContext,
+        action: 'SERVICE_TABLE_CREATED',
+        entityType: 'SERVICE_TABLE',
+        entityId: input.areaId,
+        before: null,
+        after: {
+          areaId: input.areaId,
+          timeProductId,
+          count: tableItems.length,
+          tables: tableItems.map((t) => ({ id: t.id, name: t.name })),
+          status: 'AVAILABLE',
+        },
+        now,
+      });
+    }
+
+    return {
+      count: tableItems.length,
+      tables: tableItems.map((t) => ({ id: t.id, name: t.name })),
+    };
+  }
+
   async createTable(input: {
     storeId: string;
     areaId: string;

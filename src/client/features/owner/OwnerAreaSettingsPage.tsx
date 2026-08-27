@@ -1,4 +1,5 @@
 import {
+  AppstoreAddOutlined,
   AppstoreOutlined,
   ArrowDownOutlined,
   ArrowLeftOutlined,
@@ -32,6 +33,7 @@ import { useNavigate } from 'react-router';
 import type { AuthContextResponse } from '@contracts/auth';
 
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
+import { BulkAddTablesModal, type BulkTableItem } from './BulkAddTablesModal';
 
 interface AreaTable {
   id: string;
@@ -115,6 +117,8 @@ export function OwnerAreaSettingsPage() {
   const [newTableName, setNewTableName] = useState('');
   const [newTableTimeProductId, setNewTableTimeProductId] = useState<string | null>(null);
   const [addingTable, setAddingTable] = useState(false);
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
+  const [bulkAddingTables, setBulkAddingTables] = useState(false);
   const [orderingAreaId, setOrderingAreaId] = useState<string | null>(null);
   const [pricingTableId, setPricingTableId] = useState<string | null>(null);
   const [togglingStatusTableId, setTogglingStatusTableId] = useState<string | null>(null);
@@ -228,6 +232,38 @@ export function OwnerAreaSettingsPage() {
       messageApi.error(errorMessage(error, 'Không thể thêm bàn/phòng mới.'));
     } finally {
       setAddingTable(false);
+    }
+  };
+
+  const createBulkTablesInArea = async (generatedTables: BulkTableItem[]) => {
+    if (!detailArea || !generatedTables.length) return;
+    setBulkAddingTables(true);
+    try {
+      const baseSortOrder = detailArea.tables.length;
+      await jsonRequest(
+        '/api/v1/owner/catalog/tables/batch',
+        {
+          areaId: detailArea.id,
+          tables: generatedTables.map((t, idx) => ({
+            name: t.name,
+            sortOrder: baseSortOrder + idx + 1,
+          })),
+          timeProductId: generatedTables[0]?.timeProductId || null,
+        },
+        {
+          method: 'POST',
+          headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' },
+        },
+      );
+      await queryClient.invalidateQueries({ queryKey: AREA_LAYOUTS_QUERY });
+      messageApi.success(
+        `Đã thêm thành công ${generatedTables.length} bàn/phòng vào khu vực ${detailArea.name}.`,
+      );
+      setBulkModalOpen(false);
+    } catch (error) {
+      messageApi.error(errorMessage(error, 'Không thể thêm nhiều bàn/phòng.'));
+    } finally {
+      setBulkAddingTables(false);
     }
   };
 
@@ -553,6 +589,12 @@ export function OwnerAreaSettingsPage() {
                 >
                   Thêm bàn
                 </Button>
+                <Button
+                  icon={<AppstoreAddOutlined />}
+                  onClick={() => setBulkModalOpen(true)}
+                >
+                  Thêm nhiều bàn
+                </Button>
               </div>
             </div>
 
@@ -569,11 +611,10 @@ export function OwnerAreaSettingsPage() {
               <div className="owner-area-modal-table-list">
                 {detailArea.tables.map((table, tableIndex) => (
                   <div
-                    className={`owner-area-modal-table-row${
-                      orderingAreaId === detailArea.id
-                        ? ' owner-area-modal-table-row--ordering'
-                        : ''
-                    }`}
+                    className={`owner-area-modal-table-row${orderingAreaId === detailArea.id
+                      ? ' owner-area-modal-table-row--ordering'
+                      : ''
+                      }`}
                     key={table.id}
                     draggable={orderingAreaId === null}
                     onDragStart={() =>
@@ -796,6 +837,19 @@ export function OwnerAreaSettingsPage() {
           </Form.Item>
         </Form>
       </Modal>
+      {/* MODAL: THÊM NHIỀU BÀN VÀO KHU VỰC */}
+      <BulkAddTablesModal
+        open={bulkModalOpen}
+        onCancel={() => setBulkModalOpen(false)}
+        onConfirm={createBulkTablesInArea}
+        loading={bulkAddingTables}
+        initialPrefix="Bàn "
+        initialStartNumber={(detailArea?.tables.length ?? 0) + 1}
+        initialQuantity={10}
+        showPricingSelect
+        pricingOptions={pricingOptions()}
+        existingNames={detailArea?.tables.map((t) => t.name) ?? []}
+      />
     </div>
   );
 }
@@ -807,6 +861,7 @@ export function OwnerAreaCreatePage() {
   const [areaName, setAreaName] = useState('');
   const [tables, setTables] = useState<DraftTable[]>([]);
   const [tableModalOpen, setTableModalOpen] = useState(false);
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [editingDraft, setEditingDraft] = useState<DraftTable | null>(null);
   const [saving, setSaving] = useState(false);
   const [draggedDraftId, setDraggedDraftId] = useState<string | null>(null);
@@ -842,6 +897,16 @@ export function OwnerAreaCreatePage() {
     closeTableModal();
   };
 
+  const addBulkDraftTables = (generatedTables: BulkTableItem[]) => {
+    const newItems: DraftTable[] = generatedTables.map((item) => ({
+      id: crypto.randomUUID(),
+      name: item.name,
+    }));
+    setTables((current) => [...current, ...newItems]);
+    setBulkModalOpen(false);
+    messageApi.success(`Đã thêm ${newItems.length} bàn/phòng.`);
+  };
+
   const saveArea = async () => {
     if (!areaName.trim() || tables.length === 0) return;
     setSaving(true);
@@ -869,14 +934,23 @@ export function OwnerAreaCreatePage() {
           <AreaBackLink label="Quản lý bàn/phòng" />
           <Typography.Title level={2}>Tạo khu vực</Typography.Title>
         </div>
-        <Button type="primary" size="large" onClick={() => openTableModal()}>
-          Thêm bàn/phòng mới
-        </Button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Button
+            icon={<AppstoreAddOutlined />}
+            size="large"
+            onClick={() => setBulkModalOpen(true)}
+          >
+            Thêm nhiều bàn/phòng
+          </Button>
+          <Button type="primary" size="large" onClick={() => openTableModal()}>
+            Thêm bàn/phòng mới
+          </Button>
+        </div>
       </div>
 
       <Card className="owner-area-create-card" styles={{ body: { padding: 0 } }}>
         <div className="owner-area-name-field">
-          <label htmlFor="area-name">Tên khu vực</label>
+          <label htmlFor="area-name">Tên khu vực (*)</label>
           <Input
             id="area-name"
             value={areaName}
@@ -957,9 +1031,18 @@ export function OwnerAreaCreatePage() {
               image={Empty.PRESENTED_IMAGE_SIMPLE}
               description="Thêm ít nhất 1 bàn/phòng để tạo khu vực"
             >
-              <Button type="primary" ghost onClick={() => openTableModal()}>
-                Thêm bàn/phòng mới
-              </Button>
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+                <Button
+                  type="primary"
+                  icon={<AppstoreAddOutlined />}
+                  onClick={() => setBulkModalOpen(true)}
+                >
+                  Thêm nhiều bàn/phòng
+                </Button>
+                <Button ghost onClick={() => openTableModal()}>
+                  Thêm 1 bàn
+                </Button>
+              </div>
             </Empty>
           )}
         </div>
@@ -998,6 +1081,17 @@ export function OwnerAreaCreatePage() {
           </Form.Item>
         </Form>
       </Modal>
+
+      {/* MODAL: THÊM NHIỀU BÀN VÀO KHU VỰC DRAFT */}
+      <BulkAddTablesModal
+        open={bulkModalOpen}
+        onCancel={() => setBulkModalOpen(false)}
+        onConfirm={addBulkDraftTables}
+        initialPrefix="Bàn "
+        initialStartNumber={tables.length + 1}
+        initialQuantity={10}
+        existingNames={tables.map((t) => t.name)}
+      />
     </div>
   );
 }

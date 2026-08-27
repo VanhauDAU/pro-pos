@@ -1,25 +1,34 @@
 import {
+  AppstoreFilled,
   AppstoreOutlined,
   BankOutlined,
   BellFilled,
   BellOutlined,
+  BookOutlined,
+  CarOutlined,
   CheckCircleOutlined,
   ClockCircleOutlined,
   CloseCircleFilled,
   CloseCircleOutlined,
   CloseOutlined,
+  CoffeeOutlined,
   CopyOutlined,
   CreditCardOutlined,
+  CustomerServiceOutlined,
   DeleteOutlined,
   DownOutlined,
   EditOutlined,
   EllipsisOutlined,
   EnvironmentOutlined,
   FileTextOutlined,
+  FireOutlined,
   GiftOutlined,
   HistoryOutlined,
+  HomeOutlined,
+  LaptopOutlined,
   LeftOutlined,
   LogoutOutlined,
+  MedicineBoxOutlined,
   MessageOutlined,
   MinusOutlined,
   PauseCircleOutlined,
@@ -35,11 +44,16 @@ import {
   ShopOutlined,
   ShoppingCartOutlined,
   ShoppingOutlined,
+  SkinOutlined,
+  SmileOutlined,
   StopOutlined,
   SwapOutlined,
   SyncOutlined,
+  TagsFilled,
   TagsOutlined,
   TeamOutlined,
+  ThunderboltOutlined,
+  ToolOutlined,
   UnlockOutlined,
   UpOutlined,
   UserOutlined,
@@ -246,6 +260,91 @@ import { PosNotificationTracker } from './pos-notification-tracker';
 import { orderQuoteQueryOptions, overviewRefreshInterval } from './pos-order-query';
 
 const BRAND = '#0975f7';
+
+const ALL_CATEGORY_ICON = <AppstoreFilled />;
+
+function normalizeCategoryName(name: string) {
+  return name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase('vi-VN')
+    .replace(/đ/g, 'd')
+    .trim();
+}
+
+function categoryNameIncludes(name: string, keywords: string[]) {
+  return keywords.some(
+    (keyword) =>
+      name === keyword ||
+      name.startsWith(`${keyword} `) ||
+      name.endsWith(` ${keyword}`) ||
+      name.includes(` ${keyword} `),
+  );
+}
+
+function categoryIcon(name: string): ReactNode {
+  const normalized = normalizeCategoryName(name);
+
+  if (
+    categoryNameIncludes(normalized, [
+      'do an',
+      'mon an',
+      'thuc an',
+      'do nuong',
+      'banh',
+      'com',
+      'pho',
+      'bun',
+      'food',
+    ])
+  ) {
+    return <FireOutlined />;
+  }
+  if (
+    categoryNameIncludes(normalized, [
+      'do uong',
+      'nuoc',
+      'ca phe',
+      'coffee',
+      'tra',
+      'bia',
+      'ruou',
+      'drink',
+    ])
+  ) {
+    return <CoffeeOutlined />;
+  }
+  if (categoryNameIncludes(normalized, ['dich vu', 'service', 'sua chua', 'bao tri'])) {
+    return <ToolOutlined />;
+  }
+  if (categoryNameIncludes(normalized, ['quan ao', 'thoi trang', 'giay', 'tui', 'fashion'])) {
+    return <SkinOutlined />;
+  }
+  if (
+    categoryNameIncludes(normalized, ['dien tu', 'cong nghe', 'may tinh', 'dien thoai', 'laptop'])
+  ) {
+    return <LaptopOutlined />;
+  }
+  if (categoryNameIncludes(normalized, ['suc khoe', 'thuoc', 'y te', 'duoc'])) {
+    return <MedicineBoxOutlined />;
+  }
+  if (categoryNameIncludes(normalized, ['xe', 'van chuyen', 'giao hang', 'transport'])) {
+    return <CarOutlined />;
+  }
+  if (categoryNameIncludes(normalized, ['sach', 'van phong pham', 'giao duc', 'book'])) {
+    return <BookOutlined />;
+  }
+  if (categoryNameIncludes(normalized, ['gia dung', 'noi that', 'nha cua', 'home'])) {
+    return <HomeOutlined />;
+  }
+  if (categoryNameIncludes(normalized, ['giai tri', 'am nhac', 'game', 'tro choi'])) {
+    return <CustomerServiceOutlined />;
+  }
+
+  const hash = [...normalized].reduce((value, char) => value + char.charCodeAt(0), 0);
+  const icons = [<TagsFilled />, <ShoppingOutlined />, <ThunderboltOutlined />, <SmileOutlined />];
+  return icons[hash % icons.length];
+}
 
 interface StaffContext {
   storeId: string;
@@ -1475,7 +1574,7 @@ function AreasPage() {
 
   const initialArea =
     searchParams.get('tab') === 'takeaway' ||
-    (location.state as { selectedArea?: string } | null)?.selectedArea === '__TAKEAWAY__'
+      (location.state as { selectedArea?: string } | null)?.selectedArea === '__TAKEAWAY__'
       ? '__TAKEAWAY__'
       : ((location.state as { selectedArea?: string } | null)?.selectedArea ?? null);
 
@@ -1703,30 +1802,30 @@ function AreasPage() {
             {/* Các đơn mang về đang hoạt động ("Mang về 01", "Mang về 02", ...) */}
             {status !== 'AVAILABLE'
               ? activeTakeaways.map((takeawayOrder, index) => {
-                  const label = `Mang về ${String(index + 1).padStart(2, '0')}`;
-                  return (
-                    <button
-                      type="button"
-                      key={takeawayOrder.id}
-                      className="staff-table-card staff-table-card--occupied"
-                      onClick={() => navigate(`/pos/orders/${takeawayOrder.id}`)}
-                    >
-                      <div className="staff-table-card__header">
-                        <strong className="staff-table-card__name">{label}</strong>
+                const label = `Mang về ${String(index + 1).padStart(2, '0')}`;
+                return (
+                  <button
+                    type="button"
+                    key={takeawayOrder.id}
+                    className="staff-table-card staff-table-card--occupied"
+                    onClick={() => navigate(`/pos/orders/${takeawayOrder.id}`)}
+                  >
+                    <div className="staff-table-card__header">
+                      <strong className="staff-table-card__name">{label}</strong>
+                    </div>
+                    <div className="staff-table-card__body">
+                      <div className="staff-table-card__meta">
+                        <span>{formatTableShortDuration(takeawayOrder.openedAt, now)}</span>
+                        <span className="staff-table-card__dot">•</span>
+                        <span>{takeawayOrder.itemCount ?? 0} món</span>
                       </div>
-                      <div className="staff-table-card__body">
-                        <div className="staff-table-card__meta">
-                          <span>{formatTableShortDuration(takeawayOrder.openedAt, now)}</span>
-                          <span className="staff-table-card__dot">•</span>
-                          <span>{takeawayOrder.itemCount ?? 0} món</span>
-                        </div>
-                        <div className="staff-table-card__total">
-                          {formatMoney(takeawayOrder.totalVnd ?? 0)}
-                        </div>
+                      <div className="staff-table-card__total">
+                        {formatMoney(takeawayOrder.totalVnd ?? 0)}
                       </div>
-                    </button>
-                  );
-                })
+                    </div>
+                  </button>
+                );
+              })
               : null}
           </div>
         ) : visibleTables.length === 0 ? (
@@ -2920,8 +3019,8 @@ function MorePage({
         </div>
 
         {context.data?.storeAddress ||
-        context.data?.storePhone ||
-        context.data?.bankAccountNumber ? (
+          context.data?.storePhone ||
+          context.data?.bankAccountNumber ? (
           <div className="staff-store-card__details">
             {context.data?.storeAddress ? (
               <div className="staff-store-card__detail-item">
@@ -3357,9 +3456,8 @@ function StaffTableTransferModal({
                         <div className="staff-transfer-card__header">
                           <strong className="staff-transfer-card__name">{table.name}</strong>
                           <span
-                            className={`staff-transfer-card__status-badge ${
-                              isCurrent ? 'is-current' : isOccupied ? 'is-occupied' : 'is-available'
-                            }`}
+                            className={`staff-transfer-card__status-badge ${isCurrent ? 'is-current' : isOccupied ? 'is-occupied' : 'is-available'
+                              }`}
                           >
                             {isCurrent ? 'Bàn hiện tại' : isOccupied ? 'Đang chơi' : 'Bàn trống'}
                           </span>
@@ -3672,13 +3770,13 @@ function StaffItemDetailModal({
     product?.variants && product.variants.length > 0
       ? product.variants
       : [
-          {
-            id: item.variantId ?? 'default',
-            name: item.variantName || 'Giá thường',
-            salePriceVnd: item.unitPriceVnd,
-            promptPrice: 0,
-          },
-        ];
+        {
+          id: item.variantId ?? 'default',
+          name: item.variantName || 'Giá thường',
+          salePriceVnd: item.unitPriceVnd,
+          promptPrice: 0,
+        },
+      ];
 
   return (
     <OrderItemDetailModal
@@ -5123,10 +5221,10 @@ function OrderEditor({
       discount:
         line.discountType && line.discountInputValue !== null
           ? {
-              type: line.discountType,
-              value: line.discountInputValue,
-              reason: line.discountReason ?? '',
-            }
+            type: line.discountType,
+            value: line.discountInputValue,
+            reason: line.discountReason ?? '',
+          }
           : null,
     }));
 
@@ -5199,8 +5297,8 @@ function OrderEditor({
         orderIndex < 0
           ? [...cached.orders, overviewOrder]
           : cached.orders.map((order, index) =>
-              index === orderIndex ? { ...order, ...overviewOrder } : order,
-            );
+            index === orderIndex ? { ...order, ...overviewOrder } : order,
+          );
       return { ...cached, tables, orders, serverNowMs: snapshot.serverNowMs };
     });
     queryClient.setQueryData<PosOverviewOrder[]>(['pos-orders-list'], (cached) => {
@@ -5209,8 +5307,8 @@ function OrderEditor({
       return orderIndex < 0
         ? [...cached, overviewOrder]
         : cached.map((order, index) =>
-            index === orderIndex ? { ...order, ...overviewOrder } : order,
-          );
+          index === orderIndex ? { ...order, ...overviewOrder } : order,
+        );
     });
     if (snapshot.callBatch) {
       queryClient.setQueryData<OrderCallBatchPageDto>(
@@ -5587,13 +5685,22 @@ function OrderEditor({
   };
 
   const categories = useMemo(() => {
-    const map = new Map<string, string>();
+    const map = new Map<string, { count: number; name: string }>();
     for (const product of catalog.data ?? []) {
       if (product.categoryId && product.categoryName) {
-        map.set(product.categoryId, product.categoryName);
+        const current = map.get(product.categoryId);
+        map.set(product.categoryId, {
+          count: (current?.count ?? 0) + 1,
+          name: product.categoryName,
+        });
       }
     }
-    return [...map].map(([id, name]) => ({ id, name }));
+    return [...map].map(([id, category]) => ({
+      id,
+      count: category.count,
+      name: category.name,
+      icon: categoryIcon(category.name),
+    }));
   }, [catalog.data]);
 
   const visibleCatalog = (catalog.data ?? []).filter((product) => {
@@ -5825,8 +5932,8 @@ function OrderEditor({
     const targetKey = variantId || product.variants[0]?.id || product.productId;
     const existingRow = targetKey
       ? (document.querySelector(
-          `.staff-cart-panel [data-variant-id="${targetKey}"]`,
-        ) as HTMLElement | null)
+        `.staff-cart-panel [data-variant-id="${targetKey}"]`,
+      ) as HTMLElement | null)
       : null;
     const cartList = document.querySelector('.staff-compact-order-list') as HTMLElement | null;
     const cartPanel = document.querySelector('.staff-cart-panel') as HTMLElement | null;
@@ -5919,10 +6026,10 @@ function OrderEditor({
           discount:
             line.discountType && line.discountInputValue !== null
               ? {
-                  type: line.discountType,
-                  value: line.discountInputValue,
-                  reason: line.discountReason ?? '',
-                }
+                type: line.discountType,
+                value: line.discountInputValue,
+                reason: line.discountReason ?? '',
+              }
               : null,
         },
         { headers: mutationHeaders(csrf) },
@@ -5963,10 +6070,10 @@ function OrderEditor({
             update.discount === undefined
               ? item.discountType && typeof item.discountInputValue === 'number'
                 ? {
-                    type: item.discountType,
-                    value: item.discountInputValue,
-                    reason: item.discountReason || '',
-                  }
+                  type: item.discountType,
+                  value: item.discountInputValue,
+                  reason: item.discountReason || '',
+                }
                 : undefined
               : update.discount,
           note: update.note === undefined ? (item.note ?? null) : update.note,
@@ -6153,7 +6260,7 @@ function OrderEditor({
 
   const saveOrder = async () => {
     if (isNew && orderType === 'TAKEAWAY' && draftLines.length === 0) {
-      messageApi.warning('Vui lòng chọn ít nhất một mặt hàng cho đơn mang đi.');
+      messageApi.warning('Vui lòng chọn ít nhất một mặt hàng cho đơn mang về.');
       return;
     }
     if (orderType === 'DINE_IN') {
@@ -6444,8 +6551,8 @@ function OrderEditor({
         image: qrImage,
         ...(quote.data?.order.displayCode || (orderId && orderId !== 'new')
           ? {
-              orderCode: quote.data?.order.displayCode || `D-${orderId!.slice(0, 8).toUpperCase()}`,
-            }
+            orderCode: quote.data?.order.displayCode || `D-${orderId!.slice(0, 8).toUpperCase()}`,
+          }
           : {}),
       });
       setTableQrModalOpen(true);
@@ -6458,7 +6565,7 @@ function OrderEditor({
 
   const beginCheckout = async () => {
     if (isNew && orderType === 'TAKEAWAY' && draftLines.length === 0) {
-      messageApi.warning('Vui lòng chọn ít nhất một mặt hàng cho đơn mang đi.');
+      messageApi.warning('Vui lòng chọn ít nhất một mặt hàng cho đơn Mang về.');
       return;
     }
     if (!isNew) {
@@ -6868,8 +6975,8 @@ function OrderEditor({
           const details = modifiedItemDetails[item.id];
           const variant = details?.variantId
             ? catalog.data
-                ?.find((product) => product.productId === item.productId)
-                ?.variants.find((candidate) => candidate.id === details.variantId)
+              ?.find((product) => product.productId === item.productId)
+              ?.variants.find((candidate) => candidate.id === details.variantId)
             : undefined;
           const quantityMilli = modifiedItemQuantities[item.id] ?? item.quantityMilli;
           const unitPriceVnd =
@@ -7025,19 +7132,19 @@ function OrderEditor({
     const gifts = promotionPreview.data
       ? (promotionPreview.data.giftItems ?? [])
       : (quote.data?.items ?? [])
-          .filter((it) => it.promotionGift)
-          .map((g) => ({
-            productId: g.productId,
-            variantId: g.variantId ?? null,
-            productName: g.productName,
-            variantName: g.variantName ?? null,
-            unitName: g.unitName,
-            unitPriceVnd: g.unitPriceVnd,
-            quantityMilli: g.quantityMilli,
-            grossAmountVnd: g.grossLineTotalVnd,
-            promotionId: g.promotionGift?.promotionId ?? '',
-            promotionName: g.promotionGift?.promotionName ?? '',
-          }));
+        .filter((it) => it.promotionGift)
+        .map((g) => ({
+          productId: g.productId,
+          variantId: g.variantId ?? null,
+          productName: g.productName,
+          variantName: g.variantName ?? null,
+          unitName: g.unitName,
+          unitPriceVnd: g.unitPriceVnd,
+          quantityMilli: g.quantityMilli,
+          grossAmountVnd: g.grossLineTotalVnd,
+          promotionId: g.promotionGift?.promotionId ?? '',
+          promotionName: g.promotionGift?.promotionName ?? '',
+        }));
     return gifts.map((gift) => ({
       id: `preview-gift:${gift.promotionId}:${gift.productId}:${gift.variantId}`,
       productId: gift.productId,
@@ -7231,9 +7338,9 @@ function OrderEditor({
   const displayedTotal = Math.max(0, combinedSubtotal - totalDiscount);
   const liveElapsedSeconds = quote.data?.time
     ? quote.data.time.elapsedSeconds +
-      (quote.data.time.status === 'RUNNING' && !quote.data.time.endedAtMs
-        ? Math.max(0, Math.floor((clockNow - quote.dataUpdatedAt) / 1000))
-        : 0)
+    (quote.data.time.status === 'RUNNING' && !quote.data.time.endedAtMs
+      ? Math.max(0, Math.floor((clockNow - quote.dataUpdatedAt) / 1000))
+      : 0)
     : 0;
 
   const applyPromotion = async (promotionIds: string[]) => {
@@ -7421,8 +7528,13 @@ function OrderEditor({
                 type="button"
                 className={`staff-product-picker-cat-pill ${selectedCategory === 'ALL' ? 'is-active' : ''}`}
                 onClick={() => setSelectedCategory('ALL')}
+                aria-pressed={selectedCategory === 'ALL'}
               >
-                Tất cả
+                <span className="staff-product-picker-cat-pill__icon">{ALL_CATEGORY_ICON}</span>
+                <span className="staff-product-picker-cat-pill__content">
+                  <span>Tất cả</span>
+                  <small>{catalog.data?.length ?? 0} mặt hàng</small>
+                </span>
               </button>
               {categories.map((cat) => (
                 <button
@@ -7430,8 +7542,13 @@ function OrderEditor({
                   key={cat.id}
                   className={`staff-product-picker-cat-pill ${selectedCategory === cat.id ? 'is-active' : ''}`}
                   onClick={() => setSelectedCategory(cat.id)}
+                  aria-pressed={selectedCategory === cat.id}
                 >
-                  {cat.name}
+                  <span className="staff-product-picker-cat-pill__icon">{cat.icon}</span>
+                  <span className="staff-product-picker-cat-pill__content">
+                    <span>{cat.name}</span>
+                    <small>{cat.count} mặt hàng</small>
+                  </span>
                 </button>
               ))}
             </div>
@@ -7528,8 +7645,8 @@ function OrderEditor({
 
                         <div className="staff-product-compact-row__action">
                           {effectiveCount > 0 &&
-                          product.productType === 'QUANTITY' &&
-                          product.variants.length === 1 ? (
+                            product.productType === 'QUANTITY' &&
+                            product.variants.length === 1 ? (
                             <div
                               className="staff-product-compact-stepper"
                               onClick={(e) => e.stopPropagation()}
@@ -7639,7 +7756,7 @@ function OrderEditor({
                         ? selectedTable.name
                         : 'Tạo đơn mới'
                       : quote.data?.order.displayCode ||
-                        (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
+                      (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
                   </div>
                   <div className="staff-order-mobile-sub">
                     <span className="staff-order-mobile-type-icon">
@@ -7757,11 +7874,11 @@ function OrderEditor({
                   Mặt hàng đã gọi (
                   {committedDisplayItems.length +
                     (quote.data?.time ||
-                    (isNew &&
-                      orderType === 'DINE_IN' &&
-                      selectedTable?.timeProductId &&
-                      !timeRemoved) ||
-                    timeRestoringDraft
+                      (isNew &&
+                        orderType === 'DINE_IN' &&
+                        selectedTable?.timeProductId &&
+                        !timeRemoved) ||
+                      timeRestoringDraft
                       ? 1
                       : 0)}
                   )
@@ -7795,10 +7912,10 @@ function OrderEditor({
                     quote.data?.order.orderType === 'DINE_IN' &&
                     !quote.data?.time &&
                     !timeRestoringDraft) ||
-                  (isNew &&
-                    orderType === 'DINE_IN' &&
-                    selectedTable?.timeProductId &&
-                    timeRemoved) ? (
+                    (isNew &&
+                      orderType === 'DINE_IN' &&
+                      selectedTable?.timeProductId &&
+                      timeRemoved) ? (
                     <div style={{ padding: '8px 16px 4px' }}>
                       <Button
                         size="small"
@@ -7836,7 +7953,7 @@ function OrderEditor({
                         <span className="staff-order-mobile-item__name">
                           <span>
                             {quote.data.time.tableSegments &&
-                            quote.data.time.tableSegments.length > 1
+                              quote.data.time.tableSegments.length > 1
                               ? 'Tiền giờ (Chuyển bàn)'
                               : 'Giờ'}
                           </span>
@@ -8289,11 +8406,11 @@ function OrderEditor({
                   {[
                     quote.data.order.orderType === 'DINE_IN'
                       ? [quote.data.order.areaName, quote.data.order.tableName]
-                          .filter(Boolean)
-                          .join(' - ')
-                      : 'Mang đi',
+                        .filter(Boolean)
+                        .join(' - ')
+                      : 'Mang về',
                     quote.data.order.displayCode ||
-                      (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : null),
+                    (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : null),
                   ]
                     .filter(Boolean)
                     .join(' · ')}
@@ -8318,7 +8435,7 @@ function OrderEditor({
                 value={isNew ? orderType : quote.data?.order.orderType}
                 options={[
                   { value: 'DINE_IN', label: 'Tại chỗ' },
-                  { value: 'TAKEAWAY', label: 'Mang đi' },
+                  { value: 'TAKEAWAY', label: 'Mang về' },
                 ]}
                 disabled={!isNew}
                 onChange={(value) => {
@@ -8348,7 +8465,7 @@ function OrderEditor({
                   {isNew
                     ? 'Sinh khi lưu'
                     : quote.data?.order.displayCode ||
-                      (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
+                    (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
                 </strong>
               </div>
             </div>
@@ -8364,9 +8481,11 @@ function OrderEditor({
                 type="button"
                 className={selectedCategory === 'ALL' ? 'is-active' : ''}
                 onClick={() => setSelectedCategory('ALL')}
+                aria-pressed={selectedCategory === 'ALL'}
               >
-                <AppstoreOutlined />
-                <span>Tất cả</span>
+                <span className="staff-category-sidebar__icon">{ALL_CATEGORY_ICON}</span>
+                <span className="staff-category-sidebar__label">Tất cả</span>
+                <small>{catalog.data?.length ?? 0}</small>
               </button>
               {categories.map((category) => (
                 <button
@@ -8374,9 +8493,11 @@ function OrderEditor({
                   key={category.id}
                   className={selectedCategory === category.id ? 'is-active' : ''}
                   onClick={() => setSelectedCategory(category.id)}
+                  aria-pressed={selectedCategory === category.id}
                 >
-                  <AppstoreOutlined />
-                  <span>{category.name}</span>
+                  <span className="staff-category-sidebar__icon">{category.icon}</span>
+                  <span className="staff-category-sidebar__label">{category.name}</span>
+                  <small>{category.count}</small>
                 </button>
               ))}
             </aside>
@@ -8488,11 +8609,11 @@ function OrderEditor({
                         Sản phẩm đã gọi (
                         {committedDisplayItems.length +
                           (quote.data?.time ||
-                          (isNew &&
-                            orderType === 'DINE_IN' &&
-                            selectedTable?.timeProductId &&
-                            !timeRemoved) ||
-                          timeRestoringDraft
+                            (isNew &&
+                              orderType === 'DINE_IN' &&
+                              selectedTable?.timeProductId &&
+                              !timeRemoved) ||
+                            timeRestoringDraft
                             ? 1
                             : 0)}
                         )
@@ -8527,10 +8648,10 @@ function OrderEditor({
                           quote.data?.order.orderType === 'DINE_IN' &&
                           !quote.data?.time &&
                           !timeRestoringDraft) ||
-                        (isNew &&
-                          orderType === 'DINE_IN' &&
-                          selectedTable?.timeProductId &&
-                          timeRemoved) ? (
+                          (isNew &&
+                            orderType === 'DINE_IN' &&
+                            selectedTable?.timeProductId &&
+                            timeRemoved) ? (
                           <div style={{ margin: '0 0 14px' }}>
                             <Button
                               size="small"
@@ -8560,7 +8681,7 @@ function OrderEditor({
 
                         {quote.data?.time ? (
                           quote.data.time.tableSegments &&
-                          quote.data.time.tableSegments.length > 1 ? (
+                            quote.data.time.tableSegments.length > 1 ? (
                             <button
                               type="button"
                               className="staff-time-line staff-time-line--editable staff-time-line--transfer"
@@ -8663,7 +8784,7 @@ function OrderEditor({
                                   {quote.data.time.endedAtMs
                                     ? formatClock(quote.data.time.endedAtMs)
                                     : quote.data.time.status === 'PAUSED' &&
-                                        quote.data.time.pausedAtMs
+                                      quote.data.time.pausedAtMs
                                       ? formatClock(quote.data.time.pausedAtMs)
                                       : 'Hiện tại'}{' '}
                                   · Tổng: <strong>{formatElapsed(liveElapsedSeconds)}</strong>
@@ -8866,7 +8987,7 @@ function OrderEditor({
                           <strong className="staff-order-info-value">
                             {orderType === 'DINE_IN'
                               ? `Tại chỗ · ${quote.data?.order.tableName ?? selectedTable?.name ?? 'Chưa chọn bàn'}`
-                              : 'Mang đi'}
+                              : 'Mang về'}
                           </strong>
                         </div>
                         <div className="staff-order-info-item">
@@ -8880,7 +9001,7 @@ function OrderEditor({
                             {isNew
                               ? 'Sinh khi lưu'
                               : quote.data?.order.displayCode ||
-                                (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
+                              (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
                           </strong>
                         </div>
                       </div>
@@ -9241,13 +9362,13 @@ function OrderEditor({
                   : (updated.variantId ?? null),
               discount:
                 updated.discountType &&
-                updated.discountInputValue !== null &&
-                updated.discountInputValue !== undefined
+                  updated.discountInputValue !== null &&
+                  updated.discountInputValue !== undefined
                   ? {
-                      type: updated.discountType,
-                      value: updated.discountInputValue,
-                      reason: updated.discountReason ?? '',
-                    }
+                    type: updated.discountType,
+                    value: updated.discountInputValue,
+                    reason: updated.discountReason ?? '',
+                  }
                   : null,
               note: updated.note.trim() || null,
             });
@@ -9288,94 +9409,94 @@ function OrderEditor({
         footer={
           quote.data?.time
             ? [
-                quote.data.time.status === 'PAUSED' ? (
-                  <Button
-                    key="resume"
-                    type="primary"
-                    style={{ background: '#16a34a', borderColor: '#16a34a' }}
-                    icon={<PlayCircleOutlined />}
-                    loading={saving}
-                    onClick={handleResumeTimeRealtime}
-                    className="staff-time-footer-btn"
-                  >
-                    Mở lại bàn (Tiếp tục giờ)
-                  </Button>
-                ) : quote.data.time.status === 'ENDED' || quote.data.time.endedAtMs ? (
-                  <Button
-                    key="continue"
-                    type="primary"
-                    style={{ background: '#16a34a', borderColor: '#16a34a' }}
-                    icon={<PlayCircleOutlined />}
-                    loading={saving}
-                    onClick={handleContinueRunningTime}
-                    className="staff-time-footer-btn"
-                  >
-                    Tiếp tục tính giờ (Bỏ dừng)
-                  </Button>
-                ) : (
-                  <Button
-                    key="pause"
-                    danger
-                    icon={<PauseCircleOutlined />}
-                    loading={saving}
-                    onClick={handlePauseTimeRealtime}
-                    className="staff-time-footer-btn"
-                  >
-                    Tạm dừng tính giờ
-                  </Button>
-                ),
+              quote.data.time.status === 'PAUSED' ? (
                 <Button
-                  key="delete-time"
-                  danger
-                  icon={<DeleteOutlined />}
-                  onClick={() => {
-                    setDeleteTimeReason('');
-                    setDeleteTimeModalOpen(true);
-                  }}
+                  key="resume"
+                  type="primary"
+                  style={{ background: '#16a34a', borderColor: '#16a34a' }}
+                  icon={<PlayCircleOutlined />}
+                  loading={saving}
+                  onClick={handleResumeTimeRealtime}
                   className="staff-time-footer-btn"
                 >
-                  Xóa tiền giờ
-                </Button>,
+                  Mở lại bàn (Tiếp tục giờ)
+                </Button>
+              ) : quote.data.time.status === 'ENDED' || quote.data.time.endedAtMs ? (
                 <Button
-                  key="save"
+                  key="continue"
                   type="primary"
+                  style={{ background: '#16a34a', borderColor: '#16a34a' }}
+                  icon={<PlayCircleOutlined />}
                   loading={saving}
-                  onClick={saveTimeRange}
-                  className="staff-time-footer-btn staff-time-footer-btn--primary"
+                  onClick={handleContinueRunningTime}
+                  className="staff-time-footer-btn"
                 >
-                  Lưu thay đổi
-                </Button>,
-              ]
+                  Tiếp tục tính giờ (Bỏ dừng)
+                </Button>
+              ) : (
+                <Button
+                  key="pause"
+                  danger
+                  icon={<PauseCircleOutlined />}
+                  loading={saving}
+                  onClick={handlePauseTimeRealtime}
+                  className="staff-time-footer-btn"
+                >
+                  Tạm dừng tính giờ
+                </Button>
+              ),
+              <Button
+                key="delete-time"
+                danger
+                icon={<DeleteOutlined />}
+                onClick={() => {
+                  setDeleteTimeReason('');
+                  setDeleteTimeModalOpen(true);
+                }}
+                className="staff-time-footer-btn"
+              >
+                Xóa tiền giờ
+              </Button>,
+              <Button
+                key="save"
+                type="primary"
+                loading={saving}
+                onClick={saveTimeRange}
+                className="staff-time-footer-btn staff-time-footer-btn--primary"
+              >
+                Lưu thay đổi
+              </Button>,
+            ]
             : [
-                <Button
-                  key="cancel"
-                  onClick={() => setTimeDetailOpen(false)}
-                  className="staff-time-footer-btn"
-                >
-                  Đóng
-                </Button>,
-                <Button
-                  key="discard-restore"
-                  danger
-                  icon={<DeleteOutlined />}
-                  onClick={() => {
-                    setTimeRestoringDraft(false);
-                    setTimeDetailOpen(false);
-                  }}
-                  className="staff-time-footer-btn"
-                >
-                  Hủy khôi phục
-                </Button>,
-                <Button
-                  key="save"
-                  type="primary"
-                  loading={saving}
-                  onClick={saveTimeRange}
-                  className="staff-time-footer-btn staff-time-footer-btn--primary"
-                >
-                  Lưu thay đổi
-                </Button>,
-              ]
+              <Button
+                key="cancel"
+                onClick={() => setTimeDetailOpen(false)}
+                className="staff-time-footer-btn"
+              >
+                Đóng
+              </Button>,
+              <Button
+                key="discard-restore"
+                danger
+                icon={<DeleteOutlined />}
+                onClick={() => {
+                  setTimeRestoringDraft(false);
+                  setTimeDetailOpen(false);
+                }}
+                className="staff-time-footer-btn"
+              >
+                Hủy khôi phục
+              </Button>,
+              <Button
+                key="save"
+                type="primary"
+                loading={saving}
+                onClick={saveTimeRange}
+                className="staff-time-footer-btn staff-time-footer-btn--primary"
+              >
+                Lưu thay đổi
+              </Button>,
+            ]
         }
       >
         {quote.data?.time ? (
@@ -9975,7 +10096,7 @@ function OrderEditor({
                 {isNew
                   ? 'Chưa tạo'
                   : quote.data?.order.displayCode ||
-                    (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
+                  (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
               </strong>
             </div>
             <div className="staff-mobile-actions-info-row">
@@ -9995,7 +10116,7 @@ function OrderEditor({
               <strong>
                 {orderType === 'DINE_IN'
                   ? (quote.data?.order.tableName ?? selectedTable?.name ?? 'Chưa chọn bàn')
-                  : 'Mang đi'}
+                  : 'Mang về'}
               </strong>
             </div>
           </div>
@@ -10286,7 +10407,7 @@ function InvoicePage() {
         <header>
           <div>
             <strong>Pro POS</strong>
-            <span>{data.invoice.orderType === 'DINE_IN' ? 'Tại chỗ' : 'Mang đi'}</span>
+            <span>{data.invoice.orderType === 'DINE_IN' ? 'Tại chỗ' : 'Mang về'}</span>
           </div>
           <div>
             <b>{data.invoice.displayCode}</b>
@@ -10401,10 +10522,10 @@ function InvoicePage() {
                 <span>
                   {line.lineType === 'PRODUCT' && snapshot.productType !== 'TIME'
                     ? formatItemQuantity(
-                        snapshot.productType ?? 'QUANTITY',
-                        line.quantityMilli,
-                        snapshot.unitName ?? null,
-                      )
+                      snapshot.productType ?? 'QUANTITY',
+                      line.quantityMilli,
+                      snapshot.unitName ?? null,
+                    )
                     : ''}
                 </span>
                 <b>{formatMoney(line.lineTotal)}</b>
@@ -10587,6 +10708,14 @@ function quickCashAmounts(totalVnd: number) {
     amounts.add((Math.floor(totalVnd / denomination) + 1) * denomination);
   }
   return [...amounts].filter((amount) => amount >= totalVnd).slice(0, 6);
+}
+
+function formatBankAccountOption(account: BankAccountDto): string {
+  const bankTitle = account.bankName || account.bankCode || 'Ngân hàng';
+  const holder = account.accountName ? ` · ${account.accountName}` : '';
+  const num = account.accountNumber ? ` (${account.accountNumber})` : '';
+  const def = account.isDefault ? ' · Mặc định' : '';
+  return `${bankTitle}${holder}${num}${def}`;
 }
 
 function PaymentPage({
@@ -10944,19 +11073,19 @@ function PaymentPage({
     method: 'CASH' | 'BANK_TRANSFER' | 'DEBT';
     amountVnd: number;
   }> = isMultiMethod
-    ? [
+      ? [
         ...(cashApplied > 0 ? [{ method: 'CASH' as const, amountVnd: cashApplied }] : []),
         ...(bankApplied > 0 ? [{ method: 'BANK_TRANSFER' as const, amountVnd: bankApplied }] : []),
         ...(debtAmount > 0 ? [{ method: 'DEBT' as const, amountVnd: debtAmount }] : []),
       ]
-    : isDebtMethod
-      ? [
+      : isDebtMethod
+        ? [
           ...(cashApplied > 0 ? [{ method: 'CASH' as const, amountVnd: cashApplied }] : []),
           ...(currentDebtAmount > 0
             ? [{ method: 'DEBT' as const, amountVnd: currentDebtAmount }]
             : []),
         ]
-      : [
+        : [
           {
             method: selectedMethod === 'CASH' ? ('CASH' as const) : ('BANK_TRANSFER' as const),
             amountVnd: totalVnd,
@@ -10977,19 +11106,19 @@ function PaymentPage({
   };
   const paymentPreviewOptions = quote.data
     ? {
-        data: buildCurrentPaymentPrintData()!,
-        printSettings: printSettings.data,
-        storeInfo: {
-          storeName: staffContext.data?.storeName ?? null,
-          phone: staffContext.data?.storePhone ?? null,
-          address: staffContext.data?.storeAddress ?? null,
-          bankName: selectedBankAccount?.bankBin ?? staffContext.data?.bankName ?? null,
-          bankAccountNumber:
-            selectedBankAccount?.accountNumber ?? staffContext.data?.bankAccountNumber ?? null,
-          bankAccountName:
-            selectedBankAccount?.accountName ?? staffContext.data?.bankAccountName ?? null,
-        },
-      }
+      data: buildCurrentPaymentPrintData()!,
+      printSettings: printSettings.data,
+      storeInfo: {
+        storeName: staffContext.data?.storeName ?? null,
+        phone: staffContext.data?.storePhone ?? null,
+        address: staffContext.data?.storeAddress ?? null,
+        bankName: selectedBankAccount?.bankBin ?? staffContext.data?.bankName ?? null,
+        bankAccountNumber:
+          selectedBankAccount?.accountNumber ?? staffContext.data?.bankAccountNumber ?? null,
+        bankAccountName:
+          selectedBankAccount?.accountName ?? staffContext.data?.bankAccountName ?? null,
+      },
+    }
     : null;
 
   const resumeCheckoutForReturn = async () => {
@@ -11066,17 +11195,17 @@ function PaymentPage({
           cashReceivedVnd: currentMethodItem.backendMethod === 'CASH' ? cashReceived : null,
           allocations: isMultiMethod
             ? [
-                ...(cashApplied > 0
-                  ? [
-                      {
-                        method: 'CASH',
-                        amountVnd: cashApplied,
-                        tenderedVnd: cashReceived ?? cashApplied,
-                      },
-                    ]
-                  : []),
-                ...(bankApplied > 0 ? [{ method: 'BANK_TRANSFER', amountVnd: bankApplied }] : []),
-              ]
+              ...(cashApplied > 0
+                ? [
+                  {
+                    method: 'CASH',
+                    amountVnd: cashApplied,
+                    tenderedVnd: cashReceived ?? cashApplied,
+                  },
+                ]
+                : []),
+              ...(bankApplied > 0 ? [{ method: 'BANK_TRANSFER', amountVnd: bankApplied }] : []),
+            ]
             : isDebtMethod
               ? cashApplied > 0
                 ? [{ method: 'CASH', amountVnd: cashApplied, tenderedVnd: cashApplied }]
@@ -11139,12 +11268,12 @@ function PaymentPage({
             setPaymentSuccessData((current) =>
               current?.orderId === completedOrderId
                 ? {
-                    ...current,
-                    printStatus: printResult.success ? 'PRINTED' : 'FAILED',
-                    printError: printResult.success
-                      ? null
-                      : (printResult.message ?? 'Không thể in hóa đơn.'),
-                  }
+                  ...current,
+                  printStatus: printResult.success ? 'PRINTED' : 'FAILED',
+                  printError: printResult.success
+                    ? null
+                    : (printResult.message ?? 'Không thể in hóa đơn.'),
+                }
                 : current,
             );
             if (!printResult.success) {
@@ -11157,10 +11286,10 @@ function PaymentPage({
             setPaymentSuccessData((current) =>
               current?.orderId === completedOrderId
                 ? {
-                    ...current,
-                    printStatus: 'FAILED',
-                    printError: errorText(error),
-                  }
+                  ...current,
+                  printStatus: 'FAILED',
+                  printError: errorText(error),
+                }
                 : current,
             );
             messageApi.warning(
@@ -11302,6 +11431,18 @@ function PaymentPage({
       }
     },
   };
+  const [isDesktopOrTablet, setIsDesktopOrTablet] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth >= 768 : true,
+  );
+
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 768px)');
+    const sync = () => setIsDesktopOrTablet(media.matches);
+    sync();
+    media.addEventListener('change', sync);
+    return () => media.removeEventListener('change', sync);
+  }, []);
+
   const methodDetail = isMultiMethod ? (
     <div className="payment-workspace__allocations">
       <label>
@@ -11346,7 +11487,7 @@ function PaymentPage({
           placeholder="Chọn tài khoản nhận tiền"
           options={bankAccounts.map((account) => ({
             value: account.id,
-            label: `${account.bankCode} · ${account.accountNumber}${account.isDefault ? ' · Mặc định' : ''}`,
+            label: formatBankAccountOption(account),
           }))}
           onChange={(value) => setSelectedBankAccountId(value)}
         />
@@ -11384,23 +11525,60 @@ function PaymentPage({
     </div>
   ) : selectedMethod === 'BANK_TRANSFER' ? (
     <div className="payment-workspace__bank-detail">
-      <Select<string>
-        value={selectedBankAccount?.id ?? null}
-        placeholder="Chọn tài khoản nhận tiền"
-        options={bankAccounts.map((account) => ({
-          value: account.id,
-          label: `${account.bankCode} · ${account.accountNumber}${account.isDefault ? ' · Mặc định' : ''}`,
-        }))}
-        onChange={(value) => setSelectedBankAccountId(value)}
-      />
+      {bankAccounts.length > 1 ? (
+        <div className="payment-bank-picker-row">
+          <span className="payment-bank-picker-label">Tài khoản nhận:</span>
+          <Select<string>
+            value={selectedBankAccount?.id ?? null}
+            placeholder="Chọn tài khoản nhận tiền"
+            options={bankAccounts.map((account) => ({
+              value: account.id,
+              label: formatBankAccountOption(account),
+            }))}
+            onChange={(value) => setSelectedBankAccountId(value)}
+            style={{ width: '100%' }}
+          />
+        </div>
+      ) : null}
+
       {transferQrUrl && selectedBankAccount ? (
-        <button
-          type="button"
-          className="payment-workspace__qr"
-          onClick={() => setQrModalOpen(true)}
-        >
-          <img src={transferQrUrl} alt="VietQR thanh toán" />
-        </button>
+        <div className="payment-vietqr-card payment-vietqr-card--hero">
+          <div className="payment-vietqr-bank-header">
+            <span className="payment-vietqr-bank-tag">
+              <BankOutlined style={{ color: '#0975f7', fontSize: 16 }} />{' '}
+              {selectedBankAccount.bankName || selectedBankAccount.bankCode || 'Ngân hàng'}
+              {selectedBankAccount.accountNumber ? ` · ${selectedBankAccount.accountNumber}` : ''}
+              {selectedBankAccount.accountName ? ` · ${selectedBankAccount.accountName}` : ''}
+            </span>
+            {selectedBankAccount.isDefault ? (
+              <Tag color="blue" style={{ margin: 0 }}>
+                Mặc định
+              </Tag>
+            ) : null}
+          </div>
+
+          <div className="payment-vietqr-hero-wrap">
+            <button
+              type="button"
+              className="payment-workspace__qr payment-workspace__qr--hero"
+              onClick={() => setQrModalOpen(true)}
+              title="Nhấn để phóng to mã QR"
+            >
+              <img src={transferQrUrl} alt="VietQR thanh toán" />
+              <span className="payment-workspace__qr-overlay">
+                <QrcodeOutlined /> Phóng to QR
+              </span>
+            </button>
+            <div className="payment-vietqr-hero-caption">
+              <div className="payment-vietqr-hero-amount">
+                {formatMoney(isMultiMethod ? bankApplied : totalVnd)}
+              </div>
+              <div className="payment-vietqr-hint">
+                Quét mã bằng ứng dụng ngân hàng bất kỳ để thanh toán
+              </div>
+            </div>
+          </div>
+        </div>
       ) : (
         <Alert type="warning" showIcon message="Chưa có tài khoản ngân hàng nhận chuyển khoản." />
       )}
@@ -11533,7 +11711,7 @@ function PaymentPage({
         </div>
       ) : (
         <>
-          {presentation === 'drawer' ? (
+          {presentation === 'drawer' || isDesktopOrTablet ? (
             <div className="payment-workspace payment-workspace--desktop">
               <section className="payment-workspace__order-column">
                 <button
@@ -11620,11 +11798,17 @@ function PaymentPage({
                         type="button"
                         key={method.key}
                         disabled={disabled}
-                        className={selectedMethod === method.key ? 'is-active' : ''}
-                        onClick={() => selectPaymentMethod(method.key)}
+                        className={selectedMethod === method.key && !isMultiMethod ? 'is-active' : ''}
+                        onClick={() => {
+                          setIsMultiMethod(false);
+                          selectPaymentMethod(method.key);
+                        }}
                       >
+                        <span className="payment-workspace__method-icon">{method.icon}</span>
+                        <span className="payment-workspace__method-text">
+                          <strong>{method.label}</strong>
+                        </span>
                         <span className="payment-workspace__radio" />
-                        {method.label}
                       </button>
                     );
                   })}
@@ -11897,7 +12081,7 @@ function PaymentPage({
     <Drawer
       open
       placement="right"
-      width="50vw"
+      width={isDesktopOrTablet ? 'clamp(820px, 70vw, 1160px)' : '100%'}
       closable={false}
       maskClosable={!returningToOrder && !preparingCheckout && !submitting}
       styles={{ body: { padding: 0, overflow: 'hidden' } }}
@@ -11945,8 +12129,8 @@ export function StaffPosPortalPage() {
       : undefined;
   const routeDesktopCheckoutOrderId =
     desktopPayment &&
-    /^\/pos\/orders\/[^/]+$/u.test(location.pathname) &&
-    new URLSearchParams(location.search).get('checkout') === '1'
+      /^\/pos\/orders\/[^/]+$/u.test(location.pathname) &&
+      new URLSearchParams(location.search).get('checkout') === '1'
       ? location.pathname.split('/')[3]
       : undefined;
   const checkoutActive = Boolean(routePaymentOrderId || routeDesktopCheckoutOrderId);
@@ -12057,11 +12241,11 @@ export function StaffPosPortalPage() {
   const active = location.pathname.startsWith('/pos/qr-order')
     ? 'qr'
     : location.pathname.startsWith('/pos/more') ||
-        isInvoicesList ||
-        isCatalog ||
-        isPrinterSettings ||
-        isCustomer ||
-        isStaff
+      isInvoicesList ||
+      isCatalog ||
+      isPrinterSettings ||
+      isCustomer ||
+      isStaff
       ? 'more'
       : 'areas';
 

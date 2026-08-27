@@ -923,7 +923,7 @@ export class QrOrderRepository {
                 COALESCE(o.display_code, tor.display_code) AS orderCode,
                 st.id AS tableId,
                 COALESCE(st.display_name, st.name,
-                  CASE WHEN tor.id IS NOT NULL THEN 'Mang đi' END) AS tableName,
+                  CASE WHEN tor.id IS NOT NULL THEN 'Mang về' END) AS tableName,
                 a.name AS areaName,
                 COALESCE(p.name, oi.product_name_snapshot, toi.product_name_snapshot) AS productName,
                 COALESCE(pv.name, oi.variant_name_snapshot, toi.variant_name_snapshot) AS variantName,

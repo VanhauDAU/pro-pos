@@ -4258,8 +4258,8 @@ export class PosService {
           description = `${actor} mở ${orderRaw.table_name ?? 'bàn'}`;
           break;
         case 'ORDER_CREATED':
-          title = 'Tạo đơn mang đi';
-          description = `${actor} tạo đơn mang đi`;
+          title = 'Tạo đơn Mang về';
+          description = `${actor} tạo đơn Mang về`;
           break;
         case 'ORDER_ITEM_ADDED':
           title = 'Thêm mặt hàng';

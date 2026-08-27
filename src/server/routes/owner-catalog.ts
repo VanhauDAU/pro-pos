@@ -7,6 +7,7 @@ import {
   catalogImportPreviewSchema,
   createProductSchema,
   createServiceTableSchema,
+  createBatchServiceTablesSchema,
   namedResourceSchema,
   pricingConfigSchema,
   reorderServiceTablesSchema,
@@ -362,6 +363,26 @@ ownerCatalogRoutes.post('/tables', requirePermission('table.manage'), async (c) 
       timeProductId: body.timeProductId ?? null,
       name: body.name,
       sortOrder: body.sortOrder,
+      auditContext: {
+        actorUserId: c.get('actor').id,
+        actorSessionId: c.get('sessionId'),
+        deviceId: c.get('device')?.id ?? null,
+        requestId: c.get('requestId'),
+      },
+    }),
+    201,
+  );
+});
+
+ownerCatalogRoutes.post('/tables/batch', requirePermission('table.manage'), async (c) => {
+  const body = await parseJson(c.req.raw, createBatchServiceTablesSchema);
+  return success(
+    c,
+    await new CatalogService(c.env).createTablesBatch({
+      storeId: c.get('actor').storeId!,
+      areaId: body.areaId,
+      timeProductId: body.timeProductId ?? null,
+      tables: body.tables,
       auditContext: {
         actorUserId: c.get('actor').id,
         actorSessionId: c.get('sessionId'),

@@ -199,9 +199,8 @@ function SvgDonutChart({
         {slices.map((slice, i) => (
           <div
             key={slice.key}
-            className={`dashboard-donut-legend__row ${
-              hoveredIdx === i ? 'dashboard-donut-legend__row--active' : ''
-            }`}
+            className={`dashboard-donut-legend__row ${hoveredIdx === i ? 'dashboard-donut-legend__row--active' : ''
+              }`}
             onMouseEnter={() => setHoveredIdx(i)}
             onMouseLeave={() => setHoveredIdx(null)}
           >
@@ -285,9 +284,8 @@ function SvgTimelineBarChart({ points }: { points: DashboardTimelinePoint[] }) {
               return (
                 <div
                   key={idx}
-                  className={`dashboard-barchart__col ${
-                    isHovered ? 'dashboard-barchart__col--active' : ''
-                  }`}
+                  className={`dashboard-barchart__col ${isHovered ? 'dashboard-barchart__col--active' : ''
+                    }`}
                   onMouseEnter={() => setHoveredIdx(idx)}
                   onMouseLeave={() => setHoveredIdx(null)}
                 >
@@ -907,7 +905,7 @@ export function OwnerDashboardPage({ settings }: { settings: StoreSettings | und
                   <ShoppingCartOutlined />
                 </div>
                 <div className="owner-uncompleted-item__info">
-                  <span className="owner-uncompleted-item__label">Mang đi (Takeaway)</span>
+                  <span className="owner-uncompleted-item__label">Mang về (Takeaway)</span>
                   <div className="owner-uncompleted-item__metrics">
                     <Tag color="orange">{data?.uncompletedOrders.takeaway.count ?? 0} đơn</Tag>
                     <strong>{formatMoney(data?.uncompletedOrders.takeaway.amount ?? 0)}</strong>

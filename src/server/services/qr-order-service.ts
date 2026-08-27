@@ -39,7 +39,7 @@ function mapOperationalAudit(row: StaffOperationalAuditRow): StaffNotificationAu
   const orderLabel = row.orderCode ? `đơn ${row.orderCode}` : 'đơn hàng';
   const location = row.tableName
     ? `${row.tableName}${row.areaName ? ` · ${row.areaName}` : ''}`
-    : 'đơn mang đi';
+    : 'đơn Mang về';
   const quantity = Math.max(0, Number(after['quantityMilli'] ?? 0) / 1000);
   const totalVnd = Math.max(
     0,
@@ -117,7 +117,7 @@ function mapOperationalAudit(row: StaffOperationalAuditRow): StaffNotificationAu
     status: 'INFO',
     orderId: row.orderId ?? '',
     tableId: row.tableId ?? '',
-    tableName: row.tableName ?? 'Mang đi',
+    tableName: row.tableName ?? 'Mang về',
     areaName: row.areaName ?? '',
     summary,
     note,

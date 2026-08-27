@@ -264,7 +264,7 @@ export function OwnerStoreSettingsPage() {
   const deleteBankAccount = (account: BankAccountDto) => {
     Modal.confirm({
       title: 'Xóa tài khoản ngân hàng?',
-      content: `${account.bankCode} · ${account.accountNumber}`,
+      content: `${account.bankName || account.bankCode} · ${account.accountNumber}${account.accountName ? ` (${account.accountName})` : ''}`,
       okText: 'Xóa',
       okButtonProps: { danger: true },
       cancelText: 'Hủy',
@@ -515,7 +515,7 @@ export function OwnerStoreSettingsPage() {
                     </div>
                     <div className="owner-bank-account-row__content">
                       <div>
-                        <strong>{account.bankCode || account.bankName}</strong>
+                        <strong>{account.bankName || account.bankCode}</strong>
                         {account.isDefault ? <Tag color="blue">Mặc định</Tag> : null}
                       </div>
                       <span>{account.accountNumber}</span>

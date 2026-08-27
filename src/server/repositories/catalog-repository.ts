@@ -1196,6 +1196,41 @@ export class CatalogRepository {
     return { configId, version: nextVersion };
   }
 
+  async createServiceTablesBatch(input: {
+    storeId: string;
+    areaId: string;
+    timeProductId: string;
+    tables: Array<{ id: string; name: string; sortOrder: number }>;
+    now: number;
+  }) {
+    const statements = input.tables.map((table) =>
+      this.db
+        .prepare(
+          `INSERT INTO service_tables (
+            id, store_id, area_id, time_product_id, name, sort_order,
+            status, version, created_at, updated_at
+          )
+          SELECT ?, ?, a.id, p.id, ?, ?, 'AVAILABLE', 1, ?, ?
+          FROM areas a, products p
+          WHERE a.id = ? AND a.store_id = ? AND a.status = 'ACTIVE'
+            AND p.id = ? AND p.store_id = ? AND p.product_type = 'TIME' AND p.status = 'ACTIVE'`,
+        )
+        .bind(
+          table.id,
+          input.storeId,
+          table.name,
+          table.sortOrder,
+          input.now,
+          input.now,
+          input.areaId,
+          input.storeId,
+          input.timeProductId,
+          input.storeId,
+        ),
+    );
+    return this.db.batch(statements);
+  }
+
   async createServiceTable(input: {
     id: string;
     storeId: string;

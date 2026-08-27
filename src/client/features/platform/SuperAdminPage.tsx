@@ -995,7 +995,7 @@ export function SuperAdminPage() {
         },
       );
       message.success(
-        `Đã dọn dẹp thành công ${res.totalDeleted.toLocaleString('vi-VN')} bản ghi logs cũ hơn 7 ngày!`,
+        `Đã dọn dẹp ${res.totalDeleted.toLocaleString('vi-VN')} bản ghi vận hành quá hạn 7 ngày.`,
         5,
       );
       void queryClient.invalidateQueries({ queryKey: ['platform-analytics'] });
@@ -1083,8 +1083,8 @@ export function SuperAdminPage() {
           </div>
           <div className="platform-actions-row">
             <Popconfirm
-              title="Dọn dẹp nhật ký & dữ liệu cũ hơn 7 ngày?"
-              description="Hệ thống sẽ giải phóng audit logs, lệnh tạm, thông báo và phiên đăng nhập cũ hơn 7 ngày để tối ưu dung lượng DB Free Tier."
+              title="Dọn dẹp dữ liệu vận hành quá hạn 7 ngày?"
+              description="Xóa nhật ký, lệnh tạm, thông báo, phiên hết hạn và yêu cầu QR đã xử lý; không xóa hóa đơn, thanh toán hoặc lịch sử bán hàng."
               okText="Dọn dẹp ngay"
               cancelText="Hủy"
               okButtonProps={{ danger: true, loading: cleaningDb }}

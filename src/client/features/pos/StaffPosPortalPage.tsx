@@ -100,7 +100,6 @@ import type {
   StaffNotificationStatus,
   TableOpenRequestDto,
 } from '@contracts/qr-order';
-import { QrOrderConfirmModal } from './QrOrderConfirmModal';
 import type { BankAccountDto, StorePrintSettings } from '@contracts/store';
 import type { PricingConfigSnapshot } from '@domain/pricing/types';
 import {
@@ -179,6 +178,11 @@ const OwnerEmployeeFormPage = lazy(async () => {
 const OwnerStaffListPage = lazy(async () => {
   const module = await import('@client/features/owner/OwnerStaffPages');
   return { default: module.OwnerStaffListPage };
+});
+
+const QrOrderConfirmModal = lazy(async () => {
+  const module = await import('./QrOrderConfirmModal');
+  return { default: module.QrOrderConfirmModal };
 });
 
 const StaffPrinterSettingsPage = lazy(async () => {
@@ -1087,7 +1091,25 @@ function PosNotificationsProvider({ children }: { children: React.ReactNode }) {
   return (
     <PosNotificationsContext.Provider value={value}>
       <PosNotificationWatcher />
-      <QrOrderConfirmModal open={qrConfirmModalOpen} onClose={() => setQrConfirmModalOpen(false)} />
+      {qrConfirmModalOpen ? (
+        <Suspense
+          fallback={
+            <Modal
+              open
+              title="Xác nhận gọi món"
+              footer={null}
+              centered
+              onCancel={() => setQrConfirmModalOpen(false)}
+            >
+              <div style={{ minHeight: 180, display: 'grid', placeItems: 'center' }}>
+                <Spin tip="Đang tải danh sách gọi món..." />
+              </div>
+            </Modal>
+          }
+        >
+          <QrOrderConfirmModal open onClose={() => setQrConfirmModalOpen(false)} />
+        </Suspense>
+      ) : null}
       {children}
     </PosNotificationsContext.Provider>
   );

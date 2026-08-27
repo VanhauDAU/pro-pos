@@ -31,6 +31,8 @@ const metricNames = [
   'snapshot_tables',
   'snapshot_call_batch',
   'overview_base',
+  'overview_batch_load',
+  'overview_pricing',
   'overview_quotes',
   'overview',
   'command',

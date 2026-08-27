@@ -7,7 +7,9 @@ import {
   DeleteOutlined,
   DownloadOutlined,
   EditOutlined,
+  FileExcelOutlined,
   FilterOutlined,
+  LinkOutlined,
   PictureOutlined,
   PlusOutlined,
   SaveOutlined,
@@ -51,6 +53,7 @@ import { useNavigate, useSearchParams } from 'react-router';
 import type { AuthContextResponse } from '@contracts/auth';
 import { CameraCaptureModal } from '@client/components/CameraCaptureModal';
 import { ImageCropperModal } from '@client/components/ImageCropperModal';
+import { ImageUrlModal } from '@client/components/ImageUrlModal';
 import { ProductImportModal } from './ProductImportModal';
 import { downloadCatalogWorkbook, type CatalogExportRow } from './catalog-excel';
 
@@ -552,33 +555,49 @@ export function OwnerProductListPage({
       {contextHolder}
       {onBack ? <BackLink label="Quay lại POS" onClick={onBack} /> : null}
       <div className="owner-catalog-heading">
-        <div>
+        <div className="owner-catalog-heading-info">
           <Typography.Title level={2}>Danh sách mặt hàng</Typography.Title>
           <Typography.Text type="secondary">
             Quản lý sản phẩm, dịch vụ và bảng giá dùng trên POS.
           </Typography.Text>
         </div>
-        <Button
-          icon={<UploadOutlined />}
-          onClick={() => setImportOpen(true)}
-          disabled={!canEditProduct}
-        >
-          Nhập Excel
-        </Button>
-        <Button
-          icon={<DownloadOutlined />}
-          loading={exporting}
-          onClick={() => void exportProducts()}
-        >
-          Xuất Excel
-        </Button>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => navigate(`${baseRoute}/products/new`)}
-        >
-          Thêm mặt hàng
-        </Button>
+        <div className="owner-catalog-header-actions">
+          <div className="owner-catalog-excel-group">
+            <Button
+              className="owner-excel-btn owner-excel-btn--import"
+              icon={<FileExcelOutlined style={{ color: '#10b981', fontSize: 15 }} />}
+              onClick={() => setImportOpen(true)}
+              disabled={!canEditProduct}
+            >
+              Nhập Excel
+            </Button>
+            <Button
+              className="owner-excel-btn owner-excel-btn--export"
+              icon={<DownloadOutlined style={{ color: '#059669', fontSize: 15 }} />}
+              loading={exporting}
+              onClick={() => void exportProducts()}
+            >
+              Xuất Excel
+            </Button>
+          </div>
+          <div className="owner-catalog-primary-actions">
+            <Button
+              icon={<TagsOutlined />}
+              onClick={() => navigate(`${baseRoute}/categories`)}
+              className="owner-catalog-category-btn"
+            >
+              Danh mục
+            </Button>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => navigate(`${baseRoute}/products/new`)}
+              className="owner-catalog-add-btn"
+            >
+              Thêm mặt hàng
+            </Button>
+          </div>
+        </div>
       </div>
       <ProductImportModal
         open={importOpen}
@@ -592,15 +611,6 @@ export function OwnerProductListPage({
           ]);
         }}
       />
-      <div className="owner-catalog-subnav">
-        <Button
-          type="link"
-          icon={<TagsOutlined />}
-          onClick={() => navigate(`${baseRoute}/categories`)}
-        >
-          Danh mục
-        </Button>
-      </div>
       <Card className="owner-catalog-card">
         {/* Desktop Filter Toolbar */}
         <div className="owner-catalog-toolbar owner-catalog-toolbar--desktop">
@@ -923,9 +933,60 @@ export function OwnerProductFormPage({
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [cameraModalOpen, setCameraModalOpen] = useState(false);
+  const [urlModalOpen, setUrlModalOpen] = useState(false);
   const [cropperModalOpen, setCropperModalOpen] = useState(false);
   const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+      ) {
+        return;
+      }
+      const items = e.clipboardData?.items;
+      if (items) {
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          if (item?.type.startsWith('image/')) {
+            const file = item.getAsFile();
+            if (file) {
+              const reader = new FileReader();
+              reader.addEventListener(
+                'load',
+                (evt) => {
+                  if (typeof evt.target?.result === 'string') {
+                    setCropImageSrc(evt.target.result);
+                    setCropperModalOpen(true);
+                  }
+                },
+                { once: true },
+              );
+              reader.readAsDataURL(file);
+              return;
+            }
+          }
+        }
+      }
+      const pastedText = e.clipboardData?.getData('text')?.trim();
+      if (
+        pastedText &&
+        (pastedText.startsWith('http://') ||
+          pastedText.startsWith('https://') ||
+          pastedText.startsWith('data:image/')) &&
+        (pastedText.match(/\.(jpeg|jpg|png|webp|gif|avif|bmp)(\?.*)?$/i) ||
+          pastedText.startsWith('data:image/'))
+      ) {
+        setUrlModalOpen(true);
+      }
+    };
+
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, []);
 
   const [categorySearch, setCategorySearch] = useState('');
   const [inlineCategoryName, setInlineCategoryName] = useState('');
@@ -2013,6 +2074,13 @@ export function OwnerProductFormPage({
                               Chụp ảnh mới
                             </Button>
                             <Button
+                              icon={<LinkOutlined />}
+                              disabled={uploading}
+                              onClick={() => setUrlModalOpen(true)}
+                            >
+                              Đổi từ URL
+                            </Button>
+                            <Button
                               icon={<UploadOutlined />}
                               disabled={uploading}
                               onClick={() => fileInputRef.current?.click()}
@@ -2044,12 +2112,19 @@ export function OwnerProductFormPage({
                             type="secondary"
                             style={{ fontSize: 13, display: 'block', marginBottom: 12 }}
                           >
-                            Chỉ lưu 1 ảnh duy nhất. Bạn có thể chụp trực tiếp từ camera hoặc tải ảnh
+                            Chỉ lưu 1 ảnh duy nhất. Bạn có thể dán link URL, chụp từ camera hoặc tải ảnh
                             từ máy.
                           </Typography.Text>
                           <div className="owner-image-upload-cta-row">
                             <Button
                               type="primary"
+                              icon={<LinkOutlined />}
+                              disabled={uploading}
+                              onClick={() => setUrlModalOpen(true)}
+                            >
+                              Dán URL ảnh
+                            </Button>
+                            <Button
                               icon={<CameraOutlined />}
                               disabled={uploading}
                               onClick={() => setCameraModalOpen(true)}
@@ -2171,6 +2246,16 @@ export function OwnerProductFormPage({
                 setCropperModalOpen(true);
               }}
               onCapture={uploadImage}
+            />
+            <ImageUrlModal
+              open={urlModalOpen}
+              csrfToken={authContext.data?.csrfToken}
+              onClose={() => setUrlModalOpen(false)}
+              onSuccess={(dataUrl) => {
+                setCropImageSrc(dataUrl);
+                setUrlModalOpen(false);
+                setCropperModalOpen(true);
+              }}
             />
             <ImageCropperModal
               open={cropperModalOpen}

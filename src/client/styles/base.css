@@ -10027,15 +10027,114 @@ body {
 
 .owner-catalog-heading {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 20px;
-  margin-bottom: 14px;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.owner-catalog-heading-info {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .owner-catalog-heading h2.ant-typography {
-  margin: 0 0 5px;
+  margin: 0 0 4px;
   color: #1b2a3f;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.owner-catalog-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.owner-catalog-excel-group {
+  display: inline-flex;
+  align-items: center;
+  background: #ffffff;
+  padding: 3px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  gap: 4px;
+}
+
+.owner-excel-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 14px;
+  border-radius: 7px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #334155;
+  border: 1px solid transparent;
+  background: transparent;
+  box-shadow: none;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.owner-excel-btn:hover:not(:disabled) {
+  background: #f0fdf4 !important;
+  color: #065f46 !important;
+  border-color: #86efac !important;
+  box-shadow: 0 2px 6px rgba(16, 185, 129, 0.12);
+  transform: translateY(-1px);
+}
+
+.owner-excel-btn:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+.owner-excel-btn:disabled {
+  opacity: 0.5;
+  background: transparent !important;
+  border-color: transparent !important;
+}
+
+.owner-catalog-primary-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.owner-catalog-category-btn {
+  height: 44px;
+  padding: 0 16px;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 13.5px;
+  color: #334155;
+  border-color: #cbd5e1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.owner-catalog-category-btn:hover {
+  color: #0975f7 !important;
+  border-color: #0975f7 !important;
+  background: #f0f7ff !important;
+}
+
+.owner-catalog-add-btn {
+  height: 44px;
+  padding: 0 20px;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 14px;
+  box-shadow: 0 2px 8px rgba(9, 117, 247, 0.25);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .owner-catalog-subnav {
@@ -10421,10 +10520,59 @@ body {
 
   .owner-catalog-heading {
     flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    margin-bottom: 14px;
   }
 
-  .owner-catalog-heading > .ant-btn {
+  .owner-catalog-heading-info {
+    flex: 0 0 auto;
     width: 100%;
+  }
+
+  .owner-catalog-header-actions {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .owner-catalog-excel-group {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    padding: 4px;
+    background: #f8fafc;
+    border-radius: 10px;
+  }
+
+  .owner-excel-btn {
+    width: 100%;
+    justify-content: center;
+    height: 40px;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  }
+
+  .owner-catalog-primary-actions {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .owner-catalog-category-btn {
+    width: 100%;
+    justify-content: center;
+    height: 44px;
+  }
+
+  .owner-catalog-add-btn {
+    width: 100%;
+    justify-content: center;
+    height: 44px;
   }
 
   .owner-catalog-toolbar--desktop {

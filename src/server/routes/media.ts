@@ -19,6 +19,14 @@ mediaRoutes.get('/:mediaId', async (c) => {
   return new Response(result.object.body, { headers });
 });
 
+mediaRoutes.post('/fetch-url', requirePermission('catalog.manage'), async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { url?: unknown };
+  if (!body.url || typeof body.url !== 'string') {
+    throw new AppError('MEDIA_URL_INVALID', 'Vui lòng cung cấp đường dẫn ảnh hợp lệ.', 400);
+  }
+  return success(c, await new MediaService(c.env).fetchFromUrl(body.url));
+});
+
 mediaRoutes.post('/', requirePermission('catalog.manage'), async (c) => {
   const contentLength = Number(c.req.header('Content-Length') ?? 0);
   if (contentLength > 6 * 1024 * 1024) {

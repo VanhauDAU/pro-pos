@@ -73,6 +73,8 @@ import dayjs, { type Dayjs } from 'dayjs';
 import {
   createContext,
   lazy,
+  Suspense,
+  type ReactNode,
   useCallback,
   useContext,
   useEffect,
@@ -118,26 +120,83 @@ import { toast } from 'sonner';
 import type { CustomerSummary } from '@contracts/customer';
 import type { PosPromotionOption, PromotionPreviewResult } from '@contracts/promotion';
 import { PushNotificationControl } from '@client/features/pwa/PushNotificationControl';
-import { OwnerInvoicesPage } from '@client/features/owner/OwnerInvoicesPage';
-import {
-  OwnerCategoryDetailPage,
-  OwnerCategoryListPage,
-  OwnerProductFormPage,
-  OwnerProductListPage,
-} from '@client/features/owner/OwnerCatalogPages';
-import {
-  OwnerCustomerDetailPage,
-  OwnerCustomerFormPage,
-  OwnerCustomerGroupFormPage,
-  OwnerCustomerGroupListPage,
-  OwnerCustomerListPage,
-} from '@client/features/owner/OwnerCustomerPages';
-import { OwnerEmployeeFormPage, OwnerStaffListPage } from '@client/features/owner/OwnerStaffPages';
+
+const OwnerInvoicesPage = lazy(async () => {
+  const module = await import('@client/features/owner/OwnerInvoicesPage');
+  return { default: module.OwnerInvoicesPage };
+});
+
+const OwnerCategoryDetailPage = lazy(async () => {
+  const module = await import('@client/features/owner/OwnerCatalogPages');
+  return { default: module.OwnerCategoryDetailPage };
+});
+
+const OwnerCategoryListPage = lazy(async () => {
+  const module = await import('@client/features/owner/OwnerCatalogPages');
+  return { default: module.OwnerCategoryListPage };
+});
+
+const OwnerProductFormPage = lazy(async () => {
+  const module = await import('@client/features/owner/OwnerCatalogPages');
+  return { default: module.OwnerProductFormPage };
+});
+
+const OwnerProductListPage = lazy(async () => {
+  const module = await import('@client/features/owner/OwnerCatalogPages');
+  return { default: module.OwnerProductListPage };
+});
+
+const OwnerCustomerDetailPage = lazy(async () => {
+  const module = await import('@client/features/owner/OwnerCustomerPages');
+  return { default: module.OwnerCustomerDetailPage };
+});
+
+const OwnerCustomerFormPage = lazy(async () => {
+  const module = await import('@client/features/owner/OwnerCustomerPages');
+  return { default: module.OwnerCustomerFormPage };
+});
+
+const OwnerCustomerGroupFormPage = lazy(async () => {
+  const module = await import('@client/features/owner/OwnerCustomerPages');
+  return { default: module.OwnerCustomerGroupFormPage };
+});
+
+const OwnerCustomerGroupListPage = lazy(async () => {
+  const module = await import('@client/features/owner/OwnerCustomerPages');
+  return { default: module.OwnerCustomerGroupListPage };
+});
+
+const OwnerCustomerListPage = lazy(async () => {
+  const module = await import('@client/features/owner/OwnerCustomerPages');
+  return { default: module.OwnerCustomerListPage };
+});
+
+const OwnerEmployeeFormPage = lazy(async () => {
+  const module = await import('@client/features/owner/OwnerStaffPages');
+  return { default: module.OwnerEmployeeFormPage };
+});
+
+const OwnerStaffListPage = lazy(async () => {
+  const module = await import('@client/features/owner/OwnerStaffPages');
+  return { default: module.OwnerStaffListPage };
+});
 
 const StaffPrinterSettingsPage = lazy(async () => {
   const module = await import('./StaffPrinterSettingsPage');
   return { default: module.StaffPrinterSettingsPage };
 });
+
+function PosRouteLoadingFallback() {
+  return (
+    <div aria-label="Đang tải nội dung" style={{ minHeight: 320, padding: 24, background: '#fff' }}>
+      <Skeleton active title={{ width: '36%' }} paragraph={{ rows: 6 }} />
+    </div>
+  );
+}
+
+function renderLazyPosRoute(content: ReactNode) {
+  return <Suspense fallback={<PosRouteLoadingFallback />}>{content}</Suspense>;
+}
 
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 import { playPosSound } from '@client/lib/sound';
@@ -11825,199 +11884,235 @@ export function StaffPosPortalPage() {
             ) : null}
             <div className="staff-pos-main">
               {isPrinterSettings ? (
-                <StaffPrinterSettingsPage
-                  csrfToken={auth.data.csrfToken}
-                  storeName={posContext.data?.storeName ?? 'PRO POS'}
-                  onBack={() => navigate('/pos/more')}
-                />
+                renderLazyPosRoute(
+                  <StaffPrinterSettingsPage
+                    csrfToken={auth.data.csrfToken}
+                    storeName={posContext.data?.storeName ?? 'PRO POS'}
+                    onBack={() => navigate('/pos/more')}
+                  />,
+                )
               ) : isInvoiceDetail ? (
                 <InvoicePage />
               ) : isInvoicesList ? (
                 <div className="staff-invoices-shell">
                   <div className="staff-invoices-container">
-                    <OwnerInvoicesPage
-                      apiPrefix="/api/v1/pos/invoices"
-                      userPermissions={posContext.data?.permissions}
-                      isOwner={false}
-                      onBack={() => navigate('/pos/more')}
-                    />
+                    {renderLazyPosRoute(
+                      <OwnerInvoicesPage
+                        apiPrefix="/api/v1/pos/invoices"
+                        userPermissions={posContext.data?.permissions}
+                        isOwner={false}
+                        onBack={() => navigate('/pos/more')}
+                      />,
+                    )}
                   </div>
                 </div>
               ) : isCustomerNew ? (
                 <div className="staff-invoices-shell">
                   <div className="staff-invoices-container">
-                    <OwnerCustomerFormPage
-                      baseRoute="/pos/customers"
-                      apiPrefix="/api/v1/pos/customers"
-                      userPermissions={posContext.data?.permissions}
-                      isOwner={false}
-                      onBack={() => navigate('/pos/customers')}
-                    />
+                    {renderLazyPosRoute(
+                      <OwnerCustomerFormPage
+                        baseRoute="/pos/customers"
+                        apiPrefix="/api/v1/pos/customers"
+                        userPermissions={posContext.data?.permissions}
+                        isOwner={false}
+                        onBack={() => navigate('/pos/customers')}
+                      />,
+                    )}
                   </div>
                 </div>
               ) : isCustomerEdit ? (
                 <div className="staff-invoices-shell">
                   <div className="staff-invoices-container">
-                    <OwnerCustomerFormPage
-                      customerId={location.pathname.split('/')[3]!}
-                      baseRoute="/pos/customers"
-                      apiPrefix="/api/v1/pos/customers"
-                      userPermissions={posContext.data?.permissions}
-                      isOwner={false}
-                      onBack={() => navigate(`/pos/customers/${location.pathname.split('/')[3]!}`)}
-                    />
+                    {renderLazyPosRoute(
+                      <OwnerCustomerFormPage
+                        customerId={location.pathname.split('/')[3]!}
+                        baseRoute="/pos/customers"
+                        apiPrefix="/api/v1/pos/customers"
+                        userPermissions={posContext.data?.permissions}
+                        isOwner={false}
+                        onBack={() =>
+                          navigate(`/pos/customers/${location.pathname.split('/')[3]!}`)
+                        }
+                      />,
+                    )}
                   </div>
                 </div>
               ) : isCustomerGroupNew ? (
                 <div className="staff-invoices-shell">
                   <div className="staff-invoices-container">
-                    <OwnerCustomerGroupFormPage
-                      baseRoute="/pos/customers/groups"
-                      apiPrefix="/api/v1/pos/customers"
-                      userPermissions={posContext.data?.permissions}
-                      isOwner={false}
-                      onBack={() => navigate('/pos/customers/groups')}
-                    />
+                    {renderLazyPosRoute(
+                      <OwnerCustomerGroupFormPage
+                        baseRoute="/pos/customers/groups"
+                        apiPrefix="/api/v1/pos/customers"
+                        userPermissions={posContext.data?.permissions}
+                        isOwner={false}
+                        onBack={() => navigate('/pos/customers/groups')}
+                      />,
+                    )}
                   </div>
                 </div>
               ) : isCustomerGroupEdit ? (
                 <div className="staff-invoices-shell">
                   <div className="staff-invoices-container">
-                    <OwnerCustomerGroupFormPage
-                      groupId={location.pathname.split('/')[4]!}
-                      baseRoute="/pos/customers/groups"
-                      apiPrefix="/api/v1/pos/customers"
-                      userPermissions={posContext.data?.permissions}
-                      isOwner={false}
-                      onBack={() => navigate('/pos/customers/groups')}
-                    />
+                    {renderLazyPosRoute(
+                      <OwnerCustomerGroupFormPage
+                        groupId={location.pathname.split('/')[4]!}
+                        baseRoute="/pos/customers/groups"
+                        apiPrefix="/api/v1/pos/customers"
+                        userPermissions={posContext.data?.permissions}
+                        isOwner={false}
+                        onBack={() => navigate('/pos/customers/groups')}
+                      />,
+                    )}
                   </div>
                 </div>
               ) : isCustomerGroups ? (
                 <div className="staff-invoices-shell">
                   <div className="staff-invoices-container">
-                    <OwnerCustomerGroupListPage
-                      baseRoute="/pos/customers/groups"
-                      apiPrefix="/api/v1/pos/customers"
-                      userPermissions={posContext.data?.permissions}
-                      isOwner={false}
-                      onBack={() => navigate('/pos/customers')}
-                    />
+                    {renderLazyPosRoute(
+                      <OwnerCustomerGroupListPage
+                        baseRoute="/pos/customers/groups"
+                        apiPrefix="/api/v1/pos/customers"
+                        userPermissions={posContext.data?.permissions}
+                        isOwner={false}
+                        onBack={() => navigate('/pos/customers')}
+                      />,
+                    )}
                   </div>
                 </div>
               ) : isCustomerDetail ? (
                 <div className="staff-invoices-shell">
                   <div className="staff-invoices-container">
-                    <OwnerCustomerDetailPage
-                      customerId={location.pathname.split('/')[3]!}
-                      baseRoute="/pos/customers"
-                      apiPrefix="/api/v1/pos/customers"
-                      userPermissions={posContext.data?.permissions}
-                      isOwner={false}
-                      onBack={() => navigate('/pos/customers')}
-                    />
+                    {renderLazyPosRoute(
+                      <OwnerCustomerDetailPage
+                        customerId={location.pathname.split('/')[3]!}
+                        baseRoute="/pos/customers"
+                        apiPrefix="/api/v1/pos/customers"
+                        userPermissions={posContext.data?.permissions}
+                        isOwner={false}
+                        onBack={() => navigate('/pos/customers')}
+                      />,
+                    )}
                   </div>
                 </div>
               ) : isCustomerList ? (
                 <div className="staff-invoices-shell">
                   <div className="staff-invoices-container">
-                    <OwnerCustomerListPage
-                      baseRoute="/pos/customers"
-                      apiPrefix="/api/v1/pos/customers"
-                      userPermissions={posContext.data?.permissions}
-                      isOwner={false}
-                      onBack={() => navigate('/pos/more')}
-                    />
+                    {renderLazyPosRoute(
+                      <OwnerCustomerListPage
+                        baseRoute="/pos/customers"
+                        apiPrefix="/api/v1/pos/customers"
+                        userPermissions={posContext.data?.permissions}
+                        isOwner={false}
+                        onBack={() => navigate('/pos/more')}
+                      />,
+                    )}
                   </div>
                 </div>
               ) : isStaffNew ? (
                 <div className="staff-invoices-shell">
                   <div className="staff-invoices-container">
-                    <OwnerEmployeeFormPage
-                      baseRoute="/pos/staff"
-                      apiPrefix="/api/v1/pos/staff"
-                      userPermissions={posContext.data?.permissions}
-                      isOwner={false}
-                      onBack={() => navigate('/pos/staff')}
-                    />
+                    {renderLazyPosRoute(
+                      <OwnerEmployeeFormPage
+                        baseRoute="/pos/staff"
+                        apiPrefix="/api/v1/pos/staff"
+                        userPermissions={posContext.data?.permissions}
+                        isOwner={false}
+                        onBack={() => navigate('/pos/staff')}
+                      />,
+                    )}
                   </div>
                 </div>
               ) : isStaffEdit ? (
                 <div className="staff-invoices-shell">
                   <div className="staff-invoices-container">
-                    <OwnerEmployeeFormPage
-                      userId={location.pathname.split('/').at(-1)!}
-                      baseRoute="/pos/staff"
-                      apiPrefix="/api/v1/pos/staff"
-                      userPermissions={posContext.data?.permissions}
-                      isOwner={false}
-                      onBack={() => navigate('/pos/staff')}
-                    />
+                    {renderLazyPosRoute(
+                      <OwnerEmployeeFormPage
+                        userId={location.pathname.split('/').at(-1)!}
+                        baseRoute="/pos/staff"
+                        apiPrefix="/api/v1/pos/staff"
+                        userPermissions={posContext.data?.permissions}
+                        isOwner={false}
+                        onBack={() => navigate('/pos/staff')}
+                      />,
+                    )}
                   </div>
                 </div>
               ) : isStaffList ? (
                 <div className="staff-invoices-shell">
                   <div className="staff-invoices-container">
-                    <OwnerStaffListPage
-                      baseRoute="/pos/staff"
-                      apiPrefix="/api/v1/pos/staff"
-                      userPermissions={posContext.data?.permissions}
-                      isOwner={false}
-                      onBack={() => navigate('/pos/more')}
-                    />
+                    {renderLazyPosRoute(
+                      <OwnerStaffListPage
+                        baseRoute="/pos/staff"
+                        apiPrefix="/api/v1/pos/staff"
+                        userPermissions={posContext.data?.permissions}
+                        isOwner={false}
+                        onBack={() => navigate('/pos/more')}
+                      />,
+                    )}
                   </div>
                 </div>
               ) : isCatalogNewProduct ? (
                 <div className="staff-invoices-shell">
                   <div className="staff-invoices-container">
-                    <OwnerProductFormPage
-                      baseRoute="/pos/catalog"
-                      userPermissions={posContext.data?.permissions}
-                      isOwner={false}
-                      onBack={() => navigate('/pos/catalog/products')}
-                    />
+                    {renderLazyPosRoute(
+                      <OwnerProductFormPage
+                        baseRoute="/pos/catalog"
+                        userPermissions={posContext.data?.permissions}
+                        isOwner={false}
+                        onBack={() => navigate('/pos/catalog/products')}
+                      />,
+                    )}
                   </div>
                 </div>
               ) : isCatalogEditProduct ? (
                 <div className="staff-invoices-shell">
                   <div className="staff-invoices-container">
-                    <OwnerProductFormPage
-                      productId={location.pathname.split('/').at(-1)!}
-                      baseRoute="/pos/catalog"
-                      userPermissions={posContext.data?.permissions}
-                      isOwner={false}
-                      onBack={() => navigate('/pos/catalog/products')}
-                    />
+                    {renderLazyPosRoute(
+                      <OwnerProductFormPage
+                        productId={location.pathname.split('/').at(-1)!}
+                        baseRoute="/pos/catalog"
+                        userPermissions={posContext.data?.permissions}
+                        isOwner={false}
+                        onBack={() => navigate('/pos/catalog/products')}
+                      />,
+                    )}
                   </div>
                 </div>
               ) : isCatalogCategoryDetail ? (
                 <div className="staff-invoices-shell">
                   <div className="staff-invoices-container">
-                    <OwnerCategoryDetailPage
-                      categoryId={location.pathname.split('/').at(-1)!}
-                      baseRoute="/pos/catalog"
-                      onBack={() => navigate('/pos/catalog/categories')}
-                    />
+                    {renderLazyPosRoute(
+                      <OwnerCategoryDetailPage
+                        categoryId={location.pathname.split('/').at(-1)!}
+                        baseRoute="/pos/catalog"
+                        onBack={() => navigate('/pos/catalog/categories')}
+                      />,
+                    )}
                   </div>
                 </div>
               ) : isCatalogCategories ? (
                 <div className="staff-invoices-shell">
                   <div className="staff-invoices-container">
-                    <OwnerCategoryListPage
-                      baseRoute="/pos/catalog"
-                      onBack={() => navigate('/pos/catalog/products')}
-                    />
+                    {renderLazyPosRoute(
+                      <OwnerCategoryListPage
+                        baseRoute="/pos/catalog"
+                        onBack={() => navigate('/pos/catalog/products')}
+                      />,
+                    )}
                   </div>
                 </div>
               ) : isCatalogList ? (
                 <div className="staff-invoices-shell">
                   <div className="staff-invoices-container">
-                    <OwnerProductListPage
-                      baseRoute="/pos/catalog"
-                      userPermissions={posContext.data?.permissions}
-                      isOwner={false}
-                      onBack={() => navigate('/pos/more')}
-                    />
+                    {renderLazyPosRoute(
+                      <OwnerProductListPage
+                        baseRoute="/pos/catalog"
+                        userPermissions={posContext.data?.permissions}
+                        isOwner={false}
+                        onBack={() => navigate('/pos/more')}
+                      />,
+                    )}
                   </div>
                 </div>
               ) : isDetail && detailOrderId ? (

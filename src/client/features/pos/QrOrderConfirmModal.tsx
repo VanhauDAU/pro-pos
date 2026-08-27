@@ -13,6 +13,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { AuthContextResponse } from '@contracts/auth';
 import type { GuestOrderRequestDto } from '@contracts/qr-order';
 import { apiRequest, jsonRequest } from '@client/lib/api';
+import { usePosPollingInterval } from '@client/realtime/RealtimeProvider';
 
 function formatVnd(amount: number) {
   return new Intl.NumberFormat('vi-VN').format(Math.round(amount));
@@ -50,6 +51,7 @@ export interface QrOrderConfirmModalProps {
 export function QrOrderConfirmModal({ open, onClose, areas }: QrOrderConfirmModalProps) {
   const queryClient = useQueryClient();
   const [messageApi, contextHolder] = message.useMessage();
+  const pollingInterval = usePosPollingInterval(5000);
 
   const [statusTab, setStatusTab] = useState<'PENDING' | 'ACCEPTED' | 'REJECTED'>('PENDING');
   const [selectedAreaId, setSelectedAreaId] = useState<string>('ALL');
@@ -67,7 +69,7 @@ export function QrOrderConfirmModal({ open, onClose, areas }: QrOrderConfirmModa
     queryKey: ['pos-staff-all-qr-orders'],
     queryFn: () => apiRequest<GuestOrderRequestDto[]>('/api/v1/pos/qr-orders'),
     enabled: open,
-    refetchInterval: open ? 5000 : false,
+    refetchInterval: open ? pollingInterval : false,
   });
 
   const overviewQuery = useQuery({

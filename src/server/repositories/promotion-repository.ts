@@ -414,6 +414,20 @@ export class PromotionRepository {
       .all<{ promotionId: string }>();
   }
 
+  listSelectedForOrders(storeId: string, orderIds: string[]) {
+    if (orderIds.length === 0) {
+      return Promise.resolve({ results: [] as Array<{ orderId: string; promotionId: string }> });
+    }
+    const marks = orderIds.map(() => '?').join(',');
+    return this.db
+      .prepare(
+        `SELECT order_id AS orderId, promotion_id AS promotionId
+         FROM order_promotions WHERE store_id = ? AND order_id IN (${marks})`,
+      )
+      .bind(storeId, ...orderIds)
+      .all<{ orderId: string; promotionId: string }>();
+  }
+
   listSuppressed(storeId: string, orderId: string) {
     return this.db
       .prepare(
@@ -422,6 +436,21 @@ export class PromotionRepository {
       )
       .bind(storeId, orderId)
       .all<{ promotionId: string }>();
+  }
+
+  listSuppressedForOrders(storeId: string, orderIds: string[]) {
+    if (orderIds.length === 0) {
+      return Promise.resolve({ results: [] as Array<{ orderId: string; promotionId: string }> });
+    }
+    const marks = orderIds.map(() => '?').join(',');
+    return this.db
+      .prepare(
+        `SELECT order_id AS orderId, promotion_id AS promotionId
+         FROM order_promotion_suppressions
+         WHERE store_id = ? AND order_id IN (${marks})`,
+      )
+      .bind(storeId, ...orderIds)
+      .all<{ orderId: string; promotionId: string }>();
   }
 
   customerInAnyGroup(storeId: string, customerId: string, groupIds: string[]) {
@@ -435,6 +464,21 @@ export class PromotionRepository {
       .bind(storeId, customerId, ...groupIds)
       .first<{ found: 1 }>()
       .then(Boolean);
+  }
+
+  async customerGroupsForCustomers(storeId: string, customerIds: string[]) {
+    if (customerIds.length === 0) {
+      return { results: [] as Array<{ customerId: string; groupId: string }> };
+    }
+    const marks = customerIds.map(() => '?').join(',');
+    return this.db
+      .prepare(
+        `SELECT customer_id AS customerId, group_id AS groupId
+         FROM customer_group_members
+         WHERE store_id = ? AND customer_id IN (${marks})`,
+      )
+      .bind(storeId, ...customerIds)
+      .all<{ customerId: string; groupId: string }>();
   }
 
   async giftProductNames(storeId: string, productIds: string[]) {

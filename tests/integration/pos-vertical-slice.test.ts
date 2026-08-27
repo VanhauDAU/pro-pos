@@ -255,6 +255,144 @@ describe('online POS vertical slice', () => {
     });
   });
 
+  it('keeps batched overview consistent with quotes across pricing scenarios', async () => {
+    const pos = new PosService(env);
+    const activeOrderIds: string[] = [];
+    const createTakeawayWithItem = async (key: string, discountVnd = 0) => {
+      const created = await pos.createTakeaway({
+        storeId,
+        actorId: ownerUserId,
+        requestId: `request-${key}-create`,
+        idempotencyKey: `${key}-create`,
+        note: null,
+      });
+      await pos.addItem({
+        storeId,
+        actorId: ownerUserId,
+        requestId: `request-${key}-item`,
+        idempotencyKey: `${key}-item`,
+        orderId: created.orderId,
+        productId,
+        variantId,
+        quantityMilli: 1000,
+        expectedOrderVersion: 1,
+        discount:
+          discountVnd > 0
+            ? { type: 'FIXED' as const, value: discountVnd, reason: 'Test overview discount' }
+            : null,
+      });
+      activeOrderIds.push(created.orderId);
+      return created.orderId;
+    };
+
+    try {
+      await createTakeawayWithItem('overview-batch-item');
+      await createTakeawayWithItem('overview-batch-discount', 5_000);
+
+      const timerOnly = await openFreshTable(
+        'Bàn overview chỉ tính giờ',
+        'overview-batch-timer-only',
+      );
+      activeOrderIds.push(timerOnly.orderId);
+
+      const mixed = await openFreshTable('Bàn overview món và giờ', 'overview-batch-mixed');
+      activeOrderIds.push(mixed.orderId);
+      await pos.addItem({
+        storeId,
+        actorId: ownerUserId,
+        requestId: 'request-overview-batch-mixed-item',
+        idempotencyKey: 'overview-batch-mixed-item',
+        orderId: mixed.orderId,
+        productId,
+        variantId,
+        quantityMilli: 2000,
+        expectedOrderVersion: 1,
+        discount: null,
+      });
+
+      const resumed = await openFreshTable('Bàn overview pause resume', 'overview-batch-pause');
+      activeOrderIds.push(resumed.orderId);
+      await pos.pause({
+        storeId,
+        orderId: resumed.orderId,
+        actorId: ownerUserId,
+        expectedOrderVersion: 1,
+        requestId: 'request-overview-batch-pause',
+        idempotencyKey: 'overview-batch-pause',
+      });
+      await pos.resume({
+        storeId,
+        orderId: resumed.orderId,
+        actorId: ownerUserId,
+        expectedOrderVersion: 2,
+        requestId: 'request-overview-batch-resume',
+        idempotencyKey: 'overview-batch-resume',
+      });
+
+      const transferred = await openFreshTable(
+        'Bàn overview trước chuyển',
+        'overview-batch-transfer-source',
+      );
+      activeOrderIds.push(transferred.orderId);
+      const target = await new CatalogService(env).createTable({
+        storeId,
+        areaId,
+        timeProductId,
+        name: 'Bàn overview sau chuyển',
+        sortOrder: 12,
+      });
+      await pos.transfer({
+        storeId,
+        actorId: ownerUserId,
+        requestId: 'request-overview-batch-transfer',
+        idempotencyKey: 'overview-batch-transfer',
+        orderId: transferred.orderId,
+        targetTableId: target.id,
+        expectedOrderVersion: 1,
+        expectedSourceTableVersion: 2,
+        expectedTargetTableVersion: 1,
+      });
+
+      const now = Date.now() + 10_000;
+      const overview = await pos.overview(storeId, now);
+      expect(activeOrderIds.length).toBeGreaterThan(5);
+      const quotes = await Promise.all(
+        activeOrderIds.map(
+          async (orderId) => [orderId, await pos.quote(storeId, orderId, now)] as const,
+        ),
+      );
+      for (const [orderId, quote] of quotes) {
+        expect(overview.orders.find((order) => order.id === orderId)).toMatchObject({
+          version: quote.order.version,
+          status: quote.order.status,
+          totalVnd: quote.totalVnd,
+        });
+        if (quote.order.tableId) {
+          expect(overview.tables.find((table) => table.id === quote.order.tableId)).toMatchObject({
+            activeOrderId: orderId,
+            totalVnd: quote.totalVnd,
+            timeSessionStatus: quote.time?.status ?? null,
+          });
+        }
+      }
+    } finally {
+      await Promise.all(
+        activeOrderIds.map(async (orderId, index) => {
+          const quote = await pos.quote(storeId, orderId);
+          await pos.cancel({
+            storeId,
+            actorId: ownerUserId,
+            requestId: `request-overview-batch-cleanup-${index}`,
+            idempotencyKey: `overview-batch-cleanup-${index}`,
+            orderId,
+            expectedOrderVersion: quote.order.version,
+            reason: 'Dọn dữ liệu test overview batch',
+          });
+        }),
+      );
+    }
+  });
+
   it('fails overview instead of replacing a quote failure with a zero total', async () => {
     const pos = new PosService(env);
     const opened = await openFreshTable('Bàn quote lỗi', 'overview-quote-error-open-001');
@@ -785,6 +923,12 @@ describe('online POS vertical slice', () => {
       promotionDiscountVnd: 15_000,
       totalVnd: 5_000,
       promotion: { id: promotion.id, name: 'Giảm 15.000đ hóa đơn' },
+    });
+    expect(
+      (await pos.overview(storeId)).orders.find((item) => item.id === order.orderId),
+    ).toMatchObject({
+      version: discounted.order.version,
+      totalVnd: discounted.totalVnd,
     });
     const checkout = await pos.checkout({
       storeId,

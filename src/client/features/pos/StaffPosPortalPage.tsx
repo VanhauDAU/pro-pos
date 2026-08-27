@@ -4076,9 +4076,12 @@ function OrderItemDetailModal({
         <div className="staff-item-modal__scrollable-content">
           <div className="staff-item-modal__avatar-wrap">
             <div
-              className={`staff-item-modal__avatar-box ${product?.avatarType === 'IMAGE' && product?.mediaId ? 'has-image' : 'has-color'} ${product?.avatarColor ? 'has-custom-color' : ''}`}
+              className={`staff-item-modal__avatar-box ${product?.avatarType === 'IMAGE' && product?.mediaId ? 'has-image' : 'has-color'}`}
               style={{
-                background: product?.avatarColor || '#f8fafc',
+                background:
+                  product?.avatarType === 'IMAGE' && product?.mediaId
+                    ? undefined
+                    : product?.avatarColor || '#0975f7',
               }}
             >
               {product?.avatarType === 'IMAGE' && product?.mediaId ? (
@@ -7351,9 +7354,12 @@ function OrderEditor({
                         onClick={(e) => chooseProduct(product, e)}
                       >
                         <div
-                          className={`staff-product-compact-row__visual ${product.avatarType === 'IMAGE' && product.mediaId ? 'has-image' : 'has-color'} ${product.avatarColor ? 'has-custom-color' : ''}`}
+                          className={`staff-product-compact-row__visual ${product.avatarType === 'IMAGE' && product.mediaId ? 'has-image' : 'has-color'}`}
                           style={{
-                            background: product.avatarColor || '#f8fafc',
+                            background:
+                              product.avatarType === 'IMAGE' && product.mediaId
+                                ? undefined
+                                : product.avatarColor || '#0975f7',
                           }}
                         >
                           {product.avatarType === 'IMAGE' && product.mediaId ? (
@@ -7849,7 +7855,10 @@ function OrderEditor({
                           <div
                             className={`staff-order-mobile-card-row__visual ${catalogProd?.avatarType === 'IMAGE' && catalogProd.mediaId ? 'has-image' : 'has-color'}`}
                             style={{
-                              background: catalogProd?.avatarColor || '#f8fafc',
+                              background:
+                                catalogProd?.avatarType === 'IMAGE' && catalogProd.mediaId
+                                  ? undefined
+                                  : catalogProd?.avatarColor || '#0975f7',
                             }}
                           >
                             {catalogProd?.avatarType === 'IMAGE' && catalogProd.mediaId ? (
@@ -8293,12 +8302,16 @@ function OrderEditor({
                       <button
                         type="button"
                         key={product.productId}
+                        className={`staff-product-card ${product.avatarType === 'IMAGE' && product.mediaId ? 'has-image-card' : 'has-color-card'}`}
                         onClick={(e) => chooseProduct(product, e)}
                       >
                         <span
-                          className={`staff-product-card__visual ${product.avatarType === 'IMAGE' && product.mediaId ? 'has-image' : 'has-color'} ${product.avatarColor ? 'has-custom-color' : ''}`}
+                          className={`staff-product-card__visual ${product.avatarType === 'IMAGE' && product.mediaId ? 'has-image' : 'has-color'}`}
                           style={{
-                            background: product.avatarColor || '#f8fafc',
+                            background:
+                              product.avatarType === 'IMAGE' && product.mediaId
+                                ? undefined
+                                : product.avatarColor || '#0975f7',
                           }}
                         >
                           {product.avatarType === 'IMAGE' && product.mediaId ? (

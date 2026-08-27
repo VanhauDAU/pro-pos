@@ -1197,9 +1197,12 @@ export function GuestOrderPage() {
                   return (
                     <div key={product.id} className="qr-guest-card">
                       <div
-                        className={`qr-guest-card__img-wrap ${product.avatarColor ? 'has-custom-color' : ''}`}
+                        className={`qr-guest-card__img-wrap ${product.avatarType === 'IMAGE' && product.mediaId ? 'has-image' : 'has-color'}`}
                         style={{
-                          background: product.avatarColor || '#f8fafc',
+                          background:
+                            product.avatarType === 'IMAGE' && product.mediaId
+                              ? undefined
+                              : product.avatarColor || '#0975f7',
                         }}
                         onClick={() => openCustomizationModal(product)}
                       >
@@ -1680,8 +1683,7 @@ export function GuestOrderPage() {
                 <img
                   src={`/api/v1/guest-order/media/${customizingProduct.mediaId}`}
                   alt={customizingProduct.name}
-                  className={`qr-guest-modal-img ${customizingProduct.avatarColor ? 'has-custom-color' : ''}`}
-                  style={{ background: customizingProduct.avatarColor || '#f8fafc' }}
+                  className="qr-guest-modal-img has-image"
                 />
               ) : null}
 

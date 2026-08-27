@@ -5,6 +5,38 @@ import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
+  environments: {
+    client: {
+      build: {
+        rolldownOptions: {
+          output: {
+            strictExecutionOrder: true,
+            codeSplitting: {
+              groups: [
+                {
+                  name: 'vendor-initial',
+                  test: /node_modules[\\/]/,
+                  tags: ['$initial'],
+                  priority: 20,
+                  minSize: 20_000,
+                  maxSize: 500_000,
+                },
+                {
+                  name: 'vendor',
+                  test: /node_modules[\\/]/,
+                  priority: 10,
+                  entriesAware: true,
+                  entriesAwareMergeThreshold: 10_000,
+                  minSize: 20_000,
+                  maxSize: 500_000,
+                },
+              ],
+            },
+          },
+        },
+      },
+    },
+  },
   server: {
     host: '127.0.0.1',
     port: 5173,
@@ -57,21 +89,12 @@ export default defineConfig({
           'apple-touch-icon.png',
           'sounds/*.mp3',
           'pwa-*.png',
-          'assets/index-*.css',
           'assets/index-*.js',
+          'assets/propos-*.css',
+          'assets/propos-*.js',
           'assets/rolldown-runtime-*.js',
-          'assets/api-*.js',
-          'assets/typography-*.js',
-          'assets/spin-*.js',
-          'assets/ShopOutlined-*.js',
-          'assets/LockOutlined-*.js',
-          'assets/hooks-*.js',
-          'assets/components-*.js',
-          'assets/input-*.js',
-          'assets/UserOutlined-*.js',
-          'assets/lib-*.js',
-          'assets/MailOutlined-*.js',
-          'assets/workbox-window*.js',
+          'assets/vendor-initial-*.css',
+          'assets/vendor-initial-*.js',
         ],
       },
     }),

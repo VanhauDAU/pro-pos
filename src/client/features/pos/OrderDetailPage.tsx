@@ -49,7 +49,7 @@ import {
   Typography,
 } from 'antd';
 import type { TableColumnsType } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
@@ -64,8 +64,17 @@ import {
   type PosReceiptTimeSegment,
 } from '@client/lib/pos-receipt-printer';
 import { usePosPollingInterval, useRealtime } from '@client/realtime/RealtimeProvider';
-import { ReceiptPreviewModal, ReceiptPreviewPaper } from './ReceiptPreviewModal';
 import { toast } from 'sonner';
+
+const ReceiptPreviewModal = lazy(async () => {
+  const module = await import('./ReceiptPreviewModal');
+  return { default: module.ReceiptPreviewModal };
+});
+
+const ReceiptPreviewPaper = lazy(async () => {
+  const module = await import('./ReceiptPreviewModal');
+  return { default: module.ReceiptPreviewPaper };
+});
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -1900,7 +1909,9 @@ export function OrderDetailPage({
                     borderRadius: 8,
                   }}
                 >
-                  <ReceiptPreviewPaper options={currentReceiptPrintOptions} />
+                  <Suspense fallback={<Skeleton active title={false} paragraph={{ rows: 10 }} />}>
+                    <ReceiptPreviewPaper options={currentReceiptPrintOptions} />
+                  </Suspense>
                 </div>
               ) : null}
             </Card>
@@ -1953,20 +1964,41 @@ export function OrderDetailPage({
       )}
 
       {/* ── Authentic Thermal Receipt Modal ── */}
-      <ReceiptPreviewModal
-        open={receiptModalVisible}
-        title={
-          receiptModalType === 'PAYMENT'
-            ? `Xem hóa đơn thanh toán · ${data.invoice?.displayCode || orderCode}`
-            : `Xem hóa đơn tạm tính · ${orderCode}`
-        }
-        options={currentReceiptPrintOptions}
-        onCancel={() => setReceiptModalVisible(false)}
-        onPrint={async () => {
-          await handlePrintReceipt(receiptModalType);
-          setReceiptModalVisible(false);
-        }}
-      />
+      {receiptModalVisible ? (
+        <Suspense
+          fallback={
+            <Modal
+              open
+              title={
+                receiptModalType === 'PAYMENT'
+                  ? `Xem hóa đơn thanh toán · ${data.invoice?.displayCode || orderCode}`
+                  : `Xem hóa đơn tạm tính · ${orderCode}`
+              }
+              footer={null}
+              width={650}
+              centered
+              onCancel={() => setReceiptModalVisible(false)}
+            >
+              <Skeleton active title={false} paragraph={{ rows: 10 }} />
+            </Modal>
+          }
+        >
+          <ReceiptPreviewModal
+            open
+            title={
+              receiptModalType === 'PAYMENT'
+                ? `Xem hóa đơn thanh toán · ${data.invoice?.displayCode || orderCode}`
+                : `Xem hóa đơn tạm tính · ${orderCode}`
+            }
+            options={currentReceiptPrintOptions}
+            onCancel={() => setReceiptModalVisible(false)}
+            onPrint={async () => {
+              await handlePrintReceipt(receiptModalType);
+              setReceiptModalVisible(false);
+            }}
+          />
+        </Suspense>
+      ) : null}
 
       {/* ── Delete Confirmation Modal ── */}
       <Modal

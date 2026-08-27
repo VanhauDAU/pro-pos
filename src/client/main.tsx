@@ -10,6 +10,16 @@ import { BrowserRouter } from 'react-router';
 import { App } from './App';
 import { ApiError } from './lib/api';
 
+const PRELOAD_RECOVERY_KEY = 'propos-preload-recovery-at';
+
+window.addEventListener('vite:preloadError', (event) => {
+  const lastRecoveryAt = Number(window.sessionStorage.getItem(PRELOAD_RECOVERY_KEY) ?? '0');
+  if (Date.now() - lastRecoveryAt < 10_000) return;
+  event.preventDefault();
+  window.sessionStorage.setItem(PRELOAD_RECOVERY_KEY, String(Date.now()));
+  window.location.reload();
+});
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {

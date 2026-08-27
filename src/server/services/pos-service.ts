@@ -9,11 +9,20 @@ import type {
   OrderAuditEventDetail,
 } from '@contracts/order-detail';
 import type { OrderCallBatchDto, OrderCallBatchPageDto } from '@contracts/pos';
+import type { PosPromotionOption } from '@contracts/promotion';
 import type { BankAccountDto } from '@contracts/store';
 import { calculateTimePrice } from '@domain/pricing/engine';
 import { AppError } from '@server/lib/app-error';
 import { readStableVersionedSnapshot } from '@server/lib/consistent-read';
 import { PosRepository } from '@server/repositories/pos-repository';
+import type {
+  OrderItemRow,
+  OrderRow,
+  OverviewPauseRow,
+  ProductPricingSnapshotRow,
+  TableTimeSegmentRow,
+  TimeSessionRow,
+} from '@server/repositories/pos-repository';
 import { AuditRepository } from '@server/repositories/audit-repository';
 import { AuthorizationRepository } from '@server/repositories/authorization-repository';
 import { CustomerService } from '@server/services/customer-service';
@@ -49,6 +58,229 @@ async function measurePhase<T>(
   } finally {
     timing?.(name, performance.now() - startedAt);
   }
+}
+
+interface PricedTableTimeSegment {
+  tableId: string;
+  tableName: string;
+  startedAtMs: number;
+  endedAtMs: number | null;
+  elapsedSeconds: number;
+  amountBeforeRoundingVnd: number;
+  amountAfterRoundingVnd: number;
+  pricingConfig: PricingConfigSnapshot;
+}
+
+type SessionPricing = PricingResult & {
+  status: 'RUNNING' | 'PAUSED' | 'ENDED';
+  startedAtMs: number;
+  endedAtMs: number | null;
+  pausedAtMs: number | null;
+  pricingConfig: PricingConfigSnapshot;
+  tableSegments?: PricedTableTimeSegment[];
+};
+
+function groupBy<T, K>(values: T[], keyFor: (value: T) => K) {
+  const grouped = new Map<K, T[]>();
+  for (const value of values) {
+    const key = keyFor(value);
+    const group = grouped.get(key) ?? [];
+    group.push(value);
+    grouped.set(key, group);
+  }
+  return grouped;
+}
+
+function pricingSnapshotsFromRows(
+  rows: ProductPricingSnapshotRow[],
+  timezone: string,
+): Map<string, PricingConfigSnapshot> {
+  const snapshots = new Map<string, PricingConfigSnapshot>();
+  for (const row of rows) {
+    let snapshot = snapshots.get(row.product_id);
+    if (!snapshot) {
+      snapshot = {
+        version: row.pricing_version,
+        timezone,
+        basePriceVnd: row.base_price,
+        baseDurationSeconds: row.base_duration_seconds,
+        calculationMode: row.calculation_mode,
+        roundingUnitVnd: row.rounding_unit,
+        firstPeriod:
+          row.first_period_enabled === 1 &&
+          row.first_period_duration_seconds &&
+          row.first_period_price
+            ? {
+                enabled: true,
+                durationSeconds: row.first_period_duration_seconds,
+                priceVnd: row.first_period_price,
+              }
+            : { enabled: false },
+        specialWindows: [],
+      };
+      snapshots.set(row.product_id, snapshot);
+    }
+    if (
+      row.windowId &&
+      row.windowName &&
+      row.windowPriceVnd !== null &&
+      row.windowStartMinute !== null &&
+      row.windowEndMinute !== null &&
+      row.windowWeekdaysMask !== null
+    ) {
+      snapshot.specialWindows.push({
+        id: row.windowId,
+        name: row.windowName,
+        priceVnd: row.windowPriceVnd,
+        startMinute: row.windowStartMinute,
+        endMinute: row.windowEndMinute,
+        weekdaysMask: row.windowWeekdaysMask,
+      });
+    }
+  }
+  return snapshots;
+}
+
+function calculateSessionPricing(input: {
+  session: TimeSessionRow | null;
+  tableSegments: TableTimeSegmentRow[];
+  pauses: Array<{ pausedAtMs: number; resumedAtMs: number | null }>;
+  now: number;
+}): SessionPricing | null {
+  const { session, tableSegments, pauses, now } = input;
+  if (!session) return null;
+  const currentPause = pauses.find((pause) => pause.resumedAtMs === null);
+  const pausedAtMs = currentPause?.pausedAtMs ?? null;
+  const sessionPauses = pauses.map((pause) => ({
+    pausedAtMs: pause.pausedAtMs,
+    resumedAtMs: pause.resumedAtMs ?? now,
+  }));
+
+  if (tableSegments.length === 0) {
+    const pricingConfig = JSON.parse(session.pricing_snapshot_json) as PricingConfigSnapshot;
+    return {
+      ...calculateTimePrice({
+        startedAtMs: session.started_at,
+        endedAtMs: Math.max(session.started_at + 1, session.ended_at ?? now),
+        pauses: sessionPauses,
+        config: pricingConfig,
+      }),
+      status: session.status,
+      startedAtMs: session.started_at,
+      endedAtMs: session.ended_at,
+      pausedAtMs,
+      pricingConfig,
+    };
+  }
+
+  let totalElapsedSeconds = 0;
+  let totalAmountBeforeRounding = 0;
+  let totalAmountAfterRounding = 0;
+  const allSegments: PricingSegment[] = [];
+  const processedTableSegments: PricedTableTimeSegment[] = [];
+  for (let index = 0; index < tableSegments.length; index += 1) {
+    const segment = tableSegments[index]!;
+    const isFirst = index === 0;
+    const isLast = index === tableSegments.length - 1;
+    const startedAtMs = isFirst ? session.started_at : segment.started_at;
+    const rawEnd = isLast
+      ? (session.ended_at ?? now)
+      : (segment.ended_at ?? session.ended_at ?? now);
+    const endedAtMs = Math.max(startedAtMs + 1, rawEnd);
+    const pricingConfig = JSON.parse(segment.pricing_snapshot_json) as PricingConfigSnapshot;
+    const segmentPricing = calculateTimePrice({
+      startedAtMs,
+      endedAtMs,
+      pauses: sessionPauses.filter(
+        (pause) => pause.resumedAtMs > startedAtMs && pause.pausedAtMs < endedAtMs,
+      ),
+      config: pricingConfig,
+    });
+    totalElapsedSeconds += segmentPricing.elapsedSeconds;
+    totalAmountBeforeRounding += segmentPricing.amountBeforeRoundingVnd;
+    totalAmountAfterRounding += segmentPricing.amountAfterRoundingVnd;
+    allSegments.push(...segmentPricing.segments);
+    processedTableSegments.push({
+      tableId: segment.table_id,
+      tableName: segment.table_name_snapshot,
+      startedAtMs,
+      endedAtMs: isLast ? session.ended_at : segment.ended_at,
+      elapsedSeconds: segmentPricing.elapsedSeconds,
+      amountBeforeRoundingVnd: segmentPricing.amountBeforeRoundingVnd,
+      amountAfterRoundingVnd: segmentPricing.amountAfterRoundingVnd,
+      pricingConfig,
+    });
+  }
+  return {
+    elapsedSeconds: totalElapsedSeconds,
+    amountBeforeRoundingVnd: totalAmountBeforeRounding,
+    amountAfterRoundingVnd: totalAmountAfterRounding,
+    segments: allSegments,
+    status: session.status,
+    startedAtMs: session.started_at,
+    endedAtMs: session.ended_at,
+    pausedAtMs,
+    pricingConfig: processedTableSegments.at(-1)!.pricingConfig,
+    tableSegments: processedTableSegments,
+  };
+}
+
+function priceOrderItems(
+  items: OrderItemRow[],
+  now: number,
+  productPricing: Map<string, PricingConfigSnapshot>,
+) {
+  return items.map((item) => {
+    if (item.productType !== 'TIME' || !item.timeStartedAtMs) return item;
+    const pricingConfig = productPricing.get(item.productId);
+    if (!pricingConfig) return item;
+    const startedAtMs = item.timeStartedAtMs;
+    const timePricing = calculateTimePrice({
+      startedAtMs,
+      endedAtMs: Math.max(startedAtMs + 1000, item.timeEndedAtMs ?? now),
+      config: pricingConfig,
+    });
+    const quantityMilli = Math.max(1, Math.round((timePricing.elapsedSeconds / 3600) * 1000));
+    const grossLineTotalVnd = timePricing.amountAfterRoundingVnd;
+    const discountAmountVnd =
+      item.discountType === 'PERCENT'
+        ? Math.min(
+            grossLineTotalVnd,
+            Math.round((grossLineTotalVnd * (item.discountInputValue ?? 0)) / 100),
+          )
+        : item.discountType === 'FIXED'
+          ? Math.min(grossLineTotalVnd, item.discountInputValue ?? 0)
+          : 0;
+    return {
+      ...item,
+      quantityMilli,
+      grossLineTotalVnd,
+      discountAmountVnd,
+      netLineTotalVnd: grossLineTotalVnd - discountAmountVnd,
+      timePricing: { ...timePricing, pricingConfig },
+    };
+  });
+}
+
+function calculateQuoteTotals(
+  items: ReturnType<typeof priceOrderItems>,
+  pricing: SessionPricing | null,
+  appliedPromotions: PosPromotionOption[],
+) {
+  const productGrossVnd = items.reduce((sum, item) => sum + Number(item.grossLineTotalVnd), 0);
+  const itemDiscountVnd = items.reduce((sum, item) => sum + Number(item.discountAmountVnd), 0);
+  const subtotalVnd = productGrossVnd + (pricing?.amountAfterRoundingVnd ?? 0);
+  const promotionDiscountVnd = appliedPromotions.reduce(
+    (sum, promotion) => sum + promotion.discountAmountVnd,
+    0,
+  );
+  return {
+    subtotalVnd,
+    itemDiscountVnd,
+    promotionDiscountVnd,
+    discountTotalVnd: itemDiscountVnd + promotionDiscountVnd,
+    totalVnd: Math.max(0, subtotalVnd - itemDiscountVnd - promotionDiscountVnd),
+  };
 }
 
 interface PreparedSaveItem {
@@ -277,59 +509,217 @@ export class PosService {
   }
 
   async overview(storeId: string, now = Date.now(), timing?: TimingCallback, requestId?: string) {
-    const [tableRows, orderRows] = await measurePhase(timing, 'overview_base', () =>
-      Promise.all([this.repository.listTables(storeId), this.repository.listActiveOrders(storeId)]),
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      // eslint-disable-next-line no-await-in-loop -- the retry must rebuild after a version change.
+      const [tableRows, orderRows] = await measurePhase(timing, 'overview_base', () =>
+        Promise.all([
+          this.repository.listTables(storeId),
+          this.repository.listActiveOrders(storeId),
+        ]),
+      );
+      // eslint-disable-next-line no-await-in-loop -- validate only the snapshot built in this attempt.
+      const summaries = await measurePhase(timing, 'overview_quotes', () =>
+        this.buildOverviewQuoteSummaries(
+          storeId,
+          orderRows.results,
+          now,
+          timing,
+          requestId,
+          attempt,
+        ),
+      );
+      if (!summaries) continue;
+
+      const orders = orderRows.results.map((order) => {
+        const summary = summaries.get(order.id);
+        if (!summary) throw new Error(`Missing overview summary for active order ${order.id}`);
+        return {
+          id: order.id,
+          displayCode: order.display_code,
+          orderType: order.order_type,
+          status: order.status,
+          version: order.version,
+          openedAt: order.opened_at,
+          tableId: order.table_id,
+          tableName: order.table_name,
+          areaId: order.area_id,
+          areaName: order.area_name,
+          itemCount: summary.orderItemCount,
+          totalVnd: summary.totalVnd,
+          timeStatus: summary.timeStatus,
+        };
+      });
+      const tables = tableRows.results.map((table) => {
+        const summary = table.activeOrderId ? summaries.get(table.activeOrderId) : null;
+        if (!summary) return Object.assign({}, table, { totalVnd: 0, itemCount: 0 });
+        return Object.assign({}, table, {
+          totalVnd: summary.totalVnd,
+          itemCount: summary.tableItemCount,
+          guestCount: summary.guestCount ?? table.guestCount ?? 1,
+          timeSessionStatus: summary.timeStatus ?? table.timeSessionStatus ?? null,
+        });
+      });
+      return { tables, orders, serverNowMs: now };
+    }
+    throw new AppError(
+      'ORDER_VERSION_CONFLICT',
+      'Đơn hàng đang được cập nhật. Vui lòng tải lại.',
+      409,
+      { retryable: true },
     );
-    const quoteEntries = await measurePhase(timing, 'overview_quotes', () =>
-      Promise.all(
-        orderRows.results.map(
-          async (order) =>
-            [
-              order.id,
-              await this.quote(storeId, order.id, now, requestId ? { requestId } : undefined),
-            ] as const,
+  }
+
+  private async buildOverviewQuoteSummaries(
+    storeId: string,
+    orders: OrderRow[],
+    now: number,
+    timing: TimingCallback | undefined,
+    requestId: string | undefined,
+    attempt: number,
+  ) {
+    if (orders.length === 0) {
+      return new Map<
+        string,
+        {
+          totalVnd: number;
+          orderItemCount: number;
+          tableItemCount: number;
+          guestCount: number;
+          timeStatus: 'RUNNING' | 'PAUSED' | 'ENDED' | null;
+        }
+      >();
+    }
+    const orderIds = orders.map((order) => order.id);
+    const [sessionRows, tableSegmentRows, pauseRows, itemRows] = await measurePhase(
+      timing,
+      'overview_batch_load',
+      () =>
+        Promise.all([
+          this.repository.listTimeSessionsForOrders(storeId, orderIds),
+          this.repository.listTableTimeSegmentsForOrders(storeId, orderIds),
+          this.repository.listPausesForOrders(storeId, orderIds),
+          this.repository.listOrderItemsForOrders(storeId, orderIds),
+        ]),
+    );
+    const timeProductIds = [
+      ...new Set(
+        itemRows.results.flatMap((item) =>
+          item.productType === 'TIME' && item.timeStartedAtMs ? [item.productId] : [],
         ),
       ),
+    ];
+    const productPricingRows = await measurePhase(timing, 'overview_batch_load', () =>
+      this.repository.listProductPricingSnapshots(storeId, timeProductIds),
     );
-    const quotes = new Map(quoteEntries);
-    const orders = orderRows.results.map((order) => {
-      const quote = quotes.get(order.id);
-      if (!quote) throw new Error(`Missing quote for active order ${order.id}`);
-      return {
-        id: quote.order.id,
-        displayCode: quote.order.displayCode ?? order.display_code,
-        orderType: quote.order.orderType,
-        status: quote.order.status,
-        version: quote.order.version,
-        openedAt: quote.order.openedAt,
-        tableId: quote.order.tableId,
-        tableName: quote.order.tableName,
-        areaId: quote.order.areaId,
-        areaName: quote.order.areaName,
-        itemCount: quote.items.reduce(
-          (sum, item) =>
-            sum + (item.productType === 'TIME' ? 0 : Number(item.quantityMilli) / 1000),
-          0,
-        ),
-        totalVnd: quote.totalVnd,
-        timeStatus: quote.time?.status ?? null,
-      };
+
+    return measurePhase(timing, 'overview_pricing', async () => {
+      const sessionsByOrder = new Map(
+        sessionRows.results.map((session) => [session.order_id, session]),
+      );
+      const segmentsByOrder = groupBy(tableSegmentRows.results, (segment) => segment.order_id);
+      const pausesByOrder = groupBy(pauseRows.results, (pause) => pause.orderId);
+      const itemsByOrder = groupBy(itemRows.results, (item) => item.orderId);
+      const productPricing = pricingSnapshotsFromRows(
+        productPricingRows.results,
+        this.env.STORE_TIMEZONE,
+      );
+      const priced = new Map<
+        string,
+        {
+          order: OrderRow;
+          items: ReturnType<typeof priceOrderItems>;
+          pricing: SessionPricing | null;
+          subtotalAfterItemDiscountVnd: number;
+        }
+      >();
+      for (const order of orders) {
+        const items = priceOrderItems(itemsByOrder.get(order.id) ?? [], now, productPricing);
+        const pricing = calculateSessionPricing({
+          session: sessionsByOrder.get(order.id) ?? null,
+          tableSegments: segmentsByOrder.get(order.id) ?? [],
+          pauses: pausesByOrder.get(order.id) ?? [],
+          now,
+        });
+        const totals = calculateQuoteTotals(items, pricing, []);
+        priced.set(order.id, {
+          order,
+          items,
+          pricing,
+          subtotalAfterItemDiscountVnd: Math.max(0, totals.subtotalVnd - totals.itemDiscountVnd),
+        });
+      }
+      const promotionResults = await this.promotions.optionsForOrders(
+        [...priced.values()].map((entry) => ({
+          storeId,
+          orderId: entry.order.id,
+          subtotalVnd: entry.subtotalAfterItemDiscountVnd,
+          customerId: entry.order.customer_id ?? null,
+          items: entry.items.map((item) => ({
+            productId: item.productId,
+            variantId: item.variantId,
+            productType: item.productType,
+            productName: item.productName,
+            variantName: item.variantName,
+            unitPriceVnd: Number(item.unitPriceVnd),
+            quantityMilli: Number(item.quantityMilli),
+            grossLineTotalVnd: Number(item.grossLineTotalVnd),
+            netLineTotalVnd: Number(item.netLineTotalVnd),
+          })),
+          now,
+        })),
+      );
+      const latestRows = await this.repository.listOrderVersions(storeId, orderIds);
+      const latestVersions = new Map(latestRows.results.map((row) => [row.id, row.version]));
+      const changed = orders.find((order) => latestVersions.get(order.id) !== order.version);
+      if (changed) {
+        console.warn(
+          JSON.stringify({
+            level: 'warn',
+            message: 'pos overview order changed during batch read',
+            requestId: requestId ?? null,
+            storeId,
+            orderId: changed.id,
+            attempt,
+            quotedVersion: changed.version,
+            latestVersion: latestVersions.get(changed.id) ?? null,
+          }),
+        );
+        return null;
+      }
+
+      return new Map(
+        [...priced.values()].map((entry) => {
+          const promotions = promotionResults.get(entry.order.id)!;
+          const totals = calculateQuoteTotals(entry.items, entry.pricing, promotions.applied);
+          const giftItemCount = promotions.applied.reduce(
+            (sum, promotion) =>
+              sum +
+              promotion.giftItems.reduce(
+                (giftSum, gift) => giftSum + Number(gift.quantityMilli) / 1000,
+                0,
+              ),
+            0,
+          );
+          return [
+            entry.order.id,
+            {
+              totalVnd: totals.totalVnd,
+              orderItemCount:
+                entry.items.reduce((sum, item) => sum + Number(item.quantityMilli) / 1000, 0) +
+                giftItemCount,
+              tableItemCount:
+                entry.items.reduce(
+                  (sum, item) =>
+                    sum + (item.productType === 'TIME' ? 0 : Number(item.quantityMilli) / 1000),
+                  0,
+                ) + giftItemCount,
+              guestCount: entry.order.guest_count ?? 1,
+              timeStatus: entry.pricing?.status ?? null,
+            },
+          ] as const;
+        }),
+      );
     });
-    const tables = tableRows.results.map((table) => {
-      const quote = table.activeOrderId ? quotes.get(table.activeOrderId) : null;
-      if (!quote) return Object.assign({}, table, { totalVnd: 0, itemCount: 0 });
-      return Object.assign({}, table, {
-        totalVnd: quote.totalVnd,
-        itemCount: quote.items.reduce(
-          (sum, item) =>
-            sum + (item.productType === 'TIME' ? 0 : Number(item.quantityMilli) / 1000),
-          0,
-        ),
-        guestCount: quote.order.guestCount ?? table.guestCount ?? 1,
-        timeSessionStatus: quote.time?.status ?? table.timeSessionStatus ?? null,
-      });
-    });
-    return { tables, orders, serverNowMs: now };
   }
 
   async createTakeaway(input: {
@@ -571,18 +961,17 @@ export class PosService {
     includeLatestCallBatch = false,
     timing?: TimingCallback,
   ) {
-    const [quote, rawTables, callBatchPage] = await Promise.all([
+    const [quote, table, callBatchPage] = await Promise.all([
       measurePhase(timing, 'snapshot_quote', () => this.quote(storeId, orderId, now)),
-      measurePhase(timing, 'snapshot_tables', () => this.repository.listTables(storeId)),
+      measurePhase(timing, 'snapshot_tables', () =>
+        this.repository.findTableByOrderId(storeId, orderId),
+      ),
       includeLatestCallBatch
         ? measurePhase(timing, 'snapshot_call_batch', () =>
             this.listOrderCallBatches(storeId, orderId, undefined, 1),
           )
         : Promise.resolve<OrderCallBatchPageDto | null>(null),
     ]);
-    const table = quote.order.tableId
-      ? rawTables.results.find((candidate) => candidate.id === quote.order.tableId)
-      : null;
     return {
       clientMutationId,
       quote,
@@ -2328,196 +2717,48 @@ export class PosService {
       (await this.repository.findTakeawayOrder(storeId, orderId));
     if (!order) throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn.', 404);
 
-    const session = await this.repository.findTimeSession(storeId, orderId);
-    const tableSegments = session
-      ? (await this.repository.listTableTimeSegments(storeId, session.id)).results
-      : [];
-    const pauses = session ? await this.repository.listPauses(storeId, session.id) : null;
-    const currentPause = pauses?.results.find((p) => p.resumedAtMs === null);
-    const pausedAtMs = currentPause ? currentPause.pausedAtMs : null;
-    const sessionPauses = pauses
-      ? pauses.results.map((pause) => ({
-          pausedAtMs: pause.pausedAtMs,
-          resumedAtMs: pause.resumedAtMs ?? now,
-        }))
-      : [];
-
-    let pricing:
-      | (PricingResult & {
-          status: 'RUNNING' | 'PAUSED' | 'ENDED';
-          startedAtMs: number;
-          endedAtMs: number | null;
-          pausedAtMs: number | null;
-          pricingConfig: PricingConfigSnapshot;
-          tableSegments?: Array<{
-            tableId: string;
-            tableName: string;
-            startedAtMs: number;
-            endedAtMs: number | null;
-            elapsedSeconds: number;
-            amountBeforeRoundingVnd: number;
-            amountAfterRoundingVnd: number;
-            pricingConfig: PricingConfigSnapshot;
-          }>;
-        })
-      | null = null;
-
-    if (session) {
-      if (tableSegments.length > 0) {
-        let totalElapsedSeconds = 0;
-        let totalAmountBeforeRounding = 0;
-        let totalAmountAfterRounding = 0;
-        const allSegments: PricingSegment[] = [];
-        const processedTableSegments: Array<{
-          tableId: string;
-          tableName: string;
-          startedAtMs: number;
-          endedAtMs: number | null;
-          elapsedSeconds: number;
-          amountBeforeRoundingVnd: number;
-          amountAfterRoundingVnd: number;
-          pricingConfig: PricingConfigSnapshot;
-        }> = [];
-
-        for (let i = 0; i < tableSegments.length; i++) {
-          const seg = tableSegments[i]!;
-          const isFirst = i === 0;
-          const isLast = i === tableSegments.length - 1;
-          const segStarted = isFirst ? session.started_at : seg.started_at;
-          const rawEnd = isLast
-            ? (session.ended_at ?? now)
-            : (seg.ended_at ?? session.ended_at ?? now);
-          const segEnded = Math.max(segStarted + 1, rawEnd);
-          const segConfig = JSON.parse(seg.pricing_snapshot_json) as PricingConfigSnapshot;
-          const segPauses = sessionPauses.filter(
-            (p) => p.resumedAtMs > segStarted && p.pausedAtMs < segEnded,
-          );
-
-          const segPricing = calculateTimePrice({
-            startedAtMs: segStarted,
-            endedAtMs: segEnded,
-            pauses: segPauses,
-            config: segConfig,
-          });
-
-          totalElapsedSeconds += segPricing.elapsedSeconds;
-          totalAmountBeforeRounding += segPricing.amountBeforeRoundingVnd;
-          totalAmountAfterRounding += segPricing.amountAfterRoundingVnd;
-          allSegments.push(...segPricing.segments);
-
-          processedTableSegments.push({
-            tableId: seg.table_id,
-            tableName: seg.table_name_snapshot,
-            startedAtMs: segStarted,
-            endedAtMs: isLast ? session.ended_at : seg.ended_at,
-            elapsedSeconds: segPricing.elapsedSeconds,
-            amountBeforeRoundingVnd: segPricing.amountBeforeRoundingVnd,
-            amountAfterRoundingVnd: segPricing.amountAfterRoundingVnd,
-            pricingConfig: segConfig,
-          });
-        }
-
-        const latestConfig = JSON.parse(
-          tableSegments[tableSegments.length - 1]!.pricing_snapshot_json,
-        ) as PricingConfigSnapshot;
-
-        pricing = {
-          elapsedSeconds: totalElapsedSeconds,
-          amountBeforeRoundingVnd: totalAmountBeforeRounding,
-          amountAfterRoundingVnd: totalAmountAfterRounding,
-          segments: allSegments,
-          status: session.status,
-          startedAtMs: session.started_at,
-          endedAtMs: session.ended_at,
-          pausedAtMs,
-          pricingConfig: latestConfig,
-          tableSegments: processedTableSegments,
-        };
-      } else {
-        const pricingConfig = JSON.parse(session.pricing_snapshot_json) as PricingConfigSnapshot;
-        const singlePricing = calculateTimePrice({
-          startedAtMs: session.started_at,
-          endedAtMs: Math.max(session.started_at + 1, session.ended_at ?? now),
-          pauses: sessionPauses,
-          config: pricingConfig,
-        });
-        pricing = {
-          ...singlePricing,
-          status: session.status,
-          startedAtMs: session.started_at,
-          endedAtMs: session.ended_at,
-          pausedAtMs,
-          pricingConfig,
-        };
-      }
-    }
-
-    const items =
+    const [session, items] = await Promise.all([
+      this.repository.findTimeSession(storeId, orderId),
       order.order_type === 'TAKEAWAY'
-        ? await this.repository.listTakeawayOrderItems(storeId, orderId)
-        : await this.repository.listOrderItems(storeId, orderId);
-
-    const productPricing = new Map<string, Promise<PricingConfigSnapshot | null>>();
-    const pricingForProduct = (productId: string) => {
-      let cached = productPricing.get(productId);
-      if (!cached) {
-        cached = this.productPricingSnapshot(storeId, productId);
-        productPricing.set(productId, cached);
-      }
-      return cached;
-    };
-    const processedItems = await Promise.all(
-      items.results.map(async (item) => {
-        if (item.productType === 'TIME' && item.timeStartedAtMs) {
-          const itemPricing = await pricingForProduct(item.productId);
-          if (itemPricing) {
-            const startedAt = item.timeStartedAtMs;
-            const endedAt = item.timeEndedAtMs ?? now;
-            const timeCalc = calculateTimePrice({
-              startedAtMs: startedAt,
-              endedAtMs: Math.max(startedAt + 1000, endedAt),
-              config: itemPricing,
-            });
-            const durationMilli = Math.max(1, Math.round((timeCalc.elapsedSeconds / 3600) * 1000));
-            const gross = timeCalc.amountAfterRoundingVnd;
-            const discountAmount =
-              item.discountType === 'PERCENT'
-                ? Math.min(gross, Math.round((gross * (item.discountInputValue ?? 0)) / 100))
-                : item.discountType === 'FIXED'
-                  ? Math.min(gross, item.discountInputValue ?? 0)
-                  : 0;
-            const net = gross - discountAmount;
-            return Object.assign({}, item, {
-              quantityMilli: durationMilli,
-              grossLineTotalVnd: gross,
-              discountAmountVnd: discountAmount,
-              netLineTotalVnd: net,
-              timePricing: {
-                ...timeCalc,
-                pricingConfig: itemPricing,
-              },
-            });
-          }
-        }
-        return item;
-      }),
+        ? this.repository.listTakeawayOrderItems(storeId, orderId)
+        : this.repository.listOrderItems(storeId, orderId),
+    ]);
+    const [tableSegments, pauses] = session
+      ? await Promise.all([
+          this.repository.listTableTimeSegments(storeId, session.id),
+          this.repository.listPauses(storeId, session.id),
+        ])
+      : [{ results: [] as TableTimeSegmentRow[] }, { results: [] as OverviewPauseRow[] }];
+    const pricing = calculateSessionPricing({
+      session,
+      tableSegments: tableSegments.results,
+      pauses: pauses.results,
+      now,
+    });
+    const timeProductIds = [
+      ...new Set(
+        items.results.flatMap((item) =>
+          item.productType === 'TIME' && item.timeStartedAtMs ? [item.productId] : [],
+        ),
+      ),
+    ];
+    const productPricingRows = await this.repository.listProductPricingSnapshots(
+      storeId,
+      timeProductIds,
     );
-    const productGross = processedItems.reduce(
-      (sum, item) => sum + Number(item.grossLineTotalVnd),
-      0,
+    const processedItems = priceOrderItems(
+      items.results,
+      now,
+      pricingSnapshotsFromRows(productPricingRows.results, this.env.STORE_TIMEZONE),
     );
-    const discountTotal = processedItems.reduce(
-      (sum, item) => sum + Number(item.discountAmountVnd),
-      0,
-    );
-    const subtotal = productGross + (pricing?.amountAfterRoundingVnd ?? 0);
+    const preliminaryTotals = calculateQuoteTotals(processedItems, pricing, []);
     const [bankSettings, bankAccountRows, promotions] = await Promise.all([
       this.repository.findStoreBankSettings(storeId),
       this.repository.listStoreBankAccounts(storeId),
       this.promotions.optionsForOrder({
         storeId,
         orderId,
-        subtotalVnd: Math.max(0, subtotal - discountTotal),
+        subtotalVnd: Math.max(0, preliminaryTotals.subtotalVnd - preliminaryTotals.itemDiscountVnd),
         customerId: order.customer_id ?? null,
         items: processedItems.map((item) => ({
           productId: item.productId,
@@ -2533,12 +2774,9 @@ export class PosService {
         now,
       }),
     ]);
+    const totals = calculateQuoteTotals(processedItems, pricing, promotions.applied);
     const bankAccounts: BankAccountDto[] = bankAccountRows.results.map((account) =>
       Object.assign({}, account, { isDefault: account.isDefault === 1 }),
-    );
-    const promotionDiscount = promotions.applied.reduce(
-      (sum, promotion) => sum + promotion.discountAmountVnd,
-      0,
     );
     const promotionGiftItems = promotions.applied.flatMap((promotion) =>
       promotion.giftItems.map((gift) => ({
@@ -2589,14 +2827,14 @@ export class PosService {
       },
       items: [...processedItems, ...promotionGiftItems],
       time: pricing,
-      subtotalVnd: subtotal,
-      discountTotalVnd: discountTotal + promotionDiscount,
-      itemDiscountTotalVnd: discountTotal,
-      promotionDiscountVnd: promotionDiscount,
+      subtotalVnd: totals.subtotalVnd,
+      discountTotalVnd: totals.discountTotalVnd,
+      itemDiscountTotalVnd: totals.itemDiscountVnd,
+      promotionDiscountVnd: totals.promotionDiscountVnd,
       promotions: promotions.applied,
       promotion: promotions.applied[0] ?? null,
       promotionOptions: promotions.options,
-      totalVnd: Math.max(0, subtotal - discountTotal - promotionDiscount),
+      totalVnd: totals.totalVnd,
       bankSettings: bankSettings ?? null,
       bankAccounts,
     };

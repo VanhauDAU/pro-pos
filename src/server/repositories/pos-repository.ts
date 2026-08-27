@@ -16,6 +16,25 @@ export interface TablePricingRow {
   first_period_price: number | null;
 }
 
+export interface ProductPricingSnapshotRow {
+  product_id: string;
+  config_id: string;
+  pricing_version: number;
+  base_price: number;
+  base_duration_seconds: number;
+  calculation_mode: 'ACTUAL_TIME' | 'TIME_BLOCK';
+  rounding_unit: 0 | 100 | 500 | 1000 | 5000;
+  first_period_enabled: 0 | 1;
+  first_period_duration_seconds: number | null;
+  first_period_price: number | null;
+  windowId: string | null;
+  windowName: string | null;
+  windowPriceVnd: number | null;
+  windowStartMinute: number | null;
+  windowEndMinute: number | null;
+  windowWeekdaysMask: number | null;
+}
+
 export interface PosBankAccountRow {
   id: string;
   bankBin: string;
@@ -150,6 +169,17 @@ export interface OrderItemRow {
   note: string | null;
   timeStartedAtMs: number | null;
   timeEndedAtMs: number | null;
+}
+
+export interface OverviewOrderItemRow extends OrderItemRow {
+  orderId: string;
+}
+
+export interface OverviewPauseRow {
+  orderId: string;
+  timeSessionId: string;
+  pausedAtMs: number;
+  resumedAtMs: number | null;
 }
 
 interface PromotionGiftInvoiceLineInput {
@@ -507,6 +537,42 @@ export class PosRepository {
       .all<PosTableRecord>();
   }
 
+  findTableByOrderId(storeId: string, orderId: string) {
+    return this.db
+      .prepare(
+        `SELECT
+          st.id, COALESCE(st.display_name, st.name) AS name, st.status, st.version,
+          st.area_id AS areaId,
+          a.name AS areaName, a.sort_order AS areaSortOrder,
+          st.sort_order AS sortOrder,
+          st.time_product_id AS timeProductId,
+          p.name AS timeProductName,
+          tpc.base_price AS defaultPriceVnd,
+          tpc.base_duration_seconds AS defaultDurationSeconds,
+          active_order.id AS activeOrderId,
+          active_order.opened_at AS occupiedSince,
+          active_order.guest_count AS guestCount,
+          ts.status AS timeSessionStatus
+        FROM orders target_order
+        JOIN service_tables st
+          ON st.id = target_order.table_id AND st.store_id = target_order.store_id
+        JOIN areas a ON a.id = st.area_id AND a.store_id = st.store_id
+        LEFT JOIN products p ON p.id = st.time_product_id AND p.store_id = st.store_id
+        LEFT JOIN time_price_configs tpc ON tpc.product_id = p.id AND tpc.store_id = p.store_id
+        LEFT JOIN orders active_order
+          ON active_order.table_id = st.id AND active_order.store_id = st.store_id
+         AND active_order.order_type = 'DINE_IN'
+         AND active_order.status IN ('OPEN', 'PAYMENT_PENDING')
+        LEFT JOIN time_sessions ts
+          ON ts.order_id = active_order.id AND ts.store_id = st.store_id
+         AND ts.status IN ('RUNNING', 'PAUSED')
+        WHERE target_order.store_id = ? AND target_order.id = ? AND a.status = 'ACTIVE'
+        LIMIT 1`,
+      )
+      .bind(storeId, orderId)
+      .first<PosTableRecord>();
+  }
+
   async listTableTimeSegments(storeId: string, timeSessionId: string) {
     return this.db
       .prepare(
@@ -519,6 +585,23 @@ export class PosRepository {
         ORDER BY started_at ASC`,
       )
       .bind(storeId, timeSessionId)
+      .all<TableTimeSegmentRow>();
+  }
+
+  async listTableTimeSegmentsForOrders(storeId: string, orderIds: string[]) {
+    if (orderIds.length === 0) return { results: [] as TableTimeSegmentRow[] };
+    const marks = orderIds.map(() => '?').join(',');
+    return this.db
+      .prepare(
+        `SELECT
+          id, store_id, order_id, time_session_id, table_id, time_product_id,
+          table_name_snapshot, started_at, ended_at, pricing_snapshot_json,
+          pricing_version, unit_price_snapshot, created_at, updated_at
+        FROM table_time_segments
+        WHERE store_id = ? AND order_id IN (${marks})
+        ORDER BY order_id, started_at ASC`,
+      )
+      .bind(storeId, ...orderIds)
       .all<TableTimeSegmentRow>();
   }
 
@@ -571,6 +654,31 @@ export class PosRepository {
         first_period_duration_seconds: number | null;
         first_period_price: number | null;
       }>();
+  }
+
+  async listProductPricingSnapshots(storeId: string, productIds: string[]) {
+    if (productIds.length === 0) return { results: [] as ProductPricingSnapshotRow[] };
+    const marks = productIds.map(() => '?').join(',');
+    return this.db
+      .prepare(
+        `SELECT
+          p.id AS product_id, tpc.id AS config_id, tpc.version AS pricing_version,
+          tpc.base_price, tpc.base_duration_seconds, tpc.calculation_mode,
+          tpc.rounding_unit, tpc.first_period_enabled,
+          tpc.first_period_duration_seconds, tpc.first_period_price,
+          window.id AS windowId, window.name AS windowName,
+          window.price AS windowPriceVnd, window.start_minute AS windowStartMinute,
+          window.end_minute AS windowEndMinute, window.weekdays_mask AS windowWeekdaysMask
+        FROM products p
+        JOIN time_price_configs tpc
+          ON tpc.product_id = p.id AND tpc.store_id = p.store_id
+        LEFT JOIN special_price_windows window
+          ON window.time_price_config_id = tpc.id AND window.store_id = tpc.store_id
+        WHERE p.store_id = ? AND p.id IN (${marks})
+        ORDER BY p.id, window.name COLLATE NOCASE`,
+      )
+      .bind(storeId, ...productIds)
+      .all<ProductPricingSnapshotRow>();
   }
 
   async listSpecialWindows(storeId: string, configId: string) {
@@ -997,6 +1105,20 @@ export class PosRepository {
       .first<TimeSessionRow>();
   }
 
+  async listTimeSessionsForOrders(storeId: string, orderIds: string[]) {
+    if (orderIds.length === 0) return { results: [] as TimeSessionRow[] };
+    const marks = orderIds.map(() => '?').join(',');
+    return this.db
+      .prepare(
+        `SELECT id, order_id, table_id, time_product_id, status, started_at, ended_at,
+                pricing_snapshot_json, pricing_version
+         FROM time_sessions
+         WHERE store_id = ? AND order_id IN (${marks})`,
+      )
+      .bind(storeId, ...orderIds)
+      .all<TimeSessionRow>();
+  }
+
   async listPauses(storeId: string, timeSessionId: string) {
     return this.db
       .prepare(
@@ -1006,6 +1128,23 @@ export class PosRepository {
       )
       .bind(storeId, timeSessionId)
       .all<{ pausedAtMs: number; resumedAtMs: number | null }>();
+  }
+
+  async listPausesForOrders(storeId: string, orderIds: string[]) {
+    if (orderIds.length === 0) return { results: [] as OverviewPauseRow[] };
+    const marks = orderIds.map(() => '?').join(',');
+    return this.db
+      .prepare(
+        `SELECT session.order_id AS orderId, pause.time_session_id AS timeSessionId,
+                pause.paused_at AS pausedAtMs, pause.resumed_at AS resumedAtMs
+         FROM time_pauses pause
+         JOIN time_sessions session
+           ON session.id = pause.time_session_id AND session.store_id = pause.store_id
+         WHERE pause.store_id = ? AND session.order_id IN (${marks})
+         ORDER BY session.order_id, pause.paused_at`,
+      )
+      .bind(storeId, ...orderIds)
+      .all<OverviewPauseRow>();
   }
 
   async listOrderItems(storeId: string, orderId: string) {
@@ -1027,6 +1166,58 @@ export class PosRepository {
       )
       .bind(storeId, orderId)
       .all<OrderItemRow>();
+  }
+
+  async listOrderItemsForOrders(storeId: string, orderIds: string[]) {
+    if (orderIds.length === 0) return { results: [] as OverviewOrderItemRow[] };
+    const marks = orderIds.map(() => '?').join(',');
+    return this.db
+      .prepare(
+        `SELECT order_id AS orderId,
+          id, product_id AS productId, variant_id AS variantId,
+          product_type AS productType,
+          product_name_snapshot AS productName, variant_name_snapshot AS variantName,
+          unit_name_snapshot AS unitName, unit_price_snapshot AS unitPriceVnd,
+          quantity_milli AS quantityMilli, discount_type AS discountType,
+          discount_input_value AS discountInputValue,
+          discount_amount AS discountAmountVnd, discount_reason AS discountReason,
+          gross_line_total AS grossLineTotalVnd,
+          net_line_total AS netLineTotalVnd,
+          line_total AS lineTotalVnd, note,
+          time_started_at AS timeStartedAtMs, time_ended_at AS timeEndedAtMs
+         FROM order_items
+         WHERE store_id = ? AND order_id IN (${marks})
+         UNION ALL
+         SELECT order_id AS orderId,
+          id, product_id AS productId, variant_id AS variantId,
+          product_type AS productType,
+          product_name_snapshot AS productName, variant_name_snapshot AS variantName,
+          unit_name_snapshot AS unitName, unit_price_snapshot AS unitPriceVnd,
+          quantity_milli AS quantityMilli, discount_type AS discountType,
+          discount_input_value AS discountInputValue,
+          discount_amount AS discountAmountVnd, discount_reason AS discountReason,
+          gross_line_total AS grossLineTotalVnd,
+          net_line_total AS netLineTotalVnd,
+          net_line_total AS lineTotalVnd, note,
+          NULL AS timeStartedAtMs, NULL AS timeEndedAtMs
+         FROM takeaway_order_items
+         WHERE store_id = ? AND order_id IN (${marks})`,
+      )
+      .bind(storeId, ...orderIds, storeId, ...orderIds)
+      .all<OverviewOrderItemRow>();
+  }
+
+  async listOrderVersions(storeId: string, orderIds: string[]) {
+    if (orderIds.length === 0) return { results: [] as Array<{ id: string; version: number }> };
+    const marks = orderIds.map(() => '?').join(',');
+    return this.db
+      .prepare(
+        `SELECT id, version FROM orders WHERE store_id = ? AND id IN (${marks})
+         UNION ALL
+         SELECT id, version FROM takeaway_orders WHERE store_id = ? AND id IN (${marks})`,
+      )
+      .bind(storeId, ...orderIds, storeId, ...orderIds)
+      .all<{ id: string; version: number }>();
   }
 
   findOrderItemType(

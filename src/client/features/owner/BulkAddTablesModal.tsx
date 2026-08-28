@@ -1,15 +1,5 @@
 import { AppstoreAddOutlined, EyeOutlined } from '@ant-design/icons';
-import {
-  Alert,
-  Checkbox,
-  Form,
-  Input,
-  InputNumber,
-  Modal,
-  Select,
-  Tag,
-  Typography,
-} from 'antd';
+import { Alert, Checkbox, Form, Input, InputNumber, Modal, Select, Tag, Typography } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 
 export interface BulkTableItem {

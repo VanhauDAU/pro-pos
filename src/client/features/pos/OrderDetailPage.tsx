@@ -551,60 +551,60 @@ export function OrderDetailPage({
       lines: [
         ...(liveTimeSegments.length > 0
           ? [
-            {
-              id: 'time-session',
-              name: 'Tiền giờ',
-              quantity: 1,
-              unitPrice: liveTimeSegments[0]?.unitPriceSnapshot ?? liveTotalTimeAmount,
-              totalPrice: liveTotalTimeAmount,
-              isTime: true,
-              timeStartedAtMs: data.order.openedAt,
-              timeEndedAtMs:
-                data.order.status === 'OPEN' ? null : (data.order.closedAt ?? Date.now()),
-              timeElapsedSeconds: liveTotalElapsed,
-              timeSegments: liveTimeSegments.flatMap((s): PosReceiptTimeSegment[] => {
-                if (s.pricingRuleSnapshot) {
-                  const singlePricing = calculateTimePrice({
-                    startedAtMs: s.startedAt,
-                    endedAtMs:
-                      s.endedAt ??
-                      (data.order.status === 'OPEN' ? now : (data.order.closedAt ?? now)),
-                    config: s.pricingRuleSnapshot,
-                  });
-                  if (singlePricing.segments && singlePricing.segments.length > 0) {
-                    return singlePricing.segments.map((ps): PosReceiptTimeSegment => ({
-                      name: ps.name,
-                      type: ps.type,
-                      startedAtMs: ps.startedAtMs,
-                      endedAtMs: ps.endedAtMs,
-                      elapsedSeconds: ps.elapsedSeconds,
-                      priceVnd: ps.priceVnd,
-                      amount: ps.amountBeforeRoundingVnd,
-                    }));
+              {
+                id: 'time-session',
+                name: 'Tiền giờ',
+                quantity: 1,
+                unitPrice: liveTimeSegments[0]?.unitPriceSnapshot ?? liveTotalTimeAmount,
+                totalPrice: liveTotalTimeAmount,
+                isTime: true,
+                timeStartedAtMs: data.order.openedAt,
+                timeEndedAtMs:
+                  data.order.status === 'OPEN' ? null : (data.order.closedAt ?? Date.now()),
+                timeElapsedSeconds: liveTotalElapsed,
+                timeSegments: liveTimeSegments.flatMap((s): PosReceiptTimeSegment[] => {
+                  if (s.pricingRuleSnapshot) {
+                    const singlePricing = calculateTimePrice({
+                      startedAtMs: s.startedAt,
+                      endedAtMs:
+                        s.endedAt ??
+                        (data.order.status === 'OPEN' ? now : (data.order.closedAt ?? now)),
+                      config: s.pricingRuleSnapshot,
+                    });
+                    if (singlePricing.segments && singlePricing.segments.length > 0) {
+                      return singlePricing.segments.map((ps): PosReceiptTimeSegment => ({
+                        name: ps.name,
+                        type: ps.type,
+                        startedAtMs: ps.startedAtMs,
+                        endedAtMs: ps.endedAtMs,
+                        elapsedSeconds: ps.elapsedSeconds,
+                        priceVnd: ps.priceVnd,
+                        amount: ps.amountBeforeRoundingVnd,
+                      }));
+                    }
                   }
-                }
-                return [
-                  {
-                    name: s.rateNameSnapshot || 'Giá tính giờ',
-                    type: 'BASE' as const,
-                    startedAtMs: s.startedAt,
-                    endedAtMs: s.endedAt,
-                    elapsedSeconds: s.elapsedSeconds,
-                    priceVnd: s.unitPriceSnapshot,
-                    amount: s.amountAfterRoundingVnd,
-                  },
-                ];
-              }),
-              tableSegments: liveTimeSegments.map((s) => ({
-                tableName: s.tableName,
-                startedAtMs: s.startedAt,
-                endedAtMs: s.endedAt,
-                elapsedSeconds: s.elapsedSeconds,
-                amount: s.amountAfterRoundingVnd,
-                hourlyPrice: s.unitPriceSnapshot,
-              })),
-            },
-          ]
+                  return [
+                    {
+                      name: s.rateNameSnapshot || 'Giá tính giờ',
+                      type: 'BASE' as const,
+                      startedAtMs: s.startedAt,
+                      endedAtMs: s.endedAt,
+                      elapsedSeconds: s.elapsedSeconds,
+                      priceVnd: s.unitPriceSnapshot,
+                      amount: s.amountAfterRoundingVnd,
+                    },
+                  ];
+                }),
+                tableSegments: liveTimeSegments.map((s) => ({
+                  tableName: s.tableName,
+                  startedAtMs: s.startedAt,
+                  endedAtMs: s.endedAt,
+                  elapsedSeconds: s.elapsedSeconds,
+                  amount: s.amountAfterRoundingVnd,
+                  hourlyPrice: s.unitPriceSnapshot,
+                })),
+              },
+            ]
           : []),
         ...data.items.map((it) => ({
           id: it.id,

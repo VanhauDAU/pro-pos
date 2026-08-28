@@ -417,11 +417,7 @@ export class CatalogService {
     return { id: tableId, deleted: true };
   }
 
-  async reorderAreas(
-    storeId: string,
-    areaIds: string[],
-    auditContext?: AuditContext,
-  ) {
+  async reorderAreas(storeId: string, areaIds: string[], auditContext?: AuditContext) {
     const current = await this.repository.listActiveAreaIds(storeId);
     const currentIds = current.results.map((area) => area.id);
     const requestedIds = new Set(areaIds);
@@ -818,10 +814,7 @@ export class CatalogService {
       now,
     });
 
-    const totalCreated = results.reduce(
-      (sum, item) => sum + (item.meta?.changes ?? 0),
-      0,
-    );
+    const totalCreated = results.reduce((sum, item) => sum + (item.meta?.changes ?? 0), 0);
     if (totalCreated !== tableItems.length) {
       throw new AppError(
         'TABLE_REFERENCE_INVALID',

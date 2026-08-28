@@ -11,9 +11,7 @@ function generateTableNames(
   for (let i = 0; i < quantity; i++) {
     const currentNum = startNumber + i;
     const numStr =
-      useZeroPadding && currentNum < 10
-        ? String(currentNum).padStart(2, '0')
-        : String(currentNum);
+      useZeroPadding && currentNum < 10 ? String(currentNum).padStart(2, '0') : String(currentNum);
     result.push(`${prefix}${numStr}`.trim());
   }
   return result;
@@ -88,10 +86,6 @@ describe('Bulk Table Creation Schema & Generation', () => {
     ]);
 
     // VIP prefix with continuing index
-    expect(generateTableNames('VIP-', 5, 3, true)).toEqual([
-      'VIP-05',
-      'VIP-06',
-      'VIP-07',
-    ]);
+    expect(generateTableNames('VIP-', 5, 3, true)).toEqual(['VIP-05', 'VIP-06', 'VIP-07']);
   });
 });

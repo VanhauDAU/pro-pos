@@ -2641,7 +2641,9 @@ export class PosService {
     let customerName =
       input.customerName === undefined ? order.customer_name : input.customerName?.trim() || null;
     let customerPhone =
-      input.customerPhone === undefined ? order.customer_phone : input.customerPhone?.trim() || null;
+      input.customerPhone === undefined
+        ? order.customer_phone
+        : input.customerPhone?.trim() || null;
     const customerId = input.customerId === undefined ? order.customer_id : input.customerId;
     if (customerId) {
       const customer = await new CustomerService(this.env).detail(input.storeId, customerId);

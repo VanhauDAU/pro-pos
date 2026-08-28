@@ -487,7 +487,10 @@ export function OwnerAreaSettingsPage() {
                     }}
                   >
                     <div className="owner-area-table__order-col">
-                      <span className="owner-area-drag-handle" title="Kéo để sắp xếp thứ tự khu vực">
+                      <span
+                        className="owner-area-drag-handle"
+                        title="Kéo để sắp xếp thứ tự khu vực"
+                      >
                         <MenuOutlined />
                       </span>
                       <span className="owner-area-index">
@@ -516,7 +519,8 @@ export function OwnerAreaSettingsPage() {
                         icon={<ArrowUpOutlined />}
                         title="Đưa lên trên"
                         onClick={() =>
-                          layouts.data && void saveAreaOrder(moveItem(layouts.data, index, index - 1))
+                          layouts.data &&
+                          void saveAreaOrder(moveItem(layouts.data, index, index - 1))
                         }
                       />
                       <Button
@@ -527,7 +531,8 @@ export function OwnerAreaSettingsPage() {
                         icon={<ArrowDownOutlined />}
                         title="Đưa xuống dưới"
                         onClick={() =>
-                          layouts.data && void saveAreaOrder(moveItem(layouts.data, index, index + 1))
+                          layouts.data &&
+                          void saveAreaOrder(moveItem(layouts.data, index, index + 1))
                         }
                       />
                       <Button
@@ -660,10 +665,7 @@ export function OwnerAreaSettingsPage() {
                 >
                   Thêm bàn
                 </Button>
-                <Button
-                  icon={<AppstoreAddOutlined />}
-                  onClick={() => setBulkModalOpen(true)}
-                >
+                <Button icon={<AppstoreAddOutlined />} onClick={() => setBulkModalOpen(true)}>
                   Thêm nhiều bàn
                 </Button>
               </div>
@@ -682,10 +684,11 @@ export function OwnerAreaSettingsPage() {
               <div className="owner-area-modal-table-list">
                 {detailArea.tables.map((table, tableIndex) => (
                   <div
-                    className={`owner-area-modal-table-row${orderingAreaId === detailArea.id
-                      ? ' owner-area-modal-table-row--ordering'
-                      : ''
-                      }`}
+                    className={`owner-area-modal-table-row${
+                      orderingAreaId === detailArea.id
+                        ? ' owner-area-modal-table-row--ordering'
+                        : ''
+                    }`}
                     key={table.id}
                     draggable={orderingAreaId === null}
                     onDragStart={() =>

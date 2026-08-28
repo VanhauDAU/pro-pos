@@ -199,8 +199,9 @@ function SvgDonutChart({
         {slices.map((slice, i) => (
           <div
             key={slice.key}
-            className={`dashboard-donut-legend__row ${hoveredIdx === i ? 'dashboard-donut-legend__row--active' : ''
-              }`}
+            className={`dashboard-donut-legend__row ${
+              hoveredIdx === i ? 'dashboard-donut-legend__row--active' : ''
+            }`}
             onMouseEnter={() => setHoveredIdx(i)}
             onMouseLeave={() => setHoveredIdx(null)}
           >
@@ -284,8 +285,9 @@ function SvgTimelineBarChart({ points }: { points: DashboardTimelinePoint[] }) {
               return (
                 <div
                   key={idx}
-                  className={`dashboard-barchart__col ${isHovered ? 'dashboard-barchart__col--active' : ''
-                    }`}
+                  className={`dashboard-barchart__col ${
+                    isHovered ? 'dashboard-barchart__col--active' : ''
+                  }`}
                   onMouseEnter={() => setHoveredIdx(idx)}
                   onMouseLeave={() => setHoveredIdx(null)}
                 >

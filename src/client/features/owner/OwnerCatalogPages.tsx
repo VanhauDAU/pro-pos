@@ -2715,17 +2715,17 @@ export function OwnerCategoryDetailPage({
         </div>
         <Space>
           {canDelete ? (
-          <Popconfirm
-            title="Xóa danh mục này?"
-            description="Chỉ xóa được danh mục không còn mặt hàng đang bán."
-            onConfirm={remove}
-            okText="Xóa"
-            cancelText="Hủy"
-          >
-            <Button danger icon={<DeleteOutlined />}>
-              Xóa
-            </Button>
-          </Popconfirm>
+            <Popconfirm
+              title="Xóa danh mục này?"
+              description="Chỉ xóa được danh mục không còn mặt hàng đang bán."
+              onConfirm={remove}
+              okText="Xóa"
+              cancelText="Hủy"
+            >
+              <Button danger icon={<DeleteOutlined />}>
+                Xóa
+              </Button>
+            </Popconfirm>
           ) : null}
           {canEdit ? (
             <Button type="primary" loading={saving} icon={<SaveOutlined />} onClick={save}>

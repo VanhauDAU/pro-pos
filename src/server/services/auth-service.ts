@@ -541,7 +541,9 @@ export class AuthService {
               ? Math.min(
                   EMPLOYEE_REMEMBER_SESSION_MAX_HOURS,
                   Math.max(1, session.employee_remember_session_hours ?? 12),
-                ) * 60 * 60
+                ) *
+                60 *
+                60
               : session.session_kind === 'SUPER_ADMIN'
                 ? PLATFORM_IDLE_SECONDS
                 : OWNER_LONG_IDLE_SECONDS;

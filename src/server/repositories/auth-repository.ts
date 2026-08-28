@@ -180,9 +180,11 @@ export class AuthRepository {
           pc.pepper_version, pc.credential_version
         FROM users u
         JOIN store_memberships sm ON sm.user_id = u.id AND sm.store_id = ?
+        JOIN store_employee_usernames seu
+          ON seu.store_id = sm.store_id AND seu.user_id = u.id
         LEFT JOIN store_settings ss ON ss.store_id = sm.store_id
         JOIN pin_verifiers pc ON pc.user_id = u.id AND pc.store_id = sm.store_id
-        WHERE u.username = ? COLLATE NOCASE
+        WHERE seu.username = ? COLLATE NOCASE
         LIMIT 1`,
       )
       .bind(storeId, username)

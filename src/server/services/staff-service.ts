@@ -80,11 +80,12 @@ export class StaffService {
         now: Date.now(),
       });
     } catch (error) {
-      if (
-        error instanceof Error &&
-        error.message.includes('UNIQUE constraint failed: users.username')
-      ) {
-        throw new AppError('USERNAME_CONFLICT', 'Tên đăng nhập đã tồn tại.', 409);
+      if (error instanceof Error && error.message.includes('UNIQUE constraint failed:')) {
+        throw new AppError(
+          'USERNAME_CONFLICT',
+          'Tên đăng nhập đã tồn tại trong cửa hàng này.',
+          409,
+        );
       }
       throw error;
     }

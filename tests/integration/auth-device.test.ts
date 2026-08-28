@@ -517,6 +517,27 @@ describe('Owner and POS activation invariants', () => {
       .bind(storeId, invoiceId, bankAccId, now)
       .run();
 
+    // Large stores must purge in bounded chunks and also remove historical
+    // catalog-import/audit data, not only transactional rows.
+    await env.DB.batch(
+      Array.from({ length: 501 }, (_, index) =>
+        env.DB.prepare(
+          `INSERT INTO catalog_import_commands
+             (id, store_id, idempotency_key, payload_hash, result_json, created_at)
+             VALUES (?, ?, ?, 'hash', '{}', ?)`,
+        ).bind(`import-${index}`, storeId, `import-key-${index}`, now + index),
+      ),
+    );
+    await env.DB.batch(
+      Array.from({ length: 501 }, (_, index) =>
+        env.DB.prepare(
+          `INSERT INTO audit_logs
+             (id, store_id, action, entity_type, request_id, created_at)
+             VALUES (?, ?, 'STORE_TEST_DATA', 'STORE', ?, ?)`,
+        ).bind(`audit-${index}`, storeId, `purge-test-${index}`, now + index),
+      ),
+    );
+
     // Now call DELETE on the fully populated store
     const deleteResp = await SELF.fetch(`${ORIGIN}/api/v1/platform/stores/${storeId}`, {
       method: 'DELETE',
@@ -553,6 +574,18 @@ describe('Owner and POS activation invariants', () => {
       .bind(storeId)
       .first();
     expect(prodRow).toBeNull();
+
+    const importCommand = await env.DB.prepare(
+      'SELECT id FROM catalog_import_commands WHERE store_id = ?',
+    )
+      .bind(storeId)
+      .first();
+    expect(importCommand).toBeNull();
+
+    const auditLog = await env.DB.prepare('SELECT id FROM audit_logs WHERE store_id = ?')
+      .bind(storeId)
+      .first();
+    expect(auditLog).toBeNull();
   });
 
   it('allows Owner login on a fresh device without creating a POS device', async () => {

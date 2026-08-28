@@ -51,6 +51,12 @@ export class StaffRepository {
         .bind(input.userId, input.username, input.email, input.displayName, input.now, input.now),
       this.db
         .prepare(
+          `INSERT INTO store_employee_usernames (store_id, username, user_id, created_at)
+           VALUES (?, ?, ?, ?)`,
+        )
+        .bind(input.storeId, input.username, input.userId, input.now),
+      this.db
+        .prepare(
           `INSERT INTO store_memberships (
             id, store_id, user_id, role_id, status, created_at, updated_at
           ) VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?)`,

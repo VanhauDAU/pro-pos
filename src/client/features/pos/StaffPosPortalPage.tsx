@@ -123,11 +123,9 @@ import type { PricingConfigSnapshot } from '@domain/pricing/types';
 import {
   buildPrintDataFromInvoice,
   buildPrintDataFromQuote,
-  printReceipt,
   type PosReceiptPrintOptions,
-} from '@client/lib/pos-receipt-printer';
+} from '@domain/receipt/receipt-generator';
 import logoBlack from '@client/assets/logo-black.svg?url';
-import { OrderDetailPage } from './OrderDetailPage';
 import { PosCustomerSelector } from './PosCustomerSelector';
 import { PosAppSplash } from './PosAppSplash';
 import { toast } from 'sonner';
@@ -138,6 +136,11 @@ import { PushNotificationControl } from '@client/features/pwa/PushNotificationCo
 const OwnerInvoicesPage = lazy(async () => {
   const module = await import('@client/features/owner/OwnerInvoicesPage');
   return { default: module.OwnerInvoicesPage };
+});
+
+const OrderDetailPage = lazy(async () => {
+  const module = await import('./OrderDetailPage');
+  return { default: module.OrderDetailPage };
 });
 
 const OwnerProductReportPage = lazy(async () => {
@@ -225,6 +228,11 @@ const StaffPrinterSettingsPage = lazy(async () => {
   return { default: module.StaffPrinterSettingsPage };
 });
 
+async function printReceipt(options: PosReceiptPrintOptions) {
+  const printer = await import('@client/lib/pos-receipt-printer');
+  return printer.printReceipt(options);
+}
+
 function PosRouteLoadingFallback() {
   return (
     <div aria-label="Đang tải nội dung" style={{ minHeight: 320, padding: 24, background: '#fff' }}>
@@ -261,7 +269,11 @@ import {
 import { canonicalPaymentPath } from './payment-navigation';
 import { posErrorText } from './pos-error';
 import { PosNotificationTracker } from './pos-notification-tracker';
-import { orderQuoteQueryOptions, overviewRefreshInterval } from './pos-order-query';
+import {
+  orderQuoteQueryOptions,
+  overviewRefreshInterval,
+  quoteIsVerifiedForInteraction,
+} from './pos-order-query';
 
 const BRAND = '#0975f7';
 
@@ -5666,11 +5678,16 @@ function OrderEditor({
     if (
       !isNew &&
       orderId &&
-      quote.data?.order.id === orderId &&
-      quote.isFetchedAfterMount &&
-      quote.isSuccess &&
-      !quote.isFetching &&
-      !quote.isRefetchError
+      quoteIsVerifiedForInteraction({
+        orderId,
+        quote: quote.data,
+        isSuccess: quote.isSuccess,
+        isFetching: quote.isFetching,
+        isRefetchError: quote.isRefetchError,
+        isFetchedAfterMount: quote.isFetchedAfterMount,
+        isStale: quote.isStale,
+        dataUpdatedAt: quote.dataUpdatedAt,
+      })
     ) {
       setVerifiedQuoteOrderId(orderId);
     }
@@ -5681,7 +5698,9 @@ function OrderEditor({
     quote.isFetchedAfterMount,
     quote.isFetching,
     quote.isRefetchError,
+    quote.isStale,
     quote.isSuccess,
+    quote.dataUpdatedAt,
   ]);
   const quoteReady = isNew || (Boolean(orderId) && verifiedQuoteOrderId === orderId);
   const callHistory = useQuery({
@@ -11214,11 +11233,16 @@ function PaymentPage({
   const [verifiedQuoteOrderId, setVerifiedQuoteOrderId] = useState<string | null>(null);
   useEffect(() => {
     if (
-      quote.data?.order.id === orderId &&
-      quote.isFetchedAfterMount &&
-      quote.isSuccess &&
-      !quote.isFetching &&
-      !quote.isRefetchError
+      quoteIsVerifiedForInteraction({
+        orderId,
+        quote: quote.data,
+        isSuccess: quote.isSuccess,
+        isFetching: quote.isFetching,
+        isRefetchError: quote.isRefetchError,
+        isFetchedAfterMount: quote.isFetchedAfterMount,
+        isStale: quote.isStale,
+        dataUpdatedAt: quote.dataUpdatedAt,
+      })
     ) {
       setVerifiedQuoteOrderId(orderId);
     }
@@ -11228,7 +11252,9 @@ function PaymentPage({
     quote.isFetchedAfterMount,
     quote.isFetching,
     quote.isRefetchError,
+    quote.isStale,
     quote.isSuccess,
+    quote.dataUpdatedAt,
   ]);
   const quoteReady = verifiedQuoteOrderId === orderId;
 
@@ -12963,7 +12989,7 @@ export function StaffPosPortalPage() {
                   </div>
                 </div>
               ) : isDetail && detailOrderId ? (
-                <OrderDetailPage orderId={detailOrderId} />
+                renderLazyPosRoute(<OrderDetailPage orderId={detailOrderId} />)
               ) : isPayment && paymentOrderId ? (
                 desktopPayment ? (
                   <>

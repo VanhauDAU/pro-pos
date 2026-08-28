@@ -1,21 +1,23 @@
 # POS data consistency hardening
 
-Cập nhật: 2026-08-26.
+Cập nhật: 2026-08-28.
 
 ## Invariants
 
 - Quote và overview là server-authoritative; realtime chỉ báo dữ liệu đã đổi.
 - `version`, trạng thái, bàn và tổng tiền của một overview order phải đến từ cùng một stable quote.
-- Order Editor và Payment không mở khóa mutation trước khi GET quote của lần mount hiện tại thành
-  công.
+- Order Editor và Payment không mở khóa mutation trước khi có quote authoritative của ý định điều
+  hướng hiện tại: quote được prefetch từ thao tác chạm trong tối đa 2 giây hoặc GET của lần mount
+  hiện tại. Quote đã bị realtime/invalidation đánh dấu stale luôn phải tải lại.
 - Bàn RUNNING được đối soát server mỗi 15 giây. Khi không có bàn RUNNING và realtime CONNECTED,
   overview không polling.
 - Quote không dựng được phải làm request thất bại; không thay bằng `totalVnd: 0`.
 
 ## Coverage và quality gate
 
-- Unit: inactive quote cache v12 → invalidate → mount/refetch v14; polling policy; validation và
-  request ID; retry stable versioned read.
+- Unit: quote mới prefetch từ thao tác chạm không gọi GET trùng; inactive quote cache v12 →
+  invalidate → mount/refetch v14; polling policy; validation và request ID; retry stable versioned
+  read.
 - Integration: overview total/version khớp quote; quote failure không bị đổi thành tổng 0;
   checkout/version conflict vẫn do server chặn.
 - Authenticated E2E staging: inactive quote refresh, payment lifecycle, table/active-order cache,

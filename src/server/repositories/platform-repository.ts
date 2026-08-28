@@ -607,6 +607,18 @@ export class PlatformRepository {
         .bind(...userBindings),
     );
 
+    if (input.username !== undefined && membership.role_code !== 'OWNER') {
+      statements.push(
+        this.db
+          .prepare(
+            `UPDATE store_employee_usernames
+             SET username = ?
+             WHERE store_id = ? AND user_id = ?`,
+          )
+          .bind(input.username, input.storeId, input.userId),
+      );
+    }
+
     if (input.status !== undefined) {
       statements.push(
         this.db
@@ -983,134 +995,155 @@ export class PlatformRepository {
       .all<{ userId: string }>();
     const orphanUserIds = (orphanUsersResult.results ?? []).map((r) => r.userId);
 
-    // Batch 1: Leaf command & item tables (part 1)
-    const batch1 = [
-      this.db.prepare('DELETE FROM role_permissions WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM store_memberships WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM pin_credentials WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM pin_verifiers WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM activation_grants WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM audit_logs WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM store_settings WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM store_print_settings WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM store_capabilities WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM special_price_windows WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM order_items WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM time_pauses WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM pricing_segments WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM payments WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM invoice_lines WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM invoice_sequences WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM open_table_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM add_item_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM checkout_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM transfer_table_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM cancel_order_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM pause_time_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM resume_time_commands WHERE store_id = ?').bind(storeId),
+    // Large stores can exceed D1's execution window when a whole table is deleted
+    // in one statement. Keep the referential delete order, but remove at most this
+    // many rows per statement so every round stays bounded and retry-safe.
+    const DELETE_CHUNK_SIZE = 500;
+    const deleteStoreRows = async (table: string) => {
+      try {
+        for (;;) {
+          const result = await this.db
+            .prepare(
+              `DELETE FROM ${table}
+               WHERE rowid IN (
+                 SELECT rowid FROM ${table} WHERE store_id = ? LIMIT ?
+               )`,
+            )
+            .bind(storeId, DELETE_CHUNK_SIZE)
+            .run();
+          if ((result.meta.changes ?? 0) < DELETE_CHUNK_SIZE) return;
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'unknown database error';
+        throw new Error(`store cleanup failed at ${table}: ${message}`, { cause: error });
+      }
+    };
+    const deleteDeviceCredentials = async () => {
+      for (;;) {
+        const result = await this.db
+          .prepare(
+            `DELETE FROM device_credentials
+             WHERE rowid IN (
+               SELECT dc.rowid
+               FROM device_credentials dc
+               JOIN devices d ON d.id = dc.device_id
+               WHERE d.store_id = ?
+               LIMIT ?
+             )`,
+          )
+          .bind(storeId, DELETE_CHUNK_SIZE)
+          .run();
+        if ((result.meta.changes ?? 0) < DELETE_CHUNK_SIZE) return;
+      }
+    };
+
+    const cleanupOrder = [
+      // Access/configuration and D1 leaf records.
+      'role_permissions',
+      'store_memberships',
+      'pin_credentials',
+      'pin_verifiers',
+      'activation_grants',
+      'audit_logs',
+      'store_settings',
+      'store_print_settings',
+      'store_capabilities',
+      'store_employee_usernames',
+      'catalog_import_commands',
+      'special_price_windows',
+      // Dine-in order leaves.
+      'order_items',
+      'time_pauses',
+      'pricing_segments',
+      'payments',
+      'invoice_lines',
+      'invoice_sequences',
+      'open_table_commands',
+      'add_item_commands',
+      'checkout_commands',
+      'transfer_table_commands',
+      'cancel_order_commands',
+      'pause_time_commands',
+      'resume_time_commands',
+      // Takeaway, time and realtime leaves.
+      'takeaway_order_items',
+      'create_takeaway_order_commands',
+      'add_takeaway_item_commands',
+      'update_order_item_commands',
+      'remove_order_item_commands',
+      'update_order_note_commands',
+      'takeaway_payments',
+      'takeaway_invoice_lines',
+      'takeaway_checkout_commands',
+      'cancel_takeaway_order_commands',
+      'order_sequences',
+      'update_time_range_commands',
+      'table_time_segments',
+      'stop_time_commands',
+      'resume_checkout_commands',
+      'update_order_guest_commands',
+      'realtime_store_sequences',
+      'realtime_events',
+      'realtime_event_requests',
+      'realtime_batch_contexts',
+      'create_time_session_commands',
+      'remove_time_session_commands',
+      // QR, customer, promotion, payment and call-history leaves.
+      'guest_order_request_items',
+      'create_guest_order_request_commands',
+      'accept_guest_order_request_commands',
+      'reject_guest_order_request_commands',
+      'service_requests',
+      'qr_order_quick_reasons',
+      'qr_order_sales_hours',
+      'push_subscriptions',
+      'staff_notification_events',
+      'table_open_requests',
+      'customer_group_members',
+      'customer_loyalty_settings',
+      'customer_loyalty_entries',
+      'customer_debt_entries',
+      'invoice_payment_allocations',
+      'promotion_customer_groups',
+      'invoice_promotions',
+      'promotion_targets',
+      'order_promotions',
+      'order_promotion_suppressions',
+      'pos_save_commands',
+      'payment_snapshots',
+      'order_call_batch_entries',
+      'store_bank_accounts',
+      // Parents after every dependent row above has been removed.
+      'roles',
+      'auth_sessions',
+      'product_variants',
+      'time_price_configs',
+      'media_objects',
+      'invoices',
+      'takeaway_invoices',
+      'guest_order_requests',
+      'customer_groups',
+      'promotions',
+      'order_call_batches',
+      'takeaway_orders',
+      'guest_order_sessions',
+      'time_sessions',
+      'table_qr_codes',
+      'orders',
+      'customers',
+      'service_tables',
+      'areas',
+      'products',
+      'units',
+      'categories',
     ];
 
-    // Batch 2: Takeaway, Time & Realtime leaf tables (part 2)
-    const batch2 = [
-      this.db.prepare('DELETE FROM takeaway_order_items WHERE store_id = ?').bind(storeId),
-      this.db
-        .prepare('DELETE FROM create_takeaway_order_commands WHERE store_id = ?')
-        .bind(storeId),
-      this.db.prepare('DELETE FROM add_takeaway_item_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM update_order_item_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM remove_order_item_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM update_order_note_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM takeaway_payments WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM takeaway_invoice_lines WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM takeaway_checkout_commands WHERE store_id = ?').bind(storeId),
-      this.db
-        .prepare('DELETE FROM cancel_takeaway_order_commands WHERE store_id = ?')
-        .bind(storeId),
-      this.db.prepare('DELETE FROM order_sequences WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM update_time_range_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM table_time_segments WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM stop_time_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM resume_checkout_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM update_order_guest_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM realtime_store_sequences WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM realtime_events WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM realtime_event_requests WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM realtime_batch_contexts WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM create_time_session_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM remove_time_session_commands WHERE store_id = ?').bind(storeId),
-    ];
-
-    // Batch 3: Guest orders, Customers, Promotions & Call batches (part 3)
-    const batch3 = [
-      this.db.prepare('DELETE FROM guest_order_request_items WHERE store_id = ?').bind(storeId),
-      this.db
-        .prepare('DELETE FROM create_guest_order_request_commands WHERE store_id = ?')
-        .bind(storeId),
-      this.db
-        .prepare('DELETE FROM accept_guest_order_request_commands WHERE store_id = ?')
-        .bind(storeId),
-      this.db
-        .prepare('DELETE FROM reject_guest_order_request_commands WHERE store_id = ?')
-        .bind(storeId),
-      this.db.prepare('DELETE FROM service_requests WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM qr_order_quick_reasons WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM qr_order_sales_hours WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM push_subscriptions WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM staff_notification_events WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM table_open_requests WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM customer_group_members WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM customer_loyalty_settings WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM customer_loyalty_entries WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM customer_debt_entries WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM invoice_payment_allocations WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM promotion_customer_groups WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM invoice_promotions WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM promotion_targets WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM order_promotions WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM order_promotion_suppressions WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM pos_save_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM payment_snapshots WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM order_call_batch_entries WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM store_bank_accounts WHERE store_id = ?').bind(storeId),
-      this.db
-        .prepare(
-          'DELETE FROM device_credentials WHERE device_id IN (SELECT id FROM devices WHERE store_id = ?)',
-        )
-        .bind(storeId),
-    ];
-
-    // Batch 4: Intermediate parent entities (part 4)
-    const batch4 = [
-      this.db.prepare('DELETE FROM roles WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM auth_sessions WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM product_variants WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM time_price_configs WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM media_objects WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM invoices WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM takeaway_invoices WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM guest_order_requests WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM customer_groups WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM promotions WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM order_call_batches WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM devices WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM takeaway_orders WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM guest_order_sessions WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM time_sessions WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM table_qr_codes WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM orders WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM customers WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM service_tables WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM areas WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM products WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM units WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM categories WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM stores WHERE id = ?').bind(storeId),
-    ];
-
-    await this.db.batch(batch1);
-    await this.db.batch(batch2);
-    await this.db.batch(batch3);
-    await this.db.batch(batch4);
+    for (const table of cleanupOrder) {
+      await deleteStoreRows(table);
+    }
+    await deleteDeviceCredentials();
+    await deleteStoreRows('devices');
+    await this.db.prepare('DELETE FROM stores WHERE id = ?').bind(storeId).run();
 
     // 3. Delete orphan users if any
     for (const userId of orphanUserIds) {

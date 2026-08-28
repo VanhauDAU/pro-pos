@@ -3696,6 +3696,9 @@ body,
   flex-direction: column;
   gap: 6px;
   margin-bottom: 8px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .payment-bank-picker-label {
@@ -3705,6 +3708,10 @@ body,
 }
 
 .payment-vietqr-card {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   background: #f8fafc;
   border: 1.5px solid #e2e8f0;
   border-radius: 12px;
@@ -3720,20 +3727,36 @@ body,
 
 .payment-vietqr-bank-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 12px;
   width: 100%;
 }
 
 .payment-vietqr-bank-tag {
-  display: inline-flex;
-  align-items: center;
+  display: flex;
+  flex: 1 1 220px;
+  align-items: flex-start;
+  justify-content: center;
   gap: 6px;
+  min-width: 0;
+  max-width: 100%;
   font-weight: 700;
   font-size: 13.5px;
   color: #0f172a;
+}
+
+.payment-vietqr-bank-tag > .anticon {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.payment-vietqr-bank-tag > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
 }
 
 .payment-vietqr-hero-wrap {
@@ -3837,6 +3860,21 @@ body,
   width: 100%;
 }
 
+.payment-bank-picker-select,
+.payment-bank-picker-select .ant-select-selector,
+.payment-bank-picker-select .ant-select-selection-wrap,
+.payment-bank-picker-select .ant-select-selection-item {
+  max-width: 100%;
+  min-width: 0 !important;
+}
+
+.payment-bank-picker-select .ant-select-selection-item {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .payment-workspace__submit {
   position: sticky;
   bottom: 0;
@@ -3853,13 +3891,20 @@ body,
 }
 
 .payment-workspace--mobile {
+  width: 100%;
+  max-width: 100%;
   min-height: 0;
+  box-sizing: border-box;
+  overflow-x: clip;
   overflow-y: auto;
   padding-bottom: 104px;
 }
 
 .payment-mobile__content {
   width: min(100%, 720px);
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   margin: 0 auto;
   padding: 18px 20px;
 }
@@ -3907,10 +3952,17 @@ body,
 .payment-workspace__method-radios.is-vertical {
   display: grid;
   gap: 8px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   padding-top: 10px;
 }
 
 .payment-mobile__method {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   border: 1px solid transparent;
   border-radius: 12px;
 }
@@ -3927,7 +3979,19 @@ body,
 }
 
 .payment-mobile__method-detail {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   padding: 0 12px 12px;
+}
+
+.payment-mobile__method-detail .payment-workspace__bank-detail,
+.payment-mobile__method-detail .payment-workspace__allocations,
+.payment-mobile__method-detail .payment-bank-picker-row {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .payment-mobile__footer {
@@ -3988,6 +4052,16 @@ body,
 
   .payment-mobile__footer {
     padding-inline: 14px;
+  }
+
+  .payment-vietqr-bank-tag {
+    flex-basis: 100%;
+    justify-content: flex-start;
+    text-align: left;
+  }
+
+  .payment-vietqr-bank-header > .ant-tag {
+    margin-left: 22px !important;
   }
 }
 

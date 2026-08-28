@@ -9,6 +9,7 @@ import { AppError } from '@server/lib/app-error';
 import { CatalogRepository } from '@server/repositories/catalog-repository';
 import { validatePricingConfig } from '@domain/pricing/validation';
 import { AuditRepository, type AuditContext } from '@server/repositories/audit-repository';
+import { MediaService } from '@server/services/media-service';
 
 type ProductInput = z.input<typeof createProductSchema>;
 type PricingInput = z.infer<typeof pricingConfigSchema>;
@@ -416,6 +417,38 @@ export class CatalogService {
     return { id: tableId, deleted: true };
   }
 
+  async reorderAreas(storeId: string, areaIds: string[], auditContext?: AuditContext) {
+    const current = await this.repository.listActiveAreaIds(storeId);
+    const currentIds = current.results.map((area) => area.id);
+    const requestedIds = new Set(areaIds);
+    if (
+      currentIds.length === 0 ||
+      currentIds.length !== areaIds.length ||
+      currentIds.some((areaId) => !requestedIds.has(areaId))
+    ) {
+      throw new AppError(
+        'AREA_ORDER_INVALID',
+        'Danh sách sắp xếp phải chứa đầy đủ các khu vực.',
+        422,
+      );
+    }
+    const now = Date.now();
+    await this.repository.reorderAreas({ storeId, areaIds, now });
+    if (auditContext) {
+      await new AuditRepository(this.env.DB).record({
+        storeId,
+        context: auditContext,
+        action: 'AREAS_REORDERED',
+        entityType: 'AREA',
+        entityId: storeId,
+        before: { areaIds: currentIds },
+        after: { areaIds },
+        now,
+      });
+    }
+    return { areaIds };
+  }
+
   async reorderTables(
     storeId: string,
     areaId: string,
@@ -634,6 +667,11 @@ export class CatalogService {
       }),
       now,
     });
+    const oldMediaId = before.mediaId;
+    const newMediaId = input.mediaId ?? null;
+    if (oldMediaId && oldMediaId !== newMediaId) {
+      new MediaService(this.env).remove(storeId, oldMediaId).catch(() => {});
+    }
     if (auditContext) {
       await new AuditRepository(this.env.DB).record({
         storeId,
@@ -740,6 +778,74 @@ export class CatalogService {
       });
     }
     return result;
+  }
+
+  async createTablesBatch(input: {
+    storeId: string;
+    areaId: string;
+    timeProductId?: string | null | undefined;
+    tables: Array<{ name: string; sortOrder?: number | undefined }>;
+    auditContext?: AuditContext | undefined;
+  }) {
+    const now = Date.now();
+    const timeProductId = input.timeProductId || `area-layout-product:${input.storeId}`;
+
+    if (timeProductId === `area-layout-product:${input.storeId}`) {
+      await this.env.DB.prepare(
+        `INSERT OR IGNORE INTO products (
+          id, store_id, name, product_type, status, is_system, created_at, updated_at
+        ) VALUES (?, ?, 'Cấu hình bàn/phòng', 'TIME', 'ACTIVE', 1, ?, ?)`,
+      )
+        .bind(timeProductId, input.storeId, now, now)
+        .run();
+    }
+
+    const tableItems = input.tables.map((table, index) => ({
+      id: crypto.randomUUID(),
+      name: table.name.trim(),
+      sortOrder: table.sortOrder ?? index + 1,
+    }));
+
+    const results = await this.repository.createServiceTablesBatch({
+      storeId: input.storeId,
+      areaId: input.areaId,
+      timeProductId,
+      tables: tableItems,
+      now,
+    });
+
+    const totalCreated = results.reduce((sum, item) => sum + (item.meta?.changes ?? 0), 0);
+    if (totalCreated !== tableItems.length) {
+      throw new AppError(
+        'TABLE_REFERENCE_INVALID',
+        'Khu vực hoặc mặt hàng tính giờ không khả dụng.',
+        422,
+      );
+    }
+
+    if (input.auditContext) {
+      await new AuditRepository(this.env.DB).record({
+        storeId: input.storeId,
+        context: input.auditContext,
+        action: 'SERVICE_TABLE_CREATED',
+        entityType: 'SERVICE_TABLE',
+        entityId: input.areaId,
+        before: null,
+        after: {
+          areaId: input.areaId,
+          timeProductId,
+          count: tableItems.length,
+          tables: tableItems.map((t) => ({ id: t.id, name: t.name })),
+          status: 'AVAILABLE',
+        },
+        now,
+      });
+    }
+
+    return {
+      count: tableItems.length,
+      tables: tableItems.map((t) => ({ id: t.id, name: t.name })),
+    };
   }
 
   async createTable(input: {

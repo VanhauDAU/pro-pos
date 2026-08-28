@@ -171,6 +171,47 @@ describe('Owner Account Settings API', () => {
     expect(updateRes.status).toBe(422);
   });
 
+  it('allows Owner to configure the remembered Employee-session duration', async () => {
+    const currentSettings = await SELF.fetch(`${ORIGIN}/api/v1/owner/store/settings`, {
+      headers: {
+        Origin: ORIGIN,
+        Cookie: sessionCookie,
+      },
+    });
+    expect(currentSettings.status).toBe(200);
+    const settings = await jsonData<{
+      name: string;
+      phone: string | null;
+      address: string | null;
+      businessDayCutoffMinutes: number;
+    }>(currentSettings);
+
+    const updateRes = await SELF.fetch(`${ORIGIN}/api/v1/owner/store/settings`, {
+      method: 'PUT',
+      headers: {
+        Origin: ORIGIN,
+        Cookie: sessionCookie,
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': csrfToken,
+      },
+      body: JSON.stringify({
+        name: settings.name,
+        phone: settings.phone,
+        address: settings.address ?? 'Số 1 đường Test, Đà Nẵng',
+        businessDayCutoffMinutes: settings.businessDayCutoffMinutes,
+        employeeRememberSessionHours: 48,
+      }),
+    });
+    expect(updateRes.status).toBe(200);
+
+    const updatedSettings = await SELF.fetch(`${ORIGIN}/api/v1/owner/store/settings`, {
+      headers: { Origin: ORIGIN, Cookie: sessionCookie },
+    });
+    expect(updatedSettings.status).toBe(200);
+    const savedSettings = await jsonData<{ employeeRememberSessionHours: number }>(updatedSettings);
+    expect(savedSettings.employeeRememberSessionHours).toBe(48);
+  });
+
   it('rejects password change with incorrect current password', async () => {
     const changeRes = await SELF.fetch(`${ORIGIN}/api/v1/owner/account/change-password`, {
       method: 'POST',

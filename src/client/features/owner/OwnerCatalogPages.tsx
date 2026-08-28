@@ -7,7 +7,9 @@ import {
   DeleteOutlined,
   DownloadOutlined,
   EditOutlined,
+  FileExcelOutlined,
   FilterOutlined,
+  LinkOutlined,
   PictureOutlined,
   PlusOutlined,
   SaveOutlined,
@@ -51,6 +53,7 @@ import { useNavigate, useSearchParams } from 'react-router';
 import type { AuthContextResponse } from '@contracts/auth';
 import { CameraCaptureModal } from '@client/components/CameraCaptureModal';
 import { ImageCropperModal } from '@client/components/ImageCropperModal';
+import { ImageUrlModal } from '@client/components/ImageUrlModal';
 import { ProductImportModal } from './ProductImportModal';
 import { downloadCatalogWorkbook, type CatalogExportRow } from './catalog-excel';
 
@@ -314,17 +317,37 @@ export function OwnerProductListPage({
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const requestedPermissions = userPermissions ?? [];
+  const canRequestCatalogData =
+    userPermissions === undefined ||
+    requestedPermissions.some((permission) =>
+      [
+        'catalog.manage',
+        'catalog.products.view',
+        'catalog.products.create',
+        'catalog.products.edit',
+        'catalog.products.delete',
+        'catalog.products.import_export',
+        'catalog.categories.view',
+        'catalog.categories.create',
+        'catalog.categories.edit',
+        'catalog.categories.delete',
+      ].includes(permission),
+    );
   const products = useQuery({
     queryKey: PRODUCT_QUERY,
     queryFn: () => apiRequest<ProductSummary[]>('/api/v1/owner/catalog/products'),
+    enabled: canRequestCatalogData,
   });
   const categories = useQuery({
     queryKey: CATEGORY_QUERY,
     queryFn: () => apiRequest<Category[]>('/api/v1/owner/catalog/categories'),
+    enabled: canRequestCatalogData,
   });
   const units = useQuery({
     queryKey: ['owner-units'],
     queryFn: () => apiRequest<Unit[]>('/api/v1/owner/catalog/units'),
+    enabled: canRequestCatalogData,
   });
   const authContext = useQuery({
     queryKey: ['auth-context'],
@@ -333,6 +356,27 @@ export function OwnerProductListPage({
 
   const isOwnerUser = isOwner ?? authContext.data?.actor?.kind === 'OWNER';
   const perms = userPermissions ?? [];
+  const canViewProducts =
+    isOwnerUser ||
+    perms.includes('catalog.products.view') ||
+    perms.includes('catalog.products.create') ||
+    perms.includes('catalog.products.edit') ||
+    perms.includes('catalog.products.delete') ||
+    perms.includes('catalog.products.import_export') ||
+    perms.includes('catalog.manage');
+  const canCreateProduct =
+    isOwnerUser || perms.includes('catalog.products.create') || perms.includes('catalog.manage');
+  const canImportExport =
+    isOwnerUser ||
+    perms.includes('catalog.products.import_export') ||
+    perms.includes('catalog.manage');
+  const canViewCategories =
+    isOwnerUser ||
+    perms.includes('catalog.categories.view') ||
+    perms.includes('catalog.categories.create') ||
+    perms.includes('catalog.categories.edit') ||
+    perms.includes('catalog.categories.delete') ||
+    perms.includes('catalog.manage');
   const canDeleteProduct =
     isOwnerUser || perms.includes('catalog.products.delete') || perms.includes('catalog.manage');
   const canEditProduct =
@@ -350,6 +394,17 @@ export function OwnerProductListPage({
       return matchesSearch && matchesType && matchesStatus && matchesCategory && matchesUnit;
     });
   }, [categoryFilters, products.data, search, statusFilters, typeFilters, unitFilters]);
+
+  if (userPermissions !== undefined && !canViewProducts) {
+    return (
+      <Alert
+        type="warning"
+        showIcon
+        title="Không có quyền truy cập mặt hàng"
+        description="Vai trò hiện tại chưa được cấp quyền xem mặt hàng hoặc danh mục."
+      />
+    );
+  }
 
   const filterLabels = {
     type: Object.fromEntries(Object.entries(productTypeLabels)),
@@ -451,13 +506,17 @@ export function OwnerProductListPage({
         <Space>
           <ProductAvatar product={product} />
           <div>
-            <Button
-              type="link"
-              className="owner-catalog-name-link"
-              onClick={() => navigate(`${baseRoute}/products/${product.id}`)}
-            >
-              {product.name}
-            </Button>
+            {canEditProduct ? (
+              <Button
+                type="link"
+                className="owner-catalog-name-link"
+                onClick={() => navigate(`${baseRoute}/products/${product.id}`)}
+              >
+                {product.name}
+              </Button>
+            ) : (
+              <Typography.Text strong>{product.name}</Typography.Text>
+            )}
             <Typography.Text type="secondary" className="owner-catalog-code">
               {productTypeLabels[product.productType]}
             </Typography.Text>
@@ -499,13 +558,15 @@ export function OwnerProductListPage({
       align: 'right',
       render: (_, product) => (
         <Space>
-          <Button
-            type="link"
-            icon={<CopyOutlined />}
-            onClick={() => navigate(`${baseRoute}/products/new?copyFrom=${product.id}`)}
-          >
-            Sao chép
-          </Button>
+          {canCreateProduct ? (
+            <Button
+              type="link"
+              icon={<CopyOutlined />}
+              onClick={() => navigate(`${baseRoute}/products/new?copyFrom=${product.id}`)}
+            >
+              Sao chép
+            </Button>
+          ) : null}
           {canEditProduct && (
             <Button
               type="link"
@@ -552,55 +613,70 @@ export function OwnerProductListPage({
       {contextHolder}
       {onBack ? <BackLink label="Quay lại POS" onClick={onBack} /> : null}
       <div className="owner-catalog-heading">
-        <div>
+        <div className="owner-catalog-heading-info">
           <Typography.Title level={2}>Danh sách mặt hàng</Typography.Title>
           <Typography.Text type="secondary">
             Quản lý sản phẩm, dịch vụ và bảng giá dùng trên POS.
           </Typography.Text>
         </div>
-        <Button
-          icon={<UploadOutlined />}
-          onClick={() => setImportOpen(true)}
-          disabled={!canEditProduct}
-        >
-          Nhập Excel
-        </Button>
-        <Button
-          icon={<DownloadOutlined />}
-          loading={exporting}
-          onClick={() => void exportProducts()}
-        >
-          Xuất Excel
-        </Button>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => navigate(`${baseRoute}/products/new`)}
-        >
-          Thêm mặt hàng
-        </Button>
+        <div className="owner-catalog-header-actions">
+          {canImportExport ? (
+            <div className="owner-catalog-excel-group">
+              <Button
+                className="owner-excel-btn owner-excel-btn--import"
+                icon={<FileExcelOutlined style={{ color: '#10b981', fontSize: 15 }} />}
+                onClick={() => setImportOpen(true)}
+                disabled={!canImportExport}
+              >
+                Nhập Excel
+              </Button>
+              <Button
+                className="owner-excel-btn owner-excel-btn--export"
+                icon={<DownloadOutlined style={{ color: '#059669', fontSize: 15 }} />}
+                loading={exporting}
+                onClick={() => void exportProducts()}
+              >
+                Xuất Excel
+              </Button>
+            </div>
+          ) : null}
+          <div className="owner-catalog-primary-actions">
+            {canViewCategories ? (
+              <Button
+                icon={<TagsOutlined />}
+                onClick={() => navigate(`${baseRoute}/categories`)}
+                className="owner-catalog-category-btn"
+              >
+                Danh mục
+              </Button>
+            ) : null}
+            {canCreateProduct ? (
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={() => navigate(`${baseRoute}/products/new`)}
+                className="owner-catalog-add-btn"
+              >
+                Thêm mặt hàng
+              </Button>
+            ) : null}
+          </div>
+        </div>
       </div>
-      <ProductImportModal
-        open={importOpen}
-        onClose={() => setImportOpen(false)}
-        onCommitted={async () => {
-          await Promise.all([
-            queryClient.invalidateQueries({ queryKey: PRODUCT_QUERY }),
-            queryClient.invalidateQueries({ queryKey: CATEGORY_QUERY }),
-            queryClient.invalidateQueries({ queryKey: ['owner-units'] }),
-            queryClient.invalidateQueries({ queryKey: ['pos-catalog'] }),
-          ]);
-        }}
-      />
-      <div className="owner-catalog-subnav">
-        <Button
-          type="link"
-          icon={<TagsOutlined />}
-          onClick={() => navigate(`${baseRoute}/categories`)}
-        >
-          Danh mục
-        </Button>
-      </div>
+      {canImportExport ? (
+        <ProductImportModal
+          open={importOpen}
+          onClose={() => setImportOpen(false)}
+          onCommitted={async () => {
+            await Promise.all([
+              queryClient.invalidateQueries({ queryKey: PRODUCT_QUERY }),
+              queryClient.invalidateQueries({ queryKey: CATEGORY_QUERY }),
+              queryClient.invalidateQueries({ queryKey: ['owner-units'] }),
+              queryClient.invalidateQueries({ queryKey: ['pos-catalog'] }),
+            ]);
+          }}
+        />
+      ) : null}
       <Card className="owner-catalog-card">
         {/* Desktop Filter Toolbar */}
         <div className="owner-catalog-toolbar owner-catalog-toolbar--desktop">
@@ -923,9 +999,60 @@ export function OwnerProductFormPage({
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [cameraModalOpen, setCameraModalOpen] = useState(false);
+  const [urlModalOpen, setUrlModalOpen] = useState(false);
   const [cropperModalOpen, setCropperModalOpen] = useState(false);
   const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+      ) {
+        return;
+      }
+      const items = e.clipboardData?.items;
+      if (items) {
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          if (item?.type.startsWith('image/')) {
+            const file = item.getAsFile();
+            if (file) {
+              const reader = new FileReader();
+              reader.addEventListener(
+                'load',
+                (evt) => {
+                  if (typeof evt.target?.result === 'string') {
+                    setCropImageSrc(evt.target.result);
+                    setCropperModalOpen(true);
+                  }
+                },
+                { once: true },
+              );
+              reader.readAsDataURL(file);
+              return;
+            }
+          }
+        }
+      }
+      const pastedText = e.clipboardData?.getData('text')?.trim();
+      if (
+        pastedText &&
+        (pastedText.startsWith('http://') ||
+          pastedText.startsWith('https://') ||
+          pastedText.startsWith('data:image/')) &&
+        (pastedText.match(/\.(jpeg|jpg|png|webp|gif|avif|bmp)(\?.*)?$/i) ||
+          pastedText.startsWith('data:image/'))
+      ) {
+        setUrlModalOpen(true);
+      }
+    };
+
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, []);
 
   const [categorySearch, setCategorySearch] = useState('');
   const [inlineCategoryName, setInlineCategoryName] = useState('');
@@ -939,18 +1066,34 @@ export function OwnerProductFormPage({
 
   const isEdit = Boolean(productId);
   const sourceProductId = productId || copyFromId;
+  const requestedPermissions = userPermissions ?? [];
+  const canRequestProductForm =
+    userPermissions === undefined ||
+    requestedPermissions.some((permission) =>
+      [
+        'catalog.manage',
+        'catalog.products.view',
+        'catalog.products.create',
+        'catalog.products.edit',
+        'catalog.products.delete',
+        'catalog.categories.view',
+        'catalog.categories.create',
+      ].includes(permission),
+    );
   const detail = useQuery({
     queryKey: ['owner-product', sourceProductId],
     queryFn: () => apiRequest<ProductDetail>(`/api/v1/owner/catalog/products/${sourceProductId}`),
-    enabled: Boolean(sourceProductId),
+    enabled: Boolean(sourceProductId) && canRequestProductForm,
   });
   const categories = useQuery({
     queryKey: CATEGORY_QUERY,
     queryFn: () => apiRequest<Category[]>('/api/v1/owner/catalog/categories'),
+    enabled: canRequestProductForm,
   });
   const units = useQuery({
     queryKey: ['owner-units'],
     queryFn: () => apiRequest<Unit[]>('/api/v1/owner/catalog/units'),
+    enabled: canRequestProductForm,
   });
   const authContext = useQuery({
     queryKey: ['auth-context'],
@@ -959,6 +1102,10 @@ export function OwnerProductFormPage({
   const [deleting, setDeleting] = useState(false);
   const isOwnerUser = isOwner ?? authContext.data?.actor?.kind === 'OWNER';
   const perms = userPermissions ?? [];
+  const canCreateProduct =
+    isOwnerUser || perms.includes('catalog.products.create') || perms.includes('catalog.manage');
+  const canEditProduct =
+    isOwnerUser || perms.includes('catalog.products.edit') || perms.includes('catalog.manage');
   const canDeleteProduct =
     isOwnerUser || perms.includes('catalog.products.delete') || perms.includes('catalog.manage');
 
@@ -1409,6 +1556,16 @@ export function OwnerProductFormPage({
     }
   };
 
+  if ((isEdit && !canEditProduct) || (!isEdit && !canCreateProduct)) {
+    return (
+      <Alert
+        type="warning"
+        showIcon
+        title={isEdit ? 'Không có quyền sửa mặt hàng' : 'Không có quyền tạo mặt hàng'}
+        description="Vai trò hiện tại chưa được cấp quyền cho thao tác này."
+      />
+    );
+  }
   if (isEdit && detail.isLoading) return <Skeleton active />;
   if (isEdit && detail.isError)
     return <Alert type="error" showIcon title="Không thể tải mặt hàng" />;
@@ -2013,6 +2170,13 @@ export function OwnerProductFormPage({
                               Chụp ảnh mới
                             </Button>
                             <Button
+                              icon={<LinkOutlined />}
+                              disabled={uploading}
+                              onClick={() => setUrlModalOpen(true)}
+                            >
+                              Đổi từ URL
+                            </Button>
+                            <Button
                               icon={<UploadOutlined />}
                               disabled={uploading}
                               onClick={() => fileInputRef.current?.click()}
@@ -2044,12 +2208,19 @@ export function OwnerProductFormPage({
                             type="secondary"
                             style={{ fontSize: 13, display: 'block', marginBottom: 12 }}
                           >
-                            Chỉ lưu 1 ảnh duy nhất. Bạn có thể chụp trực tiếp từ camera hoặc tải ảnh
-                            từ máy.
+                            Chỉ lưu 1 ảnh duy nhất. Bạn có thể dán link URL, chụp từ camera hoặc tải
+                            ảnh từ máy.
                           </Typography.Text>
                           <div className="owner-image-upload-cta-row">
                             <Button
                               type="primary"
+                              icon={<LinkOutlined />}
+                              disabled={uploading}
+                              onClick={() => setUrlModalOpen(true)}
+                            >
+                              Dán URL ảnh
+                            </Button>
+                            <Button
                               icon={<CameraOutlined />}
                               disabled={uploading}
                               onClick={() => setCameraModalOpen(true)}
@@ -2172,6 +2343,16 @@ export function OwnerProductFormPage({
               }}
               onCapture={uploadImage}
             />
+            <ImageUrlModal
+              open={urlModalOpen}
+              csrfToken={authContext.data?.csrfToken}
+              onClose={() => setUrlModalOpen(false)}
+              onSuccess={(dataUrl) => {
+                setCropImageSrc(dataUrl);
+                setUrlModalOpen(false);
+                setCropperModalOpen(true);
+              }}
+            />
             <ImageCropperModal
               open={cropperModalOpen}
               imageSrc={cropImageSrc}
@@ -2209,7 +2390,7 @@ export function OwnerProductFormPage({
                 </Button>
               </Popconfirm>
             )}
-            {isEdit && (
+            {isEdit && canCreateProduct && (
               <Button
                 icon={<CopyOutlined />}
                 onClick={() => navigate(`${baseRoute}/products/new?copyFrom=${productId}`)}
@@ -2246,9 +2427,11 @@ export function OwnerProductFormPage({
 
 export function OwnerCategoryListPage({
   baseRoute = '/owner/catalog',
+  userPermissions,
   onBack,
 }: {
   baseRoute?: string;
+  userPermissions?: string[] | undefined;
   onBack?: () => void;
 } = {}) {
   const navigate = useNavigate();
@@ -2257,9 +2440,30 @@ export function OwnerCategoryListPage({
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
   const [form] = Form.useForm<{ name: string }>();
+  const requestedPermissions = userPermissions ?? [];
+  const canView =
+    userPermissions === undefined ||
+    requestedPermissions.some((permission) =>
+      [
+        'catalog.manage',
+        'catalog.categories.view',
+        'catalog.categories.create',
+        'catalog.categories.edit',
+        'catalog.categories.delete',
+      ].includes(permission),
+    );
+  const canCreate =
+    userPermissions === undefined ||
+    requestedPermissions.includes('catalog.categories.create') ||
+    requestedPermissions.includes('catalog.manage');
+  const canEdit =
+    userPermissions === undefined ||
+    requestedPermissions.includes('catalog.categories.edit') ||
+    requestedPermissions.includes('catalog.manage');
   const categories = useQuery({
     queryKey: CATEGORY_QUERY,
     queryFn: () => apiRequest<Category[]>('/api/v1/owner/catalog/categories'),
+    enabled: canView,
   });
   const rows = (categories.data ?? []).filter(
     (category) =>
@@ -2267,6 +2471,7 @@ export function OwnerCategoryListPage({
       category.name.toLowerCase().includes(search.trim().toLowerCase()),
   );
   const create = async ({ name }: { name: string }) => {
+    if (!canCreate) return;
     const context = await apiRequest<AuthContextResponse>('/api/v1/auth/context');
     try {
       await jsonRequest(
@@ -2282,6 +2487,16 @@ export function OwnerCategoryListPage({
       messageApi.error(errorMessage(error, 'Không thể tạo danh mục.'));
     }
   };
+  if (!canView) {
+    return (
+      <Alert
+        type="warning"
+        showIcon
+        title="Không có quyền xem danh mục"
+        description="Vai trò hiện tại chưa được cấp quyền xem danh mục."
+      />
+    );
+  }
   return (
     <div className="owner-catalog-page">
       {contextHolder}
@@ -2297,9 +2512,11 @@ export function OwnerCategoryListPage({
             Nhóm các mặt hàng để tìm nhanh trên POS.
           </Typography.Text>
         </div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
-          Tạo danh mục
-        </Button>
+        {canCreate ? (
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
+            Tạo danh mục
+          </Button>
+        ) : null}
       </div>
       <Card className="owner-catalog-card">
         <Input
@@ -2323,14 +2540,17 @@ export function OwnerCategoryListPage({
               {
                 title: 'Danh mục',
                 dataIndex: 'name',
-                render: (name, category) => (
-                  <Button
-                    type="link"
-                    onClick={() => navigate(`${baseRoute}/categories/${category.id}`)}
-                  >
-                    {name}
-                  </Button>
-                ),
+                render: (name, category) =>
+                  canEdit ? (
+                    <Button
+                      type="link"
+                      onClick={() => navigate(`${baseRoute}/categories/${category.id}`)}
+                    >
+                      {name}
+                    </Button>
+                  ) : (
+                    name
+                  ),
               },
               {
                 title: 'Số lượng mặt hàng',
@@ -2341,15 +2561,16 @@ export function OwnerCategoryListPage({
               {
                 title: 'Thao tác',
                 align: 'right',
-                render: (_, category) => (
-                  <Button
-                    type="link"
-                    icon={<EditOutlined />}
-                    onClick={() => navigate(`${baseRoute}/categories/${category.id}`)}
-                  >
-                    Xem và sửa
-                  </Button>
-                ),
+                render: (_, category) =>
+                  canEdit ? (
+                    <Button
+                      type="link"
+                      icon={<EditOutlined />}
+                      onClick={() => navigate(`${baseRoute}/categories/${category.id}`)}
+                    >
+                      Xem và sửa
+                    </Button>
+                  ) : null,
               },
             ]}
           />
@@ -2380,10 +2601,12 @@ export function OwnerCategoryListPage({
 export function OwnerCategoryDetailPage({
   categoryId,
   baseRoute = '/owner/catalog',
+  userPermissions,
   onBack,
 }: {
   categoryId: string;
   baseRoute?: string;
+  userPermissions?: string[] | undefined;
   onBack?: () => void;
 }) {
   const navigate = useNavigate();
@@ -2392,9 +2615,29 @@ export function OwnerCategoryDetailPage({
   const [name, setName] = useState('');
   const [search, setSearch] = useState('');
   const [saving, setSaving] = useState(false);
+  const requestedPermissions = userPermissions ?? [];
+  const canView =
+    userPermissions === undefined ||
+    requestedPermissions.some((permission) =>
+      [
+        'catalog.manage',
+        'catalog.categories.view',
+        'catalog.categories.edit',
+        'catalog.categories.delete',
+      ].includes(permission),
+    );
+  const canEdit =
+    userPermissions === undefined ||
+    requestedPermissions.includes('catalog.categories.edit') ||
+    requestedPermissions.includes('catalog.manage');
+  const canDelete =
+    userPermissions === undefined ||
+    requestedPermissions.includes('catalog.categories.delete') ||
+    requestedPermissions.includes('catalog.manage');
   const categories = useQuery({
     queryKey: CATEGORY_QUERY,
     queryFn: () => apiRequest<Category[]>('/api/v1/owner/catalog/categories'),
+    enabled: canView,
   });
   const products = useQuery({
     queryKey: ['owner-category-products', categoryId, search],
@@ -2402,6 +2645,7 @@ export function OwnerCategoryDetailPage({
       apiRequest<ProductSummary[]>(
         `/api/v1/owner/catalog/categories/${categoryId}/products?q=${encodeURIComponent(search)}`,
       ),
+    enabled: canView,
   });
   const category = categories.data?.find((item) => item.id === categoryId);
   useEffect(() => {
@@ -2442,6 +2686,16 @@ export function OwnerCategoryDetailPage({
       messageApi.error(errorMessage(error, 'Không thể xóa danh mục.'));
     }
   };
+  if (!canView) {
+    return (
+      <Alert
+        type="warning"
+        showIcon
+        title="Không có quyền xem danh mục"
+        description="Vai trò hiện tại chưa được cấp quyền xem danh mục."
+      />
+    );
+  }
   if (!category && categories.isLoading) return <Skeleton active />;
   if (!category) return <Alert type="error" showIcon title="Không tìm thấy danh mục" />;
   return (
@@ -2460,20 +2714,24 @@ export function OwnerCategoryDetailPage({
           </Typography.Text>
         </div>
         <Space>
-          <Popconfirm
-            title="Xóa danh mục này?"
-            description="Chỉ xóa được danh mục không còn mặt hàng đang bán."
-            onConfirm={remove}
-            okText="Xóa"
-            cancelText="Hủy"
-          >
-            <Button danger icon={<DeleteOutlined />}>
-              Xóa
+          {canDelete ? (
+            <Popconfirm
+              title="Xóa danh mục này?"
+              description="Chỉ xóa được danh mục không còn mặt hàng đang bán."
+              onConfirm={remove}
+              okText="Xóa"
+              cancelText="Hủy"
+            >
+              <Button danger icon={<DeleteOutlined />}>
+                Xóa
+              </Button>
+            </Popconfirm>
+          ) : null}
+          {canEdit ? (
+            <Button type="primary" loading={saving} icon={<SaveOutlined />} onClick={save}>
+              Lưu
             </Button>
-          </Popconfirm>
-          <Button type="primary" loading={saving} icon={<SaveOutlined />} onClick={save}>
-            Lưu
-          </Button>
+          ) : null}
         </Space>
       </div>
       <Row gutter={[20, 20]}>
@@ -2487,6 +2745,7 @@ export function OwnerCategoryDetailPage({
             <Input
               value={name}
               onChange={(event) => setName(event.target.value)}
+              disabled={!canEdit}
               maxLength={160}
               className="owner-category-name-input"
             />
@@ -2516,12 +2775,7 @@ export function OwnerCategoryDetailPage({
                     render: (value, product) => (
                       <Space>
                         <ProductAvatar product={product} size={32} />
-                        <Button
-                          type="link"
-                          onClick={() => navigate(`${baseRoute}/products/${product.id}`)}
-                        >
-                          {value}
-                        </Button>
+                        <Typography.Text>{value}</Typography.Text>
                       </Space>
                     ),
                   },

@@ -285,7 +285,7 @@ export function ImageCropperModal({
     setSubmitting(true);
 
     try {
-      const outputDim = 900;
+      const outputDim = 360;
       let outW = outputDim;
       let outH = outputDim;
 
@@ -325,7 +325,7 @@ export function ImageCropperModal({
       ctx.restore();
 
       const blob = await new Promise<Blob | null>((resolve) =>
-        canvas.toBlob(resolve, 'image/webp', 0.95),
+        canvas.toBlob(resolve, 'image/webp', 0.82),
       );
       if (!blob) throw new Error('Không thể xuất tệp ảnh.');
 

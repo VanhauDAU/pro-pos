@@ -149,7 +149,7 @@ guestOrderRoutes.get('/resolve/:token/media/:mediaId', async (c) => {
   const headers = new Headers();
   result.object.writeHttpMetadata(headers);
   headers.set('ETag', result.object.httpEtag);
-  headers.set('Cache-Control', 'private, max-age=86400');
+  headers.set('Cache-Control', 'public, max-age=31536000, immutable');
   return new Response(result.object.body, { headers });
 });
 
@@ -165,7 +165,7 @@ guestOrderRoutes.get('/media/:mediaId', async (c) => {
   const headers = new Headers();
   result.object.writeHttpMetadata(headers);
   headers.set('ETag', result.object.httpEtag);
-  headers.set('Cache-Control', 'private, max-age=86400');
+  headers.set('Cache-Control', 'public, max-age=31536000, immutable');
   return new Response(result.object.body, { headers });
 });
 

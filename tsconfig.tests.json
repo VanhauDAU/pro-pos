@@ -44,6 +44,7 @@
     "src/client/lib/sound.ts",
     "src/client/lib/api.ts",
     "src/client/lib/request-activity.ts",
+    "src/client/lib/zip.ts",
     "src/client/env.d.ts",
     "worker-configuration.d.ts"
   ]

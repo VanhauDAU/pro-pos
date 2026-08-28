@@ -51,6 +51,12 @@ export class StaffRepository {
         .bind(input.userId, input.username, input.email, input.displayName, input.now, input.now),
       this.db
         .prepare(
+          `INSERT INTO store_employee_usernames (store_id, username, user_id, created_at)
+           VALUES (?, ?, ?, ?)`,
+        )
+        .bind(input.storeId, input.username, input.userId, input.now),
+      this.db
+        .prepare(
           `INSERT INTO store_memberships (
             id, store_id, user_id, role_id, status, created_at, updated_at
           ) VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?)`,
@@ -266,7 +272,7 @@ export class StaffRepository {
           `UPDATE pin_verifiers
            SET salt = ?, digest = ?,
                credential_version = credential_version + 1, updated_at = ?
-           WHERE store_id = ? AND user_id = ? AND session_kind = 'EMPLOYEE'`,
+           WHERE store_id = ? AND user_id = ?`,
         )
         .bind(input.salt, input.digest, input.now, input.storeId, input.userId),
       this.db

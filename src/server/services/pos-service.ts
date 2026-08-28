@@ -1120,7 +1120,7 @@ export class PosService {
     const now = Date.now();
     const orderId = crypto.randomUUID();
     const takeaway = input.values.orderType === 'TAKEAWAY';
-    const [preparedItems, guest, businessDay] = await measurePhase(
+    const [preparedItems, guest, businessDay, pricing] = await measurePhase(
       input.timing,
       'cmd_prepare',
       () =>
@@ -1133,6 +1133,11 @@ export class PosService {
           ),
           this.resolveGuest(input.storeId, input.values.guest),
           this.businessDay(input.storeId, now),
+          takeaway
+            ? Promise.resolve(null)
+            : measurePhase(input.timing, 'cmd_pricing', () =>
+                this.pricingSnapshot(input.storeId, input.values.tableId!),
+              ),
         ]),
     );
     const statements: D1PreparedStatement[] = [
@@ -1164,9 +1169,7 @@ export class PosService {
         }),
       );
     } else {
-      const pricing = await measurePhase(input.timing, 'cmd_pricing', () =>
-        this.pricingSnapshot(input.storeId, input.values.tableId!),
-      );
+      if (!pricing) throw new Error('Missing table pricing for dine-in order');
       statements.push(
         this.repository.buildOpenTableStatement({
           commandId: `${input.idempotencyKey}:open`,
@@ -2635,10 +2638,15 @@ export class PosService {
       (await this.repository.findOrder(input.storeId, input.orderId)) ??
       (await this.repository.findTakeawayOrder(input.storeId, input.orderId));
     if (!order) throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn.', 404);
-    let customerName = input.customerName?.trim() || null;
-    let customerPhone = input.customerPhone?.trim() || null;
-    if (input.customerId) {
-      const customer = await new CustomerService(this.env).detail(input.storeId, input.customerId);
+    let customerName =
+      input.customerName === undefined ? order.customer_name : input.customerName?.trim() || null;
+    let customerPhone =
+      input.customerPhone === undefined
+        ? order.customer_phone
+        : input.customerPhone?.trim() || null;
+    const customerId = input.customerId === undefined ? order.customer_id : input.customerId;
+    if (customerId) {
+      const customer = await new CustomerService(this.env).detail(input.storeId, customerId);
       if (customer.status !== 'ACTIVE')
         throw new AppError('CUSTOMER_ARCHIVED', 'Khách hàng đã được lưu trữ.', 409);
       customerName = customer.name;
@@ -2655,7 +2663,7 @@ export class PosService {
         guestCount: Math.max(1, input.guestCount),
         customerName,
         customerPhone,
-        customerId: input.customerId ?? null,
+        customerId: customerId ?? null,
         actorId: input.actorId,
         requestId: input.requestId,
         issuedAt: now,
@@ -2717,24 +2725,14 @@ export class PosService {
       (await this.repository.findTakeawayOrder(storeId, orderId));
     if (!order) throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn.', 404);
 
-    const [session, items] = await Promise.all([
+    const [session, items, bankSettings, bankAccountRows] = await Promise.all([
       this.repository.findTimeSession(storeId, orderId),
       order.order_type === 'TAKEAWAY'
         ? this.repository.listTakeawayOrderItems(storeId, orderId)
         : this.repository.listOrderItems(storeId, orderId),
+      this.repository.findStoreBankSettings(storeId),
+      this.repository.listStoreBankAccounts(storeId),
     ]);
-    const [tableSegments, pauses] = session
-      ? await Promise.all([
-          this.repository.listTableTimeSegments(storeId, session.id),
-          this.repository.listPauses(storeId, session.id),
-        ])
-      : [{ results: [] as TableTimeSegmentRow[] }, { results: [] as OverviewPauseRow[] }];
-    const pricing = calculateSessionPricing({
-      session,
-      tableSegments: tableSegments.results,
-      pauses: pauses.results,
-      now,
-    });
     const timeProductIds = [
       ...new Set(
         items.results.flatMap((item) =>
@@ -2742,38 +2740,45 @@ export class PosService {
         ),
       ),
     ];
-    const productPricingRows = await this.repository.listProductPricingSnapshots(
-      storeId,
-      timeProductIds,
-    );
+    const [tableSegments, pauses, productPricingRows] = await Promise.all([
+      session
+        ? this.repository.listTableTimeSegments(storeId, session.id)
+        : Promise.resolve({ results: [] as TableTimeSegmentRow[] }),
+      session
+        ? this.repository.listPauses(storeId, session.id)
+        : Promise.resolve({ results: [] as OverviewPauseRow[] }),
+      this.repository.listProductPricingSnapshots(storeId, timeProductIds),
+    ]);
+    const pricing = calculateSessionPricing({
+      session,
+      tableSegments: tableSegments.results,
+      pauses: pauses.results,
+      now,
+    });
     const processedItems = priceOrderItems(
       items.results,
       now,
       pricingSnapshotsFromRows(productPricingRows.results, this.env.STORE_TIMEZONE),
     );
     const preliminaryTotals = calculateQuoteTotals(processedItems, pricing, []);
-    const [bankSettings, bankAccountRows, promotions] = await Promise.all([
-      this.repository.findStoreBankSettings(storeId),
-      this.repository.listStoreBankAccounts(storeId),
-      this.promotions.optionsForOrder({
-        storeId,
-        orderId,
-        subtotalVnd: Math.max(0, preliminaryTotals.subtotalVnd - preliminaryTotals.itemDiscountVnd),
-        customerId: order.customer_id ?? null,
-        items: processedItems.map((item) => ({
-          productId: item.productId,
-          variantId: item.variantId,
-          productType: item.productType,
-          productName: item.productName,
-          variantName: item.variantName,
-          unitPriceVnd: Number(item.unitPriceVnd),
-          quantityMilli: Number(item.quantityMilli),
-          grossLineTotalVnd: Number(item.grossLineTotalVnd),
-          netLineTotalVnd: Number(item.netLineTotalVnd),
-        })),
-        now,
-      }),
-    ]);
+    const promotions = await this.promotions.optionsForOrder({
+      storeId,
+      orderId,
+      subtotalVnd: Math.max(0, preliminaryTotals.subtotalVnd - preliminaryTotals.itemDiscountVnd),
+      customerId: order.customer_id ?? null,
+      items: processedItems.map((item) => ({
+        productId: item.productId,
+        variantId: item.variantId,
+        productType: item.productType,
+        productName: item.productName,
+        variantName: item.variantName,
+        unitPriceVnd: Number(item.unitPriceVnd),
+        quantityMilli: Number(item.quantityMilli),
+        grossLineTotalVnd: Number(item.grossLineTotalVnd),
+        netLineTotalVnd: Number(item.netLineTotalVnd),
+      })),
+      now,
+    });
     const totals = calculateQuoteTotals(processedItems, pricing, promotions.applied);
     const bankAccounts: BankAccountDto[] = bankAccountRows.results.map((account) =>
       Object.assign({}, account, { isDefault: account.isDefault === 1 }),
@@ -3417,18 +3422,16 @@ export class PosService {
       method: 'CASH' | 'BANK_TRANSFER';
     },
   ) {
-    const [{ invoice }, order, takeaway, tables] = await Promise.all([
+    const [{ invoice }, order, takeaway, table] = await Promise.all([
       this.repository.getInvoice(storeId, replay.invoiceId),
       this.repository.findOrder(storeId, replay.orderId),
       this.repository.findTakeawayOrder(storeId, replay.orderId),
-      this.repository.listTables(storeId),
+      this.repository.findTableByOrderId(storeId, replay.orderId),
     ]);
     if (!invoice || (!order && !takeaway)) return replay;
     const invoiceData = invoice;
     const resolved = order ?? takeaway!;
-    const tableSummaries = resolved.table_id
-      ? tables.results.filter((table) => table.id === resolved.table_id)
-      : [];
+    const tableSummaries = table ? [table] : [];
     return {
       ...replay,
       invoice: {
@@ -3718,19 +3721,21 @@ export class PosService {
     } catch (error) {
       mapDatabaseError(error);
     }
-    await new AuditRepository(this.env.DB).enrichByRequest(input.storeId, input.requestId, {
-      actorUserId: input.actorId,
-      actorSessionId: input.actorSessionId ?? null,
-      deviceId: input.deviceId ?? null,
-      requestId: input.requestId,
-    });
-    const completed =
-      (await this.repository.findCheckoutCommand(input.storeId, input.idempotencyKey)) ??
-      (await this.repository.findTakeawayCheckoutCommand(input.storeId, input.idempotencyKey));
-    const tableRows = await this.repository.listTables(input.storeId);
-    const tableSummaries = quote.order.tableId
-      ? tableRows.results.filter((table) => table.id === quote.order.tableId)
-      : [];
+    const [completedOrder, completedTakeaway, tableSummary] = await Promise.all([
+      this.repository.findCheckoutCommand(input.storeId, input.idempotencyKey),
+      this.repository.findTakeawayCheckoutCommand(input.storeId, input.idempotencyKey),
+      quote.order.tableId
+        ? this.repository.findTableByOrderId(input.storeId, input.orderId)
+        : Promise.resolve(null),
+      new AuditRepository(this.env.DB).enrichByRequest(input.storeId, input.requestId, {
+        actorUserId: input.actorId,
+        actorSessionId: input.actorSessionId ?? null,
+        deviceId: input.deviceId ?? null,
+        requestId: input.requestId,
+      }),
+    ]);
+    const completed = completedOrder ?? completedTakeaway;
+    const tableSummaries = tableSummary ? [tableSummary] : [];
     return {
       invoiceId,
       paymentId,
@@ -4258,8 +4263,8 @@ export class PosService {
           description = `${actor} mở ${orderRaw.table_name ?? 'bàn'}`;
           break;
         case 'ORDER_CREATED':
-          title = 'Tạo đơn mang đi';
-          description = `${actor} tạo đơn mang đi`;
+          title = 'Tạo đơn Mang về';
+          description = `${actor} tạo đơn Mang về`;
           break;
         case 'ORDER_ITEM_ADDED':
           title = 'Thêm mặt hàng';

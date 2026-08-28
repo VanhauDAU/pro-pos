@@ -1,4 +1,5 @@
 import {
+  AppstoreAddOutlined,
   AppstoreOutlined,
   ArrowDownOutlined,
   ArrowLeftOutlined,
@@ -32,6 +33,7 @@ import { useNavigate } from 'react-router';
 import type { AuthContextResponse } from '@contracts/auth';
 
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
+import { BulkAddTablesModal, type BulkTableItem } from './BulkAddTablesModal';
 
 interface AreaTable {
   id: string;
@@ -115,7 +117,11 @@ export function OwnerAreaSettingsPage() {
   const [newTableName, setNewTableName] = useState('');
   const [newTableTimeProductId, setNewTableTimeProductId] = useState<string | null>(null);
   const [addingTable, setAddingTable] = useState(false);
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
+  const [bulkAddingTables, setBulkAddingTables] = useState(false);
   const [orderingAreaId, setOrderingAreaId] = useState<string | null>(null);
+  const [orderingAreas, setOrderingAreas] = useState(false);
+  const [draggedAreaId, setDraggedAreaId] = useState<string | null>(null);
   const [pricingTableId, setPricingTableId] = useState<string | null>(null);
   const [togglingStatusTableId, setTogglingStatusTableId] = useState<string | null>(null);
   const [draggedTable, setDraggedTable] = useState<{ areaId: string; tableId: string } | null>(
@@ -231,6 +237,38 @@ export function OwnerAreaSettingsPage() {
     }
   };
 
+  const createBulkTablesInArea = async (generatedTables: BulkTableItem[]) => {
+    if (!detailArea || !generatedTables.length) return;
+    setBulkAddingTables(true);
+    try {
+      const baseSortOrder = detailArea.tables.length;
+      await jsonRequest(
+        '/api/v1/owner/catalog/tables/batch',
+        {
+          areaId: detailArea.id,
+          tables: generatedTables.map((t, idx) => ({
+            name: t.name,
+            sortOrder: baseSortOrder + idx + 1,
+          })),
+          timeProductId: generatedTables[0]?.timeProductId || null,
+        },
+        {
+          method: 'POST',
+          headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' },
+        },
+      );
+      await queryClient.invalidateQueries({ queryKey: AREA_LAYOUTS_QUERY });
+      messageApi.success(
+        `Đã thêm thành công ${generatedTables.length} bàn/phòng vào khu vực ${detailArea.name}.`,
+      );
+      setBulkModalOpen(false);
+    } catch (error) {
+      messageApi.error(errorMessage(error, 'Không thể thêm nhiều bàn/phòng.'));
+    } finally {
+      setBulkAddingTables(false);
+    }
+  };
+
   const toggleTableStatus = async (table: AreaTable) => {
     if (table.status === 'OCCUPIED') return;
     const nextStatus = table.status === 'DISABLED' ? 'AVAILABLE' : 'DISABLED';
@@ -289,6 +327,33 @@ export function OwnerAreaSettingsPage() {
     }
   };
 
+  const saveAreaOrder = async (orderedAreas: AreaLayout[]) => {
+    if (!layouts.data) return;
+    if (orderedAreas.every((area, index) => area.id === layouts.data?.[index]?.id)) return;
+    setOrderingAreas(true);
+    try {
+      await jsonRequest(
+        '/api/v1/owner/catalog/area-layouts/area-order',
+        { areaIds: orderedAreas.map((area) => area.id) },
+        {
+          method: 'PUT',
+          headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' },
+        },
+      );
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: AREA_LAYOUTS_QUERY }),
+        queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-overview'] }),
+      ]);
+      messageApi.success('Đã cập nhật thứ tự khu vực.');
+    } catch (error) {
+      messageApi.error(errorMessage(error, 'Không thể cập nhật thứ tự khu vực.'));
+    } finally {
+      setOrderingAreas(false);
+      setDraggedAreaId(null);
+    }
+  };
+
   const saveTableOrder = async (area: AreaLayout, orderedTables: AreaTable[]) => {
     if (orderedTables.every((table, index) => table.id === area.tables[index]?.id)) return;
     setOrderingAreaId(area.id);
@@ -301,7 +366,11 @@ export function OwnerAreaSettingsPage() {
           headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' },
         },
       );
-      await queryClient.invalidateQueries({ queryKey: AREA_LAYOUTS_QUERY });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: AREA_LAYOUTS_QUERY }),
+        queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-overview'] }),
+      ]);
       messageApi.success('Đã cập nhật thứ tự bàn/phòng.');
     } catch (error) {
       messageApi.error(errorMessage(error, 'Không thể cập nhật thứ tự bàn/phòng.'));
@@ -385,6 +454,7 @@ export function OwnerAreaSettingsPage() {
         <Card className="owner-area-list-card" styles={{ body: { padding: 0 } }}>
           <div className="owner-area-list-card__tab">Tất cả khu vực</div>
           <div className="owner-area-table__header">
+            <span>Thứ tự</span>
             <span>Tên khu vực</span>
             <span style={{ textAlign: 'center' }}>Số lượng bàn/phòng</span>
             <span style={{ textAlign: 'right' }}>Thao tác</span>
@@ -405,16 +475,34 @@ export function OwnerAreaSettingsPage() {
             <div className="owner-area-table">
               {layouts.data.map((area, index) => (
                 <div className="owner-area-table__group" key={area.id}>
-                  <div className="owner-area-table__row">
+                  <div
+                    className={`owner-area-table__row ${orderingAreas ? 'owner-area-table__row--ordering' : ''}`}
+                    draggable={!orderingAreas}
+                    onDragStart={() => setDraggedAreaId(area.id)}
+                    onDragEnd={() => setDraggedAreaId(null)}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={() => {
+                      if (!draggedAreaId || !layouts.data) return;
+                      void saveAreaOrder(moveItemToTarget(layouts.data, draggedAreaId, area.id));
+                    }}
+                  >
+                    <div className="owner-area-table__order-col">
+                      <span
+                        className="owner-area-drag-handle"
+                        title="Kéo để sắp xếp thứ tự khu vực"
+                      >
+                        <MenuOutlined />
+                      </span>
+                      <span className="owner-area-index">
+                        #{String(index + 1).padStart(2, '0')}
+                      </span>
+                    </div>
                     <button
                       type="button"
                       className="owner-area-table__name"
                       title="Bấm để xem chi tiết và quản lý bàn"
                       onClick={() => setDetailAreaId(area.id)}
                     >
-                      <span className="owner-area-index">
-                        {String(index + 1).padStart(2, '0')}.
-                      </span>
                       <strong className="owner-area-name-text">{area.name}</strong>
                     </button>
                     <div style={{ textAlign: 'center' }}>
@@ -423,6 +511,30 @@ export function OwnerAreaSettingsPage() {
                       </Tag>
                     </div>
                     <div className="owner-area-row-actions">
+                      <Button
+                        type="text"
+                        size="small"
+                        disabled={index === 0 || orderingAreas}
+                        aria-label={`Đưa khu vực ${area.name} lên`}
+                        icon={<ArrowUpOutlined />}
+                        title="Đưa lên trên"
+                        onClick={() =>
+                          layouts.data &&
+                          void saveAreaOrder(moveItem(layouts.data, index, index - 1))
+                        }
+                      />
+                      <Button
+                        type="text"
+                        size="small"
+                        disabled={index === layouts.data.length - 1 || orderingAreas}
+                        aria-label={`Đưa khu vực ${area.name} xuống`}
+                        icon={<ArrowDownOutlined />}
+                        title="Đưa xuống dưới"
+                        onClick={() =>
+                          layouts.data &&
+                          void saveAreaOrder(moveItem(layouts.data, index, index + 1))
+                        }
+                      />
                       <Button
                         type="primary"
                         ghost
@@ -552,6 +664,9 @@ export function OwnerAreaSettingsPage() {
                   onClick={() => void createTableInArea()}
                 >
                   Thêm bàn
+                </Button>
+                <Button icon={<AppstoreAddOutlined />} onClick={() => setBulkModalOpen(true)}>
+                  Thêm nhiều bàn
                 </Button>
               </div>
             </div>
@@ -796,6 +911,19 @@ export function OwnerAreaSettingsPage() {
           </Form.Item>
         </Form>
       </Modal>
+      {/* MODAL: THÊM NHIỀU BÀN VÀO KHU VỰC */}
+      <BulkAddTablesModal
+        open={bulkModalOpen}
+        onCancel={() => setBulkModalOpen(false)}
+        onConfirm={createBulkTablesInArea}
+        loading={bulkAddingTables}
+        initialPrefix="Bàn "
+        initialStartNumber={(detailArea?.tables.length ?? 0) + 1}
+        initialQuantity={10}
+        showPricingSelect
+        pricingOptions={pricingOptions()}
+        existingNames={detailArea?.tables.map((t) => t.name) ?? []}
+      />
     </div>
   );
 }
@@ -807,6 +935,7 @@ export function OwnerAreaCreatePage() {
   const [areaName, setAreaName] = useState('');
   const [tables, setTables] = useState<DraftTable[]>([]);
   const [tableModalOpen, setTableModalOpen] = useState(false);
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [editingDraft, setEditingDraft] = useState<DraftTable | null>(null);
   const [saving, setSaving] = useState(false);
   const [draggedDraftId, setDraggedDraftId] = useState<string | null>(null);
@@ -842,6 +971,16 @@ export function OwnerAreaCreatePage() {
     closeTableModal();
   };
 
+  const addBulkDraftTables = (generatedTables: BulkTableItem[]) => {
+    const newItems: DraftTable[] = generatedTables.map((item) => ({
+      id: crypto.randomUUID(),
+      name: item.name,
+    }));
+    setTables((current) => [...current, ...newItems]);
+    setBulkModalOpen(false);
+    messageApi.success(`Đã thêm ${newItems.length} bàn/phòng.`);
+  };
+
   const saveArea = async () => {
     if (!areaName.trim() || tables.length === 0) return;
     setSaving(true);
@@ -869,14 +1008,23 @@ export function OwnerAreaCreatePage() {
           <AreaBackLink label="Quản lý bàn/phòng" />
           <Typography.Title level={2}>Tạo khu vực</Typography.Title>
         </div>
-        <Button type="primary" size="large" onClick={() => openTableModal()}>
-          Thêm bàn/phòng mới
-        </Button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Button
+            icon={<AppstoreAddOutlined />}
+            size="large"
+            onClick={() => setBulkModalOpen(true)}
+          >
+            Thêm nhiều bàn/phòng
+          </Button>
+          <Button type="primary" size="large" onClick={() => openTableModal()}>
+            Thêm bàn/phòng mới
+          </Button>
+        </div>
       </div>
 
       <Card className="owner-area-create-card" styles={{ body: { padding: 0 } }}>
         <div className="owner-area-name-field">
-          <label htmlFor="area-name">Tên khu vực</label>
+          <label htmlFor="area-name">Tên khu vực (*)</label>
           <Input
             id="area-name"
             value={areaName}
@@ -957,9 +1105,18 @@ export function OwnerAreaCreatePage() {
               image={Empty.PRESENTED_IMAGE_SIMPLE}
               description="Thêm ít nhất 1 bàn/phòng để tạo khu vực"
             >
-              <Button type="primary" ghost onClick={() => openTableModal()}>
-                Thêm bàn/phòng mới
-              </Button>
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+                <Button
+                  type="primary"
+                  icon={<AppstoreAddOutlined />}
+                  onClick={() => setBulkModalOpen(true)}
+                >
+                  Thêm nhiều bàn/phòng
+                </Button>
+                <Button ghost onClick={() => openTableModal()}>
+                  Thêm 1 bàn
+                </Button>
+              </div>
             </Empty>
           )}
         </div>
@@ -998,6 +1155,17 @@ export function OwnerAreaCreatePage() {
           </Form.Item>
         </Form>
       </Modal>
+
+      {/* MODAL: THÊM NHIỀU BÀN VÀO KHU VỰC DRAFT */}
+      <BulkAddTablesModal
+        open={bulkModalOpen}
+        onCancel={() => setBulkModalOpen(false)}
+        onConfirm={addBulkDraftTables}
+        initialPrefix="Bàn "
+        initialStartNumber={tables.length + 1}
+        initialQuantity={10}
+        existingNames={tables.map((t) => t.name)}
+      />
     </div>
   );
 }

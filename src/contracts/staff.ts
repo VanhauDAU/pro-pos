@@ -130,6 +130,56 @@ export const rolePermissionKeys = rolePermissionCatalog.flatMap((group) =>
   group.sections.flatMap((section) => section.permissions.map(([key]) => key)),
 );
 
+export const orderWorkspacePermissionKeys = ['order.create', 'order.manage'] as const;
+export const catalogProductPermissionKeys = [
+  'catalog.products.view',
+  'catalog.products.edit',
+  'catalog.products.import_export',
+  'catalog.products.create',
+  'catalog.products.delete',
+] as const;
+export const catalogCategoryPermissionKeys = [
+  'catalog.categories.view',
+  'catalog.categories.edit',
+  'catalog.categories.create',
+  'catalog.categories.delete',
+] as const;
+export const catalogModulePermissionKeys = [
+  ...catalogProductPermissionKeys,
+  ...catalogCategoryPermissionKeys,
+] as const;
+export const staffManagementPermissionKeys = [
+  'staff.employees.view',
+  'staff.employees.edit',
+  'staff.employees.create',
+  'staff.employees.delete',
+] as const;
+export const customerManagementPermissionKeys = [
+  'customer.list.view',
+  'customer.list.edit_debt',
+  'customer.list.import_export',
+  'customer.list.create',
+  'customer.list.delete',
+  'customer.groups.view',
+  'customer.groups.edit',
+  'customer.groups.create',
+  'customer.groups.delete',
+] as const;
+export const promotionManagementPermissionKeys = [
+  'promotion.edit',
+  'promotion.create',
+  'promotion.delete',
+] as const;
+
+export function hasAnyPermission(
+  grantedPermissions: readonly string[] | null | undefined,
+  requiredPermissions: readonly string[],
+) {
+  if (!grantedPermissions || requiredPermissions.length === 0) return false;
+  const granted = new Set(grantedPermissions);
+  return requiredPermissions.some((permission) => granted.has(permission));
+}
+
 export const createEmployeeSchema = z.object({
   displayName: z.string().trim().min(1).max(128),
   username: z.string().trim().min(3).max(128),

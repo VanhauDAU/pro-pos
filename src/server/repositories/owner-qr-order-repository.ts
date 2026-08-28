@@ -156,7 +156,7 @@ export class OwnerQrOrderRepository {
          JOIN areas a ON a.id = st.area_id AND a.store_id = st.store_id
          LEFT JOIN table_qr_codes qr ON qr.table_id = st.id AND qr.store_id = st.store_id
          WHERE st.store_id = ? AND a.status = 'ACTIVE'
-         ORDER BY a.sort_order, st.sort_order, name COLLATE NOCASE`,
+         ORDER BY a.sort_order, a.name COLLATE NOCASE, a.created_at, a.id, st.sort_order, name COLLATE NOCASE`,
       )
       .bind(storeId)
       .all<{

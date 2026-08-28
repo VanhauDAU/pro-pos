@@ -4,6 +4,7 @@ export interface PinIdentityRow {
   user_status: 'ACTIVE' | 'DISABLED';
   store_id: string;
   membership_status: 'ACTIVE' | 'DISABLED';
+  employee_remember_session_hours: number;
   algorithm: 'HMAC-SHA256-PEPPERED';
   salt: string;
   digest: string;
@@ -55,6 +56,7 @@ export interface SessionContextRow {
   user_status: 'ACTIVE' | 'DISABLED';
   store_id: string | null;
   session_device_id: string | null;
+  employee_remember_session_hours: number | null;
   session_kind: 'SUPER_ADMIN' | 'OWNER' | 'EMPLOYEE';
   session_status: 'ACTIVE' | 'EXPIRED' | 'REVOKED';
   expires_at: number;
@@ -173,12 +175,16 @@ export class AuthRepository {
         `SELECT
           u.id AS user_id, u.display_name, u.status AS user_status,
           sm.store_id, sm.status AS membership_status,
+          COALESCE(ss.employee_remember_session_hours, 12) AS employee_remember_session_hours,
           pc.algorithm, pc.salt, pc.digest,
           pc.pepper_version, pc.credential_version
         FROM users u
         JOIN store_memberships sm ON sm.user_id = u.id AND sm.store_id = ?
+        JOIN store_employee_usernames seu
+          ON seu.store_id = sm.store_id AND seu.user_id = u.id
+        LEFT JOIN store_settings ss ON ss.store_id = sm.store_id
         JOIN pin_verifiers pc ON pc.user_id = u.id AND pc.store_id = sm.store_id
-        WHERE u.username = ? COLLATE NOCASE
+        WHERE seu.username = ? COLLATE NOCASE
         LIMIT 1`,
       )
       .bind(storeId, username)
@@ -226,6 +232,7 @@ export class AuthRepository {
         `SELECT
           s.id AS session_id, s.user_id, u.display_name, u.status AS user_status,
           s.store_id, s.device_id AS session_device_id, s.session_kind,
+          ss.employee_remember_session_hours,
           s.status AS session_status, s.expires_at, s.idle_expires_at, s.last_seen_at,
           s.credential_version AS session_credential_version,
           CASE
@@ -236,6 +243,7 @@ export class AuthRepository {
           END AS current_credential_version
         FROM auth_sessions s
         JOIN users u ON u.id = s.user_id
+        LEFT JOIN store_settings ss ON ss.store_id = s.store_id
         LEFT JOIN password_credentials pc ON pc.user_id = s.user_id
         LEFT JOIN access_identities ai ON ai.user_id = s.user_id
         LEFT JOIN pin_verifiers pv ON pv.user_id = s.user_id

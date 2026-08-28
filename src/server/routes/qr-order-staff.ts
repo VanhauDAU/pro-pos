@@ -19,7 +19,7 @@ function idempotencyKey(c: Parameters<typeof success>[0]) {
   return value;
 }
 
-qrOrderStaffRoutes.get('/', requirePermission('table.view'), async (c) =>
+qrOrderStaffRoutes.get('/', requirePermission('qr_order.handle', 'order.manage'), async (c) =>
   success(
     c,
     await new QrOrderService(c.env).listStaffRequests(
@@ -29,84 +29,106 @@ qrOrderStaffRoutes.get('/', requirePermission('table.view'), async (c) =>
   ),
 );
 
-qrOrderStaffRoutes.get('/summary', requirePermission('table.view'), async (c) => {
-  const service = new QrOrderService(c.env);
-  const storeId = c.get('actor').storeId!;
-  const [guestOrders, serviceRequests, tableOpenRequests] = await Promise.all([
-    service.listStaffRequests(storeId, 'PENDING'),
-    service.listServiceRequests(storeId),
-    service.listTableOpenRequests(storeId),
-  ]);
-  return success(c, {
-    guestOrders,
-    serviceRequests,
-    tableOpenRequests,
-    counts: {
-      guestOrders: guestOrders.length,
-      serviceRequests: serviceRequests.filter((request) => request.status === 'OPEN').length,
-      tableOpenRequests: tableOpenRequests.length,
-    },
-    serverNowMs: Date.now(),
-  });
-});
-
-qrOrderStaffRoutes.get('/audit', requirePermission('table.view'), async (c) => {
-  const rawLimit = c.req.query('limit');
-  const limit = rawLimit === undefined ? 50 : Number(rawLimit);
-  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
-    throw new AppError('AUDIT_LIMIT_INVALID', 'Giới hạn nhật ký phải từ 1 đến 100.', 422);
-  }
-  return success(
-    c,
-    await new QrOrderService(c.env).listNotificationAudit(c.get('actor').storeId!, limit),
-  );
-});
-
-qrOrderStaffRoutes.post('/:id/accept', requirePermission('order.manage'), async (c) => {
-  const body = await parseJson(c.req.raw, acceptGuestOrderSchema);
-  return success(
-    c,
-    await new QrOrderService(c.env).accept({
-      commandId: idempotencyKey(c),
-      storeId: c.get('actor').storeId!,
-      guestRequestId: c.req.param('id'),
-      expectedOrderVersion: body.expectedOrderVersion,
-      actorId: c.get('actor').id,
-      actorSessionId: c.get('sessionId'),
-      deviceId: c.get('device')?.id ?? null,
-      requestId: c.get('requestId'),
-    }),
-  );
-});
-
-qrOrderStaffRoutes.post('/:id/reject', requirePermission('order.manage'), async (c) => {
-  const body = await parseJson(c.req.raw, rejectGuestOrderSchema);
-  return success(
-    c,
-    await new QrOrderService(c.env).reject({
-      commandId: idempotencyKey(c),
-      storeId: c.get('actor').storeId!,
-      guestRequestId: c.req.param('id'),
-      reason: body.reason,
-      actorId: c.get('actor').id,
-      actorSessionId: c.get('sessionId'),
-      deviceId: c.get('device')?.id ?? null,
-      requestId: c.get('requestId'),
-    }),
-  );
-});
-
-qrOrderStaffRoutes.get('/service-requests/list', requirePermission('table.view'), async (c) =>
-  success(c, await new QrOrderService(c.env).listServiceRequests(c.get('actor').storeId!)),
+qrOrderStaffRoutes.get(
+  '/summary',
+  requirePermission('qr_order.handle', 'order.manage'),
+  async (c) => {
+    const service = new QrOrderService(c.env);
+    const storeId = c.get('actor').storeId!;
+    const [guestOrders, serviceRequests, tableOpenRequests] = await Promise.all([
+      service.listStaffRequests(storeId, 'PENDING'),
+      service.listServiceRequests(storeId),
+      service.listTableOpenRequests(storeId),
+    ]);
+    return success(c, {
+      guestOrders,
+      serviceRequests,
+      tableOpenRequests,
+      counts: {
+        guestOrders: guestOrders.length,
+        serviceRequests: serviceRequests.filter((request) => request.status === 'OPEN').length,
+        tableOpenRequests: tableOpenRequests.length,
+      },
+      serverNowMs: Date.now(),
+    });
+  },
 );
 
-qrOrderStaffRoutes.get('/table-open-requests/list', requirePermission('table.view'), async (c) =>
-  success(c, await new QrOrderService(c.env).listTableOpenRequests(c.get('actor').storeId!)),
+qrOrderStaffRoutes.get(
+  '/audit',
+  requirePermission('qr_order.handle', 'order.manage'),
+  async (c) => {
+    const rawLimit = c.req.query('limit');
+    const limit = rawLimit === undefined ? 50 : Number(rawLimit);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new AppError('AUDIT_LIMIT_INVALID', 'Giới hạn nhật ký phải từ 1 đến 100.', 422);
+    }
+    return success(
+      c,
+      await new QrOrderService(c.env).listNotificationAudit(c.get('actor').storeId!, limit),
+    );
+  },
+);
+
+qrOrderStaffRoutes.post(
+  '/:id/accept',
+  requirePermission('qr_order.handle', 'order.manage'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, acceptGuestOrderSchema);
+    return success(
+      c,
+      await new QrOrderService(c.env).accept({
+        commandId: idempotencyKey(c),
+        storeId: c.get('actor').storeId!,
+        guestRequestId: c.req.param('id'),
+        expectedOrderVersion: body.expectedOrderVersion,
+        actorId: c.get('actor').id,
+        actorSessionId: c.get('sessionId'),
+        deviceId: c.get('device')?.id ?? null,
+        requestId: c.get('requestId'),
+      }),
+    );
+  },
+);
+
+qrOrderStaffRoutes.post(
+  '/:id/reject',
+  requirePermission('qr_order.handle', 'order.manage'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, rejectGuestOrderSchema);
+    return success(
+      c,
+      await new QrOrderService(c.env).reject({
+        commandId: idempotencyKey(c),
+        storeId: c.get('actor').storeId!,
+        guestRequestId: c.req.param('id'),
+        reason: body.reason,
+        actorId: c.get('actor').id,
+        actorSessionId: c.get('sessionId'),
+        deviceId: c.get('device')?.id ?? null,
+        requestId: c.get('requestId'),
+      }),
+    );
+  },
+);
+
+qrOrderStaffRoutes.get(
+  '/service-requests/list',
+  requirePermission('qr_order.handle', 'order.manage'),
+  async (c) =>
+    success(c, await new QrOrderService(c.env).listServiceRequests(c.get('actor').storeId!)),
+);
+
+qrOrderStaffRoutes.get(
+  '/table-open-requests/list',
+  requirePermission('qr_order.handle', 'order.manage'),
+  async (c) =>
+    success(c, await new QrOrderService(c.env).listTableOpenRequests(c.get('actor').storeId!)),
 );
 
 qrOrderStaffRoutes.post(
   '/table-open-requests/:id/accept',
-  requirePermission('table.open'),
+  requirePermission('qr_order.handle', 'order.manage'),
   async (c) => {
     const actor = c.get('actor');
     return success(
@@ -126,7 +148,7 @@ qrOrderStaffRoutes.post(
 
 qrOrderStaffRoutes.post(
   '/table-open-requests/:id/cancel',
-  requirePermission('table.open'),
+  requirePermission('qr_order.handle', 'order.manage'),
   async (c) => {
     const body = await parseJson(c.req.raw, rejectGuestOrderSchema);
     const actor = c.get('actor');
@@ -144,7 +166,7 @@ qrOrderStaffRoutes.post(
 
 qrOrderStaffRoutes.post(
   '/service-requests/:id/status',
-  requirePermission('order.manage'),
+  requirePermission('qr_order.handle', 'order.manage'),
   async (c) => {
     const body = await parseJson(
       c.req.raw,

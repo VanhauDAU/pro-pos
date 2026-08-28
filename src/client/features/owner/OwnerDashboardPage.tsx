@@ -907,7 +907,7 @@ export function OwnerDashboardPage({ settings }: { settings: StoreSettings | und
                   <ShoppingCartOutlined />
                 </div>
                 <div className="owner-uncompleted-item__info">
-                  <span className="owner-uncompleted-item__label">Mang đi (Takeaway)</span>
+                  <span className="owner-uncompleted-item__label">Mang về (Takeaway)</span>
                   <div className="owner-uncompleted-item__metrics">
                     <Tag color="orange">{data?.uncompletedOrders.takeaway.count ?? 0} đơn</Tag>
                     <strong>{formatMoney(data?.uncompletedOrders.takeaway.amount ?? 0)}</strong>

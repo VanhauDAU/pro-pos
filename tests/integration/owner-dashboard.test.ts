@@ -4,6 +4,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { CatalogService } from '@server/services/catalog-service';
 import { OwnerDashboardService } from '@server/services/owner-dashboard-service';
 import { OwnerInvoiceService } from '@server/services/owner-invoice-service';
+import { OwnerProductReportService } from '@server/services/owner-product-report-service';
 import { PlatformService } from '@server/services/platform-service';
 import { PosService } from '@server/services/pos-service';
 import { StoreService } from '@server/services/store-service';
@@ -238,6 +239,62 @@ describe('Owner Dashboard Real Analytics (Acceptance Test)', () => {
     expect(data.paymentTimeChart).toHaveLength(24);
     const sumTimelineRev = data.revenueTimelineChart.reduce((sum, p) => sum + p.revenue, 0);
     expect(sumTimelineRev).toBe(data.summary.revenue);
+
+    // The product report reads frozen invoice lines from both order types and excludes table time.
+    const productReport = await new OwnerProductReportService(env).getProductReport(storeId, {
+      reportType: 'CATEGORY',
+      timeRange: 'today',
+      dateFrom: null,
+      dateTo: null,
+      hourMode: 'all',
+      fromHour: 0,
+      fromMinute: 0,
+      toHour: 0,
+      toMinute: 0,
+      compareWith: 'none',
+    });
+    expect(productReport.summary).toMatchObject({
+      totalQuantity: 5,
+      grossAmount: 80_000,
+      discountAmount: 0,
+      netAmount: 80_000,
+    });
+    expect(productReport.topSellingRows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ productId: productBiaId, quantity: 2, grossAmount: 50_000 }),
+        expect.objectContaining({
+          productId: productNuocSuoiId,
+          quantity: 3,
+          grossAmount: 30_000,
+        }),
+      ]),
+    );
+
+    const beerDetail = await new OwnerProductReportService(env).getProductDetail(
+      storeId,
+      productBiaId,
+      {
+        reportType: 'CATEGORY',
+        timeRange: 'today',
+        dateFrom: null,
+        dateTo: null,
+        hourMode: 'all',
+        fromHour: 0,
+        fromMinute: 0,
+        toHour: 0,
+        toMinute: 0,
+        compareWith: 'none',
+      },
+    );
+    expect(beerDetail.summary).toMatchObject({ totalQuantity: 2, grossAmount: 50_000 });
+    expect(beerDetail.rows).toEqual([
+      expect.objectContaining({
+        invoiceId: checkout1.invoiceId,
+        orderType: 'DINE_IN',
+        quantity: 2,
+        grossAmount: 50_000,
+      }),
+    ]);
 
     // Assert Payment Methods (CASH & BANK_TRANSFER)
     expect(data.paymentMethods.byRevenue.some((p) => p.key === 'CASH' && p.value > 0)).toBe(true);

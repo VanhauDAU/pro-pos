@@ -357,7 +357,7 @@ describe('POS Order Detail & Lifecycle Audit (Acceptance Test)', () => {
       actorId: ownerUserId,
       requestId: 'req-takeaway-1',
       idempotencyKey: 'cmd-takeaway-1',
-      note: 'Khách VIP mang đi',
+      note: 'Khách VIP Mang về',
     });
 
     await pos.addItem({
@@ -373,7 +373,7 @@ describe('POS Order Detail & Lifecycle Audit (Acceptance Test)', () => {
 
     const detail = await pos.getOrderDetail(storeId, takeaway.orderId);
     expect(detail.order.orderType).toBe('TAKEAWAY');
-    expect(detail.order.note).toBe('Khách VIP mang đi');
+    expect(detail.order.note).toBe('Khách VIP Mang về');
     expect(detail.timeSummary).toBeNull();
     expect(detail.timeSegments).toHaveLength(0);
     expect(detail.items).toHaveLength(1);

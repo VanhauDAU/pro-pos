@@ -3,10 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   OVERVIEW_DISCONNECTED_REFRESH_MS,
+  QUOTE_INTERACTION_FRESH_MS,
   QUOTE_DISCONNECTED_REFRESH_MS,
   RUNNING_SERVER_REFRESH_MS,
   orderQuoteQueryOptions,
   overviewRefreshInterval,
+  quoteIsVerifiedForInteraction,
   quoteRefreshInterval,
   type RefreshableOrderQuote,
 } from '@client/features/pos/pos-order-query';
@@ -19,6 +21,28 @@ function quote(version: number, status = 'OPEN', timeStatus: string | null = nul
 }
 
 describe('POS order quote cache policy', () => {
+  it('reuses a quote prefetched for the current tap without a duplicate mount request', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const fetcher = vi.fn(async () => quote(12));
+    const options = orderQuoteQueryOptions({
+      orderId: 'order-1',
+      enabled: true,
+      realtimeStatus: 'CONNECTED',
+      fetcher,
+    });
+
+    await client.prefetchQuery(options);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    const observer = new QueryObserver(client, options);
+    const unsubscribe = observer.subscribe(() => undefined);
+    await Promise.resolve();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    unsubscribe();
+    client.clear();
+  });
+
   it('refetches an inactive invalidated quote before using it after mount', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const fetcher = vi.fn(async () => quote(14));
@@ -60,5 +84,28 @@ describe('POS order quote cache policy', () => {
     expect(overviewRefreshInterval(true, 'CONNECTED')).toBe(RUNNING_SERVER_REFRESH_MS);
     expect(overviewRefreshInterval(false, 'CONNECTED')).toBe(false);
     expect(overviewRefreshInterval(false, 'RECONNECTING')).toBe(OVERVIEW_DISCONNECTED_REFRESH_MS);
+  });
+
+  it('accepts only a fresh, non-stale prefetched quote as interaction-verified', () => {
+    const base = {
+      orderId: 'order-1',
+      quote: quote(12),
+      isSuccess: true,
+      isFetching: false,
+      isRefetchError: false,
+      isFetchedAfterMount: false,
+      dataUpdatedAt: 10_000,
+      now: 10_000 + QUOTE_INTERACTION_FRESH_MS,
+    };
+
+    expect(quoteIsVerifiedForInteraction({ ...base, isStale: false })).toBe(true);
+    expect(quoteIsVerifiedForInteraction({ ...base, isStale: true })).toBe(false);
+    expect(
+      quoteIsVerifiedForInteraction({
+        ...base,
+        isStale: false,
+        now: 10_001 + QUOTE_INTERACTION_FRESH_MS,
+      }),
+    ).toBe(false);
   });
 });

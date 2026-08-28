@@ -27,6 +27,9 @@ ownerStoreRoutes.put('/settings', requirePermission('store.manage'), async (c) =
     phone: body.phone ?? null,
     address: body.address ?? null,
     cutoff: body.businessDayCutoffMinutes,
+    ...(body.employeeRememberSessionHours === undefined
+      ? {}
+      : { employeeRememberSessionHours: body.employeeRememberSessionHours }),
     bankName: body.bankName ?? null,
     bankAccountNumber: body.bankAccountNumber ?? null,
     bankAccountName: body.bankAccountName ?? null,

@@ -2,6 +2,7 @@ import {
   ArrowDownOutlined,
   ArrowUpOutlined,
   DeleteOutlined,
+  DownloadOutlined,
   PlusOutlined,
   QrcodeOutlined,
   SaveOutlined,
@@ -36,8 +37,9 @@ import type {
   QrQuickReasonDto,
 } from '@contracts/owner-qr-order';
 import type { GuestMenuProduct } from '@contracts/qr-order';
-import { TableQrModal } from '@client/components/TableQrModal';
+import { generateStandeeDataUrl, TableQrModal } from '@client/components/TableQrModal';
 import { ApiError, apiRequest } from '@client/lib/api';
+import { createZip, dataUrlToBytes, fileNameSlug, type ZipEntry } from '@client/lib/zip';
 
 import { StoreLocationMapPicker } from './StoreLocationMapPicker';
 
@@ -139,6 +141,8 @@ export function OwnerQrOrderSettingsPage() {
     image: string;
   } | null>(null);
   const [qrLoadingTableId, setQrLoadingTableId] = useState<string | null>(null);
+  const [downloadingAllQr, setDownloadingAllQr] = useState(false);
+  const [qrDownloadProgress, setQrDownloadProgress] = useState({ completed: 0, total: 0 });
 
   const auth = useQuery({
     queryKey: ['auth-context'],
@@ -362,6 +366,82 @@ export function OwnerQrOrderSettingsPage() {
     }
   };
 
+  const downloadAllQrCodes = async () => {
+    const allTables = tables.data ?? [];
+    if (allTables.length === 0 || downloadingAllQr) {
+      if (allTables.length === 0) messageApi.warning('Cửa hàng chưa có bàn/phòng để tải mã QR.');
+      return;
+    }
+
+    setDownloadingAllQr(true);
+    setQrDownloadProgress({ completed: 0, total: allTables.length });
+    try {
+      const { default: QRCode } = await import('qrcode');
+      const usedNames = new Map<string, number>();
+      const fileNames = allTables.map((table) => {
+        const area = fileNameSlug(table.areaName, 'khu_vuc');
+        const tableName = fileNameSlug(table.name, 'ban');
+        const baseName = `${area}_${tableName}`;
+        const occurrence = (usedNames.get(baseName) ?? 0) + 1;
+        usedNames.set(baseName, occurrence);
+        return `${baseName}${occurrence > 1 ? `_${occurrence}` : ''}.png`;
+      });
+      const entries = Array.from({ length: allTables.length }, () => null as ZipEntry | null);
+      let nextIndex = 0;
+      let completed = 0;
+
+      const createNextEntry = async (): Promise<void> => {
+        const index = nextIndex;
+        nextIndex += 1;
+        const table = allTables[index];
+        if (!table) return;
+
+        let path = table.qrPath;
+        if (!path) {
+          const result = await apiRequest<{ path: string }>(
+            `/api/v1/owner/qr-order/tables/${table.id}/qr-code`,
+          );
+          path = result.path;
+        }
+        const url = new URL(path, window.location.origin).toString();
+        const qrImage = await QRCode.toDataURL(url, { width: 640, margin: 2 });
+        const standeeImage = await generateStandeeDataUrl({
+          tableName: table.name,
+          storeName: store.data?.name ?? 'PRO POS',
+          qrImageSrc: qrImage,
+        });
+        entries[index] = { name: fileNames[index]!, data: dataUrlToBytes(standeeImage) };
+        completed += 1;
+        setQrDownloadProgress({ completed, total: allTables.length });
+        await createNextEntry();
+      };
+
+      await Promise.all(
+        Array.from({ length: Math.min(6, allTables.length) }, () => createNextEntry()),
+      );
+      const archive = createZip(
+        entries.map((entry) => {
+          if (!entry) throw new Error('QR_ARCHIVE_ENTRY_MISSING');
+          return entry;
+        }),
+      );
+      const downloadUrl = URL.createObjectURL(new Blob([archive], { type: 'application/zip' }));
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = `ma_qr_${fileNameSlug(store.data?.name ?? '', 'cua_hang')}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 0);
+      void queryClient.invalidateQueries({ queryKey: ['owner-qr-order-tables'] });
+      messageApi.success(`Đã tải ${allTables.length} ảnh QR để bàn trong một file ZIP.`);
+    } catch (error) {
+      messageApi.error(error instanceof ApiError ? error.message : 'Không thể tạo file ZIP mã QR.');
+    } finally {
+      setDownloadingAllQr(false);
+    }
+  };
+
   const setSalesPaused = async (paused: boolean) => {
     setSalesStatusSaving(true);
     try {
@@ -558,6 +638,18 @@ export function OwnerQrOrderSettingsPage() {
             />
           </div>
           <div className="owner-qr-table-toolbar__actions">
+            <Button
+              type="primary"
+              size="small"
+              icon={<DownloadOutlined />}
+              loading={downloadingAllQr}
+              disabled={tables.isLoading || totalTables === 0}
+              onClick={() => void downloadAllQrCodes()}
+            >
+              {downloadingAllQr
+                ? `Đang tạo ${qrDownloadProgress.completed}/${qrDownloadProgress.total}`
+                : 'Tải tất cả mã QR'}
+            </Button>
             <Button size="small" loading={bulkSaving} onClick={() => void bulkToggle(true)}>
               Bật tất cả
             </Button>

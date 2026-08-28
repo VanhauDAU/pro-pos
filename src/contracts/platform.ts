@@ -132,6 +132,21 @@ export interface PlatformStoreDetail {
     totalInvoices: number;
     totalRevenue: number;
   };
+  analytics: {
+    summary: {
+      todayRevenue: number;
+      last7DaysRevenue: number;
+      last30DaysRevenue: number;
+      avgInvoiceValue: number;
+      completionRate: number;
+      activeDevices: number;
+      activeMembers: number;
+    };
+    revenueTrend: PlatformAnalytics['revenueTrend'];
+    paymentMethods: PlatformAnalytics['paymentMethods'];
+    hourlyDistribution: PlatformAnalytics['hourlyDistribution'];
+    topProducts: PlatformAnalytics['topProducts'];
+  };
 }
 
 export interface PlatformAnalytics {

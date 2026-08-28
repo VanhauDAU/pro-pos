@@ -296,16 +296,18 @@ function DetailDrawer({
   selected,
   onClose,
   queryParams,
+  apiPrefix,
 }: {
   selected: SelectedProduct | null;
   onClose: () => void;
   queryParams: string;
+  apiPrefix: string;
 }) {
   const detailQuery = useQuery({
     queryKey: ['owner-product-report-detail', selected?.productId, queryParams],
     queryFn: () =>
       apiRequest<ProductReportDetailResponseDto>(
-        `/api/v1/owner/analytics/reports/products/${encodeURIComponent(selected!.productId)}/details?${queryParams}`,
+        `${apiPrefix}/reports/products/${encodeURIComponent(selected!.productId)}/details?${queryParams}`,
       ),
     enabled: selected !== null,
   });
@@ -392,7 +394,11 @@ function DetailDrawer({
   );
 }
 
-export function OwnerProductReportPage() {
+export function OwnerProductReportPage({
+  apiPrefix = '/api/v1/owner/analytics',
+}: {
+  apiPrefix?: string;
+} = {}) {
   const [reportType, setReportType] = useState<SupportedReportType>('CATEGORY');
   const [timeRange, setTimeRange] = useState<ProductReportTimeRange>('this_week');
   const [customDates, setCustomDates] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null);
@@ -443,9 +449,7 @@ export function OwnerProductReportPage() {
   const reportQuery = useQuery({
     queryKey: ['owner-product-report', queryParams],
     queryFn: () =>
-      apiRequest<ProductReportResponseDto>(
-        `/api/v1/owner/analytics/reports/products?${queryParams}`,
-      ),
+      apiRequest<ProductReportResponseDto>(`${apiPrefix}/reports/products?${queryParams}`),
     enabled: canLoad,
   });
   const data = reportQuery.data;
@@ -764,6 +768,7 @@ export function OwnerProductReportPage() {
         selected={selectedProduct}
         onClose={() => setSelectedProduct(null)}
         queryParams={queryParams}
+        apiPrefix={apiPrefix}
       />
 
       <Modal

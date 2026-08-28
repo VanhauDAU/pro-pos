@@ -101,7 +101,7 @@ describe('Owner staff and role management', () => {
     });
   });
 
-  it('allows creating an employee with catalog permissions to manage products and categories', async () => {
+  it('keeps catalog permissions fine-grained instead of granting catalog.manage', async () => {
     const catalogRole = await staff.createRole(storeId, 'Quản lý kho món', [
       'catalog.products.view',
       'catalog.products.create',
@@ -115,6 +115,15 @@ describe('Owner staff and role management', () => {
       permissionKeys: [],
     });
     const authRepo = new AuthorizationRepository(env.DB);
-    expect(await authRepo.hasPermission(storeId, employee.userId, 'catalog.manage')).toBe(true);
+    expect(await authRepo.hasPermission(storeId, employee.userId, 'catalog.products.view')).toBe(
+      true,
+    );
+    expect(await authRepo.hasPermission(storeId, employee.userId, 'catalog.products.create')).toBe(
+      true,
+    );
+    expect(await authRepo.hasPermission(storeId, employee.userId, 'catalog.manage')).toBe(false);
+    expect(await authRepo.hasPermission(storeId, employee.userId, 'catalog.products.delete')).toBe(
+      false,
+    );
   });
 });

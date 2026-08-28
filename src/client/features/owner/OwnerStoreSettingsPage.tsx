@@ -19,6 +19,7 @@ import {
   Empty,
   Form,
   Input,
+  InputNumber,
   Modal,
   Row,
   Select,
@@ -62,6 +63,7 @@ interface StoreSettings {
   address: string | null;
   currency: string;
   businessDayCutoffMinutes: number;
+  employeeRememberSessionHours: number;
   bankName: string | null;
   bankAccountNumber: string | null;
   bankAccountName: string | null;
@@ -80,6 +82,7 @@ interface StoreFormValues {
   address: string;
   provinceCode: number;
   wardCode: number;
+  employeeRememberSessionHours: number;
 }
 
 interface BankAccountFormValues {
@@ -186,6 +189,7 @@ export function OwnerStoreSettingsPage() {
       address: data.address ?? '',
       ...(data.provinceCode === null ? {} : { provinceCode: data.provinceCode }),
       ...(data.wardCode === null ? {} : { wardCode: data.wardCode }),
+      employeeRememberSessionHours: data.employeeRememberSessionHours,
     });
   }, [form, settings.data]);
 
@@ -304,6 +308,7 @@ export function OwnerStoreSettingsPage() {
           phone: values.phone || null,
           address: values.address,
           businessDayCutoffMinutes: settings.data?.businessDayCutoffMinutes ?? 0,
+          employeeRememberSessionHours: values.employeeRememberSessionHours,
           bankName: defaultBankAccount?.bankBin ?? null,
           bankAccountNumber: defaultBankAccount?.accountNumber ?? null,
           bankAccountName: defaultBankAccount?.accountName ?? null,
@@ -569,6 +574,15 @@ export function OwnerStoreSettingsPage() {
                 Đổi mật khẩu
               </Button>
             </div>
+            <Divider />
+            <Form.Item
+              label="Ghi nhớ đăng nhập nhân viên (giờ)"
+              name="employeeRememberSessionHours"
+              extra="Thời hạn nhân viên không cần nhập lại mã PIN trên máy POS này. Áp dụng từ lần đăng nhập nhân viên tiếp theo."
+              rules={[{ required: true, message: 'Vui lòng nhập số giờ.' }]}
+            >
+              <InputNumber min={1} max={720} precision={0} style={{ width: 180 }} />
+            </Form.Item>
           </Card>
         </div>
 

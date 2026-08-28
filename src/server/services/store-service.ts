@@ -185,6 +185,7 @@ export class StoreService {
     phone: string | null;
     address: string | null;
     cutoff: number;
+    employeeRememberSessionHours?: number;
     bankName: string | null;
     bankAccountNumber: string | null;
     bankAccountName: string | null;

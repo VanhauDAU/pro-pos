@@ -11,23 +11,14 @@ import type { z } from 'zod';
 const DEFAULT_EMPLOYEE_PERMISSIONS = [
   'table.view',
   'table.open',
-  'order.manage',
+  'order.create',
   'checkout.complete',
   'invoice.view',
   'invoice.print',
 ];
 
 function expandRuntimePermissions(permissionKeys: string[]) {
-  const expanded = new Set(permissionKeys);
-  if (expanded.has('order.create')) {
-    expanded.add('table.view');
-    expanded.add('table.open');
-    expanded.add('order.manage');
-  }
-  if (permissionKeys.some((key) => key.startsWith('catalog.'))) expanded.add('catalog.manage');
-  if (permissionKeys.some((key) => key.startsWith('staff.employees.')))
-    expanded.add('staff.manage');
-  return [...expanded];
+  return [...new Set(permissionKeys)];
 }
 
 export class StaffService {

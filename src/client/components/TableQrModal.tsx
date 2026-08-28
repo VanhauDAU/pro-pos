@@ -20,7 +20,7 @@ export interface TableQrModalProps {
 }
 
 /**
- * Generates a high-resolution Standee Card (900x1260px) onto an offscreen canvas
+ * Generates the same high-resolution table card shown in the preview modal.
  * and returns the Data URL (PNG) ready for download or print.
  */
 export async function generateStandeeDataUrl({
@@ -34,171 +34,104 @@ export async function generateStandeeDataUrl({
 }): Promise<string> {
   const canvas = document.createElement('canvas');
   canvas.width = 900;
-  canvas.height = 1260;
+  canvas.height = 1000;
   const ctx = canvas.getContext('2d');
   if (!ctx) return qrImageSrc;
 
-  // Background
+  // Rounded card background
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(8, 8, 884, 984, 44);
+  ctx.clip();
   ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, 900, 1260);
+  ctx.fillRect(0, 0, 900, 1000);
 
-  // Outer border with subtle gradient
-  ctx.lineWidth = 12;
-  ctx.strokeStyle = '#0284c7';
-  ctx.strokeRect(6, 6, 888, 1248);
-
-  // Header Banner Gradient
-  const headerGrad = ctx.createLinearGradient(0, 0, 900, 220);
+  // Header banner
+  const headerGrad = ctx.createLinearGradient(0, 0, 900, 280);
   headerGrad.addColorStop(0, '#0284c7');
   headerGrad.addColorStop(1, '#0369a1');
   ctx.fillStyle = headerGrad;
-  ctx.fillRect(12, 12, 876, 210);
+  ctx.fillRect(8, 8, 884, 272);
 
-  // Store Name
   ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-  ctx.font = '600 24px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  ctx.font = '600 28px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText((storeName || 'PRO POS').toUpperCase(), 450, 68);
+  ctx.fillText(`▦ ${(storeName || 'PRO POS').toUpperCase()}`, 450, 66);
 
-  // Main Header Title
   ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 44px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-  ctx.fillText('QUÉT MÃ GỌI MÓN', 450, 128);
+  ctx.font = '800 50px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  ctx.fillText('QUÉT MÃ GỌI MÓN', 450, 142);
 
-  // Table Badge (Pill)
   const badgeLabel = `BÀN: ${tableName.toUpperCase()}`;
-  ctx.font = 'bold 28px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-  const badgeWidth = Math.max(260, ctx.measureText(badgeLabel).width + 80);
+  ctx.font = '700 30px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  const badgeWidth = Math.max(290, ctx.measureText(badgeLabel).width + 92);
   const badgeX = 450 - badgeWidth / 2;
-  const badgeY = 154;
+  const badgeY = 176;
 
   ctx.fillStyle = '#ffffff';
   ctx.beginPath();
-  ctx.roundRect(badgeX, badgeY, badgeWidth, 52, 26);
+  ctx.roundRect(badgeX, badgeY, badgeWidth, 64, 32);
   ctx.fill();
 
   ctx.fillStyle = '#0369a1';
-  ctx.fillText(badgeLabel, 450, 190);
+  ctx.fillText(badgeLabel, 450, 218);
 
-  // Load and Draw QR Code Image
+  // Load QR image
   const qrImg = new Image();
-  qrImg.crossOrigin = 'anonymous';
   await new Promise<void>((resolve) => {
     qrImg.addEventListener('load', () => resolve(), { once: true });
     qrImg.addEventListener('error', () => resolve(), { once: true });
     qrImg.src = qrImageSrc;
   });
 
-  // QR Container Box
+  // QR frame
   ctx.fillStyle = '#ffffff';
   ctx.beginPath();
-  ctx.roundRect(180, 260, 540, 540, 24);
+  ctx.roundRect(170, 320, 560, 560, 36);
   ctx.fill();
-  ctx.lineWidth = 4;
+  ctx.lineWidth = 3;
   ctx.strokeStyle = '#e2e8f0';
   ctx.stroke();
+  ctx.shadowColor = 'rgba(15, 23, 42, 0.08)';
+  ctx.shadowBlur = 22;
+  ctx.shadowOffsetY = 8;
+  ctx.stroke();
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
 
-  // Draw QR in Center
-  ctx.drawImage(qrImg, 210, 290, 480, 480);
+  ctx.drawImage(qrImg, 210, 360, 480, 480);
 
-  // Corner Scanner Accents
+  // Scanner corner accents
   ctx.strokeStyle = '#0284c7';
-  ctx.lineWidth = 6;
-  const cLen = 32;
-
-  // Top-Left
-  ctx.beginPath();
-  ctx.moveTo(195, 275 + cLen);
-  ctx.lineTo(195, 275);
-  ctx.lineTo(195 + cLen, 275);
-  ctx.stroke();
-
-  // Top-Right
-  ctx.beginPath();
-  ctx.moveTo(705 - cLen, 275);
-  ctx.lineTo(705, 275);
-  ctx.lineTo(705, 275 + cLen);
-  ctx.stroke();
-
-  // Bottom-Left
-  ctx.beginPath();
-  ctx.moveTo(195, 785 - cLen);
-  ctx.lineTo(195, 785);
-  ctx.lineTo(195 + cLen, 785);
-  ctx.stroke();
-
-  // Bottom-Right
-  ctx.beginPath();
-  ctx.moveTo(705 - cLen, 785);
-  ctx.lineTo(705, 785);
-  ctx.lineTo(705, 785 - cLen);
-  ctx.stroke();
-
-  // Instructions Container
-  ctx.fillStyle = '#f8fafc';
-  ctx.beginPath();
-  ctx.roundRect(70, 835, 760, 320, 20);
-  ctx.fill();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = '#e2e8f0';
-  ctx.stroke();
-
-  // Instructions Title
-  ctx.fillStyle = '#0f172a';
-  ctx.font = 'bold 26px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('HƯỚNG DẪN ĐẶT MÓN TẠI BÀN', 450, 878);
-
-  // 3 Steps with 2-line clean layout (Title + Subtext)
-  const steps = [
-    {
-      num: '1',
-      title: 'Mở Camera hoặc app Zalo',
-      desc: 'Quét mã QR trên bàn để truy cập menu gọi món',
-    },
-    {
-      num: '2',
-      title: 'Chọn món yêu thích',
-      desc: 'Thêm món vào giỏ hàng và tùy chỉnh ghi chú nếu cần',
-    },
-    {
-      num: '3',
-      title: 'Bấm gửi gọi món',
-      desc: 'Nhân viên và nhà bếp tiếp nhận phục vụ ngay tại bàn',
-    },
+  ctx.lineWidth = 7;
+  const cornerLength = 40;
+  const corners = [
+    { x: 190, y: 340, horizontal: 1, vertical: 1 },
+    { x: 710, y: 340, horizontal: -1, vertical: 1 },
+    { x: 190, y: 860, horizontal: 1, vertical: -1 },
+    { x: 710, y: 860, horizontal: -1, vertical: -1 },
   ];
-
-  steps.forEach((step, idx) => {
-    const centerY = 934 + idx * 72;
-
-    // Circle Badge
-    ctx.fillStyle = '#0284c7';
+  for (const corner of corners) {
     ctx.beginPath();
-    ctx.arc(120, centerY, 22, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.moveTo(corner.x, corner.y + corner.vertical * cornerLength);
+    ctx.lineTo(corner.x, corner.y);
+    ctx.lineTo(corner.x + corner.horizontal * cornerLength, corner.y);
+    ctx.stroke();
+  }
 
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 20px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(step.num, 120, centerY + 7);
-
-    // Step Title (Line 1)
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#0f172a';
-    ctx.font = 'bold 21px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-    ctx.fillText(step.title, 160, centerY - 6);
-
-    // Step Description (Line 2)
-    ctx.fillStyle = '#64748b';
-    ctx.font = '500 17px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-    ctx.fillText(step.desc, 160, centerY + 18);
-  });
-
-  // Footer Note
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#94a3b8';
-  ctx.font = 'italic 20px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-  ctx.fillText('✨ Chúc quý khách có những phút giây thư giãn tuyệt vời! ✨', 450, 1210);
+  ctx.fillStyle = '#64748b';
+  ctx.font = 'italic 21px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  ctx.fillText('✨ Chúc quý khách có những phút giây thư giãn tuyệt vời! ✨', 450, 940);
+  ctx.restore();
+
+  // Outer cyan border matching the preview card
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = '#bae6fd';
+  ctx.beginPath();
+  ctx.roundRect(8, 8, 884, 984, 44);
+  ctx.stroke();
 
   return canvas.toDataURL('image/png');
 }
@@ -384,33 +317,6 @@ export function TableQrModal({
               <Tag color="cyan">Mã đơn: {orderCode}</Tag>
             </div>
           ) : null}
-
-          {/* 3 Step Instructions */}
-          <div className="table-qr-standee-steps">
-            <div className="table-qr-standee-steps-title">3 bước gọi món siêu nhanh:</div>
-            <div className="table-qr-standee-step-row">
-              <span className="table-qr-standee-step-num">1</span>
-              <div className="table-qr-standee-step-text">
-                <div className="table-qr-standee-step-heading">Mở Camera / app Zalo</div>
-                <div className="table-qr-standee-step-sub">Quét mã QR trên bàn để xem menu</div>
-              </div>
-            </div>
-            <div className="table-qr-standee-step-row">
-              <span className="table-qr-standee-step-num">2</span>
-              <div className="table-qr-standee-step-text">
-                <div className="table-qr-standee-step-heading">Chọn món yêu thích</div>
-                <div className="table-qr-standee-step-sub">Xem thực đơn & thêm món vào đơn</div>
-              </div>
-            </div>
-            <div className="table-qr-standee-step-row">
-              <span className="table-qr-standee-step-num">3</span>
-              <div className="table-qr-standee-step-text">
-                <div className="table-qr-standee-step-heading">Bấm gửi gọi món</div>
-                <div className="table-qr-standee-step-sub">Bếp và nhân viên phục vụ ngay</div>
-              </div>
-            </div>
-          </div>
-
           {/* Footer note */}
           <div className="table-qr-standee-footer">
             <span>✨ Chúc quý khách có những phút giây thư giãn tuyệt vời! ✨</span>

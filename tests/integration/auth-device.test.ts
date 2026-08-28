@@ -624,6 +624,10 @@ describe('Owner and POS activation invariants', () => {
       pin: '1234',
       permissionKeys: [],
     });
+    await env.DB
+      .prepare('UPDATE store_settings SET employee_remember_session_hours = 48 WHERE store_id = ?')
+      .bind(store!.id)
+      .run();
 
     const authorize = await completeAccess('DEVICE_ACTIVATION');
     if (authorize.purpose !== 'DEVICE_ACTIVATION') throw new Error('Expected activation grant.');
@@ -656,6 +660,7 @@ describe('Owner and POS activation invariants', () => {
     });
     expect(login.status).toBe(200);
     expect(login.headers.get('Set-Cookie')).toContain('__Host-propos-session=');
+    expect(login.headers.get('Set-Cookie')).toContain('Max-Age=172800');
     const payload = await jsonData<{ actor: { kind: string; displayName: string } }>(login);
     expect(payload.actor).toMatchObject({
       kind: 'EMPLOYEE',

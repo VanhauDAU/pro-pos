@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   OVERVIEW_DISCONNECTED_REFRESH_MS,
   QUOTE_INTERACTION_FRESH_MS,
+  QUOTE_REALTIME_INTERACTION_FRESH_MS,
   QUOTE_DISCONNECTED_REFRESH_MS,
   RUNNING_SERVER_REFRESH_MS,
   orderQuoteQueryOptions,
@@ -95,7 +96,8 @@ describe('POS order quote cache policy', () => {
       isRefetchError: false,
       isFetchedAfterMount: false,
       dataUpdatedAt: 10_000,
-      now: 10_000 + QUOTE_INTERACTION_FRESH_MS,
+      realtimeStatus: 'CONNECTED' as const,
+      now: 10_000 + QUOTE_REALTIME_INTERACTION_FRESH_MS,
     };
 
     expect(quoteIsVerifiedForInteraction({ ...base, isStale: false })).toBe(true);
@@ -104,7 +106,24 @@ describe('POS order quote cache policy', () => {
       quoteIsVerifiedForInteraction({
         ...base,
         isStale: false,
+        now: 10_001 + QUOTE_REALTIME_INTERACTION_FRESH_MS,
+      }),
+    ).toBe(false);
+
+    expect(
+      quoteIsVerifiedForInteraction({
+        ...base,
+        realtimeStatus: 'RECONNECTING',
+        now: 10_000 + QUOTE_INTERACTION_FRESH_MS,
+        isStale: false,
+      }),
+    ).toBe(true);
+    expect(
+      quoteIsVerifiedForInteraction({
+        ...base,
+        realtimeStatus: 'RECONNECTING',
         now: 10_001 + QUOTE_INTERACTION_FRESH_MS,
+        isStale: false,
       }),
     ).toBe(false);
   });

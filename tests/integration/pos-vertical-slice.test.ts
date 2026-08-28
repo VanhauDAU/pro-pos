@@ -1985,6 +1985,57 @@ describe('online POS vertical slice', () => {
     });
   });
 
+  it('keeps a manually entered end time stopped when returning from checkout', async () => {
+    const pos = new PosService(env);
+    const opened = await openFreshTable('Bàn chốt giờ thủ công', 'open-manual-end-resume-001');
+    const startedAtMs = Date.parse('2026-08-20T10:00:00.000Z');
+    const manuallyEndedAtMs = startedAtMs + 30 * 60_000;
+    const checkoutStartedAtMs = startedAtMs + 40 * 60_000;
+    const returnedAtMs = startedAtMs + 45 * 60_000;
+
+    await pos.updateTimeRange({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-manual-end-before-checkout',
+      idempotencyKey: 'manual-end-before-checkout-001',
+      orderId: opened.orderId,
+      expectedOrderVersion: 1,
+      startedAtMs,
+      endedAtMs: manuallyEndedAtMs,
+      now: checkoutStartedAtMs,
+    });
+
+    await pos.stopTimeForCheckout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-checkout-after-manual-end',
+      idempotencyKey: 'checkout-after-manual-end-001',
+      orderId: opened.orderId,
+      expectedOrderVersion: 2,
+      now: checkoutStartedAtMs,
+    });
+
+    const resumed = await pos.resumeCheckout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-return-after-manual-end',
+      idempotencyKey: 'return-after-manual-end-001',
+      orderId: opened.orderId,
+      expectedOrderVersion: 3,
+      now: returnedAtMs,
+    });
+
+    expect(resumed.quote).toMatchObject({
+      order: { status: 'OPEN' },
+      time: {
+        status: 'ENDED',
+        startedAtMs,
+        endedAtMs: manuallyEndedAtMs,
+        elapsedSeconds: 1800,
+      },
+    });
+  });
+
   it('edits start/end time atomically and recalculates the quote from the saved range', async () => {
     const pos = new PosService(env);
     const opened = await openFreshTable('Bàn chỉnh giờ', 'open-adjust-time-001');
@@ -2974,9 +3025,18 @@ describe('online POS vertical slice', () => {
     expect(resumeResult.quote.order.status).toBe('OPEN');
     expect(resumeResult.quote.time?.status).toBe('RUNNING');
     expect(resumeResult.quote.time?.endedAtMs).toBeNull();
-    // The checkout window is frozen and is not charged after returning to the order.
-    expect(resumeResult.quote.time?.elapsedSeconds).toBe(5235);
+    // The quote stays frozen until this explicit resume, then billing is continuous from t0.
+    expect(resumeResult.quote.time?.elapsedSeconds).toBe(5442);
     expect(resumeResult.quote.time?.tableSegments).toHaveLength(1);
+    const generatedCheckoutPauses = await env.DB.prepare(
+      `SELECT COUNT(*) AS count
+       FROM time_pauses tp
+       JOIN time_sessions ts ON ts.id = tp.time_session_id
+       WHERE ts.store_id = ? AND ts.order_id = ?`,
+    )
+      .bind(storeId, opened.orderId)
+      .first<{ count: number }>();
+    expect(generatedCheckoutPauses?.count).toBe(0);
 
     // 6b. Immediate stop-time right after resume (same millisecond/second) - must not crash
     const immediateStop = await pos.stopTimeForCheckout({
@@ -2989,7 +3049,7 @@ describe('online POS vertical slice', () => {
       now: tResume,
     });
     expect(immediateStop.status).toBe('PAYMENT_PENDING');
-    expect(immediateStop.quote.time?.elapsedSeconds).toBe(5235);
+    expect(immediateStop.quote.time?.elapsedSeconds).toBe(5442);
 
     // Resume again after immediate stop
     const resumeAgain = await pos.resumeCheckout({
@@ -3003,10 +3063,10 @@ describe('online POS vertical slice', () => {
     });
     expect(resumeAgain.status).toBe('OPEN');
 
-    // At 08:00:42 only actual playing time is charged; checkout time stays excluded.
+    // At 08:00:42 the full interval since opening is charged continuously.
     const tPlayingLater = tResume + 1800 * 1000;
     const playingQuote = await pos.quote(storeId, opened.orderId, tPlayingLater);
-    expect(playingQuote.time?.elapsedSeconds).toBe(7034);
+    expect(playingQuote.time?.elapsedSeconds).toBe(7242);
     expect(playingQuote.time?.tableSegments?.length).toBe(1);
 
     // 7. Stop time again at 08:00:42

@@ -1114,6 +1114,112 @@ body,
   background: #f4f6f8;
 }
 
+.staff-order-editor--opening {
+  background: #f7f8fa;
+}
+
+.staff-order-opening__header {
+  min-height: 82px;
+  padding: 12px 20px;
+  display: grid;
+  grid-template-columns: auto minmax(180px, 1fr) minmax(240px, 38%);
+  align-items: center;
+  gap: 16px;
+  background: #fff;
+  border-bottom: 1px solid #e3e6eb;
+}
+
+.staff-order-opening__title {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.staff-order-opening__title strong {
+  overflow: hidden;
+  color: #172033;
+  font-size: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.staff-order-opening__title span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #667085;
+  font-size: 13px;
+}
+
+.staff-order-opening__body {
+  min-height: calc(100dvh - 82px);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 40%);
+}
+
+.staff-order-opening__catalog {
+  align-content: start;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(140px, 1fr));
+  gap: 12px;
+  padding: 18px;
+}
+
+.staff-order-opening__product {
+  min-height: 205px;
+  padding: 12px;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #e9ecf1;
+  border-radius: 12px;
+}
+
+.staff-order-opening__product .ant-skeleton-image {
+  width: 100% !important;
+  height: 112px !important;
+  margin-bottom: 12px;
+}
+
+.staff-order-opening__cart {
+  padding: 24px;
+  background: #fff;
+  border-left: 1px solid #e3e6eb;
+}
+
+.staff-order-opening__error {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 40px 20px;
+}
+
+@media (max-width: 900px) {
+  .staff-order-opening__header {
+    grid-template-columns: auto minmax(0, 1fr);
+    min-height: 72px;
+    padding: 10px 12px;
+  }
+
+  .staff-order-opening__header > .ant-skeleton {
+    display: none;
+  }
+
+  .staff-order-opening__body {
+    display: block;
+    min-height: calc(100dvh - 72px);
+  }
+
+  .staff-order-opening__catalog {
+    display: none;
+  }
+
+  .staff-order-opening__cart {
+    min-height: calc(100dvh - 72px);
+    padding: 20px 16px;
+    border-left: 0;
+  }
+}
+
 .staff-order-editor__header {
   min-height: 82px;
   padding: 12px 20px;
@@ -24741,6 +24847,56 @@ body {
 .pos-payment-celebration__print-badge.is-printed {
   color: #059669;
   background: #ecfdf5;
+}
+
+.pos-payment-celebration__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.pos-payment-celebration__btn {
+  flex: 1;
+  height: 44px !important;
+  font-weight: 600 !important;
+  border-radius: 12px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 14px !important;
+  transition: all 0.2s ease !important;
+}
+
+.pos-payment-celebration__btn--complete {
+  background: #f1f5f9 !important;
+  border: 1px solid #cbd5e1 !important;
+  color: #334155 !important;
+}
+
+.pos-payment-celebration__btn--complete:hover {
+  background: #e2e8f0 !important;
+  color: #0f172a !important;
+}
+
+.pos-payment-celebration__btn--print {
+  background: #0975f7 !important;
+  border-color: #0975f7 !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 14px rgba(9, 117, 247, 0.28) !important;
+}
+
+.pos-payment-celebration__btn--print:hover {
+  background: #0866d9 !important;
+  border-color: #0866d9 !important;
+}
+
+.pos-payment-celebration__countdown {
+  margin-top: 12px;
+  font-size: 12.5px;
+  color: #94a3b8;
+  font-weight: 500;
 }
 
 /* 4. POS View Transitions & Interactive Feedback */

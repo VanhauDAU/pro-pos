@@ -19,8 +19,7 @@ import { requireSecret } from '@server/lib/env';
 import { AuthRepository, type DeviceContextRow } from '@server/repositories/auth-repository';
 import { AuditRepository, type AuditContext } from '@server/repositories/audit-repository';
 
-const EMPLOYEE_ABSOLUTE_SECONDS = 12 * 60 * 60;
-const EMPLOYEE_IDLE_SECONDS = 30 * 60;
+const EMPLOYEE_REMEMBER_SESSION_MAX_HOURS = 30 * 24;
 const OWNER_SHORT_ABSOLUTE_SECONDS = 24 * 60 * 60;
 const OWNER_SHORT_IDLE_SECONDS = 12 * 60 * 60;
 const OWNER_LONG_ABSOLUTE_SECONDS = 30 * 24 * 60 * 60;
@@ -426,7 +425,7 @@ export class AuthService {
     rawDeviceSecret: string;
     username: string;
     pin: string;
-  }): Promise<{ rawToken: string; response: LoginResponse }> {
+  }): Promise<{ rawToken: string; maxAgeSeconds: number; response: LoginResponse }> {
     const now = Date.now();
     const device = await this.resolveDevice(input.rawDeviceSecret);
     if (!device) {
@@ -464,6 +463,11 @@ export class AuthService {
     }
     await this.repository.clearFailures('EMPLOYEE_PIN', subjectKey);
     const rawToken = randomOpaqueToken();
+    const rememberSessionHours = Math.min(
+      EMPLOYEE_REMEMBER_SESSION_MAX_HOURS,
+      Math.max(1, identity.employee_remember_session_hours),
+    );
+    const maxAgeSeconds = rememberSessionHours * 60 * 60;
     await this.repository.createSession({
       id: crypto.randomUUID(),
       tokenHash: await hashOpaqueToken(rawToken, this.sessionTokenPepper),
@@ -472,12 +476,13 @@ export class AuthService {
       deviceId: device.device_id,
       kind: 'EMPLOYEE',
       credentialVersion: identity.credential_version,
-      expiresAt: now + EMPLOYEE_ABSOLUTE_SECONDS * 1000,
-      idleExpiresAt: now + EMPLOYEE_IDLE_SECONDS * 1000,
+      expiresAt: now + maxAgeSeconds * 1000,
+      idleExpiresAt: now + maxAgeSeconds * 1000,
       now,
     });
     return {
       rawToken,
+      maxAgeSeconds,
       response: {
         actor: {
           id: identity.user_id,
@@ -533,11 +538,20 @@ export class AuthService {
         if (now - session.last_seen_at > 5 * 60_000) {
           const idleSeconds =
             session.session_kind === 'EMPLOYEE'
-              ? EMPLOYEE_IDLE_SECONDS
+              ? Math.min(
+                  EMPLOYEE_REMEMBER_SESSION_MAX_HOURS,
+                  Math.max(1, session.employee_remember_session_hours ?? 12),
+                ) *
+                60 *
+                60
               : session.session_kind === 'SUPER_ADMIN'
                 ? PLATFORM_IDLE_SECONDS
                 : OWNER_LONG_IDLE_SECONDS;
-          await this.repository.touchSession(session.session_id, now, now + idleSeconds * 1000);
+          await this.repository.touchSession(
+            session.session_id,
+            now,
+            Math.min(session.expires_at, now + idleSeconds * 1000),
+          );
         }
       }
     }

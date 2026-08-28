@@ -7,8 +7,10 @@ import {
   catalogImportPreviewSchema,
   createProductSchema,
   createServiceTableSchema,
+  createBatchServiceTablesSchema,
   namedResourceSchema,
   pricingConfigSchema,
+  reorderAreasSchema,
   reorderServiceTablesSchema,
   updateProductSchema,
   updateServiceTableSchema,
@@ -23,9 +25,22 @@ import { CatalogService } from '@server/services/catalog-service';
 import { CatalogImportService } from '@server/services/catalog-import-service';
 import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
 import type { AppEnv } from '@server/types';
+import { catalogCategoryPermissionKeys, catalogProductPermissionKeys } from '@contracts/staff';
 
 const ownerCatalogRoutes = new Hono<AppEnv>();
 ownerCatalogRoutes.use('*', requireActor('OWNER', 'EMPLOYEE'));
+
+const productReadPermissions = [
+  ...catalogProductPermissionKeys,
+  'product.quick_create',
+  'catalog.manage',
+];
+const categoryReadPermissions = [
+  ...catalogCategoryPermissionKeys,
+  ...catalogProductPermissionKeys,
+  'product.quick_create',
+  'catalog.manage',
+];
 
 function auditContext(c: Parameters<typeof success>[0]) {
   return {
@@ -44,43 +59,63 @@ function idempotencyKey(c: Parameters<typeof success>[0]) {
   return key;
 }
 
-ownerCatalogRoutes.post('/import/preview', requirePermission('catalog.manage'), async (c) => {
-  const body = await parseJson(c.req.raw, catalogImportPreviewSchema);
-  return success(c, await new CatalogImportService(c.env).preview(c.get('actor').storeId!, body));
-});
+ownerCatalogRoutes.post(
+  '/import/preview',
+  requirePermission('catalog.products.import_export', 'catalog.manage'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, catalogImportPreviewSchema);
+    return success(c, await new CatalogImportService(c.env).preview(c.get('actor').storeId!, body));
+  },
+);
 
-ownerCatalogRoutes.post('/import/commit', requirePermission('catalog.manage'), async (c) => {
-  const body = await parseJson(c.req.raw, catalogImportCommitSchema);
-  const storeId = c.get('actor').storeId!;
-  const result = await new CatalogImportService(c.env).commit({
-    storeId,
-    payload: body,
-    idempotencyKey: idempotencyKey(c),
-    auditContext: auditContext(c),
-  });
-  if (
-    result.createdProducts ||
-    result.updatedProducts ||
-    result.createdCategories ||
-    result.createdUnits
-  ) {
-    c.executionCtx.waitUntil(
-      new RealtimeDispatcher(c.env).dispatchStore(storeId).catch(() => undefined),
+ownerCatalogRoutes.post(
+  '/import/commit',
+  requirePermission('catalog.products.import_export', 'catalog.manage'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, catalogImportCommitSchema);
+    const storeId = c.get('actor').storeId!;
+    const result = await new CatalogImportService(c.env).commit({
+      storeId,
+      payload: body,
+      idempotencyKey: idempotencyKey(c),
+      auditContext: auditContext(c),
+    });
+    if (
+      result.createdProducts ||
+      result.updatedProducts ||
+      result.createdCategories ||
+      result.createdUnits
+    ) {
+      c.executionCtx.waitUntil(
+        new RealtimeDispatcher(c.env).dispatchStore(storeId).catch(() => undefined),
+      );
+    }
+    return success(c, result);
+  },
+);
+
+ownerCatalogRoutes.post(
+  '/export',
+  requirePermission('catalog.products.import_export', 'catalog.manage'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, catalogExportSchema);
+    return success(
+      c,
+      await new CatalogImportService(c.env).exportRows(c.get('actor').storeId!, body.productIds),
     );
-  }
-  return success(c, result);
-});
-
-ownerCatalogRoutes.post('/export', requirePermission('catalog.manage'), async (c) => {
-  const body = await parseJson(c.req.raw, catalogExportSchema);
-  return success(
-    c,
-    await new CatalogImportService(c.env).exportRows(c.get('actor').storeId!, body.productIds),
-  );
-});
+  },
+);
 
 for (const table of ['areas', 'categories', 'units'] as const) {
-  ownerCatalogRoutes.get(`/${table}`, requirePermission('catalog.manage'), async (c) => {
+  const readPermissions =
+    table === 'categories'
+      ? categoryReadPermissions
+      : table === 'units'
+        ? productReadPermissions
+        : ['catalog.manage'];
+  const createPermissions =
+    table === 'categories' ? ['catalog.categories.create', 'catalog.manage'] : ['catalog.manage'];
+  ownerCatalogRoutes.get(`/${table}`, requirePermission(...readPermissions), async (c) => {
     if (table === 'units' && (c.req.query('page') || c.req.query('q'))) {
       return success(
         c,
@@ -94,7 +129,7 @@ for (const table of ['areas', 'categories', 'units'] as const) {
     const result = await new CatalogService(c.env).listNamed(c.get('actor').storeId!, table);
     return success(c, result.results);
   });
-  ownerCatalogRoutes.post(`/${table}`, requirePermission('catalog.manage'), async (c) => {
+  ownerCatalogRoutes.post(`/${table}`, requirePermission(...createPermissions), async (c) => {
     const body = await parseJson(c.req.raw, namedResourceSchema);
     return success(
       c,
@@ -162,7 +197,7 @@ ownerCatalogRoutes.delete('/units/:unitId', requirePermission('catalog.manage'),
 
 ownerCatalogRoutes.put(
   '/categories/:categoryId',
-  requirePermission('catalog.manage'),
+  requirePermission('catalog.categories.edit', 'catalog.manage'),
   async (c) => {
     const body = await parseJson(c.req.raw, namedResourceSchema);
     return success(
@@ -180,7 +215,7 @@ ownerCatalogRoutes.put(
 
 ownerCatalogRoutes.delete(
   '/categories/:categoryId',
-  requirePermission('catalog.manage'),
+  requirePermission('catalog.categories.delete', 'catalog.manage'),
   async (c) =>
     success(
       c,
@@ -194,7 +229,7 @@ ownerCatalogRoutes.delete(
 
 ownerCatalogRoutes.get(
   '/categories/:categoryId/products',
-  requirePermission('catalog.manage'),
+  requirePermission(...categoryReadPermissions),
   async (c) =>
     success(
       c,
@@ -239,6 +274,18 @@ ownerCatalogRoutes.post('/area-layouts', requirePermission('table.manage'), asyn
   );
 });
 
+ownerCatalogRoutes.put('/area-layouts/area-order', requirePermission('table.manage'), async (c) => {
+  const body = await parseJson(c.req.raw, reorderAreasSchema);
+  return success(
+    c,
+    await new CatalogService(c.env).reorderAreas(
+      c.get('actor').storeId!,
+      body.areaIds,
+      auditContext(c),
+    ),
+  );
+});
+
 ownerCatalogRoutes.put(
   '/area-layouts/:areaId/table-order',
   requirePermission('table.manage'),
@@ -267,44 +314,55 @@ ownerCatalogRoutes.delete('/area-layouts/:areaId', requirePermission('table.mana
   ),
 );
 
-ownerCatalogRoutes.get('/products', requirePermission('catalog.manage'), async (c) => {
+ownerCatalogRoutes.get('/products', requirePermission(...productReadPermissions), async (c) => {
   const result = await new CatalogService(c.env).listProducts(c.get('actor').storeId!);
   return success(c, result.results);
 });
 
-ownerCatalogRoutes.post('/products', requirePermission('catalog.manage'), async (c) => {
-  const body = await parseJson(c.req.raw, createProductSchema);
-  return success(
-    c,
-    await new CatalogService(c.env).createProduct(c.get('actor').storeId!, body, {
-      actorUserId: c.get('actor').id,
-      actorSessionId: c.get('sessionId'),
-      deviceId: c.get('device')?.id ?? null,
-      requestId: c.get('requestId'),
-    }),
-    201,
-  );
-});
-
-ownerCatalogRoutes.get('/products/:productId', requirePermission('catalog.manage'), async (c) =>
-  success(
-    c,
-    await new CatalogService(c.env).getProduct(c.get('actor').storeId!, c.req.param('productId')),
-  ),
+ownerCatalogRoutes.post(
+  '/products',
+  requirePermission('catalog.products.create', 'product.quick_create', 'catalog.manage'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, createProductSchema);
+    return success(
+      c,
+      await new CatalogService(c.env).createProduct(c.get('actor').storeId!, body, {
+        actorUserId: c.get('actor').id,
+        actorSessionId: c.get('sessionId'),
+        deviceId: c.get('device')?.id ?? null,
+        requestId: c.get('requestId'),
+      }),
+      201,
+    );
+  },
 );
 
-ownerCatalogRoutes.put('/products/:productId', requirePermission('catalog.manage'), async (c) => {
-  const body = await parseJson(c.req.raw, updateProductSchema);
-  return success(
-    c,
-    await new CatalogService(c.env).updateProduct(
-      c.get('actor').storeId!,
-      c.req.param('productId'),
-      body,
-      auditContext(c),
+ownerCatalogRoutes.get(
+  '/products/:productId',
+  requirePermission(...productReadPermissions),
+  async (c) =>
+    success(
+      c,
+      await new CatalogService(c.env).getProduct(c.get('actor').storeId!, c.req.param('productId')),
     ),
-  );
-});
+);
+
+ownerCatalogRoutes.put(
+  '/products/:productId',
+  requirePermission('catalog.products.edit', 'catalog.manage'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, updateProductSchema);
+    return success(
+      c,
+      await new CatalogService(c.env).updateProduct(
+        c.get('actor').storeId!,
+        c.req.param('productId'),
+        body,
+        auditContext(c),
+      ),
+    );
+  },
+);
 
 ownerCatalogRoutes.delete(
   '/products/:productId',
@@ -362,6 +420,26 @@ ownerCatalogRoutes.post('/tables', requirePermission('table.manage'), async (c) 
       timeProductId: body.timeProductId ?? null,
       name: body.name,
       sortOrder: body.sortOrder,
+      auditContext: {
+        actorUserId: c.get('actor').id,
+        actorSessionId: c.get('sessionId'),
+        deviceId: c.get('device')?.id ?? null,
+        requestId: c.get('requestId'),
+      },
+    }),
+    201,
+  );
+});
+
+ownerCatalogRoutes.post('/tables/batch', requirePermission('table.manage'), async (c) => {
+  const body = await parseJson(c.req.raw, createBatchServiceTablesSchema);
+  return success(
+    c,
+    await new CatalogService(c.env).createTablesBatch({
+      storeId: c.get('actor').storeId!,
+      areaId: body.areaId,
+      timeProductId: body.timeProductId ?? null,
+      tables: body.tables,
       auditContext: {
         actorUserId: c.get('actor').id,
         actorSessionId: c.get('sessionId'),

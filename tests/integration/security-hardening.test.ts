@@ -332,7 +332,7 @@ describe('PRO-010A API security and tenant boundaries', () => {
       .first<{ roleId: string }>();
     await env.DB.prepare(
       `INSERT INTO role_permissions (store_id, role_id, permission_key, created_at)
-       VALUES (?, ?, 'discount.apply', ?)`,
+       VALUES (?, ?, 'discount.item', ?)`,
     )
       .bind(storeA.storeId, role!.roleId, Date.now())
       .run();

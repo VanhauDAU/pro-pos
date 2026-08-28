@@ -11,23 +11,14 @@ import type { z } from 'zod';
 const DEFAULT_EMPLOYEE_PERMISSIONS = [
   'table.view',
   'table.open',
-  'order.manage',
+  'order.create',
   'checkout.complete',
   'invoice.view',
   'invoice.print',
 ];
 
 function expandRuntimePermissions(permissionKeys: string[]) {
-  const expanded = new Set(permissionKeys);
-  if (expanded.has('order.create')) {
-    expanded.add('table.view');
-    expanded.add('table.open');
-    expanded.add('order.manage');
-  }
-  if (permissionKeys.some((key) => key.startsWith('catalog.'))) expanded.add('catalog.manage');
-  if (permissionKeys.some((key) => key.startsWith('staff.employees.')))
-    expanded.add('staff.manage');
-  return [...expanded];
+  return [...new Set(permissionKeys)];
 }
 
 export class StaffService {
@@ -89,11 +80,12 @@ export class StaffService {
         now: Date.now(),
       });
     } catch (error) {
-      if (
-        error instanceof Error &&
-        error.message.includes('UNIQUE constraint failed: users.username')
-      ) {
-        throw new AppError('USERNAME_CONFLICT', 'Tên đăng nhập đã tồn tại.', 409);
+      if (error instanceof Error && error.message.includes('UNIQUE constraint failed:')) {
+        throw new AppError(
+          'USERNAME_CONFLICT',
+          'Tên đăng nhập đã tồn tại trong cửa hàng này.',
+          409,
+        );
       }
       throw error;
     }

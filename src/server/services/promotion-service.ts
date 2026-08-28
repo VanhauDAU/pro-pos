@@ -503,6 +503,21 @@ export class PromotionService {
     return this.detail(storeId, id);
   }
 
+  async delete(storeId: string, id: string) {
+    if (!(await this.repository.find(storeId, id))) {
+      throw new AppError('PROMOTION_NOT_FOUND', 'Không tìm thấy chương trình khuyến mại.', 404);
+    }
+    if ((await this.repository.countReferences(storeId, id)) > 0) {
+      throw new AppError(
+        'PROMOTION_IN_USE',
+        'Không thể xóa khuyến mại đã được áp dụng cho đơn hoặc hóa đơn. Hãy ngừng áp dụng chương trình này.',
+        409,
+      );
+    }
+    await this.repository.remove(storeId, id);
+    return { id, deleted: true };
+  }
+
   async optionsForOrder(input: PromotionOptionsInput) {
     const results = await this.optionsForOrders([input]);
     return results.get(input.orderId)!;

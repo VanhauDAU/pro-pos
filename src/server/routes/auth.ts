@@ -174,7 +174,7 @@ authRoutes.post('/employee/login', async (c) => {
     }
     throw error;
   }
-  setCredentialCookie(c, 'session', result.rawToken, 12 * 60 * 60);
+  setCredentialCookie(c, 'session', result.rawToken, result.maxAgeSeconds);
   return success(c, result.response);
 });
 

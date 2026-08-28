@@ -531,7 +531,7 @@ export class PosRepository {
           AND ts.status IN ('RUNNING', 'PAUSED')
         WHERE st.store_id = ?
           AND a.status = 'ACTIVE'
-        ORDER BY a.sort_order, st.sort_order, COALESCE(st.display_name, st.name) COLLATE NOCASE`,
+        ORDER BY a.sort_order, a.name COLLATE NOCASE, a.created_at, a.id, st.sort_order, COALESCE(st.display_name, st.name) COLLATE NOCASE, st.created_at, st.id`,
       )
       .bind(storeId)
       .all<PosTableRecord>();

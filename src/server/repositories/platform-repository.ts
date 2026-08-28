@@ -95,7 +95,6 @@ export class PlatformRepository {
     const employeePermissions = [
       'table.view',
       'table.open',
-      'order.manage',
       'order.create',
       'checkout.complete',
       'invoice.view',
@@ -333,7 +332,7 @@ export class PlatformRepository {
 
     if (!store) return null;
 
-    const [members, devices, sessions, stats] = await Promise.all([
+    const [members, devices, sessions, stats, analytics] = await Promise.all([
       this.db
         .prepare(
           `SELECT
@@ -462,6 +461,7 @@ export class PlatformRepository {
           .bind(storeId)
           .first<{ total: number; revenue: number | null }>(),
       ]),
+      this.getStoreAnalytics(storeId, 14),
     ]);
 
     const [areasCount, tablesCount, productsCount, ordersCount, invoicesCount] = stats;
@@ -522,14 +522,18 @@ export class PlatformRepository {
         userId: s.userId,
         userName: s.userName,
         userUsername: s.userUsername,
+        userRoleCode: s.userRoleCode,
+        userRoleName: s.userRoleName,
         deviceId: s.deviceId,
         deviceName: s.deviceName,
+        deviceStatus: s.deviceStatus,
         sessionKind: s.sessionKind,
         status: s.status,
         createdAt: s.createdAt,
         lastSeenAt: s.lastSeenAt,
         expiresAt: s.expiresAt,
         idleExpiresAt: s.idleExpiresAt,
+        revokedAt: s.revokedAt,
       })),
       stats: {
         totalAreas: areasCount?.count ?? 0,
@@ -542,6 +546,176 @@ export class PlatformRepository {
         totalInvoices: invoicesCount?.total ?? 0,
         totalRevenue: invoicesCount?.revenue ?? 0,
       },
+      analytics,
+    };
+  }
+
+  async getStoreAnalytics(storeId: string, days = 14) {
+    const now = Date.now();
+    const todayStart = new Date(
+      new Date(now).toLocaleDateString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' }),
+    ).getTime();
+    const last7DaysStart = now - 7 * 24 * 60 * 60 * 1000;
+    const last30DaysStart = now - 30 * 24 * 60 * 60 * 1000;
+    const trendStart = now - days * 24 * 60 * 60 * 1000;
+
+    const [
+      invoiceSummary,
+      orderSummary,
+      activeDevices,
+      activeMembers,
+      trendRows,
+      paymentRows,
+      hourlyRows,
+      productRows,
+    ] = await Promise.all([
+      this.db
+        .prepare(
+          `SELECT
+               COUNT(*) AS totalInvoices,
+               COALESCE(SUM(total), 0) AS totalRevenue,
+               COALESCE(SUM(CASE WHEN issued_at >= ? THEN total ELSE 0 END), 0) AS todayRevenue,
+               COALESCE(SUM(CASE WHEN issued_at >= ? THEN total ELSE 0 END), 0) AS last7DaysRevenue,
+               COALESCE(SUM(CASE WHEN issued_at >= ? THEN total ELSE 0 END), 0) AS last30DaysRevenue
+             FROM invoices
+             WHERE store_id = ? AND status = 'COMPLETED'`,
+        )
+        .bind(todayStart, last7DaysStart, last30DaysStart, storeId)
+        .first<{
+          totalInvoices: number;
+          totalRevenue: number;
+          todayRevenue: number;
+          last7DaysRevenue: number;
+          last30DaysRevenue: number;
+        }>(),
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS totalOrders,
+                    COALESCE(SUM(CASE WHEN status = 'PAID' THEN 1 ELSE 0 END), 0) AS paidOrders
+             FROM orders WHERE store_id = ?`,
+        )
+        .bind(storeId)
+        .first<{ totalOrders: number; paidOrders: number }>(),
+      this.db
+        .prepare(`SELECT COUNT(*) AS count FROM devices WHERE store_id = ? AND status = 'ACTIVE'`)
+        .bind(storeId)
+        .first<{ count: number }>(),
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM store_memberships
+             WHERE store_id = ? AND status = 'ACTIVE'`,
+        )
+        .bind(storeId)
+        .first<{ count: number }>(),
+      this.db
+        .prepare(
+          `SELECT date(issued_at / 1000, 'unixepoch', '+7 hours') AS dayStr,
+                    COALESCE(SUM(total), 0) AS revenue,
+                    COUNT(*) AS invoiceCount
+             FROM invoices
+             WHERE store_id = ? AND status = 'COMPLETED' AND issued_at >= ?
+             GROUP BY dayStr ORDER BY dayStr ASC`,
+        )
+        .bind(storeId, trendStart)
+        .all<{ dayStr: string; revenue: number; invoiceCount: number }>(),
+      this.db
+        .prepare(
+          `SELECT method, COUNT(*) AS count, COALESCE(SUM(amount), 0) AS totalAmount
+             FROM payments
+             WHERE store_id = ? AND status = 'SUCCEEDED'
+             GROUP BY method`,
+        )
+        .bind(storeId)
+        .all<{ method: string; count: number; totalAmount: number }>(),
+      this.db
+        .prepare(
+          `SELECT CAST(strftime('%H', issued_at / 1000, 'unixepoch', '+7 hours') AS INTEGER) AS hr,
+                    COUNT(*) AS orderCount, COALESCE(SUM(total), 0) AS revenue
+             FROM invoices
+             WHERE store_id = ? AND status = 'COMPLETED'
+             GROUP BY hr`,
+        )
+        .bind(storeId)
+        .all<{ hr: number; orderCount: number; revenue: number }>(),
+      this.db
+        .prepare(
+          `SELECT oi.product_name_snapshot AS name, oi.product_type AS productType,
+                    COALESCE(SUM(oi.quantity_milli) / 1000, 0) AS totalQuantity,
+                    COALESCE(SUM(oi.line_total), 0) AS totalRevenue
+             FROM order_items oi
+             JOIN orders o ON o.id = oi.order_id AND o.status = 'PAID'
+             WHERE oi.store_id = ?
+             GROUP BY oi.product_name_snapshot, oi.product_type
+             ORDER BY totalRevenue DESC LIMIT 8`,
+        )
+        .bind(storeId)
+        .all<{ name: string; productType: string; totalQuantity: number; totalRevenue: number }>(),
+    ]);
+
+    const trendMap = new Map(
+      (trendRows.results ?? []).map((row) => [
+        row.dayStr,
+        { revenue: row.revenue, invoiceCount: row.invoiceCount },
+      ]),
+    );
+    const revenueTrend = Array.from({ length: days }, (_, index) => {
+      const date = new Date(now - (days - index - 1) * 24 * 60 * 60 * 1000);
+      const yyyy = date.getFullYear();
+      const mm = String(date.getMonth() + 1).padStart(2, '0');
+      const dd = String(date.getDate()).padStart(2, '0');
+      const dayKey = `${yyyy}-${mm}-${dd}`;
+      const value = trendMap.get(dayKey) ?? { revenue: 0, invoiceCount: 0 };
+      return {
+        date: dayKey,
+        dateLabel: `${dd}/${mm}`,
+        revenue: value.revenue,
+        invoiceCount: value.invoiceCount,
+        orderCount: value.invoiceCount,
+      };
+    });
+
+    const paymentTotal = (paymentRows.results ?? []).reduce(
+      (sum, payment) => sum + payment.totalAmount,
+      0,
+    );
+    const paymentMethods = (paymentRows.results ?? []).map((payment) =>
+      Object.assign(payment, {
+        label:
+          payment.method === 'CASH'
+            ? 'Tiền mặt'
+            : payment.method === 'BANK_TRANSFER'
+              ? 'Chuyển khoản VietQR'
+              : payment.method,
+        percentage: paymentTotal > 0 ? Math.round((payment.totalAmount / paymentTotal) * 100) : 0,
+      }),
+    );
+
+    const hourlyMap = new Map((hourlyRows.results ?? []).map((row) => [row.hr, row]));
+    const hourlyDistribution = Array.from({ length: 24 }, (_, hour) => ({
+      hour,
+      label: `${String(hour).padStart(2, '0')}:00`,
+      orderCount: hourlyMap.get(hour)?.orderCount ?? 0,
+      revenue: hourlyMap.get(hour)?.revenue ?? 0,
+    }));
+
+    const totalRevenue = invoiceSummary?.totalRevenue ?? 0;
+    const totalInvoices = invoiceSummary?.totalInvoices ?? 0;
+    const totalOrders = orderSummary?.totalOrders ?? 0;
+    return {
+      summary: {
+        todayRevenue: invoiceSummary?.todayRevenue ?? 0,
+        last7DaysRevenue: invoiceSummary?.last7DaysRevenue ?? 0,
+        last30DaysRevenue: invoiceSummary?.last30DaysRevenue ?? 0,
+        avgInvoiceValue: totalInvoices > 0 ? Math.round(totalRevenue / totalInvoices) : 0,
+        completionRate:
+          totalOrders > 0 ? Math.round(((orderSummary?.paidOrders ?? 0) / totalOrders) * 100) : 0,
+        activeDevices: activeDevices?.count ?? 0,
+        activeMembers: activeMembers?.count ?? 0,
+      },
+      revenueTrend,
+      paymentMethods,
+      hourlyDistribution,
+      topProducts: productRows.results ?? [],
     };
   }
 
@@ -607,6 +781,18 @@ export class PlatformRepository {
         .prepare(`UPDATE users SET ${userUpdates.join(', ')} WHERE id = ?`)
         .bind(...userBindings),
     );
+
+    if (input.username !== undefined && membership.role_code !== 'OWNER') {
+      statements.push(
+        this.db
+          .prepare(
+            `UPDATE store_employee_usernames
+             SET username = ?
+             WHERE store_id = ? AND user_id = ?`,
+          )
+          .bind(input.username, input.storeId, input.userId),
+      );
+    }
 
     if (input.status !== undefined) {
       statements.push(
@@ -972,159 +1158,193 @@ export class PlatformRepository {
       .all<{ objectKey: string }>();
     const mediaKeys = (mediaRows.results ?? []).map((r) => r.objectKey);
 
-    // 2. Identify users who only belong to this store and are not SUPER_ADMIN
-    const orphanUsersResult = await this.db
+    // 2. Large stores can exceed D1's execution window when a whole table is deleted
+    // in one statement. Keep the referential delete order, but remove at most this
+    // many rows per statement so every round stays bounded and retry-safe.
+    const DELETE_CHUNK_SIZE = 500;
+    const deleteStoreRows = async (table: string) => {
+      try {
+        for (;;) {
+          const result = await this.db
+            .prepare(
+              `DELETE FROM ${table}
+               WHERE rowid IN (
+                 SELECT rowid FROM ${table} WHERE store_id = ? LIMIT ?
+               )`,
+            )
+            .bind(storeId, DELETE_CHUNK_SIZE)
+            .run();
+          if ((result.meta.changes ?? 0) < DELETE_CHUNK_SIZE) return;
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'unknown database error';
+        throw new Error(`store cleanup failed at ${table}: ${message}`, { cause: error });
+      }
+    };
+    const deleteDeviceCredentials = async () => {
+      for (;;) {
+        const result = await this.db
+          .prepare(
+            `DELETE FROM device_credentials
+             WHERE rowid IN (
+               SELECT dc.rowid
+               FROM device_credentials dc
+               JOIN devices d ON d.id = dc.device_id
+               WHERE d.store_id = ?
+               LIMIT ?
+             )`,
+          )
+          .bind(storeId, DELETE_CHUNK_SIZE)
+          .run();
+        if ((result.meta.changes ?? 0) < DELETE_CHUNK_SIZE) return;
+      }
+    };
+
+    const cleanupOrder = [
+      // Access/configuration and D1 leaf records.
+      'role_permissions',
+      'store_memberships',
+      'pin_credentials',
+      'pin_verifiers',
+      'activation_grants',
+      'audit_logs',
+      'store_settings',
+      'store_print_settings',
+      'store_capabilities',
+      'store_employee_usernames',
+      'catalog_import_commands',
+      'special_price_windows',
+      // Dine-in order leaves.
+      'order_items',
+      'time_pauses',
+      'pricing_segments',
+      'payments',
+      'invoice_lines',
+      'invoice_sequences',
+      'open_table_commands',
+      'add_item_commands',
+      'checkout_commands',
+      'transfer_table_commands',
+      'cancel_order_commands',
+      'pause_time_commands',
+      'resume_time_commands',
+      // Takeaway, time and realtime leaves.
+      'takeaway_order_items',
+      'create_takeaway_order_commands',
+      'add_takeaway_item_commands',
+      'update_order_item_commands',
+      'remove_order_item_commands',
+      'update_order_note_commands',
+      'takeaway_payments',
+      'takeaway_invoice_lines',
+      'takeaway_checkout_commands',
+      'cancel_takeaway_order_commands',
+      'order_sequences',
+      'update_time_range_commands',
+      'table_time_segments',
+      'stop_time_commands',
+      'resume_checkout_commands',
+      'update_order_guest_commands',
+      'realtime_store_sequences',
+      'realtime_events',
+      'realtime_event_requests',
+      'realtime_batch_contexts',
+      'create_time_session_commands',
+      'remove_time_session_commands',
+      // QR, customer, promotion, payment and call-history leaves.
+      'guest_order_request_items',
+      'create_guest_order_request_commands',
+      'accept_guest_order_request_commands',
+      'reject_guest_order_request_commands',
+      'service_requests',
+      'qr_order_quick_reasons',
+      'qr_order_sales_hours',
+      'push_subscriptions',
+      'staff_notification_events',
+      'table_open_requests',
+      'customer_group_members',
+      'customer_loyalty_settings',
+      'customer_loyalty_entries',
+      'customer_debt_entries',
+      'invoice_payment_allocations',
+      'promotion_customer_groups',
+      'invoice_promotions',
+      'promotion_targets',
+      'order_promotions',
+      'order_promotion_suppressions',
+      'pos_save_commands',
+      'payment_snapshots',
+      'order_call_batch_entries',
+      'store_bank_accounts',
+      // Parents after every dependent row above has been removed.
+      'roles',
+      'auth_sessions',
+      'product_variants',
+      'time_price_configs',
+      'media_objects',
+      'invoices',
+      'takeaway_invoices',
+      'guest_order_requests',
+      'customer_groups',
+      'promotions',
+      'order_call_batches',
+      'takeaway_orders',
+      'guest_order_sessions',
+      'time_sessions',
+      'table_qr_codes',
+      'orders',
+      'customers',
+      'service_tables',
+      'areas',
+      'products',
+      'units',
+      'categories',
+    ];
+
+    for (const table of cleanupOrder) {
+      await deleteStoreRows(table);
+    }
+    await deleteDeviceCredentials();
+    await deleteStoreRows('devices');
+
+    // 3. Memberships have now been removed, so this also repairs accounts left
+    // behind by older store-deletion attempts. Do this before deleting the store:
+    // if a foreign-key problem is found, the request fails visibly and remains
+    // retryable instead of reporting success with orphan accounts still present.
+    const orphanUsers = await this.db
       .prepare(
-        `SELECT user_id AS userId FROM store_memberships
-         WHERE store_id = ?
-           AND user_id NOT IN (SELECT user_id FROM store_memberships WHERE store_id != ?)
-           AND user_id NOT IN (SELECT id FROM users WHERE platform_role = 'SUPER_ADMIN')`,
+        `SELECT u.id
+         FROM users u
+         WHERE u.platform_role IS NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM store_memberships sm WHERE sm.user_id = u.id
+           )
+         ORDER BY u.created_at ASC`,
       )
-      .bind(storeId, storeId)
-      .all<{ userId: string }>();
-    const orphanUserIds = (orphanUsersResult.results ?? []).map((r) => r.userId);
+      .all<{ id: string }>();
 
-    // Batch 1: Leaf command & item tables (part 1)
-    const batch1 = [
-      this.db.prepare('DELETE FROM role_permissions WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM store_memberships WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM pin_credentials WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM pin_verifiers WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM activation_grants WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM audit_logs WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM store_settings WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM store_print_settings WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM store_capabilities WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM special_price_windows WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM order_items WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM time_pauses WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM pricing_segments WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM payments WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM invoice_lines WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM invoice_sequences WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM open_table_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM add_item_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM checkout_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM transfer_table_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM cancel_order_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM pause_time_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM resume_time_commands WHERE store_id = ?').bind(storeId),
-    ];
-
-    // Batch 2: Takeaway, Time & Realtime leaf tables (part 2)
-    const batch2 = [
-      this.db.prepare('DELETE FROM takeaway_order_items WHERE store_id = ?').bind(storeId),
-      this.db
-        .prepare('DELETE FROM create_takeaway_order_commands WHERE store_id = ?')
-        .bind(storeId),
-      this.db.prepare('DELETE FROM add_takeaway_item_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM update_order_item_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM remove_order_item_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM update_order_note_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM takeaway_payments WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM takeaway_invoice_lines WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM takeaway_checkout_commands WHERE store_id = ?').bind(storeId),
-      this.db
-        .prepare('DELETE FROM cancel_takeaway_order_commands WHERE store_id = ?')
-        .bind(storeId),
-      this.db.prepare('DELETE FROM order_sequences WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM update_time_range_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM table_time_segments WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM stop_time_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM resume_checkout_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM update_order_guest_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM realtime_store_sequences WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM realtime_events WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM realtime_event_requests WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM realtime_batch_contexts WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM create_time_session_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM remove_time_session_commands WHERE store_id = ?').bind(storeId),
-    ];
-
-    // Batch 3: Guest orders, Customers, Promotions & Call batches (part 3)
-    const batch3 = [
-      this.db.prepare('DELETE FROM guest_order_request_items WHERE store_id = ?').bind(storeId),
-      this.db
-        .prepare('DELETE FROM create_guest_order_request_commands WHERE store_id = ?')
-        .bind(storeId),
-      this.db
-        .prepare('DELETE FROM accept_guest_order_request_commands WHERE store_id = ?')
-        .bind(storeId),
-      this.db
-        .prepare('DELETE FROM reject_guest_order_request_commands WHERE store_id = ?')
-        .bind(storeId),
-      this.db.prepare('DELETE FROM service_requests WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM qr_order_quick_reasons WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM qr_order_sales_hours WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM push_subscriptions WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM staff_notification_events WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM table_open_requests WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM customer_group_members WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM customer_loyalty_settings WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM customer_loyalty_entries WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM customer_debt_entries WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM invoice_payment_allocations WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM promotion_customer_groups WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM invoice_promotions WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM promotion_targets WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM order_promotions WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM order_promotion_suppressions WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM pos_save_commands WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM payment_snapshots WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM order_call_batch_entries WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM store_bank_accounts WHERE store_id = ?').bind(storeId),
-      this.db
-        .prepare(
-          'DELETE FROM device_credentials WHERE device_id IN (SELECT id FROM devices WHERE store_id = ?)',
-        )
-        .bind(storeId),
-    ];
-
-    // Batch 4: Intermediate parent entities (part 4)
-    const batch4 = [
-      this.db.prepare('DELETE FROM roles WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM auth_sessions WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM product_variants WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM time_price_configs WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM media_objects WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM invoices WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM takeaway_invoices WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM guest_order_requests WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM customer_groups WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM promotions WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM order_call_batches WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM devices WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM takeaway_orders WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM guest_order_sessions WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM time_sessions WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM table_qr_codes WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM orders WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM customers WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM service_tables WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM areas WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM products WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM units WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM categories WHERE store_id = ?').bind(storeId),
-      this.db.prepare('DELETE FROM stores WHERE id = ?').bind(storeId),
-    ];
-
-    await this.db.batch(batch1);
-    await this.db.batch(batch2);
-    await this.db.batch(batch3);
-    await this.db.batch(batch4);
-
-    // 3. Delete orphan users if any
-    for (const userId of orphanUserIds) {
+    for (const orphanUser of orphanUsers.results ?? []) {
       try {
         await this.db.batch([
-          this.db.prepare('DELETE FROM password_credentials WHERE user_id = ?').bind(userId),
-          this.db.prepare('DELETE FROM access_identities WHERE user_id = ?').bind(userId),
-          this.db.prepare('DELETE FROM users WHERE id = ?').bind(userId),
+          this.db.prepare('DELETE FROM auth_sessions WHERE user_id = ?').bind(orphanUser.id),
+          this.db.prepare('DELETE FROM pin_credentials WHERE user_id = ?').bind(orphanUser.id),
+          this.db.prepare('DELETE FROM pin_verifiers WHERE user_id = ?').bind(orphanUser.id),
+          this.db
+            .prepare('DELETE FROM store_employee_usernames WHERE user_id = ?')
+            .bind(orphanUser.id),
+          this.db.prepare('DELETE FROM password_credentials WHERE user_id = ?').bind(orphanUser.id),
+          this.db.prepare('DELETE FROM access_identities WHERE user_id = ?').bind(orphanUser.id),
+          this.db.prepare('DELETE FROM users WHERE id = ?').bind(orphanUser.id),
         ]);
-      } catch {
-        // Ignore if user cannot be deleted
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'unknown database error';
+        throw new Error(`orphan user cleanup failed for ${orphanUser.id}: ${message}`, {
+          cause: error,
+        });
       }
     }
+
+    await this.db.prepare('DELETE FROM stores WHERE id = ?').bind(storeId).run();
 
     return { storeId, mediaKeys };
   }

@@ -1,22 +1,35 @@
 import {
+  AppstoreFilled,
   AppstoreOutlined,
+  BankOutlined,
+  BarChartOutlined,
   BellFilled,
   BellOutlined,
+  BookOutlined,
+  CarOutlined,
   CheckCircleOutlined,
   ClockCircleOutlined,
   CloseCircleFilled,
   CloseCircleOutlined,
   CloseOutlined,
+  CoffeeOutlined,
+  CopyOutlined,
   CreditCardOutlined,
+  CustomerServiceOutlined,
   DeleteOutlined,
   DownOutlined,
   EditOutlined,
   EllipsisOutlined,
+  EnvironmentOutlined,
   FileTextOutlined,
+  FireOutlined,
   GiftOutlined,
   HistoryOutlined,
+  HomeOutlined,
+  LaptopOutlined,
   LeftOutlined,
   LogoutOutlined,
+  MedicineBoxOutlined,
   MessageOutlined,
   MinusOutlined,
   PauseCircleOutlined,
@@ -25,18 +38,22 @@ import {
   PlusCircleOutlined,
   PlusOutlined,
   PrinterOutlined,
-  QuestionCircleOutlined,
   QrcodeOutlined,
   RightOutlined,
   SearchOutlined,
   ShopOutlined,
   ShoppingCartOutlined,
   ShoppingOutlined,
+  SkinOutlined,
+  SmileOutlined,
   StopOutlined,
   SwapOutlined,
   SyncOutlined,
+  TagsFilled,
   TagsOutlined,
   TeamOutlined,
+  ThunderboltOutlined,
+  ToolOutlined,
   UnlockOutlined,
   UpOutlined,
   UserOutlined,
@@ -73,6 +90,7 @@ import dayjs, { type Dayjs } from 'dayjs';
 import {
   createContext,
   lazy,
+  memo,
   Suspense,
   type ReactNode,
   useCallback,
@@ -105,12 +123,9 @@ import type { PricingConfigSnapshot } from '@domain/pricing/types';
 import {
   buildPrintDataFromInvoice,
   buildPrintDataFromQuote,
-  printReceipt,
   type PosReceiptPrintOptions,
-} from '@client/lib/pos-receipt-printer';
+} from '@domain/receipt/receipt-generator';
 import logoBlack from '@client/assets/logo-black.svg?url';
-import { OrderDetailPage } from './OrderDetailPage';
-import { StaffOnboarding } from './StaffOnboarding';
 import { PosCustomerSelector } from './PosCustomerSelector';
 import { PosAppSplash } from './PosAppSplash';
 import { toast } from 'sonner';
@@ -121,6 +136,16 @@ import { PushNotificationControl } from '@client/features/pwa/PushNotificationCo
 const OwnerInvoicesPage = lazy(async () => {
   const module = await import('@client/features/owner/OwnerInvoicesPage');
   return { default: module.OwnerInvoicesPage };
+});
+
+const OrderDetailPage = lazy(async () => {
+  const module = await import('./OrderDetailPage');
+  return { default: module.OrderDetailPage };
+});
+
+const OwnerProductReportPage = lazy(async () => {
+  const module = await import('@client/features/owner/OwnerProductReportPage');
+  return { default: module.OwnerProductReportPage };
 });
 
 const OwnerCategoryDetailPage = lazy(async () => {
@@ -203,6 +228,11 @@ const StaffPrinterSettingsPage = lazy(async () => {
   return { default: module.StaffPrinterSettingsPage };
 });
 
+async function printReceipt(options: PosReceiptPrintOptions) {
+  const printer = await import('@client/lib/pos-receipt-printer');
+  return printer.printReceipt(options);
+}
+
 function PosRouteLoadingFallback() {
   return (
     <div aria-label="Đang tải nội dung" style={{ minHeight: 320, padding: 24, background: '#fff' }}>
@@ -239,9 +269,105 @@ import {
 import { canonicalPaymentPath } from './payment-navigation';
 import { posErrorText } from './pos-error';
 import { PosNotificationTracker } from './pos-notification-tracker';
-import { orderQuoteQueryOptions, overviewRefreshInterval } from './pos-order-query';
+import {
+  orderQuoteQueryOptions,
+  overviewRefreshInterval,
+  quoteIsVerifiedForInteraction,
+} from './pos-order-query';
 
 const BRAND = '#0975f7';
+
+const PAYMENT_SUCCESS_VISIBLE_MS = 900;
+const PAYMENT_SUCCESS_PRINTING_VISIBLE_MS = 1_200;
+const PAYMENT_SUCCESS_FAILURE_VISIBLE_MS = 1_400;
+const MOBILE_PULL_REFRESH_THRESHOLD_PX = 64;
+const MOBILE_PULL_REFRESH_MAX_PX = 96;
+const MOBILE_PULL_REFRESH_LOADING_PX = 52;
+
+const ALL_CATEGORY_ICON = <AppstoreFilled />;
+
+function normalizeCategoryName(name: string) {
+  return name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase('vi-VN')
+    .replace(/đ/g, 'd')
+    .trim();
+}
+
+function categoryNameIncludes(name: string, keywords: string[]) {
+  return keywords.some(
+    (keyword) =>
+      name === keyword ||
+      name.startsWith(`${keyword} `) ||
+      name.endsWith(` ${keyword}`) ||
+      name.includes(` ${keyword} `),
+  );
+}
+
+function categoryIcon(name: string): ReactNode {
+  const normalized = normalizeCategoryName(name);
+
+  if (
+    categoryNameIncludes(normalized, [
+      'do an',
+      'mon an',
+      'thuc an',
+      'do nuong',
+      'banh',
+      'com',
+      'pho',
+      'bun',
+      'food',
+    ])
+  ) {
+    return <FireOutlined />;
+  }
+  if (
+    categoryNameIncludes(normalized, [
+      'do uong',
+      'nuoc',
+      'ca phe',
+      'coffee',
+      'tra',
+      'bia',
+      'ruou',
+      'drink',
+    ])
+  ) {
+    return <CoffeeOutlined />;
+  }
+  if (categoryNameIncludes(normalized, ['dich vu', 'service', 'sua chua', 'bao tri'])) {
+    return <ToolOutlined />;
+  }
+  if (categoryNameIncludes(normalized, ['quan ao', 'thoi trang', 'giay', 'tui', 'fashion'])) {
+    return <SkinOutlined />;
+  }
+  if (
+    categoryNameIncludes(normalized, ['dien tu', 'cong nghe', 'may tinh', 'dien thoai', 'laptop'])
+  ) {
+    return <LaptopOutlined />;
+  }
+  if (categoryNameIncludes(normalized, ['suc khoe', 'thuoc', 'y te', 'duoc'])) {
+    return <MedicineBoxOutlined />;
+  }
+  if (categoryNameIncludes(normalized, ['xe', 'van chuyen', 'giao hang', 'transport'])) {
+    return <CarOutlined />;
+  }
+  if (categoryNameIncludes(normalized, ['sach', 'van phong pham', 'giao duc', 'book'])) {
+    return <BookOutlined />;
+  }
+  if (categoryNameIncludes(normalized, ['gia dung', 'noi that', 'nha cua', 'home'])) {
+    return <HomeOutlined />;
+  }
+  if (categoryNameIncludes(normalized, ['giai tri', 'am nhac', 'game', 'tro choi'])) {
+    return <CustomerServiceOutlined />;
+  }
+
+  const hash = [...normalized].reduce((value, char) => value + char.charCodeAt(0), 0);
+  const icons = [<TagsFilled />, <ShoppingOutlined />, <ThunderboltOutlined />, <SmileOutlined />];
+  return icons[hash % icons.length];
+}
 
 interface StaffContext {
   storeId: string;
@@ -1082,10 +1208,20 @@ function PosNotificationWatcher() {
 function PosNotificationsProvider({ children }: { children: React.ReactNode }) {
   const pollingInterval = usePosPollingInterval(15_000);
   const [qrConfirmModalOpen, setQrConfirmModalOpen] = useState(false);
+  const context = useQuery({
+    queryKey: ['pos-context'],
+    queryFn: () => apiRequest<StaffContext>('/api/v1/pos/context'),
+    staleTime: Infinity,
+    refetchOnMount: false,
+  });
+  const canHandleQr =
+    context.data?.permissions?.includes('qr_order.handle') ||
+    context.data?.permissions?.includes('order.manage');
   const summary = useQuery({
     queryKey: ['pos-notification-summary'],
     queryFn: ({ signal }) =>
       apiRequest<PosNotificationSummary>('/api/v1/pos/qr-orders/summary', { signal }),
+    enabled: Boolean(canHandleQr),
     staleTime: 30_000,
     refetchOnMount: false,
     refetchInterval: pollingInterval,
@@ -1142,6 +1278,118 @@ function usePosNotifications() {
   return value;
 }
 
+function StaffUserMenuPopup({
+  displayName,
+  roleName,
+  storeName,
+  loggingOut,
+  onClose,
+  onLogout,
+}: {
+  displayName: string;
+  roleName: string;
+  storeName?: string | undefined;
+  loggingOut: boolean;
+  onClose: () => void;
+  onLogout: () => void;
+}) {
+  const initial = displayName ? displayName.slice(0, 1).toUpperCase() : 'U';
+
+  return (
+    <div className="staff-user-menu-pop">
+      {/* Header Profile Card */}
+      <div className="staff-user-menu-pop__profile">
+        <Avatar
+          size={40}
+          className="staff-user-menu-pop__avatar"
+          style={{
+            background: 'linear-gradient(135deg, #0975f7 0%, #0052cc 100%)',
+            color: '#fff',
+            fontWeight: 700,
+            fontSize: 16,
+            boxShadow: '0 2px 8px rgba(9, 117, 247, 0.25)',
+          }}
+        >
+          {initial}
+        </Avatar>
+        <div className="staff-user-menu-pop__info">
+          <div className="staff-user-menu-pop__name" title={displayName}>
+            {displayName}
+          </div>
+          <div className="staff-user-menu-pop__meta">
+            <span className="staff-user-menu-pop__role">
+              <span className="staff-user-menu-pop__role-dot" />
+              <span>{roleName}</span>
+            </span>
+            {storeName ? (
+              <span className="staff-user-menu-pop__store" title={storeName}>
+                · {storeName}
+              </span>
+            ) : null}
+          </div>
+        </div>
+      </div>
+
+      <div className="staff-user-menu-pop__divider" />
+
+      {/* Support / Contact Section */}
+      <div className="staff-user-menu-pop__section-title">Hỗ trợ kỹ thuật 24/7</div>
+
+      <div className="staff-user-menu-pop__links">
+        <a
+          href="tel:0777464347"
+          className="staff-user-menu-pop__link staff-user-menu-pop__link--phone"
+          onClick={onClose}
+        >
+          <div className="staff-user-menu-pop__link-icon staff-user-menu-pop__link-icon--phone">
+            <PhoneOutlined />
+          </div>
+          <div className="staff-user-menu-pop__link-content">
+            <span className="staff-user-menu-pop__link-label">Gọi hỗ trợ trực tiếp</span>
+            <strong className="staff-user-menu-pop__link-val">0777 464 347</strong>
+          </div>
+        </a>
+
+        <a
+          href="https://zalo.me/0816548150"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="staff-user-menu-pop__link staff-user-menu-pop__link--zalo"
+          onClick={onClose}
+        >
+          <div className="staff-user-menu-pop__link-icon staff-user-menu-pop__link-icon--zalo">
+            <MessageOutlined />
+          </div>
+          <div className="staff-user-menu-pop__link-content">
+            <span className="staff-user-menu-pop__link-label">Nhắn tin qua Zalo</span>
+            <strong className="staff-user-menu-pop__link-val">0816 548 150</strong>
+          </div>
+        </a>
+      </div>
+
+      <div className="staff-user-menu-pop__divider" />
+
+      {/* Logout Action */}
+      <button
+        type="button"
+        className="staff-user-menu-pop__logout"
+        onClick={() => {
+          onClose();
+          onLogout();
+        }}
+        disabled={loggingOut}
+      >
+        <span className="staff-user-menu-pop__logout-icon">
+          <LogoutOutlined />
+        </span>
+        <span className="staff-user-menu-pop__logout-text">
+          {loggingOut ? 'Đang đăng xuất...' : 'Đăng xuất'}
+        </span>
+      </button>
+    </div>
+  );
+}
+
 function StaffHeader({
   context,
   searchSlot,
@@ -1156,6 +1404,7 @@ function StaffHeader({
   const queryClient = useQueryClient();
   const [modal, holder] = Modal.useModal();
   const [loggingOut, setLoggingOut] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   const { data: notificationsData, setQrConfirmModalOpen } = usePosNotifications();
   const pendingQrCount =
     (notificationsData?.counts.guestOrders ?? 0) +
@@ -1169,7 +1418,8 @@ function StaffHeader({
 
   const logout = () => {
     modal.confirm({
-      title: 'Xác nhận đăng xuất',
+      title: 'Đăng xuất tài khoản',
+      icon: <LogoutOutlined style={{ color: '#ff4d4f' }} />,
       content: 'Bạn có chắc chắn muốn đăng xuất khỏi hệ thống POS?',
       okText: 'Đăng xuất',
       okButtonProps: { danger: true, loading: loggingOut },
@@ -1197,53 +1447,6 @@ function StaffHeader({
       },
     });
   };
-
-  const menuItems: MenuProps['items'] = [
-    {
-      key: 'profile',
-      icon: <UserOutlined />,
-      label: (
-        <div style={{ padding: '4px 0' }}>
-          <div style={{ fontWeight: 700 }}>{context?.actor?.displayName ?? 'Nhân viên'}</div>
-          <div style={{ fontSize: 12, color: '#8c8c8c' }}>
-            {context?.actor?.kind === 'EMPLOYEE' ? 'Nhân viên' : 'Quản trị viên'}
-          </div>
-        </div>
-      ),
-      disabled: true,
-    },
-    {
-      type: 'divider',
-    },
-    {
-      key: 'help-phone',
-      icon: <PhoneOutlined style={{ color: '#10b981' }} />,
-      label: (
-        <a href="tel:0777464347">
-          Gọi hỗ trợ: <strong>0777 464 347</strong>
-        </a>
-      ),
-    },
-    {
-      key: 'help-zalo',
-      icon: <MessageOutlined style={{ color: '#0975F7' }} />,
-      label: (
-        <a href="https://zalo.me/0816548150" target="_blank" rel="noopener noreferrer">
-          Chat Zalo: <strong>0816 548 150</strong>
-        </a>
-      ),
-    },
-    {
-      type: 'divider',
-    },
-    {
-      key: 'logout',
-      icon: <LogoutOutlined />,
-      label: 'Đăng xuất',
-      danger: true,
-      onClick: logout,
-    },
-  ];
 
   return (
     <header className="staff-pos-header">
@@ -1313,10 +1516,21 @@ function StaffHeader({
         </Button>
       </Tooltip>
       <Dropdown
-        menu={{ items: menuItems }}
         trigger={['click']}
         placement="bottomRight"
         arrow={{ pointAtCenter: true }}
+        open={userMenuOpen}
+        onOpenChange={setUserMenuOpen}
+        dropdownRender={() => (
+          <StaffUserMenuPopup
+            displayName={context?.actor?.displayName ?? 'Nhân viên'}
+            roleName={context?.actor?.kind === 'EMPLOYEE' ? 'Nhân viên' : 'Quản trị viên'}
+            storeName={context?.device?.storeName}
+            loggingOut={loggingOut}
+            onClose={() => setUserMenuOpen(false)}
+            onLogout={logout}
+          />
+        )}
       >
         <Button
           type="text"
@@ -1331,7 +1545,7 @@ function StaffHeader({
           </Avatar>
           <div className="staff-pos-account__copy">
             <strong>{context?.actor?.displayName ?? 'Nhân viên'}</strong>
-            <small>Nhân viên</small>
+            <small>{context?.actor?.kind === 'EMPLOYEE' ? 'Nhân viên' : 'Quản trị viên'}</small>
           </div>
           <DownOutlined style={{ fontSize: 11, color: '#8c8c8c' }} />
         </Button>
@@ -1349,13 +1563,23 @@ const navItems = [
 function StaffBottomNav({ active }: { active: (typeof navItems)[number]['key'] }) {
   const navigate = useNavigate();
   const notifications = usePosNotifications();
+  const context = useQuery({
+    queryKey: ['pos-context'],
+    queryFn: () => apiRequest<StaffContext>('/api/v1/pos/context'),
+    staleTime: Infinity,
+    refetchOnMount: false,
+  });
+  const canHandleQr =
+    context.data?.permissions?.includes('qr_order.handle') ||
+    context.data?.permissions?.includes('order.manage');
+  const visibleNavItems = navItems.filter((item) => item.key !== 'qr' || canHandleQr);
   const pendingNotificationCount =
     (notifications.data?.counts.guestOrders ?? 0) +
     (notifications.data?.counts.serviceRequests ?? 0) +
     (notifications.data?.counts.tableOpenRequests ?? 0);
   return (
     <nav className="staff-pos-bottom-nav" aria-label="Điều hướng POS nhân viên">
-      {navItems.map((item) => (
+      {visibleNavItems.map((item) => (
         <button
           key={item.key}
           type="button"
@@ -1385,7 +1609,7 @@ function StaffBottomNav({ active }: { active: (typeof navItems)[number]['key'] }
 
 const STATUS_OPTIONS: Array<{ key: 'ALL' | 'OCCUPIED' | 'AVAILABLE'; label: string }> = [
   { key: 'ALL', label: 'Tất cả' },
-  { key: 'OCCUPIED', label: 'Sử dụng' },
+  { key: 'OCCUPIED', label: 'Đang sử dụng' },
   { key: 'AVAILABLE', label: 'Còn trống' },
 ];
 
@@ -1419,12 +1643,13 @@ function AreasPage() {
   const overview = useQuery<PosOverviewSnapshot>({
     queryKey: ['pos-overview'],
     queryFn: ({ signal }) => apiRequest<PosOverviewSnapshot>('/api/v1/pos/overview', { signal }),
+    staleTime: 5_000,
     refetchInterval: (query) =>
       overviewRefreshInterval(
         query.state.data?.tables.some((table) => table.timeSessionStatus === 'RUNNING') ?? false,
         realtimeStatus,
       ),
-    refetchOnMount: false,
+    refetchOnMount: true,
     refetchOnWindowFocus: 'always',
   });
   const tables = {
@@ -1439,6 +1664,30 @@ function AreasPage() {
     queryClient.setQueryData(['pos-tables'], overview.data.tables);
     queryClient.setQueryData(['pos-orders-list'], overview.data.orders);
   }, [overview.data, queryClient]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void queryClient.prefetchQuery({
+        queryKey: ['pos-catalog'],
+        queryFn: ({ signal }) => apiRequest<CatalogProduct[]>('/api/v1/pos/catalog', { signal }),
+        staleTime: 15 * 60_000,
+      });
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [queryClient]);
+
+  const prefetchOrder = useCallback(
+    (activeOrderId: string) => {
+      void queryClient.prefetchQuery(
+        orderQuoteQueryOptions<OrderQuote>({
+          orderId: activeOrderId,
+          enabled: true,
+          realtimeStatus,
+        }),
+      );
+    },
+    [queryClient, realtimeStatus],
+  );
 
   const activeTakeaways = useMemo(() => {
     return (posOrders.data ?? [])
@@ -1460,13 +1709,26 @@ function AreasPage() {
   }, [activeTakeaways.length, serverTimeOffsetMs, tables.data]);
 
   const areas = useMemo(() => {
-    const map = new Map<string, { id: string; name: string; tables: PosTable[] }>();
+    const map = new Map<
+      string,
+      { id: string; name: string; sortOrder: number; tables: PosTable[] }
+    >();
     for (const table of tables.data ?? []) {
-      const area = map.get(table.areaId) ?? { id: table.areaId, name: table.areaName, tables: [] };
-      area.tables.push(table);
-      map.set(table.areaId, area);
+      const existing = map.get(table.areaId);
+      if (existing) {
+        existing.tables.push(table);
+      } else {
+        map.set(table.areaId, {
+          id: table.areaId,
+          name: table.areaName,
+          sortOrder: table.areaSortOrder ?? 0,
+          tables: [table],
+        });
+      }
     }
-    return [...map.values()];
+    return [...map.values()].toSorted(
+      (a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'vi', { numeric: true }),
+    );
   }, [tables.data]);
 
   const initialArea =
@@ -1705,6 +1967,7 @@ function AreasPage() {
                       type="button"
                       key={takeawayOrder.id}
                       className="staff-table-card staff-table-card--occupied"
+                      onPointerDown={() => prefetchOrder(takeawayOrder.id)}
                       onClick={() => navigate(`/pos/orders/${takeawayOrder.id}`)}
                     >
                       <div className="staff-table-card__header">
@@ -1745,6 +2008,9 @@ function AreasPage() {
                   ]
                     .filter(Boolean)
                     .join(' ')}
+                  onPointerDown={() => {
+                    if (table.activeOrderId) prefetchOrder(table.activeOrderId);
+                  }}
                   onClick={() => {
                     if (table.activeOrderId) navigate(`/pos/orders/${table.activeOrderId}`);
                     else navigate(`/pos/orders/new?tableId=${table.id}`);
@@ -2541,13 +2807,7 @@ function QrOrderPage() {
   );
 }
 
-function MorePage({
-  auth,
-  onStartOnboarding,
-}: {
-  auth: AuthContextResponse;
-  onStartOnboarding: () => void;
-}) {
+function MorePage({ auth }: { auth: AuthContextResponse }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const messageApi = toast;
@@ -2562,6 +2822,7 @@ function MorePage({
   const permissions = context.data?.permissions ?? [];
   const isOwner = auth.actor?.kind === 'OWNER';
   const hasPermission = (key: string) => isOwner || permissions.includes(key);
+  const hasAnyPermission = (...keys: string[]) => isOwner || keys.some(hasPermission);
 
   const logout = useMutation({
     mutationFn: () =>
@@ -2618,7 +2879,18 @@ function MorePage({
             boxShadow: '0 2px 8px rgba(15, 23, 42, 0.04)',
           }}
         >
-          {hasPermission('catalog.manage') ? (
+          {hasAnyPermission(
+            'catalog.manage',
+            'catalog.products.view',
+            'catalog.products.create',
+            'catalog.products.edit',
+            'catalog.products.delete',
+            'catalog.products.import_export',
+            'catalog.categories.view',
+            'catalog.categories.create',
+            'catalog.categories.edit',
+            'catalog.categories.delete',
+          ) ? (
             <div
               className="staff-more-nav-item"
               onClick={() => navigate('/pos/catalog')}
@@ -2654,6 +2926,49 @@ function MorePage({
                   </div>
                   <div style={{ fontSize: 12.5, color: '#64748b', marginTop: 2 }}>
                     Thêm món mới, điều chỉnh giá bán, quản lý danh mục và bảng giá
+                  </div>
+                </div>
+              </div>
+              <RightOutlined style={{ color: '#94a3b8', fontSize: 14 }} />
+            </div>
+          ) : null}
+
+          {hasPermission('report.product') ? (
+            <div
+              className="staff-more-nav-item"
+              onClick={() => navigate('/pos/reports/products')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '16px 18px',
+                cursor: 'pointer',
+                borderBottom: '1px solid #f1f5f9',
+                transition: 'background 0.15s ease',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                <div
+                  style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 10,
+                    background: '#fff7ed',
+                    color: '#ea580c',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 22,
+                  }}
+                >
+                  <BarChartOutlined />
+                </div>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>
+                    Báo cáo mặt hàng
+                  </div>
+                  <div style={{ fontSize: 12.5, color: '#64748b', marginTop: 2 }}>
+                    Theo dõi số lượng bán, doanh thu và mặt hàng đã hủy
                   </div>
                 </div>
               </div>
@@ -2816,7 +3131,7 @@ function MorePage({
             boxShadow: '0 2px 8px rgba(15, 23, 42, 0.04)',
           }}
         >
-          {hasPermission('order.manage') ? (
+          {hasAnyPermission('order.proforma_print', 'invoice.print', 'order.manage') ? (
             <div
               className="staff-more-nav-item"
               onClick={() => navigate('/pos/printers')}
@@ -2857,21 +3172,6 @@ function MorePage({
             </div>
           ) : null}
 
-          <button
-            type="button"
-            className="staff-more-nav-item staff-onboarding-entry"
-            onClick={onStartOnboarding}
-          >
-            <span className="staff-onboarding-entry__icon">
-              <QuestionCircleOutlined />
-            </span>
-            <span className="staff-onboarding-entry__copy">
-              <strong>Hướng dẫn sử dụng POS</strong>
-              <small>Xem lại cách chọn khu vực, bàn, gọi món, lưu đơn và QR Order</small>
-            </span>
-            <RightOutlined />
-          </button>
-
           {/* Push Notification Setup */}
           <div style={{ padding: '14px 18px' }}>
             <PushNotificationControl csrfToken={auth.csrfToken} showGuide />
@@ -2883,15 +3183,69 @@ function MorePage({
       <Card
         className="staff-store-card"
         loading={context.isLoading}
-        style={{ borderRadius: 12, border: '1px solid #e2e8f0' }}
+        style={{ borderRadius: 14, border: '1px solid #e2e8f0' }}
       >
-        <ShopOutlined />
-        <div>
-          <strong>{context.data?.storeName ?? 'Cửa hàng'}</strong>
-          <span>Mã cửa hàng: {context.data?.storeId ?? '—'}</span>
-          {context.data?.storeAddress ? <span>Địa chỉ: {context.data.storeAddress}</span> : null}
-          {context.data?.storePhone ? <span>Điện thoại: {context.data.storePhone}</span> : null}
+        <div className="staff-store-card__header">
+          <div className="staff-store-card__icon-wrap">
+            <ShopOutlined />
+          </div>
+          <div className="staff-store-card__header-info">
+            <strong className="staff-store-card__name">
+              {context.data?.storeName ?? 'Cửa hàng'}
+            </strong>
+            {context.data?.storeId ? (
+              <div className="staff-store-card__code-row">
+                <Tooltip title="Bấm để sao chép mã cửa hàng">
+                  <Tag
+                    color="blue"
+                    className="staff-store-card__code-tag"
+                    onClick={() => {
+                      if (context.data?.storeId) {
+                        navigator.clipboard.writeText(context.data.storeId);
+                        messageApi.success('Đã sao chép mã cửa hàng!');
+                      }
+                    }}
+                  >
+                    <CopyOutlined style={{ marginRight: 4 }} />
+                    Mã: #{context.data.storeId.slice(0, 8).toUpperCase()}
+                  </Tag>
+                </Tooltip>
+              </div>
+            ) : null}
+          </div>
         </div>
+
+        {context.data?.storeAddress ||
+        context.data?.storePhone ||
+        context.data?.bankAccountNumber ? (
+          <div className="staff-store-card__details">
+            {context.data?.storeAddress ? (
+              <div className="staff-store-card__detail-item">
+                <EnvironmentOutlined className="staff-store-card__detail-icon" />
+                <span className="staff-store-card__detail-text">
+                  Địa chỉ: {context.data.storeAddress}
+                </span>
+              </div>
+            ) : null}
+            {context.data?.storePhone ? (
+              <div className="staff-store-card__detail-item">
+                <PhoneOutlined className="staff-store-card__detail-icon" />
+                <span className="staff-store-card__detail-text">
+                  Điện thoại: {context.data.storePhone}
+                </span>
+              </div>
+            ) : null}
+            {context.data?.bankAccountNumber && context.data?.bankName ? (
+              <div className="staff-store-card__detail-item">
+                <BankOutlined className="staff-store-card__detail-icon" />
+                <span className="staff-store-card__detail-text">
+                  Tài khoản: {context.data.bankName} · {context.data.bankAccountNumber}
+                  {context.data.bankAccountName ? ` (${context.data.bankAccountName})` : ''}
+                </span>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </Card>
 
       {/* ── Logout Section ───────────────────────────────────────────── */}
@@ -3589,6 +3943,8 @@ function StaffPromptPriceModal({ target, onCancel, onConfirm }: StaffPromptPrice
 interface StaffItemDetailModalProps {
   item: EditingOrderItem | null;
   catalog: CatalogProduct[];
+  allowDiscount: boolean;
+  allowDelete: boolean;
   onCancel: () => void;
   onSave: (updated: EditingOrderItem, selectedVariant?: CatalogVariant) => void;
   onDelete: () => void;
@@ -3597,6 +3953,8 @@ interface StaffItemDetailModalProps {
 function StaffItemDetailModal({
   item,
   catalog,
+  allowDiscount,
+  allowDelete,
   onCancel,
   onSave,
   onDelete,
@@ -3628,6 +3986,8 @@ function StaffItemDetailModal({
       item={item}
       product={product}
       variants={variants}
+      allowDiscount={allowDiscount}
+      allowDelete={allowDelete}
       onCancel={onCancel}
       onSave={onSave}
       onDelete={onDelete}
@@ -3967,6 +4327,8 @@ function OrderItemDetailModal({
   item,
   product,
   variants,
+  allowDiscount,
+  allowDelete,
   onCancel,
   onSave,
   onDelete,
@@ -3974,6 +4336,8 @@ function OrderItemDetailModal({
   item: EditingOrderItem;
   product?: CatalogProduct | undefined;
   variants: CatalogVariant[];
+  allowDiscount: boolean;
+  allowDelete: boolean;
   onCancel: () => void;
   onSave: (updated: EditingOrderItem, selectedVariant?: CatalogVariant) => void;
   onDelete: () => void;
@@ -4076,9 +4440,12 @@ function OrderItemDetailModal({
         <div className="staff-item-modal__scrollable-content">
           <div className="staff-item-modal__avatar-wrap">
             <div
-              className={`staff-item-modal__avatar-box ${product?.avatarType === 'IMAGE' && product?.mediaId ? 'has-image' : 'has-color'} ${product?.avatarColor ? 'has-custom-color' : ''}`}
+              className={`staff-item-modal__avatar-box ${product?.avatarType === 'IMAGE' && product?.mediaId ? 'has-image' : 'has-color'}`}
               style={{
-                background: product?.avatarColor || '#f8fafc',
+                background:
+                  product?.avatarType === 'IMAGE' && product?.mediaId
+                    ? undefined
+                    : product?.avatarColor || '#0975f7',
               }}
             >
               {product?.avatarType === 'IMAGE' && product?.mediaId ? (
@@ -4180,74 +4547,76 @@ function OrderItemDetailModal({
             />
           </div>
 
-          <div className="staff-item-modal__section">
-            <div className="staff-item-modal__section-title">Giảm giá sản phẩm</div>
-            {!showDiscountInput && discountAmount === 0 ? (
-              <button
-                type="button"
-                className="staff-item-modal__discount-toggle"
-                onClick={() => {
-                  setShowDiscountInput(true);
-                  setDiscountType('FIXED');
-                }}
-              >
-                <span>Giảm giá thủ công</span>
-                <PlusCircleOutlined className="staff-item-modal__plus-icon" />
-              </button>
-            ) : (
-              <div className="staff-item-modal__discount-box">
-                <div className="staff-item-modal__discount-row">
-                  <Radio.Group
-                    value={discountType}
-                    onChange={(e) => setDiscountType(e.target.value as 'FIXED' | 'PERCENT')}
-                    size="middle"
-                    buttonStyle="solid"
-                  >
-                    <Radio.Button value="FIXED">VNĐ</Radio.Button>
-                    <Radio.Button value="PERCENT">%</Radio.Button>
-                  </Radio.Group>
-                  <InputNumber
-                    min={0}
-                    max={discountType === 'PERCENT' ? 100 : grossTotal}
-                    value={discountValue}
-                    onChange={(val) => setDiscountValue(val === null ? null : Number(val))}
-                    placeholder="0"
-                    suffix={discountType === 'PERCENT' ? '%' : 'đ'}
-                    formatter={(val) => `${val ?? ''}`.replace(/\B(?=(\d{3})+(?!\d))/gu, '.')}
-                    parser={(val) => Number((val ?? '').replaceAll('.', ''))}
-                    style={{ flex: 1 }}
-                  />
-                  <Button
-                    type="text"
-                    danger
-                    icon={<DeleteOutlined />}
-                    className="staff-item-modal__discount-delete-btn"
-                    onClick={() => {
-                      setDiscountType(null);
-                      setDiscountValue(null);
-                      setDiscountReason('');
-                      setShowDiscountInput(false);
-                    }}
+          {allowDiscount ? (
+            <div className="staff-item-modal__section">
+              <div className="staff-item-modal__section-title">Giảm giá sản phẩm</div>
+              {!showDiscountInput && discountAmount === 0 ? (
+                <button
+                  type="button"
+                  className="staff-item-modal__discount-toggle"
+                  onClick={() => {
+                    setShowDiscountInput(true);
+                    setDiscountType('FIXED');
+                  }}
+                >
+                  <span>Giảm giá thủ công</span>
+                  <PlusCircleOutlined className="staff-item-modal__plus-icon" />
+                </button>
+              ) : (
+                <div className="staff-item-modal__discount-box">
+                  <div className="staff-item-modal__discount-row">
+                    <Radio.Group
+                      value={discountType}
+                      onChange={(e) => setDiscountType(e.target.value as 'FIXED' | 'PERCENT')}
+                      size="middle"
+                      buttonStyle="solid"
+                    >
+                      <Radio.Button value="FIXED">VNĐ</Radio.Button>
+                      <Radio.Button value="PERCENT">%</Radio.Button>
+                    </Radio.Group>
+                    <InputNumber
+                      min={0}
+                      max={discountType === 'PERCENT' ? 100 : grossTotal}
+                      value={discountValue}
+                      onChange={(val) => setDiscountValue(val === null ? null : Number(val))}
+                      placeholder="0"
+                      suffix={discountType === 'PERCENT' ? '%' : 'đ'}
+                      formatter={(val) => `${val ?? ''}`.replace(/\B(?=(\d{3})+(?!\d))/gu, '.')}
+                      parser={(val) => Number((val ?? '').replaceAll('.', ''))}
+                      style={{ flex: 1 }}
+                    />
+                    <Button
+                      type="text"
+                      danger
+                      icon={<DeleteOutlined />}
+                      className="staff-item-modal__discount-delete-btn"
+                      onClick={() => {
+                        setDiscountType(null);
+                        setDiscountValue(null);
+                        setDiscountReason('');
+                        setShowDiscountInput(false);
+                      }}
+                    />
+                  </div>
+                  {discountAmount > 0 ? (
+                    <div className="staff-item-modal__discount-preview">
+                      Giảm: -{formatMoney(discountAmount)} (Còn {formatMoney(netTotal)})
+                    </div>
+                  ) : null}
+                  <Input.TextArea
+                    rows={2}
+                    maxLength={300}
+                    showCount
+                    value={discountReason}
+                    status={discountAmount > 0 && !discountReason.trim() ? 'error' : ''}
+                    placeholder="Nhập lý do giảm giá (*)"
+                    onChange={(event) => setDiscountReason(event.target.value)}
+                    className="staff-item-modal__discount-reason"
                   />
                 </div>
-                {discountAmount > 0 ? (
-                  <div className="staff-item-modal__discount-preview">
-                    Giảm: -{formatMoney(discountAmount)} (Còn {formatMoney(netTotal)})
-                  </div>
-                ) : null}
-                <Input.TextArea
-                  rows={2}
-                  maxLength={300}
-                  showCount
-                  value={discountReason}
-                  status={discountAmount > 0 && !discountReason.trim() ? 'error' : ''}
-                  placeholder="Nhập lý do giảm giá (*)"
-                  onChange={(event) => setDiscountReason(event.target.value)}
-                  className="staff-item-modal__discount-reason"
-                />
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          ) : null}
         </div>
 
         <div className="staff-item-modal__footer">
@@ -4312,7 +4681,7 @@ function OrderItemDetailModal({
               >
                 Hủy
               </Button>
-            ) : (
+            ) : allowDelete ? (
               <Button
                 danger
                 size="large"
@@ -4322,7 +4691,7 @@ function OrderItemDetailModal({
               >
                 {item.source === 'SAVED' ? 'Xóa món' : 'Xóa khỏi giỏ'}
               </Button>
-            )}
+            ) : null}
             <Button
               type="primary"
               size="large"
@@ -4375,11 +4744,13 @@ const AVATAR_COLORS_QA = [
 function QuickAddProductModal({
   open,
   auth,
+  canCreateCatalogResources,
   onClose,
   onCreated,
 }: {
   open: boolean;
   auth: AuthContextResponse;
+  canCreateCatalogResources: boolean;
   onClose: () => void;
   onCreated: (productId: string, name: string) => void;
 }) {
@@ -4707,7 +5078,7 @@ function QuickAddProductModal({
               open={categorySelectOpen}
               onDropdownVisibleChange={setCategorySelectOpen}
               optionFilterProp="label"
-              placeholder="Chọn hoặc thêm danh mục"
+              placeholder={canCreateCatalogResources ? 'Chọn hoặc thêm danh mục' : 'Chọn danh mục'}
               loading={categories.isLoading}
               searchValue={categorySearch}
               onSearch={setCategorySearch}
@@ -4715,7 +5086,7 @@ function QuickAddProductModal({
                 form.setFieldValue('categoryId', val);
                 setCategorySearch('');
               }}
-              dropdownRender={categoryDropdown}
+              dropdownRender={canCreateCatalogResources ? categoryDropdown : undefined}
               options={(categories.data ?? [])
                 .filter((c) => c.status !== 'DISABLED')
                 .map((c) => ({ value: c.id, label: c.name }))}
@@ -4734,7 +5105,11 @@ function QuickAddProductModal({
             open={unitSelectOpen}
             onDropdownVisibleChange={setUnitSelectOpen}
             optionFilterProp="label"
-            placeholder="Chọn hoặc thêm đơn vị (vd: cái, ly, kg...)"
+            placeholder={
+              canCreateCatalogResources
+                ? 'Chọn hoặc thêm đơn vị (vd: cái, ly, kg...)'
+                : 'Chọn đơn vị'
+            }
             loading={units.isLoading}
             searchValue={unitSearch}
             onSearch={setUnitSearch}
@@ -4742,7 +5117,7 @@ function QuickAddProductModal({
               form.setFieldValue('unitId', val);
               setUnitSearch('');
             }}
-            dropdownRender={unitDropdown}
+            dropdownRender={canCreateCatalogResources ? unitDropdown : undefined}
             options={(units.data ?? []).map((u) => ({ value: u.id, label: u.name }))}
           />
         </Form.Item>
@@ -4864,6 +5239,77 @@ function QuickAddProductModal({
   );
 }
 
+interface PosProductCardProps {
+  product: CatalogProduct;
+  isPriority: boolean;
+  onSelect: (product: CatalogProduct, event?: React.MouseEvent) => void;
+}
+
+const PosProductCard = memo(function PosProductCard({
+  product,
+  isPriority,
+  onSelect,
+}: PosProductCardProps) {
+  const [imgLoaded, setImgLoaded] = useState(false);
+  const [imgError, setImgError] = useState(false);
+
+  const prices = product.variants
+    .map((variant) => variant.salePriceVnd)
+    .filter((price): price is number => price !== null);
+  const minPrice = prices.length > 0 ? Math.min(...prices) : null;
+  const maxPrice = prices.length > 0 ? Math.max(...prices) : null;
+
+  const hasImage = product.avatarType === 'IMAGE' && Boolean(product.mediaId) && !imgError;
+
+  return (
+    <button
+      type="button"
+      className={`staff-product-card ${hasImage ? 'has-image-card' : 'has-color-card'}`}
+      onClick={(e) => onSelect(product, e)}
+    >
+      <span
+        className={`staff-product-card__visual ${hasImage ? 'has-image' : 'has-color'}`}
+        style={{
+          background: hasImage ? undefined : product.avatarColor || '#0975f7',
+        }}
+      >
+        {hasImage ? (
+          <img
+            src={`/api/v1/media/${product.mediaId}`}
+            alt={product.productName}
+            loading={isPriority ? 'eager' : 'lazy'}
+            fetchPriority={isPriority ? 'high' : 'low'}
+            decoding="async"
+            className={`staff-product-card__img ${imgLoaded ? 'is-loaded' : ''}`}
+            onLoad={() => setImgLoaded(true)}
+            onError={() => setImgError(true)}
+          />
+        ) : (
+          getProductInitials(product.productName)
+        )}
+      </span>
+      <div className="staff-product-card__info">
+        <strong className="staff-product-card__name">{product.productName}</strong>
+        <div className="staff-product-card__meta">
+          {product.variants.length > 1 ? <small>{product.variants.length} phiên bản</small> : null}
+        </div>
+        <b className="staff-product-card__price">
+          {minPrice === null
+            ? 'Nhập giá'
+            : minPrice === maxPrice
+              ? `${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`
+              : `Từ ${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`}
+        </b>
+      </div>
+    </button>
+  );
+});
+
+const getDefaultCartWidth = () => {
+  if (typeof window === 'undefined') return 560;
+  return Math.max(420, Math.min(window.innerWidth - 380, Math.round(window.innerWidth * 0.4)));
+};
+
 function OrderEditor({
   auth,
   orderIdOverride,
@@ -4948,6 +5394,12 @@ function OrderEditor({
   );
   const [mobileView, setMobileView] = useState<'CART' | 'PRODUCTS'>('CART');
   const cartIconRef = useRef<HTMLButtonElement>(null);
+  const mobileOrderViewRef = useRef<HTMLDivElement>(null);
+  const mobilePullDistanceRef = useRef(0);
+  const mobilePullRefreshingRef = useRef(false);
+  const mobilePullRefreshActionRef = useRef<() => Promise<void>>(async () => undefined);
+  const [mobilePullDistance, setMobilePullDistance] = useState(0);
+  const [mobilePullRefreshing, setMobilePullRefreshing] = useState(false);
   const autoResumePaymentInFlightRef = useRef(false);
   const restoredDraftOrderRef = useRef<string | null>(null);
   const draftBaseVersionRef = useRef<number | null>(null);
@@ -4976,9 +5428,16 @@ function OrderEditor({
   const [cartWidth, setCartWidth] = useState<number>(() => {
     try {
       const saved = localStorage.getItem('pos_cart_width');
-      return saved ? Math.max(360, Math.min(800, Number(saved))) : 480;
+      const isCustom = localStorage.getItem('pos_cart_width_custom');
+      if (saved && isCustom === 'true') {
+        const val = Number(saved);
+        if (Number.isFinite(val) && val >= 360 && val <= window.innerWidth - 380) {
+          return val;
+        }
+      }
+      return getDefaultCartWidth();
     } catch {
-      return 480;
+      return getDefaultCartWidth();
     }
   });
   const [isResizing, setIsResizing] = useState(false);
@@ -5128,6 +5587,14 @@ function OrderEditor({
     const handleResize = () => {
       setIsMobile(window.innerWidth <= 900);
       setIsDesktopPayment(window.innerWidth >= 1200);
+      try {
+        const isCustom = localStorage.getItem('pos_cart_width_custom');
+        if (isCustom !== 'true') {
+          setCartWidth(getDefaultCartWidth());
+        }
+      } catch {
+        // ignore
+      }
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
@@ -5153,6 +5620,7 @@ function OrderEditor({
       const finalWidth = Math.max(360, Math.min(window.innerWidth - 380, startWidth + deltaX));
       try {
         localStorage.setItem('pos_cart_width', String(finalWidth));
+        localStorage.setItem('pos_cart_width_custom', 'true');
       } catch {
         // ignore
       }
@@ -5210,11 +5678,16 @@ function OrderEditor({
     if (
       !isNew &&
       orderId &&
-      quote.data?.order.id === orderId &&
-      quote.isFetchedAfterMount &&
-      quote.isSuccess &&
-      !quote.isFetching &&
-      !quote.isRefetchError
+      quoteIsVerifiedForInteraction({
+        orderId,
+        quote: quote.data,
+        isSuccess: quote.isSuccess,
+        isFetching: quote.isFetching,
+        isRefetchError: quote.isRefetchError,
+        isFetchedAfterMount: quote.isFetchedAfterMount,
+        isStale: quote.isStale,
+        dataUpdatedAt: quote.dataUpdatedAt,
+      })
     ) {
       setVerifiedQuoteOrderId(orderId);
     }
@@ -5225,7 +5698,9 @@ function OrderEditor({
     quote.isFetchedAfterMount,
     quote.isFetching,
     quote.isRefetchError,
+    quote.isStale,
     quote.isSuccess,
+    quote.dataUpdatedAt,
   ]);
   const quoteReady = isNew || (Boolean(orderId) && verifiedQuoteOrderId === orderId);
   const callHistory = useQuery({
@@ -5250,9 +5725,27 @@ function OrderEditor({
     staleTime: Infinity,
     refetchOnMount: false,
   });
-  const canManageCatalog =
-    auth.actor?.kind === 'OWNER' ||
-    (staffContext.data?.permissions ?? []).includes('catalog.manage');
+  const staffPermissions = staffContext.data?.permissions ?? [];
+  const isOwnerActor = auth.actor?.kind === 'OWNER';
+  const hasStaffPermission = (permission: string) =>
+    isOwnerActor || staffPermissions.includes(permission);
+  const canManageCatalog = hasStaffPermission('catalog.manage');
+  const canQuickCreateProduct =
+    canManageCatalog ||
+    hasStaffPermission('catalog.products.create') ||
+    hasStaffPermission('product.quick_create');
+  const canApplyItemDiscount = hasStaffPermission('discount.item');
+  const canDeleteSavedItems =
+    hasStaffPermission('order.discount_after_saved') || hasStaffPermission('order.manage');
+  const canAdjustTime = hasStaffPermission('time.adjust');
+  const canPauseTime = hasStaffPermission('time.pause');
+  const canPrintProvisional =
+    hasStaffPermission('order.proforma_print') || hasStaffPermission('order.manage');
+  const canCancelOrder =
+    hasStaffPermission('order.cancel_unpaid') || hasStaffPermission('order.manage');
+  const canTransferTable = hasStaffPermission('table.transfer');
+  const canAttachCustomer = hasStaffPermission('order.add_customer');
+  const canApplyPromotion = hasStaffPermission('promotion.apply');
 
   useEffect(() => {
     if (!quote.data) return;
@@ -5460,13 +5953,22 @@ function OrderEditor({
   };
 
   const categories = useMemo(() => {
-    const map = new Map<string, string>();
+    const map = new Map<string, { count: number; name: string }>();
     for (const product of catalog.data ?? []) {
       if (product.categoryId && product.categoryName) {
-        map.set(product.categoryId, product.categoryName);
+        const current = map.get(product.categoryId);
+        map.set(product.categoryId, {
+          count: (current?.count ?? 0) + 1,
+          name: product.categoryName,
+        });
       }
     }
-    return [...map].map(([id, name]) => ({ id, name }));
+    return [...map].map(([id, category]) => ({
+      id,
+      count: category.count,
+      name: category.name,
+      icon: categoryIcon(category.name),
+    }));
   }, [catalog.data]);
 
   const visibleCatalog = (catalog.data ?? []).filter((product) => {
@@ -5642,12 +6144,124 @@ function OrderEditor({
     addDraftVariant(product, variant);
   };
 
-  const refreshOrder = async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['pos-order-quote', orderId] }),
-      queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
-    ]);
-  };
+  const refreshOrder = useCallback(
+    async (throwOnError = false) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['pos-order-quote', orderId] }, { throwOnError }),
+        queryClient.invalidateQueries({ queryKey: ['pos-tables'] }, { throwOnError }),
+      ]);
+    },
+    [orderId, queryClient],
+  );
+
+  const performMobilePullRefresh = useCallback(async () => {
+    if (isNew || !orderId || mobilePullRefreshingRef.current) return;
+
+    mobilePullRefreshingRef.current = true;
+    mobilePullDistanceRef.current = MOBILE_PULL_REFRESH_LOADING_PX;
+    setMobilePullRefreshing(true);
+    setMobilePullDistance(MOBILE_PULL_REFRESH_LOADING_PX);
+
+    try {
+      await refreshOrder(true);
+      messageApi.success('Đã làm mới đơn hàng.');
+    } catch (error) {
+      messageApi.error(`Không thể làm mới đơn hàng. ${errorText(error)}`);
+    } finally {
+      mobilePullRefreshingRef.current = false;
+      mobilePullDistanceRef.current = 0;
+      setMobilePullRefreshing(false);
+      setMobilePullDistance(0);
+    }
+  }, [isNew, messageApi, orderId, refreshOrder]);
+
+  useEffect(() => {
+    mobilePullRefreshActionRef.current = performMobilePullRefresh;
+  }, [performMobilePullRefresh]);
+
+  useEffect(() => {
+    const view = mobileOrderViewRef.current;
+    if (!view || !isMobile || isNew || mobileView !== 'CART' || !orderId || !quoteReady) return;
+
+    let touchStartX: number | null = null;
+    let touchStartY: number | null = null;
+    let isPullGesture = false;
+    const previousOverscrollBehavior = document.documentElement.style.overscrollBehaviorY;
+    document.documentElement.style.overscrollBehaviorY = 'none';
+
+    const setPullDistance = (distance: number) => {
+      mobilePullDistanceRef.current = distance;
+      setMobilePullDistance(distance);
+    };
+    const resetGesture = () => {
+      touchStartX = null;
+      touchStartY = null;
+      isPullGesture = false;
+    };
+    const isAtPageTop = () =>
+      window.scrollY <= 0 &&
+      document.documentElement.scrollTop <= 0 &&
+      document.body.scrollTop <= 0;
+
+    const handleTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 1 || mobilePullRefreshingRef.current || !isAtPageTop()) {
+        resetGesture();
+        return;
+      }
+      const touch = event.touches[0];
+      if (!touch) return;
+      touchStartX = touch.clientX;
+      touchStartY = touch.clientY;
+      isPullGesture = false;
+    };
+
+    const handleTouchMove = (event: TouchEvent) => {
+      if (touchStartX === null || touchStartY === null || event.touches.length !== 1) return;
+      const touch = event.touches[0];
+      if (!touch) return;
+      const deltaX = touch.clientX - touchStartX;
+      const deltaY = touch.clientY - touchStartY;
+
+      if (!isAtPageTop() || deltaY <= 0 || Math.abs(deltaX) > Math.abs(deltaY)) {
+        if (isPullGesture) setPullDistance(0);
+        resetGesture();
+        return;
+      }
+      if (deltaY < 6) return;
+
+      isPullGesture = true;
+      if (event.cancelable) event.preventDefault();
+      setPullDistance(Math.min(MOBILE_PULL_REFRESH_MAX_PX, deltaY * 0.48));
+    };
+
+    const finishGesture = () => {
+      const shouldRefresh =
+        isPullGesture && mobilePullDistanceRef.current >= MOBILE_PULL_REFRESH_THRESHOLD_PX;
+      resetGesture();
+      if (shouldRefresh) {
+        void mobilePullRefreshActionRef.current();
+      } else if (!mobilePullRefreshingRef.current) {
+        setPullDistance(0);
+      }
+    };
+    const cancelGesture = () => {
+      resetGesture();
+      if (!mobilePullRefreshingRef.current) setPullDistance(0);
+    };
+
+    view.addEventListener('touchstart', handleTouchStart, { passive: true });
+    view.addEventListener('touchmove', handleTouchMove, { passive: false });
+    view.addEventListener('touchend', finishGesture, { passive: true });
+    view.addEventListener('touchcancel', cancelGesture, { passive: true });
+
+    return () => {
+      view.removeEventListener('touchstart', handleTouchStart);
+      view.removeEventListener('touchmove', handleTouchMove);
+      view.removeEventListener('touchend', finishGesture);
+      view.removeEventListener('touchcancel', cancelGesture);
+      document.documentElement.style.overscrollBehaviorY = previousOverscrollBehavior;
+    };
+  }, [isMobile, isNew, mobileView, orderId, quoteReady]);
 
   const refreshCachesAfterCancel = async (cancelledOrderId: string) => {
     // Cancel responses only acknowledge the order id. Fetch one authoritative
@@ -6026,7 +6640,7 @@ function OrderEditor({
 
   const saveOrder = async () => {
     if (isNew && orderType === 'TAKEAWAY' && draftLines.length === 0) {
-      messageApi.warning('Vui lòng chọn ít nhất một mặt hàng cho đơn mang đi.');
+      messageApi.warning('Vui lòng chọn ít nhất một mặt hàng cho đơn mang về.');
       return;
     }
     if (orderType === 'DINE_IN') {
@@ -6331,7 +6945,7 @@ function OrderEditor({
 
   const beginCheckout = async () => {
     if (isNew && orderType === 'TAKEAWAY' && draftLines.length === 0) {
-      messageApi.warning('Vui lòng chọn ít nhất một mặt hàng cho đơn mang đi.');
+      messageApi.warning('Vui lòng chọn ít nhất một mặt hàng cho đơn Mang về.');
       return;
     }
     if (!isNew) {
@@ -6875,10 +7489,7 @@ function OrderEditor({
         { skipMutationTracking: true, signal },
       );
     },
-    enabled:
-      promotionModalOpen &&
-      combinedItemsForPromotion.length > 0 &&
-      (staffContext.data?.permissions?.includes('promotion.apply') ?? false),
+    enabled: promotionModalOpen && combinedItemsForPromotion.length > 0 && canApplyPromotion,
     staleTime: 5_000,
     retry: false,
   });
@@ -7251,24 +7862,28 @@ function OrderEditor({
               </button>
               <div className="staff-product-picker-mobile__title">{mobileHeaderTitle}</div>
               <div className="staff-product-picker-mobile__header-actions">
-                {canManageCatalog ? (
+                {canQuickCreateProduct || canManageCatalog ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <button
-                      type="button"
-                      className="staff-product-picker-mobile__action-btn"
-                      onClick={() => setQuickAddOpen(true)}
-                      title="Thêm nhanh món mới"
-                    >
-                      <PlusOutlined />
-                    </button>
-                    <button
-                      type="button"
-                      className="staff-product-picker-mobile__action-btn"
-                      onClick={() => navigate('/pos/catalog')}
-                      title="Quản lý món"
-                    >
-                      <TagsOutlined />
-                    </button>
+                    {canQuickCreateProduct ? (
+                      <button
+                        type="button"
+                        className="staff-product-picker-mobile__action-btn"
+                        onClick={() => setQuickAddOpen(true)}
+                        title="Thêm nhanh món mới"
+                      >
+                        <PlusOutlined />
+                      </button>
+                    ) : null}
+                    {canManageCatalog ? (
+                      <button
+                        type="button"
+                        className="staff-product-picker-mobile__action-btn"
+                        onClick={() => navigate('/pos/catalog')}
+                        title="Quản lý món"
+                      >
+                        <TagsOutlined />
+                      </button>
+                    ) : null}
                   </div>
                 ) : (
                   <div className="staff-product-picker-mobile__header-space" />
@@ -7294,8 +7909,13 @@ function OrderEditor({
                 type="button"
                 className={`staff-product-picker-cat-pill ${selectedCategory === 'ALL' ? 'is-active' : ''}`}
                 onClick={() => setSelectedCategory('ALL')}
+                aria-pressed={selectedCategory === 'ALL'}
               >
-                Tất cả
+                <span className="staff-product-picker-cat-pill__icon">{ALL_CATEGORY_ICON}</span>
+                <span className="staff-product-picker-cat-pill__content">
+                  <span>Tất cả</span>
+                  <small>{catalog.data?.length ?? 0} mặt hàng</small>
+                </span>
               </button>
               {categories.map((cat) => (
                 <button
@@ -7303,8 +7923,13 @@ function OrderEditor({
                   key={cat.id}
                   className={`staff-product-picker-cat-pill ${selectedCategory === cat.id ? 'is-active' : ''}`}
                   onClick={() => setSelectedCategory(cat.id)}
+                  aria-pressed={selectedCategory === cat.id}
                 >
-                  {cat.name}
+                  <span className="staff-product-picker-cat-pill__icon">{cat.icon}</span>
+                  <span className="staff-product-picker-cat-pill__content">
+                    <span>{cat.name}</span>
+                    <small>{cat.count} mặt hàng</small>
+                  </span>
                 </button>
               ))}
             </div>
@@ -7317,7 +7942,7 @@ function OrderEditor({
                 </div>
               ) : visibleCatalog.length === 0 ? (
                 <Empty description="Không tìm thấy sản phẩm" style={{ marginTop: 60 }}>
-                  {canManageCatalog && (
+                  {canQuickCreateProduct && (
                     <Button
                       type="primary"
                       icon={<PlusOutlined />}
@@ -7329,7 +7954,7 @@ function OrderEditor({
                 </Empty>
               ) : (
                 <div className="staff-product-compact-list">
-                  {visibleCatalog.map((product) => {
+                  {visibleCatalog.map((product, index) => {
                     const prices = product.variants
                       .map((v) => v.salePriceVnd)
                       .filter((p): p is number => p !== null);
@@ -7351,13 +7976,22 @@ function OrderEditor({
                         onClick={(e) => chooseProduct(product, e)}
                       >
                         <div
-                          className={`staff-product-compact-row__visual ${product.avatarType === 'IMAGE' && product.mediaId ? 'has-image' : 'has-color'} ${product.avatarColor ? 'has-custom-color' : ''}`}
+                          className={`staff-product-compact-row__visual ${product.avatarType === 'IMAGE' && product.mediaId ? 'has-image' : 'has-color'}`}
                           style={{
-                            background: product.avatarColor || '#f8fafc',
+                            background:
+                              product.avatarType === 'IMAGE' && product.mediaId
+                                ? undefined
+                                : product.avatarColor || '#0975f7',
                           }}
                         >
                           {product.avatarType === 'IMAGE' && product.mediaId ? (
-                            <img src={`/api/v1/media/${product.mediaId}`} alt="" loading="lazy" />
+                            <img
+                              src={`/api/v1/media/${product.mediaId}`}
+                              alt=""
+                              loading={index < 12 ? 'eager' : 'lazy'}
+                              fetchPriority={index < 12 ? 'high' : 'low'}
+                              decoding="async"
+                            />
                           ) : (
                             getProductInitials(product.productName)
                           )}
@@ -7483,7 +8117,33 @@ function OrderEditor({
             </div>
           </div>
         ) : (
-          <div className="staff-order-mobile-view">
+          <div className="staff-order-mobile-view" ref={mobileOrderViewRef}>
+            {!isNew ? (
+              <div
+                className={`staff-order-mobile-pull-refresh${mobilePullDistance > 0 ? ' is-visible' : ''}${mobilePullRefreshing ? ' is-refreshing' : ''}`}
+                style={{ height: mobilePullDistance }}
+                role="status"
+                aria-live="polite"
+                aria-hidden={mobilePullDistance === 0}
+              >
+                <div className="staff-order-mobile-pull-refresh__content">
+                  {mobilePullRefreshing ? (
+                    <SyncOutlined spin />
+                  ) : mobilePullDistance >= MOBILE_PULL_REFRESH_THRESHOLD_PX ? (
+                    <UpOutlined />
+                  ) : (
+                    <DownOutlined />
+                  )}
+                  <span>
+                    {mobilePullRefreshing
+                      ? 'Đang làm mới đơn hàng...'
+                      : mobilePullDistance >= MOBILE_PULL_REFRESH_THRESHOLD_PX
+                        ? 'Thả ra để làm mới'
+                        : 'Kéo xuống để làm mới'}
+                  </span>
+                </div>
+              </div>
+            ) : null}
             {/* Sticky Top Bar: Header & Chips Bar */}
             <div className="staff-order-mobile-top-bar">
               {/* Mobile Header */}
@@ -7528,14 +8188,16 @@ function OrderEditor({
               {/* Mobile Chips Horizontal Scroll Bar: Khách hàng -> Ghi chú -> Loại đơn -> Khu vực -> Số khách */}
               <div className="staff-order-mobile-chips-bar">
                 {/* 1. Khách hàng */}
-                <button
-                  type="button"
-                  className={`staff-order-chip ${customerName ? 'staff-order-chip--active' : ''}`}
-                  onClick={() => setCustomerModalOpen(true)}
-                >
-                  <UserOutlined className="staff-order-chip__icon" />
-                  <span className="staff-order-chip__text">{customerName || 'Khách lẻ'}</span>
-                </button>
+                {canAttachCustomer ? (
+                  <button
+                    type="button"
+                    className={`staff-order-chip ${customerName ? 'staff-order-chip--active' : ''}`}
+                    onClick={() => setCustomerModalOpen(true)}
+                  >
+                    <UserOutlined className="staff-order-chip__icon" />
+                    <span className="staff-order-chip__text">{customerName || 'Khách lẻ'}</span>
+                  </button>
+                ) : null}
 
                 {/* 2. Ghi chú */}
                 <button
@@ -7849,7 +8511,10 @@ function OrderEditor({
                           <div
                             className={`staff-order-mobile-card-row__visual ${catalogProd?.avatarType === 'IMAGE' && catalogProd.mediaId ? 'has-image' : 'has-color'}`}
                             style={{
-                              background: catalogProd?.avatarColor || '#f8fafc',
+                              background:
+                                catalogProd?.avatarType === 'IMAGE' && catalogProd.mediaId
+                                  ? undefined
+                                  : catalogProd?.avatarColor || '#0975f7',
                             }}
                           >
                             {catalogProd?.avatarType === 'IMAGE' && catalogProd.mediaId ? (
@@ -8040,6 +8705,7 @@ function OrderEditor({
               }}
             >
               <PlusOutlined />
+              <span>Thêm món</span>
             </button>
 
             {/* Sticky Bottom Billing Summary & Actions */}
@@ -8152,7 +8818,7 @@ function OrderEditor({
                       ? [quote.data.order.areaName, quote.data.order.tableName]
                           .filter(Boolean)
                           .join(' - ')
-                      : 'Mang đi',
+                      : 'Mang về',
                     quote.data.order.displayCode ||
                       (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : null),
                   ]
@@ -8179,7 +8845,7 @@ function OrderEditor({
                 value={isNew ? orderType : quote.data?.order.orderType}
                 options={[
                   { value: 'DINE_IN', label: 'Tại chỗ' },
-                  { value: 'TAKEAWAY', label: 'Mang đi' },
+                  { value: 'TAKEAWAY', label: 'Mang về' },
                 ]}
                 disabled={!isNew}
                 onChange={(value) => {
@@ -8225,9 +8891,11 @@ function OrderEditor({
                 type="button"
                 className={selectedCategory === 'ALL' ? 'is-active' : ''}
                 onClick={() => setSelectedCategory('ALL')}
+                aria-pressed={selectedCategory === 'ALL'}
               >
-                <AppstoreOutlined />
-                <span>Tất cả</span>
+                <span className="staff-category-sidebar__icon">{ALL_CATEGORY_ICON}</span>
+                <span className="staff-category-sidebar__label">Tất cả</span>
+                <small>{catalog.data?.length ?? 0}</small>
               </button>
               {categories.map((category) => (
                 <button
@@ -8235,9 +8903,11 @@ function OrderEditor({
                   key={category.id}
                   className={selectedCategory === category.id ? 'is-active' : ''}
                   onClick={() => setSelectedCategory(category.id)}
+                  aria-pressed={selectedCategory === category.id}
                 >
-                  <AppstoreOutlined />
-                  <span>{category.name}</span>
+                  <span className="staff-category-sidebar__icon">{category.icon}</span>
+                  <span className="staff-category-sidebar__label">{category.name}</span>
+                  <small>{category.count}</small>
                 </button>
               ))}
             </aside>
@@ -8255,7 +8925,7 @@ function OrderEditor({
                     ? 'Tất cả sản phẩm'
                     : categories.find((category) => category.id === selectedCategory)?.name}
                 </Typography.Title>
-                {canManageCatalog && (
+                {canQuickCreateProduct && (
                   <Button
                     size="small"
                     type="dashed"
@@ -8271,7 +8941,7 @@ function OrderEditor({
                 <Skeleton active />
               ) : visibleCatalog.length === 0 ? (
                 <Empty description="Không có sản phẩm phù hợp">
-                  {canManageCatalog && (
+                  {canQuickCreateProduct && (
                     <Button
                       type="primary"
                       icon={<PlusOutlined />}
@@ -8283,55 +8953,14 @@ function OrderEditor({
                 </Empty>
               ) : (
                 <div className="staff-product-grid">
-                  {visibleCatalog.map((product) => {
-                    const prices = product.variants
-                      .map((variant) => variant.salePriceVnd)
-                      .filter((price): price is number => price !== null);
-                    const minPrice = prices.length > 0 ? Math.min(...prices) : null;
-                    const maxPrice = prices.length > 0 ? Math.max(...prices) : null;
-                    return (
-                      <button
-                        type="button"
-                        key={product.productId}
-                        onClick={(e) => chooseProduct(product, e)}
-                      >
-                        <span
-                          className={`staff-product-card__visual ${product.avatarType === 'IMAGE' && product.mediaId ? 'has-image' : 'has-color'} ${product.avatarColor ? 'has-custom-color' : ''}`}
-                          style={{
-                            background: product.avatarColor || '#f8fafc',
-                          }}
-                        >
-                          {product.avatarType === 'IMAGE' && product.mediaId ? (
-                            <img
-                              src={`/api/v1/media/${product.mediaId}`}
-                              alt=""
-                              loading="lazy"
-                              decoding="async"
-                            />
-                          ) : (
-                            getProductInitials(product.productName)
-                          )}
-                        </span>
-                        <div className="staff-product-card__info">
-                          <strong className="staff-product-card__name">
-                            {product.productName}
-                          </strong>
-                          <div className="staff-product-card__meta">
-                            {product.variants.length > 1 ? (
-                              <small>{product.variants.length} phiên bản</small>
-                            ) : null}
-                          </div>
-                          <b className="staff-product-card__price">
-                            {minPrice === null
-                              ? 'Nhập giá'
-                              : minPrice === maxPrice
-                                ? `${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`
-                                : `Từ ${formatMoney(minPrice)}${product.productType === 'WEIGHT' ? `/${getWeightUnit(product.unitName)}` : ''}`}
-                          </b>
-                        </div>
-                      </button>
-                    );
-                  })}
+                  {visibleCatalog.map((product, index) => (
+                    <PosProductCard
+                      key={product.productId}
+                      product={product}
+                      isPriority={index < 12}
+                      onSelect={chooseProduct}
+                    />
+                  ))}
                 </div>
               )}
             </section>
@@ -8366,13 +8995,15 @@ function OrderEditor({
                 >
                   Chi tiết đơn
                 </button>
-                <button
-                  type="button"
-                  className={cartTab === 'CUSTOMER' ? 'is-active' : ''}
-                  onClick={() => setCartTab('CUSTOMER')}
-                >
-                  Khách hàng
-                </button>
+                {canAttachCustomer ? (
+                  <button
+                    type="button"
+                    className={cartTab === 'CUSTOMER' ? 'is-active' : ''}
+                    onClick={() => setCartTab('CUSTOMER')}
+                  >
+                    Khách hàng
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className={cartTab === 'ACTIONS' ? 'is-active' : ''}
@@ -8725,12 +9356,12 @@ function OrderEditor({
                       </>
                     ) : null}
                   </div>
-                ) : cartTab === 'CUSTOMER' ? (
+                ) : cartTab === 'CUSTOMER' && canAttachCustomer ? (
                   <div className="staff-cart-tab-content staff-customer-tab">
                     <PosCustomerSelector
                       customerId={customerId}
                       csrfToken={csrf}
-                      allowCreate
+                      allowCreate={false}
                       onSelect={saveCustomerInfo}
                     />
                   </div>
@@ -8768,7 +9399,7 @@ function OrderEditor({
                           <strong className="staff-order-info-value">
                             {orderType === 'DINE_IN'
                               ? `Tại chỗ · ${quote.data?.order.tableName ?? selectedTable?.name ?? 'Chưa chọn bàn'}`
-                              : 'Mang đi'}
+                              : 'Mang về'}
                           </strong>
                         </div>
                         <div className="staff-order-info-item">
@@ -8810,23 +9441,27 @@ function OrderEditor({
                         )}
                         {!isNew ? (
                           <>
-                            <Button
-                              icon={<PrinterOutlined />}
-                              disabled={printSettings.data?.allowProvisionalPrint === false}
-                              onClick={() => void printProvisionalReceipt()}
-                              className="staff-action-provisional-btn"
-                            >
-                              In tạm tính
-                            </Button>
-                            <Button
-                              icon={<FileTextOutlined />}
-                              disabled={printSettings.data?.allowProvisionalPrint === false}
-                              onClick={() => setProvisionalBillOpen(true)}
-                              className="staff-action-preview-btn"
-                            >
-                              Xem tạm tính
-                            </Button>
-                            {quote.data?.order.orderType === 'DINE_IN' ? (
+                            {canPrintProvisional ? (
+                              <Button
+                                icon={<PrinterOutlined />}
+                                disabled={printSettings.data?.allowProvisionalPrint === false}
+                                onClick={() => void printProvisionalReceipt()}
+                                className="staff-action-provisional-btn"
+                              >
+                                In tạm tính
+                              </Button>
+                            ) : null}
+                            {canPrintProvisional ? (
+                              <Button
+                                icon={<FileTextOutlined />}
+                                disabled={printSettings.data?.allowProvisionalPrint === false}
+                                onClick={() => setProvisionalBillOpen(true)}
+                                className="staff-action-preview-btn"
+                              >
+                                Xem tạm tính
+                              </Button>
+                            ) : null}
+                            {canTransferTable && quote.data?.order.orderType === 'DINE_IN' ? (
                               <Button
                                 icon={<SwapOutlined />}
                                 onClick={() => setTransferOpen(true)}
@@ -8835,14 +9470,16 @@ function OrderEditor({
                                 Chuyển bàn
                               </Button>
                             ) : null}
-                            <Button
-                              danger
-                              icon={<StopOutlined />}
-                              onClick={() => setCancelOpen(true)}
-                              className="staff-action-cancel-btn"
-                            >
-                              Hủy đơn hàng
-                            </Button>
+                            {canCancelOrder ? (
+                              <Button
+                                danger
+                                icon={<StopOutlined />}
+                                onClick={() => setCancelOpen(true)}
+                                className="staff-action-cancel-btn"
+                              >
+                                Hủy đơn hàng
+                              </Button>
+                            ) : null}
                           </>
                         ) : (
                           <Alert
@@ -8891,31 +9528,35 @@ function OrderEditor({
                       </b>
                     </div>
                   ) : null}
-                  <div
-                    className="staff-promotion-trigger"
-                    onClick={() => void openPromotionPicker()}
-                  >
-                    <span>
-                      Khuyến mãi <EditOutlined />
-                    </span>
-                    <span className="staff-cart-discount-amount">
-                      {totalDiscount > 0 ? `-${formatMoney(totalDiscount)}` : '0đ'}
-                    </span>
-                  </div>
-                  {appliedPromotions.length > 0 ? (
-                    <div
-                      className="staff-applied-promotions-box"
-                      onClick={() => void openPromotionPicker()}
-                    >
-                      {appliedPromotions.map((promotion) => (
-                        <div key={promotion.id} className="staff-applied-promotion-row-item">
-                          <span className="staff-applied-promotion-name">{promotion.name}</span>
-                          <span className="staff-applied-promotion-amount">
-                            {promotionBenefitCopy(promotion)}
-                          </span>
+                  {canApplyPromotion ? (
+                    <>
+                      <div
+                        className="staff-promotion-trigger"
+                        onClick={() => void openPromotionPicker()}
+                      >
+                        <span>
+                          Khuyến mãi <EditOutlined />
+                        </span>
+                        <span className="staff-cart-discount-amount">
+                          {totalDiscount > 0 ? `-${formatMoney(totalDiscount)}` : '0đ'}
+                        </span>
+                      </div>
+                      {appliedPromotions.length > 0 ? (
+                        <div
+                          className="staff-applied-promotions-box"
+                          onClick={() => void openPromotionPicker()}
+                        >
+                          {appliedPromotions.map((promotion) => (
+                            <div key={promotion.id} className="staff-applied-promotion-row-item">
+                              <span className="staff-applied-promotion-name">{promotion.name}</span>
+                              <span className="staff-applied-promotion-amount">
+                                {promotionBenefitCopy(promotion)}
+                              </span>
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
+                      ) : null}
+                    </>
                   ) : null}
                   <div className="staff-cart-total">
                     <span>Khách phải trả</span>
@@ -9106,6 +9747,12 @@ function OrderEditor({
       <StaffItemDetailModal
         item={editingItem}
         catalog={catalog.data ?? []}
+        allowDiscount={canApplyItemDiscount}
+        allowDelete={
+          Boolean(editingItem?.discardOnCancel) ||
+          editingItem?.source === 'DRAFT' ||
+          canDeleteSavedItems
+        }
         onCancel={() => {
           if (editingItem?.discardOnCancel) {
             setDraftLines((lines) => lines.filter((line) => line.id !== editingItem.id));
@@ -9141,16 +9788,20 @@ function OrderEditor({
                 selectedVariant && selectedVariant.id !== 'default'
                   ? selectedVariant.id
                   : (updated.variantId ?? null),
-              discount:
-                updated.discountType &&
-                updated.discountInputValue !== null &&
-                updated.discountInputValue !== undefined
-                  ? {
-                      type: updated.discountType,
-                      value: updated.discountInputValue,
-                      reason: updated.discountReason ?? '',
-                    }
-                  : null,
+              ...(canApplyItemDiscount
+                ? {
+                    discount:
+                      updated.discountType &&
+                      updated.discountInputValue !== null &&
+                      updated.discountInputValue !== undefined
+                        ? {
+                            type: updated.discountType,
+                            value: updated.discountInputValue,
+                            reason: updated.discountReason ?? '',
+                          }
+                        : null,
+                  }
+                : {}),
               note: updated.note.trim() || null,
             });
           }
@@ -9190,63 +9841,71 @@ function OrderEditor({
         footer={
           quote.data?.time
             ? [
-                quote.data.time.status === 'PAUSED' ? (
-                  <Button
-                    key="resume"
-                    type="primary"
-                    style={{ background: '#16a34a', borderColor: '#16a34a' }}
-                    icon={<PlayCircleOutlined />}
-                    loading={saving}
-                    onClick={handleResumeTimeRealtime}
-                    className="staff-time-footer-btn"
-                  >
-                    Mở lại bàn (Tiếp tục giờ)
-                  </Button>
-                ) : quote.data.time.status === 'ENDED' || quote.data.time.endedAtMs ? (
-                  <Button
-                    key="continue"
-                    type="primary"
-                    style={{ background: '#16a34a', borderColor: '#16a34a' }}
-                    icon={<PlayCircleOutlined />}
-                    loading={saving}
-                    onClick={handleContinueRunningTime}
-                    className="staff-time-footer-btn"
-                  >
-                    Tiếp tục tính giờ (Bỏ dừng)
-                  </Button>
-                ) : (
-                  <Button
-                    key="pause"
-                    danger
-                    icon={<PauseCircleOutlined />}
-                    loading={saving}
-                    onClick={handlePauseTimeRealtime}
-                    className="staff-time-footer-btn"
-                  >
-                    Tạm dừng tính giờ
-                  </Button>
-                ),
-                <Button
-                  key="delete-time"
-                  danger
-                  icon={<DeleteOutlined />}
-                  onClick={() => {
-                    setDeleteTimeReason('');
-                    setDeleteTimeModalOpen(true);
-                  }}
-                  className="staff-time-footer-btn"
-                >
-                  Xóa tiền giờ
-                </Button>,
-                <Button
-                  key="save"
-                  type="primary"
-                  loading={saving}
-                  onClick={saveTimeRange}
-                  className="staff-time-footer-btn staff-time-footer-btn--primary"
-                >
-                  Lưu thay đổi
-                </Button>,
+                ...(canPauseTime
+                  ? [
+                      quote.data.time.status === 'PAUSED' ? (
+                        <Button
+                          key="resume"
+                          type="primary"
+                          style={{ background: '#16a34a', borderColor: '#16a34a' }}
+                          icon={<PlayCircleOutlined />}
+                          loading={saving}
+                          onClick={handleResumeTimeRealtime}
+                          className="staff-time-footer-btn"
+                        >
+                          Mở lại bàn (Tiếp tục giờ)
+                        </Button>
+                      ) : quote.data.time.status === 'ENDED' || quote.data.time.endedAtMs ? (
+                        <Button
+                          key="continue"
+                          type="primary"
+                          style={{ background: '#16a34a', borderColor: '#16a34a' }}
+                          icon={<PlayCircleOutlined />}
+                          loading={saving}
+                          onClick={handleContinueRunningTime}
+                          className="staff-time-footer-btn"
+                        >
+                          Tiếp tục tính giờ (Bỏ dừng)
+                        </Button>
+                      ) : (
+                        <Button
+                          key="pause"
+                          danger
+                          icon={<PauseCircleOutlined />}
+                          loading={saving}
+                          onClick={handlePauseTimeRealtime}
+                          className="staff-time-footer-btn"
+                        >
+                          Tạm dừng tính giờ
+                        </Button>
+                      ),
+                    ]
+                  : []),
+                ...(canAdjustTime
+                  ? [
+                      <Button
+                        key="delete-time"
+                        danger
+                        icon={<DeleteOutlined />}
+                        onClick={() => {
+                          setDeleteTimeReason('');
+                          setDeleteTimeModalOpen(true);
+                        }}
+                        className="staff-time-footer-btn"
+                      >
+                        Xóa tiền giờ
+                      </Button>,
+                      <Button
+                        key="save"
+                        type="primary"
+                        loading={saving}
+                        onClick={saveTimeRange}
+                        className="staff-time-footer-btn staff-time-footer-btn--primary"
+                      >
+                        Lưu thay đổi
+                      </Button>,
+                    ]
+                  : []),
               ]
             : [
                 <Button
@@ -9334,6 +9993,7 @@ function OrderEditor({
                     placeholder="Chọn giờ vào (24h)"
                     value={timeRangeDraft.startedAt}
                     onChange={(val) => setTimeRangeDraft((prev) => ({ ...prev, startedAt: val }))}
+                    disabled={!canAdjustTime}
                     className="staff-time-field__datepicker"
                     popupClassName="staff-time-picker-popup"
                     style={{ width: '100%' }}
@@ -9352,6 +10012,7 @@ function OrderEditor({
                           endedAt: dayjs(),
                         }))
                       }
+                      disabled={!canAdjustTime}
                     >
                       Lấy giờ hiện tại
                     </button>
@@ -9363,6 +10024,7 @@ function OrderEditor({
                     placeholder="Chọn giờ ra (24h)"
                     value={timeRangeDraft.endedAt}
                     onChange={(val) => setTimeRangeDraft((prev) => ({ ...prev, endedAt: val }))}
+                    disabled={!canAdjustTime}
                     className="staff-time-field__datepicker"
                     popupClassName="staff-time-picker-popup"
                     style={{ width: '100%' }}
@@ -9897,7 +10559,7 @@ function OrderEditor({
               <strong>
                 {orderType === 'DINE_IN'
                   ? (quote.data?.order.tableName ?? selectedTable?.name ?? 'Chưa chọn bàn')
-                  : 'Mang đi'}
+                  : 'Mang về'}
               </strong>
             </div>
           </div>
@@ -9924,32 +10586,36 @@ function OrderEditor({
             )}
             {!isNew && (
               <>
-                <Button
-                  size="large"
-                  block
-                  icon={<PrinterOutlined />}
-                  disabled={printSettings.data?.allowProvisionalPrint === false}
-                  onClick={() => {
-                    setMobileActionsOpen(false);
-                    void printProvisionalReceipt();
-                  }}
-                >
-                  In tạm tính
-                </Button>
-                <Button
-                  size="large"
-                  block
-                  icon={<FileTextOutlined />}
-                  disabled={printSettings.data?.allowProvisionalPrint === false}
-                  onClick={() => {
-                    setMobileActionsOpen(false);
-                    setProvisionalBillOpen(true);
-                  }}
-                >
-                  Xem tạm tính
-                </Button>
+                {canPrintProvisional ? (
+                  <Button
+                    size="large"
+                    block
+                    icon={<PrinterOutlined />}
+                    disabled={printSettings.data?.allowProvisionalPrint === false}
+                    onClick={() => {
+                      setMobileActionsOpen(false);
+                      void printProvisionalReceipt();
+                    }}
+                  >
+                    In tạm tính
+                  </Button>
+                ) : null}
+                {canPrintProvisional ? (
+                  <Button
+                    size="large"
+                    block
+                    icon={<FileTextOutlined />}
+                    disabled={printSettings.data?.allowProvisionalPrint === false}
+                    onClick={() => {
+                      setMobileActionsOpen(false);
+                      setProvisionalBillOpen(true);
+                    }}
+                  >
+                    Xem tạm tính
+                  </Button>
+                ) : null}
 
-                {quote.data?.order.orderType === 'DINE_IN' && (
+                {canTransferTable && quote.data?.order.orderType === 'DINE_IN' && (
                   <Button
                     size="large"
                     block
@@ -9963,30 +10629,34 @@ function OrderEditor({
                   </Button>
                 )}
 
-                <Button
-                  size="large"
-                  block
-                  icon={<UserOutlined />}
-                  onClick={() => {
-                    setMobileActionsOpen(false);
-                    setCustomerModalOpen(true);
-                  }}
-                >
-                  {customerName ? customerName : 'Chọn khách'}
-                </Button>
+                {canAttachCustomer ? (
+                  <Button
+                    size="large"
+                    block
+                    icon={<UserOutlined />}
+                    onClick={() => {
+                      setMobileActionsOpen(false);
+                      setCustomerModalOpen(true);
+                    }}
+                  >
+                    {customerName ? customerName : 'Chọn khách'}
+                  </Button>
+                ) : null}
 
-                <Button
-                  danger
-                  size="large"
-                  block
-                  icon={<StopOutlined />}
-                  onClick={() => {
-                    setMobileActionsOpen(false);
-                    setCancelOpen(true);
-                  }}
-                >
-                  Hủy đơn
-                </Button>
+                {canCancelOrder ? (
+                  <Button
+                    danger
+                    size="large"
+                    block
+                    icon={<StopOutlined />}
+                    onClick={() => {
+                      setMobileActionsOpen(false);
+                      setCancelOpen(true);
+                    }}
+                  >
+                    Hủy đơn
+                  </Button>
+                ) : null}
               </>
             )}
 
@@ -10055,7 +10725,7 @@ function OrderEditor({
         </div>
       </Modal>
       <Modal
-        open={customerModalOpen}
+        open={canAttachCustomer && customerModalOpen}
         title="Khách hàng"
         footer={null}
         onCancel={() => setCustomerModalOpen(false)}
@@ -10065,7 +10735,7 @@ function OrderEditor({
         <PosCustomerSelector
           customerId={customerId}
           csrfToken={csrf}
-          allowCreate
+          allowCreate={false}
           reopenPickerOnDeselect={isMobile}
           onSelect={async (customer) => {
             await saveCustomerInfo(customer);
@@ -10103,10 +10773,11 @@ function OrderEditor({
         </Suspense>
       ) : null}
 
-      {canManageCatalog && (
+      {canQuickCreateProduct && (
         <QuickAddProductModal
           open={quickAddOpen}
           auth={auth}
+          canCreateCatalogResources={canManageCatalog}
           onClose={() => setQuickAddOpen(false)}
           onCreated={(_productId, name) => {
             messageApi.success(`Đã thêm mặt hàng "${name}" thành công.`);
@@ -10188,7 +10859,7 @@ function InvoicePage() {
         <header>
           <div>
             <strong>Pro POS</strong>
-            <span>{data.invoice.orderType === 'DINE_IN' ? 'Tại chỗ' : 'Mang đi'}</span>
+            <span>{data.invoice.orderType === 'DINE_IN' ? 'Tại chỗ' : 'Mang về'}</span>
           </div>
           <div>
             <b>{data.invoice.displayCode}</b>
@@ -10491,6 +11162,14 @@ function quickCashAmounts(totalVnd: number) {
   return [...amounts].filter((amount) => amount >= totalVnd).slice(0, 6);
 }
 
+function formatBankAccountOption(account: BankAccountDto): string {
+  const bankTitle = account.bankName || account.bankCode || 'Ngân hàng';
+  const holder = account.accountName ? ` · ${account.accountName}` : '';
+  const num = account.accountNumber ? ` (${account.accountNumber})` : '';
+  const def = account.isDefault ? ' · Mặc định' : '';
+  return `${bankTitle}${holder}${num}${def}`;
+}
+
 function PaymentPage({
   orderId,
   auth,
@@ -10531,6 +11210,7 @@ function PaymentPage({
     printStatus: 'PRINTING' | 'PRINTED' | 'FAILED' | 'SKIPPED';
     printError: string | null;
     receiptOptions: PosReceiptPrintOptions;
+    shownAt: number;
   } | null>(null);
   const [paymentSnapshotId, setPaymentSnapshotId] = useState<string | null>(() => {
     const cached = queryClient.getQueryData<PaymentSnapshotResult>([
@@ -10553,11 +11233,16 @@ function PaymentPage({
   const [verifiedQuoteOrderId, setVerifiedQuoteOrderId] = useState<string | null>(null);
   useEffect(() => {
     if (
-      quote.data?.order.id === orderId &&
-      quote.isFetchedAfterMount &&
-      quote.isSuccess &&
-      !quote.isFetching &&
-      !quote.isRefetchError
+      quoteIsVerifiedForInteraction({
+        orderId,
+        quote: quote.data,
+        isSuccess: quote.isSuccess,
+        isFetching: quote.isFetching,
+        isRefetchError: quote.isRefetchError,
+        isFetchedAfterMount: quote.isFetchedAfterMount,
+        isStale: quote.isStale,
+        dataUpdatedAt: quote.dataUpdatedAt,
+      })
     ) {
       setVerifiedQuoteOrderId(orderId);
     }
@@ -10567,7 +11252,9 @@ function PaymentPage({
     quote.isFetchedAfterMount,
     quote.isFetching,
     quote.isRefetchError,
+    quote.isStale,
     quote.isSuccess,
+    quote.dataUpdatedAt,
   ]);
   const quoteReady = verifiedQuoteOrderId === orderId;
 
@@ -10603,7 +11290,7 @@ function PaymentPage({
     }
   }, [orderId, paymentSnapshotId, queryClient, quote.data, quoteReady]);
 
-  const handleCelebrationComplete = useCallback(async () => {
+  const handleCelebrationComplete = useCallback(() => {
     if (completionInFlightRef.current) return;
     if (!paymentSuccessData) return;
     const completedOrder = {
@@ -10614,26 +11301,9 @@ function PaymentPage({
     clearPaymentPageActive(completedOrder.id);
     queryClient.removeQueries({ queryKey: ['pos-order-quote', completedOrder.id] });
     queryClient.removeQueries({ queryKey: ['pos-payment-snapshot', completedOrder.id] });
-    try {
-      // Checkout responses contain table summaries but not the complete active
-      // order list. Fetch one authoritative overview before returning to Areas
-      // so refetchOnMount=false cannot leave the paid order visible.
-      const overview = await queryClient.fetchQuery<PosOverviewSnapshot>({
-        queryKey: ['pos-overview'],
-        queryFn: ({ signal }) =>
-          apiRequest<PosOverviewSnapshot>('/api/v1/pos/overview', { signal }),
-        staleTime: 0,
-      });
-      queryClient.setQueryData(['pos-tables'], overview.tables);
-      queryClient.setQueryData(['pos-orders-list'], overview.orders);
-    } catch {
-      // Keep navigation responsive if the refresh fails; the query remains
-      // invalidated for the next realtime/full-sync opportunity.
-      void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
-    } finally {
-      setPaymentSuccessData(null);
-      completionInFlightRef.current = false;
-    }
+    void queryClient.invalidateQueries({ queryKey: ['pos-overview'], refetchType: 'none' });
+    setPaymentSuccessData(null);
+    completionInFlightRef.current = false;
     if (completedOrder.orderType === 'TAKEAWAY') {
       navigate('/pos/areas?tab=takeaway', {
         replace: true,
@@ -10645,8 +11315,14 @@ function PaymentPage({
   }, [navigate, paymentSuccessData, queryClient]);
 
   useEffect(() => {
-    if (!paymentSuccessData || paymentSuccessData.printStatus === 'PRINTING') return undefined;
-    const delayMs = paymentSuccessData.printStatus === 'FAILED' ? 3_500 : 1_800;
+    if (!paymentSuccessData) return undefined;
+    const visibleMs =
+      paymentSuccessData.printStatus === 'FAILED'
+        ? PAYMENT_SUCCESS_FAILURE_VISIBLE_MS
+        : paymentSuccessData.printStatus === 'PRINTING'
+          ? PAYMENT_SUCCESS_PRINTING_VISIBLE_MS
+          : PAYMENT_SUCCESS_VISIBLE_MS;
+    const delayMs = Math.max(0, visibleMs - (Date.now() - paymentSuccessData.shownAt));
     const timer = window.setTimeout(() => void handleCelebrationComplete(), delayMs);
     return () => window.clearTimeout(timer);
   }, [handleCelebrationComplete, paymentSuccessData]);
@@ -10990,13 +11666,27 @@ function PaymentPage({
         },
         { headers: mutationHeaders(csrf) },
       );
-      if (result.tableSummaries && result.tableSummaries.length > 0) {
+      const changedTables = new Map(
+        (result.tableSummaries ?? []).map((table) => [table.id, table]),
+      );
+      if (changedTables.size > 0) {
         queryClient.setQueryData<PosTable[]>(['pos-tables'], (cached) => {
-          if (!cached) return result.tableSummaries;
-          const changed = new Map(result.tableSummaries!.map((table) => [table.id, table]));
-          return cached.map((table) => changed.get(table.id) ?? table);
+          if (!cached) return cached;
+          return cached.map((table) => changedTables.get(table.id) ?? table);
         });
       }
+      queryClient.setQueryData<PosOverviewSnapshot>(['pos-overview'], (cached) => {
+        if (!cached) return cached;
+        return {
+          ...cached,
+          tables: cached.tables.map((table) => changedTables.get(table.id) ?? table),
+          orders: cached.orders.filter((order) => order.id !== quote.data!.order.id),
+          serverNowMs: Date.now(),
+        };
+      });
+      queryClient.setQueryData<PosOverviewOrder[]>(['pos-orders-list'], (cached) =>
+        cached?.filter((order) => order.id !== quote.data!.order.id),
+      );
 
       const resolvedCode =
         result.displayCode ||
@@ -11034,6 +11724,7 @@ function PaymentPage({
         printStatus: andPrint ? 'PRINTING' : 'SKIPPED',
         printError: null,
         receiptOptions,
+        shownAt: Date.now(),
       });
       if (andPrint) {
         void printReceipt(receiptOptions)
@@ -11204,6 +11895,18 @@ function PaymentPage({
       }
     },
   };
+  const [isDesktopOrTablet, setIsDesktopOrTablet] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth >= 768 : true,
+  );
+
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 768px)');
+    const sync = () => setIsDesktopOrTablet(media.matches);
+    sync();
+    media.addEventListener('change', sync);
+    return () => media.removeEventListener('change', sync);
+  }, []);
+
   const methodDetail = isMultiMethod ? (
     <div className="payment-workspace__allocations">
       <label>
@@ -11248,7 +11951,7 @@ function PaymentPage({
           placeholder="Chọn tài khoản nhận tiền"
           options={bankAccounts.map((account) => ({
             value: account.id,
-            label: `${account.bankCode} · ${account.accountNumber}${account.isDefault ? ' · Mặc định' : ''}`,
+            label: formatBankAccountOption(account),
           }))}
           onChange={(value) => setSelectedBankAccountId(value)}
         />
@@ -11286,23 +11989,60 @@ function PaymentPage({
     </div>
   ) : selectedMethod === 'BANK_TRANSFER' ? (
     <div className="payment-workspace__bank-detail">
-      <Select<string>
-        value={selectedBankAccount?.id ?? null}
-        placeholder="Chọn tài khoản nhận tiền"
-        options={bankAccounts.map((account) => ({
-          value: account.id,
-          label: `${account.bankCode} · ${account.accountNumber}${account.isDefault ? ' · Mặc định' : ''}`,
-        }))}
-        onChange={(value) => setSelectedBankAccountId(value)}
-      />
+      {bankAccounts.length > 1 ? (
+        <div className="payment-bank-picker-row">
+          <span className="payment-bank-picker-label">Tài khoản nhận:</span>
+          <Select<string>
+            value={selectedBankAccount?.id ?? null}
+            placeholder="Chọn tài khoản nhận tiền"
+            options={bankAccounts.map((account) => ({
+              value: account.id,
+              label: formatBankAccountOption(account),
+            }))}
+            onChange={(value) => setSelectedBankAccountId(value)}
+            style={{ width: '100%' }}
+          />
+        </div>
+      ) : null}
+
       {transferQrUrl && selectedBankAccount ? (
-        <button
-          type="button"
-          className="payment-workspace__qr"
-          onClick={() => setQrModalOpen(true)}
-        >
-          <img src={transferQrUrl} alt="VietQR thanh toán" />
-        </button>
+        <div className="payment-vietqr-card payment-vietqr-card--hero">
+          <div className="payment-vietqr-bank-header">
+            <span className="payment-vietqr-bank-tag">
+              <BankOutlined style={{ color: '#0975f7', fontSize: 16 }} />{' '}
+              {selectedBankAccount.bankName || selectedBankAccount.bankCode || 'Ngân hàng'}
+              {selectedBankAccount.accountNumber ? ` · ${selectedBankAccount.accountNumber}` : ''}
+              {selectedBankAccount.accountName ? ` · ${selectedBankAccount.accountName}` : ''}
+            </span>
+            {selectedBankAccount.isDefault ? (
+              <Tag color="blue" style={{ margin: 0 }}>
+                Mặc định
+              </Tag>
+            ) : null}
+          </div>
+
+          <div className="payment-vietqr-hero-wrap">
+            <button
+              type="button"
+              className="payment-workspace__qr payment-workspace__qr--hero"
+              onClick={() => setQrModalOpen(true)}
+              title="Nhấn để phóng to mã QR"
+            >
+              <img src={transferQrUrl} alt="VietQR thanh toán" />
+              <span className="payment-workspace__qr-overlay">
+                <QrcodeOutlined /> Phóng to QR
+              </span>
+            </button>
+            <div className="payment-vietqr-hero-caption">
+              <div className="payment-vietqr-hero-amount">
+                {formatMoney(isMultiMethod ? bankApplied : totalVnd)}
+              </div>
+              <div className="payment-vietqr-hint">
+                Quét mã bằng ứng dụng ngân hàng bất kỳ để thanh toán
+              </div>
+            </div>
+          </div>
+        </div>
       ) : (
         <Alert type="warning" showIcon message="Chưa có tài khoản ngân hàng nhận chuyển khoản." />
       )}
@@ -11435,7 +12175,7 @@ function PaymentPage({
         </div>
       ) : (
         <>
-          {presentation === 'drawer' ? (
+          {presentation === 'drawer' || isDesktopOrTablet ? (
             <div className="payment-workspace payment-workspace--desktop">
               <section className="payment-workspace__order-column">
                 <button
@@ -11522,11 +12262,19 @@ function PaymentPage({
                         type="button"
                         key={method.key}
                         disabled={disabled}
-                        className={selectedMethod === method.key ? 'is-active' : ''}
-                        onClick={() => selectPaymentMethod(method.key)}
+                        className={
+                          selectedMethod === method.key && !isMultiMethod ? 'is-active' : ''
+                        }
+                        onClick={() => {
+                          setIsMultiMethod(false);
+                          selectPaymentMethod(method.key);
+                        }}
                       >
+                        <span className="payment-workspace__method-icon">{method.icon}</span>
+                        <span className="payment-workspace__method-text">
+                          <strong>{method.label}</strong>
+                        </span>
                         <span className="payment-workspace__radio" />
-                        {method.label}
                       </button>
                     );
                   })}
@@ -11799,7 +12547,7 @@ function PaymentPage({
     <Drawer
       open
       placement="right"
-      width="50vw"
+      width={isDesktopOrTablet ? 'clamp(820px, 70vw, 1160px)' : '100%'}
       closable={false}
       maskClosable={!returningToOrder && !preparingCheckout && !submitting}
       styles={{ body: { padding: 0, overflow: 'hidden' } }}
@@ -11818,7 +12566,6 @@ export function StaffPosPortalPage() {
   const location = useLocation();
   const queryClient = useQueryClient();
   const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
-  const [onboardingRestartToken, setOnboardingRestartToken] = useState(0);
   const [desktopPayment, setDesktopPayment] = useState(() =>
     typeof window === 'undefined' ? false : window.innerWidth >= 1200,
   );
@@ -11879,6 +12626,10 @@ export function StaffPosPortalPage() {
   if (auth.isError || auth.data?.actor?.kind !== 'EMPLOYEE') {
     return <Navigate to="/?tab=employee&authError=SESSION_EXPIRED" replace />;
   }
+  const grantedPermissions = posContext.data?.permissions ?? [];
+  const canHandleQr =
+    grantedPermissions.includes('qr_order.handle') || grantedPermissions.includes('order.manage');
+  const canViewProductReport = grantedPermissions.includes('report.product');
 
   const isInvoiceDetail = location.pathname.startsWith('/pos/invoices/');
   const isInvoicesList =
@@ -11902,6 +12653,7 @@ export function StaffPosPortalPage() {
     isCatalogCategories ||
     isCatalogList;
   const isPrinterSettings = location.pathname === '/pos/printers';
+  const isProductReport = location.pathname === '/pos/reports/products';
 
   // Customer routes
   const isCustomerNew = location.pathname === '/pos/customers/new';
@@ -11953,6 +12705,7 @@ export function StaffPosPortalPage() {
     isEditor ||
     isDetail ||
     isCatalog ||
+    isProductReport ||
     isPrinterSettings ||
     isCustomer ||
     isStaff;
@@ -11961,6 +12714,7 @@ export function StaffPosPortalPage() {
     : location.pathname.startsWith('/pos/more') ||
         isInvoicesList ||
         isCatalog ||
+        isProductReport ||
         isPrinterSettings ||
         isCustomer ||
         isStaff
@@ -11976,7 +12730,6 @@ export function StaffPosPortalPage() {
         <PosNotificationsProvider>
           <div className={`staff-pos-shell${isFullScreen ? ' staff-pos-shell--editor' : ''}`}>
             <PushNotificationControl csrfToken={auth.data.csrfToken} autoPrompt />
-            <StaffOnboarding auth={auth.data} restartToken={onboardingRestartToken} />
             {!isFullScreen ? (
               <StaffHeader
                 context={auth.data}
@@ -11992,6 +12745,23 @@ export function StaffPosPortalPage() {
                     onBack={() => navigate('/pos/more')}
                   />,
                 )
+              ) : isProductReport ? (
+                <div className="staff-invoices-shell">
+                  <div className="staff-invoices-container">
+                    {canViewProductReport ? (
+                      renderLazyPosRoute(
+                        <OwnerProductReportPage apiPrefix="/api/v1/owner/analytics" />,
+                      )
+                    ) : (
+                      <Alert
+                        type="warning"
+                        showIcon
+                        title="Không có quyền xem báo cáo mặt hàng"
+                        description="Vai trò hiện tại chưa được cấp quyền báo cáo mặt hàng."
+                      />
+                    )}
+                  </div>
+                </div>
               ) : isInvoiceDetail ? (
                 <InvoicePage />
               ) : isInvoicesList ? (
@@ -12187,6 +12957,7 @@ export function StaffPosPortalPage() {
                       <OwnerCategoryDetailPage
                         categoryId={location.pathname.split('/').at(-1)!}
                         baseRoute="/pos/catalog"
+                        userPermissions={posContext.data?.permissions}
                         onBack={() => navigate('/pos/catalog/categories')}
                       />,
                     )}
@@ -12198,6 +12969,7 @@ export function StaffPosPortalPage() {
                     {renderLazyPosRoute(
                       <OwnerCategoryListPage
                         baseRoute="/pos/catalog"
+                        userPermissions={posContext.data?.permissions}
                         onBack={() => navigate('/pos/catalog/products')}
                       />,
                     )}
@@ -12217,7 +12989,7 @@ export function StaffPosPortalPage() {
                   </div>
                 </div>
               ) : isDetail && detailOrderId ? (
-                <OrderDetailPage orderId={detailOrderId} />
+                renderLazyPosRoute(<OrderDetailPage orderId={detailOrderId} />)
               ) : isPayment && paymentOrderId ? (
                 desktopPayment ? (
                   <>
@@ -12234,12 +13006,20 @@ export function StaffPosPortalPage() {
               ) : isEditor ? (
                 <OrderEditor auth={auth.data} />
               ) : active === 'qr' ? (
-                <QrOrderPage />
+                canHandleQr ? (
+                  <QrOrderPage />
+                ) : (
+                  <div style={{ padding: 24 }}>
+                    <Alert
+                      type="warning"
+                      showIcon
+                      title="Không có quyền xử lý QR Order"
+                      description="Vai trò hiện tại chưa được cấp quyền xử lý yêu cầu từ QR Order."
+                    />
+                  </div>
+                )
               ) : active === 'more' ? (
-                <MorePage
-                  auth={auth.data}
-                  onStartOnboarding={() => setOnboardingRestartToken((value) => value + 1)}
-                />
+                <MorePage auth={auth.data} />
               ) : (
                 <AreasPage />
               )}

@@ -22,6 +22,7 @@ export class StoreRepository {
         `SELECT
           s.id, s.name, s.status, s.timezone, ss.phone, ss.address,
           ss.currency, ss.business_day_cutoff_minutes AS businessDayCutoffMinutes,
+          ss.employee_remember_session_hours AS employeeRememberSessionHours,
           ss.bank_name AS bankName, ss.bank_account_number AS bankAccountNumber,
           ss.bank_account_name AS bankAccountName, ss.bank_qr_media_id AS bankQrMediaId,
           ss.province_code AS provinceCode, ss.province_name AS provinceName,
@@ -43,6 +44,7 @@ export class StoreRepository {
         address: string | null;
         currency: string;
         businessDayCutoffMinutes: number;
+        employeeRememberSessionHours: number;
         bankName: string | null;
         bankAccountNumber: string | null;
         bankAccountName: string | null;
@@ -233,6 +235,7 @@ export class StoreRepository {
     phone: string | null;
     address: string | null;
     cutoff: number;
+    employeeRememberSessionHours?: number;
     bankName: string | null;
     bankAccountNumber: string | null;
     bankAccountName: string | null;
@@ -251,6 +254,7 @@ export class StoreRepository {
         .prepare(
           `UPDATE store_settings
            SET phone = ?, address = ?, business_day_cutoff_minutes = ?,
+               employee_remember_session_hours = COALESCE(?, employee_remember_session_hours),
                bank_name = ?, bank_account_number = ?, bank_account_name = ?,
                bank_qr_media_id = ?, province_code = ?, province_name = ?,
                ward_code = ?, ward_name = ?,
@@ -261,6 +265,7 @@ export class StoreRepository {
           input.phone,
           input.address,
           input.cutoff,
+          input.employeeRememberSessionHours ?? null,
           input.bankName,
           input.bankAccountNumber,
           input.bankAccountName,

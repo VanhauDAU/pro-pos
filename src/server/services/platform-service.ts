@@ -209,14 +209,35 @@ export class PlatformService {
   }
 
   async deleteStore(storeId: string) {
-    const result = await this.repository.deleteStore(storeId);
+    let result: Awaited<ReturnType<PlatformRepository['deleteStore']>>;
+    try {
+      result = await this.repository.deleteStore(storeId);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'unknown error';
+      throw new AppError(
+        'STORE_DELETE_FAILED',
+        'Không thể xóa hết dữ liệu cửa hàng. Hãy thử lại; hệ thống sẽ tiếp tục dọn các phần còn lại.',
+        500,
+        { reason },
+      );
+    }
     if (!result) {
       throw new AppError('STORE_NOT_FOUND', 'Không tìm thấy cửa hàng.', 404);
     }
     if (this.env.MEDIA && result.mediaKeys.length > 0) {
-      await Promise.all(
-        result.mediaKeys.map((key) => this.env.MEDIA.delete(key).catch(() => undefined)),
-      );
+      // R2 accepts bulk deletes. Bound each request so a store with many
+      // product/receipt assets cannot create thousands of concurrent deletes.
+      const R2_DELETE_CHUNK_SIZE = 1_000;
+      for (let index = 0; index < result.mediaKeys.length; index += R2_DELETE_CHUNK_SIZE) {
+        const keys = result.mediaKeys.slice(index, index + R2_DELETE_CHUNK_SIZE);
+        try {
+          await this.env.MEDIA.delete(keys);
+        } catch {
+          // D1 is already purged. A retry of this action cannot recreate media
+          // metadata, so leave orphaned objects for lifecycle cleanup instead
+          // of falsely reporting that the store deletion failed.
+        }
+      }
     }
     return { success: true, storeId };
   }

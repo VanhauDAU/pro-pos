@@ -130,7 +130,7 @@ function orderTypeTag(type: OrderType) {
     );
   return (
     <Tag icon={<ShoppingCartOutlined />} color="purple">
-      Mang đi
+      Mang về
     </Tag>
   );
 }
@@ -460,7 +460,7 @@ export function OwnerInvoicesPage({
       'Mã đơn / HĐ': inv.displayCode,
       'Thời gian': formatDateTime(inv.issuedAt),
       'Trạng thái': inv.status === 'COMPLETED' ? 'Đã thanh toán' : 'Đã hủy',
-      'Loại hình': inv.orderType === 'DINE_IN' ? 'Tại chỗ' : 'Mang đi',
+      'Loại hình': inv.orderType === 'DINE_IN' ? 'Tại chỗ' : 'Mang về',
       Bàn: inv.tableName ?? '',
       'Khu vực': inv.areaName ?? '',
       'Thu ngân / Người xử lý': inv.actorName ?? '',
@@ -795,7 +795,7 @@ export function OwnerInvoicesPage({
               onChange={(v) => setFilterOrderType(v)}
               options={[
                 { label: 'Tại chỗ', value: 'DINE_IN' },
-                { label: 'Mang đi', value: 'TAKEAWAY' },
+                { label: 'Mang về', value: 'TAKEAWAY' },
               ]}
             />
           </Form.Item>

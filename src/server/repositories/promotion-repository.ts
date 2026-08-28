@@ -405,6 +405,26 @@ export class PromotionRepository {
       .run();
   }
 
+  async countReferences(storeId: string, id: string) {
+    const row = await this.db
+      .prepare(
+        `SELECT
+          (SELECT COUNT(*) FROM order_promotions WHERE store_id = ? AND promotion_id = ?) +
+          (SELECT COUNT(*) FROM invoice_promotions WHERE store_id = ? AND promotion_id = ?)
+          AS total`,
+      )
+      .bind(storeId, id, storeId, id)
+      .first<{ total: number }>();
+    return row?.total ?? 0;
+  }
+
+  remove(storeId: string, id: string) {
+    return this.db
+      .prepare('DELETE FROM promotions WHERE store_id = ? AND id = ?')
+      .bind(storeId, id)
+      .run();
+  }
+
   listSelected(storeId: string, orderId: string) {
     return this.db
       .prepare(

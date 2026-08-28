@@ -48,6 +48,7 @@ import {
   createEmployeeSchema,
   updateEmployeeSchema,
   employeeBulkActionSchema,
+  orderWorkspacePermissionKeys,
 } from '@contracts/staff';
 import { OwnerInvoiceService } from '@server/services/owner-invoice-service';
 import { RealtimeRepository } from '@server/repositories/realtime-repository';
@@ -96,8 +97,22 @@ function idempotencyKey(c: Parameters<typeof success>[0]) {
   return value;
 }
 
-posRoutes.get('/tables', requirePermission('table.view'), async (c) =>
-  success(c, await new PosService(c.env).listTables(c.get('actor').storeId!)),
+function includesCustomerAssignment(value: {
+  customerName?: string | null | undefined;
+  customerPhone?: string | null | undefined;
+  customerId?: string | null | undefined;
+}) {
+  return (
+    Boolean(value.customerId) ||
+    Boolean(value.customerName?.trim()) ||
+    Boolean(value.customerPhone?.trim())
+  );
+}
+
+posRoutes.get(
+  '/tables',
+  requirePermission('table.view', ...orderWorkspacePermissionKeys),
+  async (c) => success(c, await new PosService(c.env).listTables(c.get('actor').storeId!)),
 );
 
 posRoutes.get('/context', async (c) => {
@@ -105,67 +120,77 @@ posRoutes.get('/context', async (c) => {
   return success(c, await new PosService(c.env).getStaffContext(actor.storeId!, actor.id));
 });
 
-posRoutes.get('/realtime/sync', requirePermission('table.view'), async (c) => {
-  const storeId = c.get('actor').storeId!;
-  const repository = new RealtimeRepository(c.env.DB);
-  if (!(await repository.isEnabled(storeId))) {
-    throw new AppError('REALTIME_DISABLED', 'Realtime chưa được bật cho cửa hàng này.', 409);
-  }
-  const rawAfter = c.req.query('after');
-  let after: number | null = null;
-  if (rawAfter !== undefined) {
-    after = Number(rawAfter);
-    if (!Number.isSafeInteger(after) || after < 0) {
-      throw new AppError('REALTIME_CURSOR_INVALID', 'Realtime cursor không hợp lệ.', 422);
+posRoutes.get(
+  '/realtime/sync',
+  requirePermission('table.view', ...orderWorkspacePermissionKeys),
+  async (c) => {
+    const storeId = c.get('actor').storeId!;
+    const repository = new RealtimeRepository(c.env.DB);
+    if (!(await repository.isEnabled(storeId))) {
+      throw new AppError('REALTIME_DISABLED', 'Realtime chưa được bật cho cửa hàng này.', 409);
     }
-  }
-  return success(c, await repository.sync(storeId, after));
-});
+    const rawAfter = c.req.query('after');
+    let after: number | null = null;
+    if (rawAfter !== undefined) {
+      after = Number(rawAfter);
+      if (!Number.isSafeInteger(after) || after < 0) {
+        throw new AppError('REALTIME_CURSOR_INVALID', 'Realtime cursor không hợp lệ.', 422);
+      }
+    }
+    return success(c, await repository.sync(storeId, after));
+  },
+);
 
-posRoutes.get('/realtime/stream', requirePermission('table.view'), async (c) => {
-  if (c.req.header('Upgrade')?.toLowerCase() !== 'websocket') {
-    throw new AppError('WEBSOCKET_UPGRADE_REQUIRED', 'Yêu cầu WebSocket upgrade.', 422);
-  }
-  const protocols = (c.req.header('Sec-WebSocket-Protocol') ?? '')
-    .split(',')
-    .map((item) => item.trim());
-  if (!protocols.includes(REALTIME_SUBPROTOCOL)) {
-    throw new AppError(
-      'REALTIME_PROTOCOL_UNSUPPORTED',
-      'Realtime protocol không được hỗ trợ.',
-      422,
+posRoutes.get(
+  '/realtime/stream',
+  requirePermission('table.view', ...orderWorkspacePermissionKeys),
+  async (c) => {
+    if (c.req.header('Upgrade')?.toLowerCase() !== 'websocket') {
+      throw new AppError('WEBSOCKET_UPGRADE_REQUIRED', 'Yêu cầu WebSocket upgrade.', 422);
+    }
+    const protocols = (c.req.header('Sec-WebSocket-Protocol') ?? '')
+      .split(',')
+      .map((item) => item.trim());
+    if (!protocols.includes(REALTIME_SUBPROTOCOL)) {
+      throw new AppError(
+        'REALTIME_PROTOCOL_UNSUPPORTED',
+        'Realtime protocol không được hỗ trợ.',
+        422,
+      );
+    }
+    const actor = c.get('actor');
+    const storeId = actor.storeId!;
+    const repository = new RealtimeRepository(c.env.DB);
+    if (!(await repository.isEnabled(storeId))) {
+      throw new AppError('REALTIME_DISABLED', 'Realtime chưa được bật cho cửa hàng này.', 409);
+    }
+
+    const connectionId = crypto.randomUUID();
+    const reauthAt = Date.now() + 5 * 60_000;
+    const headers = new Headers(c.req.raw.headers);
+    headers.set('Upgrade', 'websocket');
+    headers.set('Sec-WebSocket-Protocol', REALTIME_SUBPROTOCOL);
+    headers.set('X-Propos-Realtime-Store', storeId);
+    headers.set('X-Propos-Realtime-User', actor.id);
+    headers.set('X-Propos-Realtime-Session', c.get('sessionId'));
+    headers.set('X-Propos-Realtime-Connection', connectionId);
+    headers.set('X-Propos-Realtime-Reauth-At', String(reauthAt));
+    headers.set(
+      'X-Propos-Realtime-Client-Version',
+      (c.req.query('clientVersion') ?? 'unknown').slice(0, 100),
     );
-  }
-  const actor = c.get('actor');
-  const storeId = actor.storeId!;
-  const repository = new RealtimeRepository(c.env.DB);
-  if (!(await repository.isEnabled(storeId))) {
-    throw new AppError('REALTIME_DISABLED', 'Realtime chưa được bật cho cửa hàng này.', 409);
-  }
+    const deviceId = c.get('device')?.id;
+    if (deviceId) headers.set('X-Propos-Realtime-Device', deviceId);
 
-  const connectionId = crypto.randomUUID();
-  const reauthAt = Date.now() + 5 * 60_000;
-  const headers = new Headers(c.req.raw.headers);
-  headers.set('Upgrade', 'websocket');
-  headers.set('Sec-WebSocket-Protocol', REALTIME_SUBPROTOCOL);
-  headers.set('X-Propos-Realtime-Store', storeId);
-  headers.set('X-Propos-Realtime-User', actor.id);
-  headers.set('X-Propos-Realtime-Session', c.get('sessionId'));
-  headers.set('X-Propos-Realtime-Connection', connectionId);
-  headers.set('X-Propos-Realtime-Reauth-At', String(reauthAt));
-  headers.set(
-    'X-Propos-Realtime-Client-Version',
-    (c.req.query('clientVersion') ?? 'unknown').slice(0, 100),
-  );
-  const deviceId = c.get('device')?.id;
-  if (deviceId) headers.set('X-Propos-Realtime-Device', deviceId);
+    const room = c.env.STORE_REALTIME.getByName(storeId);
+    return room.fetch(new Request(c.req.url, { method: 'GET', headers }));
+  },
+);
 
-  const room = c.env.STORE_REALTIME.getByName(storeId);
-  return room.fetch(new Request(c.req.url, { method: 'GET', headers }));
-});
-
-posRoutes.get('/print-settings', requirePermission('order.manage'), async (c) =>
-  success(c, await new StoreService(c.env).getPrintSettings(c.get('actor').storeId!)),
+posRoutes.get(
+  '/print-settings',
+  requirePermission(...orderWorkspacePermissionKeys, 'order.proforma_print', 'invoice.print'),
+  async (c) => success(c, await new StoreService(c.env).getPrintSettings(c.get('actor').storeId!)),
 );
 
 posRoutes.get(
@@ -475,55 +500,67 @@ posRoutes.put('/staff/:userId/pin', requirePermission('staff.employees.edit'), a
   );
 });
 
-posRoutes.put('/printer-settings', requirePermission('order.manage'), async (c) => {
-  const printer = await parseJson(c.req.raw, updatePrinterDeviceSettingsSchema);
-  const actor = c.get('actor');
-  const storeId = actor.storeId!;
-  const service = new StoreService(c.env);
-  const current = await service.getPrintSettings(storeId);
+posRoutes.put(
+  '/printer-settings',
+  requirePermission(...orderWorkspacePermissionKeys, 'order.proforma_print', 'invoice.print'),
+  async (c) => {
+    const printer = await parseJson(c.req.raw, updatePrinterDeviceSettingsSchema);
+    const actor = c.get('actor');
+    const storeId = actor.storeId!;
+    const service = new StoreService(c.env);
+    const current = await service.getPrintSettings(storeId);
 
-  await service.updatePrintSettings({
-    ...current,
-    storeId,
-    paperSize: printer.paperSize,
-    printersJson: JSON.stringify(printer),
-    auditContext: {
-      actorUserId: actor.id,
-      actorSessionId: c.get('sessionId'),
-      deviceId: c.get('device')?.id ?? null,
-      requestId: c.get('requestId'),
-    },
-  });
+    await service.updatePrintSettings({
+      ...current,
+      storeId,
+      paperSize: printer.paperSize,
+      printersJson: JSON.stringify(printer),
+      auditContext: {
+        actorUserId: actor.id,
+        actorSessionId: c.get('sessionId'),
+        deviceId: c.get('device')?.id ?? null,
+        requestId: c.get('requestId'),
+      },
+    });
 
-  return success(c, await service.getPrintSettings(storeId));
-});
+    return success(c, await service.getPrintSettings(storeId));
+  },
+);
 
-posRoutes.get('/catalog', requirePermission('order.manage'), async (c) =>
+posRoutes.get('/catalog', requirePermission(...orderWorkspacePermissionKeys), async (c) =>
   success(c, await new PosService(c.env).listCatalog(c.get('actor').storeId!)),
 );
 
-posRoutes.get('/orders', requirePermission('table.view'), async (c) =>
-  success(c, await new PosService(c.env).listOrders(c.get('actor').storeId!)),
+posRoutes.get(
+  '/orders',
+  requirePermission('table.view', ...orderWorkspacePermissionKeys),
+  async (c) => success(c, await new PosService(c.env).listOrders(c.get('actor').storeId!)),
 );
 
-posRoutes.get('/overview', requirePermission('table.view'), async (c) =>
-  success(
-    c,
-    await measureRequestTiming(c, 'overview', () =>
-      new PosService(c.env).overview(
-        c.get('actor').storeId!,
-        Date.now(),
-        (name, durationMs) => addRequestTiming(c, name, durationMs),
-        c.get('requestId'),
+posRoutes.get(
+  '/overview',
+  requirePermission('table.view', ...orderWorkspacePermissionKeys),
+  async (c) =>
+    success(
+      c,
+      await measureRequestTiming(c, 'overview', () =>
+        new PosService(c.env).overview(
+          c.get('actor').storeId!,
+          Date.now(),
+          (name, durationMs) => addRequestTiming(c, name, durationMs),
+          c.get('requestId'),
+        ),
       ),
     ),
-  ),
 );
 
-posRoutes.post('/orders/open', requirePermission('order.manage'), async (c) => {
+posRoutes.post('/orders/open', requirePermission(...orderWorkspacePermissionKeys), async (c) => {
   const body = await parseJson(c.req.raw, openOrderCommandSchema);
   if (body.items.some((item) => Boolean(item.discount))) {
-    await assertPermission(c, 'discount.apply');
+    await assertPermission(c, 'discount.item');
+  }
+  if (body.guest && includesCustomerAssignment(body.guest)) {
+    await assertPermission(c, 'order.add_customer');
   }
   if (body.promotionIds !== undefined) await assertPermission(c, 'promotion.apply');
   const actor = c.get('actor');
@@ -543,59 +580,74 @@ posRoutes.post('/orders/open', requirePermission('order.manage'), async (c) => {
   );
 });
 
-posRoutes.post('/orders/:orderId/save', requirePermission('order.manage'), async (c) => {
-  const body = await parseJson(c.req.raw, saveExistingOrderCommandSchema);
-  if (
-    body.addedItems.some((item) => Boolean(item.discount)) ||
-    body.updatedItems.some((item) => Boolean(item.discount))
-  ) {
-    await assertPermission(c, 'discount.apply');
-  }
-  if (body.promotionIds !== undefined) await assertPermission(c, 'promotion.apply');
-  const actor = c.get('actor');
-  return success(
-    c,
-    await measureRequestTiming(c, 'command', () =>
-      new PosService(c.env).saveOrderCommand({
-        storeId: actor.storeId!,
-        actorId: actor.id,
-        requestId: c.get('requestId'),
-        idempotencyKey: idempotencyKey(c),
-        orderId: c.req.param('orderId'),
-        values: body,
-        actorSessionId: c.get('sessionId'),
-        deviceId: c.get('device')?.id ?? null,
-        timing: (name, durationMs) => addRequestTiming(c, name, durationMs),
-      }),
-    ),
-  );
-});
+posRoutes.post(
+  '/orders/:orderId/save',
+  requirePermission(...orderWorkspacePermissionKeys),
+  async (c) => {
+    const body = await parseJson(c.req.raw, saveExistingOrderCommandSchema);
+    if (
+      body.addedItems.some((item) => Boolean(item.discount)) ||
+      body.updatedItems.some((item) => item.discount !== undefined)
+    ) {
+      await assertPermission(c, 'discount.item');
+    }
+    if (body.updatedItems.some((item) => item.quantityMilli === 0 || item.discount !== undefined)) {
+      await assertPermission(c, 'order.discount_after_saved', 'order.manage');
+    }
+    if (body.guest && includesCustomerAssignment(body.guest)) {
+      await assertPermission(c, 'order.add_customer');
+    }
+    if (body.promotionIds !== undefined) await assertPermission(c, 'promotion.apply');
+    const actor = c.get('actor');
+    return success(
+      c,
+      await measureRequestTiming(c, 'command', () =>
+        new PosService(c.env).saveOrderCommand({
+          storeId: actor.storeId!,
+          actorId: actor.id,
+          requestId: c.get('requestId'),
+          idempotencyKey: idempotencyKey(c),
+          orderId: c.req.param('orderId'),
+          values: body,
+          actorSessionId: c.get('sessionId'),
+          deviceId: c.get('device')?.id ?? null,
+          timing: (name, durationMs) => addRequestTiming(c, name, durationMs),
+        }),
+      ),
+    );
+  },
+);
 
-posRoutes.get('/orders/:orderId/call-batches', requirePermission('order.manage'), async (c) => {
-  const actor = c.get('actor');
-  const rawBeforeSequence = c.req.query('beforeSequence');
-  const rawLimit = c.req.query('limit');
-  const beforeSequence = rawBeforeSequence ? Number(rawBeforeSequence) : undefined;
-  const limit = rawLimit ? Number(rawLimit) : 20;
-  if (
-    (beforeSequence !== undefined && (!Number.isInteger(beforeSequence) || beforeSequence <= 0)) ||
-    !Number.isInteger(limit) ||
-    limit <= 0
-  ) {
-    throw new AppError('VALIDATION_ERROR', 'Tham số lịch sử gọi món không hợp lệ.', 422);
-  }
-  return success(
-    c,
-    await new PosService(c.env).listOrderCallBatches(
-      actor.storeId!,
-      c.req.param('orderId'),
-      beforeSequence,
-      limit,
-    ),
-  );
-});
+posRoutes.get(
+  '/orders/:orderId/call-batches',
+  requirePermission(...orderWorkspacePermissionKeys),
+  async (c) => {
+    const actor = c.get('actor');
+    const rawBeforeSequence = c.req.query('beforeSequence');
+    const rawLimit = c.req.query('limit');
+    const beforeSequence = rawBeforeSequence ? Number(rawBeforeSequence) : undefined;
+    const limit = rawLimit ? Number(rawLimit) : 20;
+    if (
+      (beforeSequence !== undefined &&
+        (!Number.isInteger(beforeSequence) || beforeSequence <= 0)) ||
+      !Number.isInteger(limit) ||
+      limit <= 0
+    ) {
+      throw new AppError('VALIDATION_ERROR', 'Tham số lịch sử gọi món không hợp lệ.', 422);
+    }
+    return success(
+      c,
+      await new PosService(c.env).listOrderCallBatches(
+        actor.storeId!,
+        c.req.param('orderId'),
+        beforeSequence,
+        limit,
+      ),
+    );
+  },
+);
 
-posRoutes.post('/orders', requirePermission('order.manage'), async (c) => {
+posRoutes.post('/orders', requirePermission(...orderWorkspacePermissionKeys), async (c) => {
   const body = await parseJson(c.req.raw, createTakeawayOrderSchema);
   const actor = c.get('actor');
   return success(
@@ -611,50 +663,68 @@ posRoutes.post('/orders', requirePermission('order.manage'), async (c) => {
   );
 });
 
-posRoutes.post('/tables/open', requirePermission('table.open'), async (c) => {
-  const body = await parseJson(c.req.raw, openTableSchema);
-  const actor = c.get('actor');
-  return success(
-    c,
-    await new PosService(c.env).openTable({
-      storeId: actor.storeId!,
-      actorId: actor.id,
-      requestId: c.get('requestId'),
-      idempotencyKey: idempotencyKey(c),
-      tableId: body.tableId,
-      expectedTableVersion: body.expectedTableVersion,
-      actorSessionId: c.get('sessionId'),
-      deviceId: c.get('device')?.id ?? null,
-    }),
-    201,
-  );
-});
+posRoutes.post(
+  '/tables/open',
+  requirePermission('table.open', ...orderWorkspacePermissionKeys),
+  async (c) => {
+    const body = await parseJson(c.req.raw, openTableSchema);
+    const actor = c.get('actor');
+    return success(
+      c,
+      await new PosService(c.env).openTable({
+        storeId: actor.storeId!,
+        actorId: actor.id,
+        requestId: c.get('requestId'),
+        idempotencyKey: idempotencyKey(c),
+        tableId: body.tableId,
+        expectedTableVersion: body.expectedTableVersion,
+        actorSessionId: c.get('sessionId'),
+        deviceId: c.get('device')?.id ?? null,
+      }),
+      201,
+    );
+  },
+);
 
-posRoutes.get('/tables/:tableId/qr-code', requirePermission('table.view'), async (c) =>
-  success(
-    c,
-    await new QrOrderService(c.env).getOrCreateQrCode(
-      c.get('actor').storeId!,
-      c.req.param('tableId'),
-      c.get('actor').id,
+posRoutes.get(
+  '/tables/:tableId/qr-code',
+  requirePermission('table.view', ...orderWorkspacePermissionKeys),
+  async (c) =>
+    success(
+      c,
+      await new QrOrderService(c.env).getOrCreateQrCode(
+        c.get('actor').storeId!,
+        c.req.param('tableId'),
+        c.get('actor').id,
+      ),
     ),
-  ),
 );
 
-posRoutes.get('/orders/:orderId/quote', requirePermission('table.view'), async (c) =>
-  success(
-    c,
-    await new PosService(c.env).quote(c.get('actor').storeId!, c.req.param('orderId'), Date.now(), {
-      requestId: c.get('requestId'),
-    }),
-  ),
+posRoutes.get(
+  '/orders/:orderId/quote',
+  requirePermission('table.view', ...orderWorkspacePermissionKeys),
+  async (c) =>
+    success(
+      c,
+      await new PosService(c.env).quote(
+        c.get('actor').storeId!,
+        c.req.param('orderId'),
+        Date.now(),
+        {
+          requestId: c.get('requestId'),
+        },
+      ),
+    ),
 );
 
-posRoutes.get('/orders/:orderId/detail', requirePermission('table.view'), async (c) =>
-  success(
-    c,
-    await new PosService(c.env).getOrderDetail(c.get('actor').storeId!, c.req.param('orderId')),
-  ),
+posRoutes.get(
+  '/orders/:orderId/detail',
+  requirePermission('table.view', 'invoice.view', ...orderWorkspacePermissionKeys),
+  async (c) =>
+    success(
+      c,
+      await new PosService(c.env).getOrderDetail(c.get('actor').storeId!, c.req.param('orderId')),
+    ),
 );
 
 posRoutes.post('/promotions/preview', requirePermission('promotion.apply'), async (c) => {
@@ -703,78 +773,94 @@ posRoutes.put('/orders/:orderId/promotion', requirePermission('promotion.apply')
   );
 });
 
-posRoutes.post('/orders/:orderId/items', requirePermission('order.manage'), async (c) => {
-  const body = await parseJson(c.req.raw, addOrderItemSchema);
-  const actor = c.get('actor');
-  if (body.discount) await assertPermission(c, 'discount.apply');
-  return success(
-    c,
-    await new PosService(c.env).addItem({
-      storeId: actor.storeId!,
-      actorId: actor.id,
-      requestId: c.get('requestId'),
-      idempotencyKey: idempotencyKey(c),
-      orderId: c.req.param('orderId'),
-      productId: body.productId,
-      variantId: body.variantId ?? null,
-      ...(body.enteredUnitPriceVnd === undefined
-        ? {}
-        : { enteredUnitPriceVnd: body.enteredUnitPriceVnd }),
-      quantityMilli: body.quantityMilli,
-      timeStartedAtMs: body.timeStartedAtMs,
-      timeEndedAtMs: body.timeEndedAtMs,
-      note: body.note ?? null,
-      expectedOrderVersion: body.expectedOrderVersion,
-      discount: body.discount ?? null,
-      actorSessionId: c.get('sessionId'),
-      deviceId: c.get('device')?.id ?? null,
-    }),
-    201,
-  );
-});
+posRoutes.post(
+  '/orders/:orderId/items',
+  requirePermission(...orderWorkspacePermissionKeys),
+  async (c) => {
+    const body = await parseJson(c.req.raw, addOrderItemSchema);
+    const actor = c.get('actor');
+    if (body.discount) await assertPermission(c, 'discount.item');
+    return success(
+      c,
+      await new PosService(c.env).addItem({
+        storeId: actor.storeId!,
+        actorId: actor.id,
+        requestId: c.get('requestId'),
+        idempotencyKey: idempotencyKey(c),
+        orderId: c.req.param('orderId'),
+        productId: body.productId,
+        variantId: body.variantId ?? null,
+        ...(body.enteredUnitPriceVnd === undefined
+          ? {}
+          : { enteredUnitPriceVnd: body.enteredUnitPriceVnd }),
+        quantityMilli: body.quantityMilli,
+        timeStartedAtMs: body.timeStartedAtMs,
+        timeEndedAtMs: body.timeEndedAtMs,
+        note: body.note ?? null,
+        expectedOrderVersion: body.expectedOrderVersion,
+        discount: body.discount ?? null,
+        actorSessionId: c.get('sessionId'),
+        deviceId: c.get('device')?.id ?? null,
+      }),
+      201,
+    );
+  },
+);
 
-posRoutes.patch('/orders/:orderId/items/:itemId', requirePermission('order.manage'), async (c) => {
-  const body = await parseJson(c.req.raw, updateOrderItemSchema);
-  const actor = c.get('actor');
-  return success(
-    c,
-    await new PosService(c.env).updateItem({
-      storeId: actor.storeId!,
-      actorId: actor.id,
-      requestId: c.get('requestId'),
-      idempotencyKey: idempotencyKey(c),
-      orderId: c.req.param('orderId'),
-      itemId: c.req.param('itemId'),
-      expectedOrderVersion: body.expectedOrderVersion,
-      quantityMilli: body.quantityMilli,
-      variantId: body.variantId,
-      discount: body.discount,
-      timeStartedAtMs: body.timeStartedAtMs,
-      timeEndedAtMs: body.timeEndedAtMs,
-      note: body.note ?? null,
-    }),
-  );
-});
+posRoutes.patch(
+  '/orders/:orderId/items/:itemId',
+  requirePermission(...orderWorkspacePermissionKeys),
+  async (c) => {
+    const body = await parseJson(c.req.raw, updateOrderItemSchema);
+    if (body.discount !== undefined) {
+      await assertPermission(c, 'discount.item');
+      await assertPermission(c, 'order.discount_after_saved', 'order.manage');
+    }
+    const actor = c.get('actor');
+    return success(
+      c,
+      await new PosService(c.env).updateItem({
+        storeId: actor.storeId!,
+        actorId: actor.id,
+        requestId: c.get('requestId'),
+        idempotencyKey: idempotencyKey(c),
+        orderId: c.req.param('orderId'),
+        itemId: c.req.param('itemId'),
+        expectedOrderVersion: body.expectedOrderVersion,
+        quantityMilli: body.quantityMilli,
+        variantId: body.variantId,
+        discount: body.discount,
+        timeStartedAtMs: body.timeStartedAtMs,
+        timeEndedAtMs: body.timeEndedAtMs,
+        note: body.note ?? null,
+      }),
+    );
+  },
+);
 
-posRoutes.delete('/orders/:orderId/items/:itemId', requirePermission('order.manage'), async (c) => {
-  const body = await parseJson(c.req.raw, removeOrderItemSchema);
-  const actor = c.get('actor');
-  return success(
-    c,
-    await new PosService(c.env).removeItem({
-      storeId: actor.storeId!,
-      actorId: actor.id,
-      requestId: c.get('requestId'),
-      idempotencyKey: idempotencyKey(c),
-      orderId: c.req.param('orderId'),
-      itemId: c.req.param('itemId'),
-      expectedOrderVersion: body.expectedOrderVersion,
-      reason: body.reason,
-    }),
-  );
-});
+posRoutes.delete(
+  '/orders/:orderId/items/:itemId',
+  requirePermission('order.discount_after_saved', 'order.manage'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, removeOrderItemSchema);
+    const actor = c.get('actor');
+    return success(
+      c,
+      await new PosService(c.env).removeItem({
+        storeId: actor.storeId!,
+        actorId: actor.id,
+        requestId: c.get('requestId'),
+        idempotencyKey: idempotencyKey(c),
+        orderId: c.req.param('orderId'),
+        itemId: c.req.param('itemId'),
+        expectedOrderVersion: body.expectedOrderVersion,
+        reason: body.reason,
+      }),
+    );
+  },
+);
 
-posRoutes.delete('/orders/:orderId/time', requirePermission('order.manage'), async (c) => {
+posRoutes.delete('/orders/:orderId/time', requirePermission('time.adjust'), async (c) => {
   const body = await parseJson(c.req.raw, removeTimeSessionSchema);
   const actor = c.get('actor');
   return success(
@@ -793,42 +879,51 @@ posRoutes.delete('/orders/:orderId/time', requirePermission('order.manage'), asy
   );
 });
 
-posRoutes.patch('/orders/:orderId/note', requirePermission('order.manage'), async (c) => {
-  const body = await parseJson(c.req.raw, updateOrderNoteSchema);
-  const actor = c.get('actor');
-  return success(
-    c,
-    await new PosService(c.env).updateNote({
-      storeId: actor.storeId!,
-      actorId: actor.id,
-      requestId: c.get('requestId'),
-      idempotencyKey: idempotencyKey(c),
-      orderId: c.req.param('orderId'),
-      expectedOrderVersion: body.expectedOrderVersion,
-      note: body.note,
-    }),
-  );
-});
+posRoutes.patch(
+  '/orders/:orderId/note',
+  requirePermission(...orderWorkspacePermissionKeys),
+  async (c) => {
+    const body = await parseJson(c.req.raw, updateOrderNoteSchema);
+    const actor = c.get('actor');
+    return success(
+      c,
+      await new PosService(c.env).updateNote({
+        storeId: actor.storeId!,
+        actorId: actor.id,
+        requestId: c.get('requestId'),
+        idempotencyKey: idempotencyKey(c),
+        orderId: c.req.param('orderId'),
+        expectedOrderVersion: body.expectedOrderVersion,
+        note: body.note,
+      }),
+    );
+  },
+);
 
-posRoutes.patch('/orders/:orderId/guest', requirePermission('order.manage'), async (c) => {
-  const body = await parseJson(c.req.raw, updateOrderGuestSchema);
-  const actor = c.get('actor');
-  return success(
-    c,
-    await new PosService(c.env).updateGuest({
-      storeId: actor.storeId!,
-      actorId: actor.id,
-      requestId: c.get('requestId'),
-      idempotencyKey: idempotencyKey(c),
-      orderId: c.req.param('orderId'),
-      expectedOrderVersion: body.expectedOrderVersion,
-      guestCount: body.guestCount,
-      customerName: body.customerName ?? null,
-      customerPhone: body.customerPhone ?? null,
-      customerId: body.customerId ?? null,
-    }),
-  );
-});
+posRoutes.patch(
+  '/orders/:orderId/guest',
+  requirePermission(...orderWorkspacePermissionKeys),
+  async (c) => {
+    const body = await parseJson(c.req.raw, updateOrderGuestSchema);
+    if (includesCustomerAssignment(body)) await assertPermission(c, 'order.add_customer');
+    const actor = c.get('actor');
+    return success(
+      c,
+      await new PosService(c.env).updateGuest({
+        storeId: actor.storeId!,
+        actorId: actor.id,
+        requestId: c.get('requestId'),
+        idempotencyKey: idempotencyKey(c),
+        orderId: c.req.param('orderId'),
+        expectedOrderVersion: body.expectedOrderVersion,
+        guestCount: body.guestCount,
+        customerName: body.customerName ?? null,
+        customerPhone: body.customerPhone ?? null,
+        customerId: body.customerId ?? null,
+      }),
+    );
+  },
+);
 
 posRoutes.post('/orders/:orderId/time/pause', requirePermission('time.pause'), async (c) => {
   const body = await parseJson(c.req.raw, timeActionSchema);
@@ -866,7 +961,7 @@ posRoutes.post('/orders/:orderId/time/resume', requirePermission('time.pause'), 
   );
 });
 
-posRoutes.patch('/orders/:orderId/time/range', requirePermission('time.pause'), async (c) => {
+posRoutes.patch('/orders/:orderId/time/range', requirePermission('time.adjust'), async (c) => {
   const body = await parseJson(c.req.raw, updateTimeRangeSchema);
   const actor = c.get('actor');
   return success(
@@ -971,24 +1066,28 @@ posRoutes.post('/orders/:orderId/transfer', requirePermission('table.transfer'),
   );
 });
 
-posRoutes.post('/orders/:orderId/cancel', requirePermission('order.manage'), async (c) => {
-  const body = await parseJson(c.req.raw, cancelOrderSchema);
-  const actor = c.get('actor');
-  return success(
-    c,
-    await new PosService(c.env).cancel({
-      storeId: actor.storeId!,
-      actorId: actor.id,
-      requestId: c.get('requestId'),
-      idempotencyKey: idempotencyKey(c),
-      orderId: c.req.param('orderId'),
-      expectedOrderVersion: body.expectedOrderVersion,
-      reason: body.reason,
-      actorSessionId: c.get('sessionId'),
-      deviceId: c.get('device')?.id ?? null,
-    }),
-  );
-});
+posRoutes.post(
+  '/orders/:orderId/cancel',
+  requirePermission('order.cancel_unpaid', 'order.manage'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, cancelOrderSchema);
+    const actor = c.get('actor');
+    return success(
+      c,
+      await new PosService(c.env).cancel({
+        storeId: actor.storeId!,
+        actorId: actor.id,
+        requestId: c.get('requestId'),
+        idempotencyKey: idempotencyKey(c),
+        orderId: c.req.param('orderId'),
+        expectedOrderVersion: body.expectedOrderVersion,
+        reason: body.reason,
+        actorSessionId: c.get('sessionId'),
+        deviceId: c.get('device')?.id ?? null,
+      }),
+    );
+  },
+);
 
 posRoutes.get('/invoices', requirePermission('invoice.view'), async (c) => {
   const storeId = c.get('actor').storeId!;

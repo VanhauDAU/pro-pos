@@ -114,7 +114,6 @@ export function PushNotificationControl({
       const nextPermission = await Notification.requestPermission();
       setPermission(nextPermission);
       setAutoPromptOpen(false);
-      window.dispatchEvent(new Event('propos:push-prompt-finished'));
       if (nextPermission !== 'granted') {
         messageApi.info('Bạn chưa cho phép nhận thông báo.');
         return;
@@ -168,7 +167,6 @@ export function PushNotificationControl({
           onOk={() => void enable()}
           onCancel={() => {
             setAutoPromptOpen(false);
-            window.dispatchEvent(new Event('propos:push-prompt-finished'));
           }}
         >
           <p>

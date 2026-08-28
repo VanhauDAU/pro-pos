@@ -258,6 +258,12 @@ paths:
         '200': { description: Table pricing updated }
         '409': { description: Occupied table cannot change pricing }
         '422': { description: Time product has no pricing configuration }
+  /owner/catalog/area-layouts/area-order:
+    put:
+      summary: Persist the display order of every active area in the store
+      responses:
+        '200': { description: Area display order updated }
+        '422': { description: List is incomplete, duplicated or belongs to another store }
   /owner/catalog/area-layouts/{areaId}/table-order:
     put:
       summary: Persist the display order of every active table/room in an area

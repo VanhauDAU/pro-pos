@@ -21,6 +21,12 @@ INSERT INTO roles (id, store_id, code, name, is_system, created_at, updated_at)
 VALUES ('role-owner-upgrade', 'store-upgrade', 'OWNER', 'Owner', 1, 1, 1);
 INSERT INTO store_memberships (id, store_id, user_id, role_id, status, created_at, updated_at)
 VALUES ('membership-upgrade', 'store-upgrade', 'owner-upgrade', 'role-owner-upgrade', 'ACTIVE', 1, 1);
+INSERT INTO users (id, username, email, display_name, status, created_at, updated_at)
+VALUES ('orphan-upgrade', 'orphan-upgrade', 'orphan-upgrade@example.com', 'Orphan User', 'ACTIVE', 1, 1);
+INSERT INTO password_credentials (
+  user_id, algorithm, work_factor, salt, digest, pepper_version, credential_version, updated_at
+)
+VALUES ('orphan-upgrade', 'PBKDF2-HMAC-SHA256', 1, 'salt', 'digest', 1, 1, 1);
 INSERT INTO store_settings (store_id, updated_at) VALUES ('store-upgrade', 1);
 INSERT INTO areas (id, store_id, name, created_at, updated_at)
 VALUES ('area-upgrade', 'store-upgrade', 'Area', 1, 1);
@@ -66,16 +72,16 @@ try {
   );
   const sql = `${migrations.slice(0, 5).join('\n')}\n${fixture}\n${migrations.slice(5).join('\n')}`;
   const result = spawnSync('sqlite3', ['-batch', '-noheader', '-separator', '|', databasePath], {
-    input: `${sql}\nSELECT gross_line_total, discount_amount, net_line_total FROM order_items WHERE id = 'item-upgrade';\nSELECT gross_line_total, discount_amount, line_total FROM invoice_lines WHERE id = 'line-upgrade';\n`,
+    input: `${sql}\nSELECT gross_line_total, discount_amount, net_line_total FROM order_items WHERE id = 'item-upgrade';\nSELECT gross_line_total, discount_amount, line_total FROM invoice_lines WHERE id = 'line-upgrade';\nSELECT COUNT(*) FROM users WHERE id = 'orphan-upgrade';\n`,
     encoding: 'utf8',
   });
   if (result.status !== 0) {
     throw new Error(result.stderr || 'sqlite3 migration execution failed');
   }
   const rows = result.stdout.trim().split('\n');
-  const expected = ['100000|100000|0', '100000|100000|0'];
-  if (rows.at(-2) !== expected[0] || rows.at(-1) !== expected[1]) {
-    throw new Error(`Unexpected migration backfill: ${rows.slice(-2).join(', ')}`);
+  const expected = ['100000|100000|0', '100000|100000|0', '0'];
+  if (rows.at(-3) !== expected[0] || rows.at(-2) !== expected[1] || rows.at(-1) !== expected[2]) {
+    throw new Error(`Unexpected migration result: ${rows.slice(-3).join(', ')}`);
   }
   console.log(
     `0005 → ${migrationFiles.at(-1)?.slice(0, 4)} upgrade path passed across ${migrationFiles.length} migrations.`,

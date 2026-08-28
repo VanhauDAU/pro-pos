@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { AuthorizationRepository } from '@server/repositories/authorization-repository';
+import { AuthRepository } from '@server/repositories/auth-repository';
 import { PlatformService } from '@server/services/platform-service';
 import { StaffService } from '@server/services/staff-service';
 
@@ -101,7 +102,7 @@ describe('Owner staff and role management', () => {
     });
   });
 
-  it('allows creating an employee with catalog permissions to manage products and categories', async () => {
+  it('keeps catalog permissions fine-grained instead of granting catalog.manage', async () => {
     const catalogRole = await staff.createRole(storeId, 'Quản lý kho món', [
       'catalog.products.view',
       'catalog.products.create',
@@ -115,6 +116,81 @@ describe('Owner staff and role management', () => {
       permissionKeys: [],
     });
     const authRepo = new AuthorizationRepository(env.DB);
-    expect(await authRepo.hasPermission(storeId, employee.userId, 'catalog.manage')).toBe(true);
+    expect(await authRepo.hasPermission(storeId, employee.userId, 'catalog.products.view')).toBe(
+      true,
+    );
+    expect(await authRepo.hasPermission(storeId, employee.userId, 'catalog.products.create')).toBe(
+      true,
+    );
+    expect(await authRepo.hasPermission(storeId, employee.userId, 'catalog.manage')).toBe(false);
+    expect(await authRepo.hasPermission(storeId, employee.userId, 'catalog.products.delete')).toBe(
+      false,
+    );
+  });
+
+  it('allows the same employee username in another store but not twice in one store', async () => {
+    const sharedUsername = `cashier.${crypto.randomUUID().slice(0, 8)}`;
+    const employeeRole = (await staff.listRoles(storeId)).find((role) => role.code === 'EMPLOYEE')!;
+    const firstEmployee = await staff.createEmployee({
+      storeId,
+      displayName: 'Thu ngân cửa hàng A',
+      username: sharedUsername,
+      pin: '1234',
+      roleId: employeeRole.id,
+      permissionKeys: [],
+    });
+
+    const secondStore = await new PlatformService(env).createStore({
+      name: `Staff Username Store ${crypto.randomUUID().slice(0, 8)}`,
+      ownerDisplayName: 'Store B Owner',
+      ownerEmail: `staff.username.${crypto.randomUUID().slice(0, 8)}@example.com`,
+    });
+    const secondStoreRole = (await staff.listRoles(secondStore.storeId)).find(
+      (role) => role.code === 'EMPLOYEE',
+    )!;
+    const secondEmployee = await staff.createEmployee({
+      storeId: secondStore.storeId,
+      displayName: 'Thu ngân cửa hàng B',
+      username: sharedUsername,
+      pin: '1234',
+      roleId: secondStoreRole.id,
+      permissionKeys: [],
+    });
+    expect(secondEmployee).toMatchObject({ userId: expect.any(String) });
+
+    const identities = new AuthRepository(env.DB);
+    expect(
+      (await identities.findEmployeeByUsernameAndStore(sharedUsername, storeId))?.user_id,
+    ).toBe(firstEmployee.userId);
+    expect(
+      (await identities.findEmployeeByUsernameAndStore(sharedUsername, secondStore.storeId))
+        ?.user_id,
+    ).toBe(secondEmployee.userId);
+
+    await expect(
+      staff.createEmployee({
+        storeId,
+        displayName: 'Thu ngân trùng',
+        username: sharedUsername,
+        pin: '1234',
+        roleId: employeeRole.id,
+        permissionKeys: [],
+      }),
+    ).rejects.toMatchObject({ code: 'USERNAME_CONFLICT' });
+  });
+
+  it('resets employee PIN successfully', async () => {
+    const employeeRole = (await staff.listRoles(storeId)).find((role) => role.code === 'EMPLOYEE')!;
+    const employee = await staff.createEmployee({
+      storeId,
+      displayName: 'Nhân viên đổi PIN',
+      username: `pin.user.${crypto.randomUUID().slice(0, 8)}`,
+      pin: '1111',
+      roleId: employeeRole.id,
+      permissionKeys: [],
+    });
+
+    const result = await staff.resetPin(storeId, employee.userId, '9999');
+    expect(result).toEqual({ userId: employee.userId, pinReset: true });
   });
 });

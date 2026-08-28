@@ -144,6 +144,20 @@ export const createServiceTableSchema = z.object({
   sortOrder: z.number().int().min(0).default(0),
 });
 
+export const createBatchServiceTablesSchema = z.object({
+  areaId: z.uuid(),
+  timeProductId: z.uuid().optional().nullable(),
+  tables: z
+    .array(
+      z.object({
+        name: z.string().trim().min(1).max(120),
+        sortOrder: z.number().int().min(0).optional(),
+      }),
+    )
+    .min(1)
+    .max(100),
+});
+
 const areaTableNameSchema = z.object({
   name: z.string().trim().min(1).max(120),
 });
@@ -170,6 +184,16 @@ export const reorderServiceTablesSchema = z
   .superRefine((value, context) => {
     if (new Set(value.tableIds).size !== value.tableIds.length) {
       context.addIssue({ code: 'custom', message: 'Danh sách bàn/phòng không được trùng.' });
+    }
+  });
+
+export const reorderAreasSchema = z
+  .object({
+    areaIds: z.array(z.uuid()).min(1).max(100),
+  })
+  .superRefine((value, context) => {
+    if (new Set(value.areaIds).size !== value.areaIds.length) {
+      context.addIssue({ code: 'custom', message: 'Danh sách khu vực không được trùng.' });
     }
   });
 

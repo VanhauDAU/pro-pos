@@ -8,6 +8,15 @@ export default defineConfig({
   environments: {
     client: {
       build: {
+        modulePreload: {
+          resolveDependencies(filename, dependencies) {
+            if (!filename.includes('StaffPosPortalPage')) return dependencies;
+            return dependencies.filter(
+              (dependency) =>
+                !/\/(?:OrderDetailPage|pos-receipt-printer|qz-tray-service)-/.test(dependency),
+            );
+          },
+        },
         rolldownOptions: {
           output: {
             strictExecutionOrder: true,

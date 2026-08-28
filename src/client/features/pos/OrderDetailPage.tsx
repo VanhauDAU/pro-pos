@@ -860,7 +860,7 @@ export function OrderDetailPage({
                 icon={order.orderType === 'DINE_IN' ? <ShopOutlined /> : <ShoppingCartOutlined />}
                 color={order.orderType === 'DINE_IN' ? 'blue' : 'purple'}
               >
-                {order.orderType === 'DINE_IN' ? 'Tại bàn' : 'Mang đi'}
+                {order.orderType === 'DINE_IN' ? 'Tại bàn' : 'Mang về'}
               </Tag>
               {order.tableName && (
                 <Tag icon={<EnvironmentOutlined />} color="cyan">
@@ -1060,7 +1060,7 @@ export function OrderDetailPage({
                 <Descriptions.Item label="Cửa hàng">{order.storeName}</Descriptions.Item>
                 <Descriptions.Item label="Khu vực">{order.areaName ?? '—'}</Descriptions.Item>
                 <Descriptions.Item label="Bàn phục vụ">
-                  {order.tableName ? <Tag color="cyan">{order.tableName}</Tag> : 'Mang đi'}
+                  {order.tableName ? <Tag color="cyan">{order.tableName}</Tag> : 'Mang về'}
                 </Descriptions.Item>
                 <Descriptions.Item label="Nhân viên mở">{order.openedByName}</Descriptions.Item>
                 <Descriptions.Item label="Thời gian mở">

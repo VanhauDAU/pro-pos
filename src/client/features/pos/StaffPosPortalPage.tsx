@@ -11947,6 +11947,7 @@ function PaymentPage({
       </label>
       {bankApplied > 0 ? (
         <Select<string>
+          className="payment-bank-picker-select"
           value={selectedBankAccount?.id ?? null}
           placeholder="Chọn tài khoản nhận tiền"
           options={bankAccounts.map((account) => ({
@@ -11993,6 +11994,7 @@ function PaymentPage({
         <div className="payment-bank-picker-row">
           <span className="payment-bank-picker-label">Tài khoản nhận:</span>
           <Select<string>
+            className="payment-bank-picker-select"
             value={selectedBankAccount?.id ?? null}
             placeholder="Chọn tài khoản nhận tiền"
             options={bankAccounts.map((account) => ({
@@ -12009,10 +12011,12 @@ function PaymentPage({
         <div className="payment-vietqr-card payment-vietqr-card--hero">
           <div className="payment-vietqr-bank-header">
             <span className="payment-vietqr-bank-tag">
-              <BankOutlined style={{ color: '#0975f7', fontSize: 16 }} />{' '}
-              {selectedBankAccount.bankName || selectedBankAccount.bankCode || 'Ngân hàng'}
-              {selectedBankAccount.accountNumber ? ` · ${selectedBankAccount.accountNumber}` : ''}
-              {selectedBankAccount.accountName ? ` · ${selectedBankAccount.accountName}` : ''}
+              <BankOutlined style={{ color: '#0975f7', fontSize: 16 }} />
+              <span>
+                {selectedBankAccount.bankName || selectedBankAccount.bankCode || 'Ngân hàng'}
+                {selectedBankAccount.accountNumber ? ` · ${selectedBankAccount.accountNumber}` : ''}
+                {selectedBankAccount.accountName ? ` · ${selectedBankAccount.accountName}` : ''}
+              </span>
             </span>
             {selectedBankAccount.isDefault ? (
               <Tag color="blue" style={{ margin: 0 }}>

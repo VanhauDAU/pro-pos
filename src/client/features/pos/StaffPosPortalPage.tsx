@@ -38,7 +38,6 @@ import {
   PlusCircleOutlined,
   PlusOutlined,
   PrinterOutlined,
-  QuestionCircleOutlined,
   QrcodeOutlined,
   RightOutlined,
   SearchOutlined,
@@ -129,7 +128,6 @@ import {
 } from '@client/lib/pos-receipt-printer';
 import logoBlack from '@client/assets/logo-black.svg?url';
 import { OrderDetailPage } from './OrderDetailPage';
-import { StaffOnboarding } from './StaffOnboarding';
 import { PosCustomerSelector } from './PosCustomerSelector';
 import { PosAppSplash } from './PosAppSplash';
 import { toast } from 'sonner';
@@ -2797,13 +2795,7 @@ function QrOrderPage() {
   );
 }
 
-function MorePage({
-  auth,
-  onStartOnboarding,
-}: {
-  auth: AuthContextResponse;
-  onStartOnboarding: () => void;
-}) {
+function MorePage({ auth }: { auth: AuthContextResponse }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const messageApi = toast;
@@ -3167,21 +3159,6 @@ function MorePage({
               <RightOutlined style={{ color: '#94a3b8', fontSize: 14 }} />
             </div>
           ) : null}
-
-          <button
-            type="button"
-            className="staff-more-nav-item staff-onboarding-entry"
-            onClick={onStartOnboarding}
-          >
-            <span className="staff-onboarding-entry__icon">
-              <QuestionCircleOutlined />
-            </span>
-            <span className="staff-onboarding-entry__copy">
-              <strong>Hướng dẫn sử dụng POS</strong>
-              <small>Xem lại cách chọn khu vực, bàn, gọi món, lưu đơn và QR Order</small>
-            </span>
-            <RightOutlined />
-          </button>
 
           {/* Push Notification Setup */}
           <div style={{ padding: '14px 18px' }}>
@@ -12563,7 +12540,6 @@ export function StaffPosPortalPage() {
   const location = useLocation();
   const queryClient = useQueryClient();
   const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
-  const [onboardingRestartToken, setOnboardingRestartToken] = useState(0);
   const [desktopPayment, setDesktopPayment] = useState(() =>
     typeof window === 'undefined' ? false : window.innerWidth >= 1200,
   );
@@ -12728,7 +12704,6 @@ export function StaffPosPortalPage() {
         <PosNotificationsProvider>
           <div className={`staff-pos-shell${isFullScreen ? ' staff-pos-shell--editor' : ''}`}>
             <PushNotificationControl csrfToken={auth.data.csrfToken} autoPrompt />
-            <StaffOnboarding auth={auth.data} restartToken={onboardingRestartToken} />
             {!isFullScreen ? (
               <StaffHeader
                 context={auth.data}
@@ -13018,10 +12993,7 @@ export function StaffPosPortalPage() {
                   </div>
                 )
               ) : active === 'more' ? (
-                <MorePage
-                  auth={auth.data}
-                  onStartOnboarding={() => setOnboardingRestartToken((value) => value + 1)}
-                />
+                <MorePage auth={auth.data} />
               ) : (
                 <AreasPage />
               )}

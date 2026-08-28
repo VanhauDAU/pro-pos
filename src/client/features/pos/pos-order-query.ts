@@ -7,6 +7,7 @@ export const RUNNING_SERVER_REFRESH_MS = 15_000;
 export const QUOTE_DISCONNECTED_REFRESH_MS = 5_000;
 export const OVERVIEW_DISCONNECTED_REFRESH_MS = 20_000;
 export const QUOTE_INTERACTION_FRESH_MS = 2_000;
+export const QUOTE_REALTIME_INTERACTION_FRESH_MS = 15_000;
 
 export interface RefreshableOrderQuote {
   order: {
@@ -19,6 +20,10 @@ export interface RefreshableOrderQuote {
   } | null;
 }
 
+export function quoteInteractionFreshMs(status: RealtimeConnectionStatus) {
+  return status === 'CONNECTED' ? QUOTE_REALTIME_INTERACTION_FRESH_MS : QUOTE_INTERACTION_FRESH_MS;
+}
+
 export function quoteIsVerifiedForInteraction(input: {
   orderId: string;
   quote: RefreshableOrderQuote | undefined;
@@ -28,6 +33,7 @@ export function quoteIsVerifiedForInteraction(input: {
   isFetchedAfterMount: boolean;
   isStale: boolean;
   dataUpdatedAt: number;
+  realtimeStatus: RealtimeConnectionStatus;
   now?: number;
 }) {
   if (
@@ -42,7 +48,7 @@ export function quoteIsVerifiedForInteraction(input: {
   if (input.isFetchedAfterMount) return true;
 
   const ageMs = (input.now ?? Date.now()) - input.dataUpdatedAt;
-  return !input.isStale && ageMs >= 0 && ageMs <= QUOTE_INTERACTION_FRESH_MS;
+  return !input.isStale && ageMs >= 0 && ageMs <= quoteInteractionFreshMs(input.realtimeStatus);
 }
 
 export function quoteRefreshInterval(
@@ -78,10 +84,10 @@ export function orderQuoteQueryOptions<T extends RefreshableOrderQuote>(input: {
     queryKey: ['pos-order-quote', input.orderId] as const,
     queryFn: ({ signal }) => fetcher(`/api/v1/pos/orders/${input.orderId}/quote`, signal),
     enabled: input.enabled,
-    // Pointer-down prefetches the quote before route navigation. Keep that
-    // authoritative response fresh only long enough for the current gesture;
-    // invalidation (including realtime) still makes it stale immediately.
-    staleTime: QUOTE_INTERACTION_FRESH_MS,
+    // Hover/focus/pointer-down warm this query before route navigation. Realtime-connected
+    // clients can safely reuse it briefly because every remote order event invalidates it;
+    // disconnected clients retain the conservative gesture-sized window.
+    staleTime: quoteInteractionFreshMs(input.realtimeStatus),
     refetchOnMount: true,
     refetchOnWindowFocus: 'always',
     refetchInterval: (query) => quoteRefreshInterval(query.state.data, input.realtimeStatus),

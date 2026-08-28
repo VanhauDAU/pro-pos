@@ -85,10 +85,11 @@ test('cash checkout refreshes Areas without a browser reload', async ({ page }) 
         response.url().endsWith(`/api/v1/pos/orders/${fixture.orderId}/checkout`) &&
         response.ok(),
     );
-    await page.getByRole('button', { name: /^Thanh toán & in:/ }).click();
+    await page.getByRole('button', { name: /^Thanh toán(?: & in)?:/ }).click();
     await checkout;
     await expect(page.getByText('Thanh toán thành công!')).toBeVisible();
-    await expect(page.locator('.pos-payment-celebration button')).toHaveCount(0);
+    await expect(page.locator('.pos-payment-celebration button')).toHaveCount(2);
+    await page.getByRole('button', { name: 'Hoàn tất', exact: true }).click();
     await expect(page).toHaveURL(/\/pos\/areas/, { timeout: 10_000 });
     await expectTableAvailable(page, fixture.tableId);
     expect(await activeOrderIds(page)).not.toContain(fixture.orderId);

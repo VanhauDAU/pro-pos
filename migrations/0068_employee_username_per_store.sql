@@ -1,4 +1,6 @@
 PRAGMA foreign_keys = OFF;
+PRAGMA defer_foreign_keys = ON;
+PRAGMA legacy_alter_table = ON;
 
 -- Usernames are used differently by each login flow. Owner/Super Admin logins
 -- resolve their own identity, while a POS employee always authenticates against
@@ -32,6 +34,9 @@ FROM users;
 DROP TABLE users;
 ALTER TABLE users_replacement RENAME TO users;
 
+PRAGMA legacy_alter_table = OFF;
+PRAGMA defer_foreign_keys = OFF;
+
 CREATE INDEX idx_users_username ON users(username COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email COLLATE NOCASE);
 
@@ -52,3 +57,4 @@ JOIN roles r ON r.id = sm.role_id AND r.store_id = sm.store_id
 WHERE r.code <> 'OWNER';
 
 PRAGMA foreign_keys = ON;
+

@@ -657,8 +657,9 @@ describe('Owner and POS activation invariants', () => {
       pin: '1234',
       permissionKeys: [],
     });
-    await env.DB
-      .prepare('UPDATE store_settings SET employee_remember_session_hours = 48 WHERE store_id = ?')
+    await env.DB.prepare(
+      'UPDATE store_settings SET employee_remember_session_hours = 48 WHERE store_id = ?',
+    )
       .bind(store!.id)
       .run();
 
@@ -861,6 +862,11 @@ describe('Owner and POS activation invariants', () => {
     });
 
     const details = await platform.getStoreDetails(store.storeId);
+    expect(details.analytics.revenueTrend).toHaveLength(14);
+    expect(details.analytics.hourlyDistribution).toHaveLength(24);
+    expect(details.analytics.summary.activeMembers).toBeGreaterThanOrEqual(1);
+    expect(Array.isArray(details.analytics.paymentMethods)).toBe(true);
+    expect(Array.isArray(details.analytics.topProducts)).toBe(true);
     const ownerMember = details.members.find((m) => m.roleCode === 'OWNER')!;
     expect(ownerMember).toBeDefined();
 
@@ -912,5 +918,99 @@ describe('Owner and POS activation invariants', () => {
     expect(analytics.hourlyDistribution).toHaveLength(24);
     expect(Array.isArray(analytics.paymentMethods)).toBe(true);
     expect(Array.isArray(analytics.topProducts)).toBe(true);
+  });
+
+  it('deletes users that only belong to a deleted store', async () => {
+    const platform = new PlatformService(env);
+    const legacyOrphanUserId = crypto.randomUUID();
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO users (
+             id, username, display_name, status, must_change_password, created_at, updated_at
+           ) VALUES (?, ?, 'Legacy Orphan', 'ACTIVE', 0, ?, ?)`,
+      ).bind(legacyOrphanUserId, `legacy-orphan-${legacyOrphanUserId}`, now, now),
+      env.DB.prepare(
+        `INSERT INTO password_credentials (
+             user_id, algorithm, work_factor, salt, digest, pepper_version,
+             credential_version, updated_at
+           ) VALUES (?, 'PBKDF2-HMAC-SHA256', 1, 'salt', 'digest', 1, 1, ?)`,
+      ).bind(legacyOrphanUserId, now),
+    ]);
+    const store = await platform.createStore({
+      name: 'Disposable Store',
+      ownerDisplayName: 'Disposable Owner',
+      ownerEmail: 'disposable.owner@example.com',
+      ownerUsername: 'disposable.owner',
+      ownerPassword: 'OwnerPassword123!',
+    });
+    const employee = await new StaffService(env).createEmployee({
+      storeId: store.storeId,
+      displayName: 'Disposable Employee',
+      username: 'disposable.employee',
+      pin: '123456',
+      permissionKeys: [],
+    });
+
+    await platform.deleteStore(store.storeId);
+
+    const remainingUsers = await env.DB.prepare('SELECT id FROM users WHERE id IN (?, ?, ?)')
+      .bind(store.ownerUserId, employee.userId, legacyOrphanUserId)
+      .all<{ id: string }>();
+    expect(remainingUsers.results).toEqual([]);
+
+    const superAdminCount = await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM users WHERE platform_role = 'SUPER_ADMIN'",
+    ).first<{ count: number }>();
+    expect(superAdminCount?.count).toBeGreaterThanOrEqual(1);
+
+    const foreignKeyViolations = await env.DB.prepare('PRAGMA foreign_key_check').all();
+    expect(foreignKeyViolations.results).toEqual([]);
+  });
+
+  it('does not report store deletion success when an orphan user is still referenced', async () => {
+    const platform = new PlatformService(env);
+    const store = await platform.createStore({
+      name: 'Retryable Delete Store',
+      ownerDisplayName: 'Retryable Owner',
+      ownerEmail: 'retryable.owner@example.com',
+      ownerUsername: 'retryable.owner',
+      ownerPassword: 'OwnerPassword123!',
+    });
+    const existingStore = await env.DB.prepare(
+      'SELECT id FROM stores WHERE id != ? ORDER BY created_at ASC LIMIT 1',
+    )
+      .bind(store.storeId)
+      .first<{ id: string }>();
+    const blockedOrphanUserId = crypto.randomUUID();
+    const blockingAuditId = crypto.randomUUID();
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO users (
+             id, username, display_name, status, must_change_password, created_at, updated_at
+           ) VALUES (?, ?, 'Blocked Orphan', 'ACTIVE', 0, ?, ?)`,
+      ).bind(blockedOrphanUserId, `blocked-orphan-${blockedOrphanUserId}`, now, now),
+      env.DB.prepare(
+        `INSERT INTO audit_logs (
+             id, store_id, actor_user_id, action, entity_type, request_id, created_at
+           ) VALUES (?, ?, ?, 'TEST_BLOCKER', 'USER', ?, ?)`,
+      ).bind(blockingAuditId, existingStore!.id, blockedOrphanUserId, crypto.randomUUID(), now),
+    ]);
+
+    await expect(platform.deleteStore(store.storeId)).rejects.toThrow(
+      'Không thể xóa hết dữ liệu cửa hàng',
+    );
+    const storeAfterFailure = await env.DB.prepare('SELECT id FROM stores WHERE id = ?')
+      .bind(store.storeId)
+      .first<{ id: string }>();
+    expect(storeAfterFailure?.id).toBe(store.storeId);
+
+    await env.DB.prepare('DELETE FROM audit_logs WHERE id = ?').bind(blockingAuditId).run();
+    await platform.deleteStore(store.storeId);
+    const storeAfterRetry = await env.DB.prepare('SELECT id FROM stores WHERE id = ?')
+      .bind(store.storeId)
+      .first<{ id: string }>();
+    expect(storeAfterRetry).toBeNull();
   });
 });

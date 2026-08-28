@@ -178,4 +178,19 @@ describe('Owner staff and role management', () => {
       }),
     ).rejects.toMatchObject({ code: 'USERNAME_CONFLICT' });
   });
+
+  it('resets employee PIN successfully', async () => {
+    const employeeRole = (await staff.listRoles(storeId)).find((role) => role.code === 'EMPLOYEE')!;
+    const employee = await staff.createEmployee({
+      storeId,
+      displayName: 'Nhân viên đổi PIN',
+      username: `pin.user.${crypto.randomUUID().slice(0, 8)}`,
+      pin: '1111',
+      roleId: employeeRole.id,
+      permissionKeys: [],
+    });
+
+    const result = await staff.resetPin(storeId, employee.userId, '9999');
+    expect(result).toEqual({ userId: employee.userId, pinReset: true });
+  });
 });

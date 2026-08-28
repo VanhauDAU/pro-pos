@@ -1,5 +1,6 @@
 import {
   AppstoreOutlined,
+  ArrowLeftOutlined,
   ClearOutlined,
   ClockCircleOutlined,
   CreditCardOutlined,
@@ -23,7 +24,6 @@ import {
   RiseOutlined,
   SearchOutlined,
   ShopOutlined,
-  ShoppingOutlined,
   StarOutlined,
   StopOutlined,
   TeamOutlined,
@@ -39,7 +39,6 @@ import {
   Card,
   Col,
   Descriptions,
-  Drawer,
   Empty,
   Form,
   Input,
@@ -48,6 +47,7 @@ import {
   Popconfirm,
   Progress,
   Radio,
+  Result,
   Row,
   Segmented,
   Select,
@@ -62,7 +62,7 @@ import {
   message,
 } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
-import { Navigate } from 'react-router';
+import { Navigate, useLocation, useNavigate } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
 import type {
@@ -675,12 +675,25 @@ function TopProductsWidget({ products }: { products: PlatformAnalytics['topProdu
 
 export function SuperAdminPage() {
   const queryClient = useQueryClient();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [form] = Form.useForm<CreateStoreValues>();
   const [editMemberForm] = Form.useForm<EditMemberValues>();
   const [resetPasswordForm] = Form.useForm<ResetPasswordValues>();
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
+  const selectedStoreId = useMemo(() => {
+    const match = location.pathname.match(/^\/platform\/stores\/([^/]+)\/?$/);
+    return match?.[1] ? decodeURIComponent(match[1]) : null;
+  }, [location.pathname]);
+
+  const openStoreDetail = (storeId: string) => {
+    navigate(`/platform/stores/${encodeURIComponent(storeId)}`);
+  };
+
+  const closeStoreDetail = () => {
+    navigate('/platform');
+  };
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -823,7 +836,7 @@ export function SuperAdminPage() {
         headers: csrfHeaders(),
       });
       if (selectedStoreId === store.id) {
-        setSelectedStoreId(null);
+        closeStoreDetail();
       }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['platform-stores'] }),
@@ -1071,7 +1084,7 @@ export function SuperAdminPage() {
         </Button>
       </header>
 
-      <main className="platform-content">
+      <main className={`platform-content ${selectedStoreId ? 'platform-content--hidden' : ''}`}>
         <div className="platform-title-row">
           <div className="platform-title-text">
             <Typography.Title level={2} className="platform-main-title">
@@ -1336,7 +1349,7 @@ export function SuperAdminPage() {
 
                 <StoreLeaderboardWidget
                   stores={analytics.data.storePerformance}
-                  onSelectStore={setSelectedStoreId}
+                  onSelectStore={openStoreDetail}
                 />
               </Card>
 
@@ -1495,7 +1508,7 @@ export function SuperAdminPage() {
                         type="primary"
                         ghost
                         icon={<EyeOutlined />}
-                        onClick={() => setSelectedStoreId(store.id)}
+                        onClick={() => openStoreDetail(store.id)}
                         style={{ borderRadius: 6 }}
                       >
                         Chi tiết
@@ -1547,716 +1560,369 @@ export function SuperAdminPage() {
         )}
       </main>
 
-      {/* Drawer Xem & Quản lý Chi Tiết Cửa Hàng */}
-      <Drawer
-        title={
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <div
-              style={{
-                width: 36,
-                height: 36,
-                borderRadius: 10,
-                background: '#eff6ff',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: '#2563eb',
-                fontSize: 18,
-                flexShrink: 0,
-              }}
-            >
-              <ShopOutlined />
-            </div>
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                <Typography.Text strong style={{ fontSize: 16 }}>
-                  {detail?.store.name || 'Chi tiết cửa hàng'}
-                </Typography.Text>
-                {detail ? (
-                  <Tag
-                    color={detail.store.status === 'ACTIVE' ? 'success' : 'error'}
-                    style={{ borderRadius: 6, margin: 0 }}
-                  >
-                    {detail.store.status === 'ACTIVE' ? 'Đang hoạt động' : 'Đã khóa'}
-                  </Tag>
-                ) : null}
+      {selectedStoreId ? (
+        <main className="platform-store-detail-page">
+          <div className="platform-store-detail-header">
+            <div className="platform-store-detail-heading">
+              <Button
+                type="text"
+                icon={<ArrowLeftOutlined />}
+                onClick={closeStoreDetail}
+                className="platform-store-detail-back"
+                aria-label="Quay lại danh sách cửa hàng"
+              />
+              <div className="platform-store-detail-icon">
+                <ShopOutlined />
+              </div>
+              <div className="platform-store-detail-title">
+                <Typography.Text type="secondary">Chi tiết cửa hàng</Typography.Text>
+                <div>
+                  <Typography.Title level={3}>
+                    {detail?.store.name || 'Đang tải cửa hàng...'}
+                  </Typography.Title>
+                  {detail ? (
+                    <Tag
+                      color={detail.store.status === 'ACTIVE' ? 'success' : 'error'}
+                      className="platform-store-detail-status"
+                    >
+                      {detail.store.status === 'ACTIVE' ? 'Đang hoạt động' : 'Đã khóa'}
+                    </Tag>
+                  ) : null}
+                </div>
               </div>
             </div>
-          </div>
-        }
-        placement="right"
-        width={isMobile ? '100%' : 820}
-        onClose={() => setSelectedStoreId(null)}
-        open={Boolean(selectedStoreId)}
-        extra={
-          detail ? (
-            <Space wrap size="small">
-              <Button
-                size="small"
-                icon={<ReloadOutlined />}
-                onClick={() =>
-                  queryClient.invalidateQueries({
-                    queryKey: ['platform-store-detail', selectedStoreId],
-                  })
-                }
-              >
-                Tải lại
-              </Button>
-              <Button
-                size="small"
-                danger={detail.store.status === 'ACTIVE'}
-                icon={detail.store.status === 'ACTIVE' ? <LockOutlined /> : <UnlockOutlined />}
-                loading={submitting}
-                onClick={() => changeStatus(detail.store)}
-              >
-                {detail.store.status === 'ACTIVE' ? 'Khóa' : 'Mở lại'}
-              </Button>
-              <Popconfirm
-                title={`Xóa vĩnh viễn cửa hàng "${detail.store.name}"?`}
-                description="Hành động này sẽ XÓA SẠCH toàn bộ dữ liệu (đơn hàng, hóa đơn, thực đơn, nhân viên, thiết bị, báo cáo...) và KHÔNG THỂ KHÔI PHỤC."
-                okText="Xóa sạch"
-                cancelText="Hủy"
-                okButtonProps={{ danger: true }}
-                onConfirm={() => deleteStore(detail.store)}
-              >
-                <Button size="small" danger icon={<DeleteOutlined />} loading={submitting}>
-                  Xóa cửa hàng
+            {detail ? (
+              <Space wrap size="small" className="platform-store-detail-actions">
+                <Button
+                  icon={<ReloadOutlined />}
+                  onClick={() =>
+                    queryClient.invalidateQueries({
+                      queryKey: ['platform-store-detail', selectedStoreId],
+                    })
+                  }
+                >
+                  Tải lại
                 </Button>
-              </Popconfirm>
-            </Space>
-          ) : null
-        }
-      >
-        {storeDetail.isLoading ? (
-          <div style={{ textAlign: 'center', padding: '80px 0' }}>
-            <Spin size="large" />
-            <div style={{ marginTop: 16, color: '#64748b', fontWeight: 500 }}>
-              Đang tải dữ liệu cửa hàng...
-            </div>
+                <Button
+                  danger={detail.store.status === 'ACTIVE'}
+                  icon={detail.store.status === 'ACTIVE' ? <LockOutlined /> : <UnlockOutlined />}
+                  loading={submitting}
+                  onClick={() => changeStatus(detail.store)}
+                >
+                  {detail.store.status === 'ACTIVE' ? 'Khóa' : 'Mở lại'}
+                </Button>
+                <Popconfirm
+                  title={`Xóa vĩnh viễn cửa hàng "${detail.store.name}"?`}
+                  description="Hành động này sẽ XÓA SẠCH toàn bộ dữ liệu và KHÔNG THỂ KHÔI PHỤC."
+                  okText="Xóa sạch"
+                  cancelText="Hủy"
+                  okButtonProps={{ danger: true }}
+                  onConfirm={() => deleteStore(detail.store)}
+                >
+                  <Button danger icon={<DeleteOutlined />} loading={submitting}>
+                    Xóa cửa hàng
+                  </Button>
+                </Popconfirm>
+              </Space>
+            ) : null}
           </div>
-        ) : detail ? (
-          <Tabs
-            defaultActiveKey="overview"
-            items={[
-              {
-                key: 'overview',
-                label: (
-                  <span>
-                    <InfoCircleOutlined /> Tổng quan & Cài đặt
-                  </span>
-                ),
-                children: (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-                    <Card size="small" title="Thông tin định danh" className="detail-card">
-                      <Descriptions column={{ xs: 1, sm: 2 }} size="small" bordered>
-                        <Descriptions.Item label="Mã ID (UUID)">
-                          <Typography.Text copyable code>
-                            {detail.store.id}
-                          </Typography.Text>
-                        </Descriptions.Item>
-                        <Descriptions.Item label="Tên cửa hàng">
-                          <strong>{detail.store.name}</strong>
-                        </Descriptions.Item>
-                        <Descriptions.Item label="Trạng thái">
-                          <Badge
-                            status={detail.store.status === 'ACTIVE' ? 'success' : 'error'}
-                            text={detail.store.status === 'ACTIVE' ? 'Đang hoạt động' : 'Đã khóa'}
-                          />
-                        </Descriptions.Item>
-                        <Descriptions.Item label="Múi giờ">
-                          {detail.store.timezone}
-                        </Descriptions.Item>
-                        <Descriptions.Item label="Ngày khởi tạo">
-                          {formatDateTime(detail.store.createdAt)}
-                        </Descriptions.Item>
-                        <Descriptions.Item label="Cập nhật gần nhất">
-                          {formatDateTime(detail.store.updatedAt)}
-                        </Descriptions.Item>
-                      </Descriptions>
-                    </Card>
+          <div className="platform-store-detail-body">
+            {storeDetail.isLoading ? (
+              <div style={{ textAlign: 'center', padding: '80px 0' }}>
+                <Spin size="large" />
+                <div style={{ marginTop: 16, color: '#64748b', fontWeight: 500 }}>
+                  Đang tải dữ liệu cửa hàng...
+                </div>
+              </div>
+            ) : storeDetail.isError ? (
+              <Result
+                status="error"
+                title="Không thể tải chi tiết cửa hàng"
+                subTitle={readableError(storeDetail.error)}
+                extra={
+                  <Space wrap>
+                    <Button onClick={closeStoreDetail}>Quay lại danh sách</Button>
+                    <Button type="primary" onClick={() => void storeDetail.refetch()}>
+                      Thử lại
+                    </Button>
+                  </Space>
+                }
+              />
+            ) : detail ? (
+              <Tabs
+                defaultActiveKey="overview"
+                items={[
+                  {
+                    key: 'overview',
+                    label: (
+                      <span>
+                        <InfoCircleOutlined /> Tổng quan & Cài đặt
+                      </span>
+                    ),
+                    children: (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+                        <Card size="small" title="Thông tin định danh" className="detail-card">
+                          <Descriptions column={{ xs: 1, sm: 2 }} size="small" bordered>
+                            <Descriptions.Item label="Mã ID (UUID)">
+                              <Typography.Text copyable code>
+                                {detail.store.id}
+                              </Typography.Text>
+                            </Descriptions.Item>
+                            <Descriptions.Item label="Tên cửa hàng">
+                              <strong>{detail.store.name}</strong>
+                            </Descriptions.Item>
+                            <Descriptions.Item label="Trạng thái">
+                              <Badge
+                                status={detail.store.status === 'ACTIVE' ? 'success' : 'error'}
+                                text={
+                                  detail.store.status === 'ACTIVE' ? 'Đang hoạt động' : 'Đã khóa'
+                                }
+                              />
+                            </Descriptions.Item>
+                            <Descriptions.Item label="Múi giờ">
+                              {detail.store.timezone}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="Ngày khởi tạo">
+                              {formatDateTime(detail.store.createdAt)}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="Cập nhật gần nhất">
+                              {formatDateTime(detail.store.updatedAt)}
+                            </Descriptions.Item>
+                          </Descriptions>
+                        </Card>
 
-                    <Card size="small" title="Địa chỉ & Liên hệ" className="detail-card">
-                      <Descriptions column={{ xs: 1, sm: 2 }} size="small" bordered>
-                        <Descriptions.Item label="Số điện thoại">
-                          {detail.store.settings?.phone ? (
-                            <Typography.Text strong>{detail.store.settings.phone}</Typography.Text>
-                          ) : (
-                            <span style={{ color: '#94a3b8' }}>Chưa cập nhật</span>
-                          )}
-                        </Descriptions.Item>
-                        <Descriptions.Item label="Tiền tệ">
-                          <Tag color="blue">{detail.store.settings?.currency || 'VND'}</Tag>
-                        </Descriptions.Item>
-                        <Descriptions.Item label="Địa chỉ chi tiết" span={2}>
-                          {detail.store.settings?.address || (
-                            <span style={{ color: '#94a3b8' }}>Chưa cập nhật</span>
-                          )}
-                        </Descriptions.Item>
-                        <Descriptions.Item label="Phường / Xã">
-                          {detail.store.settings?.wardName || (
-                            <span style={{ color: '#94a3b8' }}>Chưa cập nhật</span>
-                          )}
-                        </Descriptions.Item>
-                        <Descriptions.Item label="Tỉnh / Thành phố">
-                          {detail.store.settings?.provinceName || (
-                            <span style={{ color: '#94a3b8' }}>Chưa cập nhật</span>
-                          )}
-                        </Descriptions.Item>
-                      </Descriptions>
-                    </Card>
-
-                    <Card size="small" title="Thanh toán VietQR & Vận hành" className="detail-card">
-                      <Descriptions column={{ xs: 1, sm: 2 }} size="small" bordered>
-                        <Descriptions.Item label="Ngân hàng">
-                          {detail.store.settings?.bankName || (
-                            <span style={{ color: '#94a3b8' }}>Chưa cấu hình</span>
-                          )}
-                        </Descriptions.Item>
-                        <Descriptions.Item label="Số tài khoản">
-                          {detail.store.settings?.bankAccountNumber ? (
-                            <Typography.Text copyable strong>
-                              {detail.store.settings.bankAccountNumber}
-                            </Typography.Text>
-                          ) : (
-                            <span style={{ color: '#94a3b8' }}>Chưa cấu hình</span>
-                          )}
-                        </Descriptions.Item>
-                        <Descriptions.Item label="Chủ tài khoản">
-                          {detail.store.settings?.bankAccountName || (
-                            <span style={{ color: '#94a3b8' }}>Chưa cấu hình</span>
-                          )}
-                        </Descriptions.Item>
-                        <Descriptions.Item label="Giờ chốt ca / ngày">
-                          {detail.store.settings?.businessDayCutoffMinutes !== undefined
-                            ? `${Math.floor(detail.store.settings.businessDayCutoffMinutes / 60)}:00`
-                            : '0:00'}
-                        </Descriptions.Item>
-                      </Descriptions>
-                    </Card>
-
-                    <Card size="small" title="Tính năng nền tảng" className="detail-card">
-                      <div
-                        style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                        }}
-                      >
-                        <div>
-                          <strong>Realtime POS (Đồng bộ bàn & đơn hàng trực tiếp)</strong>
-                          <div style={{ color: '#64748b', fontSize: 13 }}>
-                            Dùng Cloudflare Durable Objects để đồng bộ tức thì giữa thu ngân và nhân
-                            viên quầy.
-                          </div>
-                        </div>
-                        <Button
-                          type={detail.store.posRealtimeEnabled ? 'primary' : 'default'}
-                          loading={submitting}
-                          onClick={() => toggleRealtime(detail.store)}
-                        >
-                          {detail.store.posRealtimeEnabled ? 'Đang bật' : 'Đang tắt'}
-                        </Button>
-                      </div>
-                    </Card>
-                  </div>
-                ),
-              },
-              {
-                key: 'members',
-                label: (
-                  <span>
-                    <TeamOutlined /> Tài khoản & Nhân sự ({detail.members.length})
-                  </span>
-                ),
-                children: (
-                  <div>
-                    <div style={{ marginBottom: 14, color: '#64748b', fontSize: 13 }}>
-                      Danh sách tài khoản Chủ quán và Nhân sự. Bấm vào{' '}
-                      <strong>Lịch sử thiết bị</strong> để xem chi tiết tất cả các lần đăng nhập,
-                      thiết bị sử dụng và trạng thái phiên làm việc.
-                    </div>
-                    <Table
-                      rowKey="id"
-                      size="middle"
-                      dataSource={detail.members}
-                      pagination={false}
-                      scroll={{ x: 720 }}
-                      columns={[
-                        {
-                          title: 'Tài khoản',
-                          key: 'user',
-                          render: (_, m) => (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                              <Avatar
-                                size={38}
-                                style={{
-                                  background: m.roleCode === 'OWNER' ? '#f59e0b' : '#3b82f6',
-                                  fontWeight: 700,
-                                }}
-                              >
-                                {getInitials(m.displayName)}
-                              </Avatar>
-                              <div>
-                                <Typography.Text strong style={{ fontSize: 14 }}>
-                                  {m.displayName}
+                        <Card size="small" title="Địa chỉ & Liên hệ" className="detail-card">
+                          <Descriptions column={{ xs: 1, sm: 2 }} size="small" bordered>
+                            <Descriptions.Item label="Số điện thoại">
+                              {detail.store.settings?.phone ? (
+                                <Typography.Text strong>
+                                  {detail.store.settings.phone}
                                 </Typography.Text>
-                                <div style={{ fontSize: 12, color: '#64748b' }}>
-                                  @{m.username}{' '}
-                                  {m.roleCode === 'OWNER' ? (
-                                    <Tag color="gold" style={{ borderRadius: 4 }}>
-                                      Chủ cửa hàng
-                                    </Tag>
-                                  ) : (
-                                    <Tag color="blue" style={{ borderRadius: 4 }}>
-                                      {m.roleName}
-                                    </Tag>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          ),
-                        },
-                        {
-                          title: 'Email / SĐT',
-                          key: 'contact',
-                          render: (_, m) => (
-                            <div style={{ fontSize: 13 }}>
-                              {m.email ? (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                  <MailOutlined style={{ color: '#94a3b8' }} />
-                                  <span>{m.email}</span>
-                                </div>
                               ) : (
-                                <span style={{ color: '#94a3b8' }}>Chưa có email</span>
+                                <span style={{ color: '#94a3b8' }}>Chưa cập nhật</span>
                               )}
-                              {m.phone ? (
-                                <div
-                                  style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: 4,
-                                    marginTop: 2,
-                                  }}
-                                >
-                                  <PhoneOutlined style={{ color: '#94a3b8' }} />
-                                  <span style={{ color: '#64748b' }}>{m.phone}</span>
-                                </div>
-                              ) : null}
-                            </div>
-                          ),
-                        },
-                        {
-                          title: 'Trạng thái',
-                          key: 'status',
-                          render: (_, m) => (
-                            <Badge
-                              status={m.userStatus === 'ACTIVE' ? 'success' : 'default'}
-                              text={m.userStatus === 'ACTIVE' ? 'Hoạt động' : 'Đã khóa'}
-                            />
-                          ),
-                        },
-                        {
-                          title: 'Thiết bị & Phiên',
-                          key: 'deviceSummary',
-                          render: (_, m) => {
-                            const userSessions = detail.sessions.filter(
-                              (s) => s.userId === m.userId,
-                            );
-                            const activeSessions = userSessions.filter(
-                              (s) => s.status === 'ACTIVE' && Date.now() < s.expiresAt,
-                            );
-                            return (
-                              <div>
-                                {activeSessions.length > 0 ? (
-                                  <Tag
-                                    color="success"
-                                    style={{
-                                      borderRadius: 6,
-                                      fontWeight: 600,
-                                      display: 'inline-flex',
-                                      alignItems: 'center',
-                                      gap: 4,
-                                    }}
-                                  >
-                                    <Badge status="processing" color="#10b981" />{' '}
-                                    {activeSessions.length} máy đang online
-                                  </Tag>
-                                ) : (
-                                  <Tag
-                                    color="default"
-                                    style={{ borderRadius: 6, color: '#64748b' }}
-                                  >
-                                    {userSessions.length > 0
-                                      ? `${userSessions.length} lịch sử phiên`
-                                      : 'Chưa có phiên'}
-                                  </Tag>
-                                )}
-                                {userSessions.length > 0 && userSessions[0] ? (
-                                  <div style={{ fontSize: 11.5, color: '#94a3b8', marginTop: 3 }}>
-                                    Gần nhất:{' '}
-                                    {formatRelativeTime(
-                                      userSessions[0].lastSeenAt || userSessions[0].createdAt,
-                                    )}
-                                  </div>
-                                ) : null}
-                              </div>
-                            );
-                          },
-                        },
-                        {
-                          title: 'Thao tác',
-                          key: 'actions',
-                          align: 'right',
-                          render: (_, m) => (
-                            <Space size="small">
-                              <Button
-                                size="small"
-                                type="primary"
-                                ghost
-                                icon={<HistoryOutlined />}
-                                onClick={() => {
-                                  setSelectedMemberForHistory(m);
-                                  setMemberHistoryFilter('ALL');
-                                }}
-                              >
-                                Lịch sử thiết bị
-                              </Button>
-                              <Button
-                                size="small"
-                                icon={<EditOutlined />}
-                                onClick={() => handleEditMember(m)}
-                              >
-                                Sửa
-                              </Button>
-                              <Button
-                                size="small"
-                                icon={<KeyOutlined />}
-                                onClick={() => handleResetPassword(m)}
-                              >
-                                Đổi MK
-                              </Button>
-                            </Space>
-                          ),
-                        },
-                      ]}
-                    />
-                  </div>
-                ),
-              },
-              {
-                key: 'devices',
-                label: (
-                  <span>
-                    <DesktopOutlined /> Thiết bị POS ({detail.devices.length})
-                  </span>
-                ),
-                children:
-                  detail.devices.length === 0 ? (
-                    <Empty description="Chưa có thiết bị POS nào được kích hoạt." />
-                  ) : (
-                    <Table
-                      rowKey="id"
-                      size="small"
-                      dataSource={detail.devices}
-                      pagination={false}
-                      scroll={{ x: 650 }}
-                      columns={[
-                        {
-                          title: 'Tên máy POS',
-                          key: 'name',
-                          render: (_, d) => (
+                            </Descriptions.Item>
+                            <Descriptions.Item label="Tiền tệ">
+                              <Tag color="blue">{detail.store.settings?.currency || 'VND'}</Tag>
+                            </Descriptions.Item>
+                            <Descriptions.Item label="Địa chỉ chi tiết" span={2}>
+                              {detail.store.settings?.address || (
+                                <span style={{ color: '#94a3b8' }}>Chưa cập nhật</span>
+                              )}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="Phường / Xã">
+                              {detail.store.settings?.wardName || (
+                                <span style={{ color: '#94a3b8' }}>Chưa cập nhật</span>
+                              )}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="Tỉnh / Thành phố">
+                              {detail.store.settings?.provinceName || (
+                                <span style={{ color: '#94a3b8' }}>Chưa cập nhật</span>
+                              )}
+                            </Descriptions.Item>
+                          </Descriptions>
+                        </Card>
+
+                        <Card
+                          size="small"
+                          title="Thanh toán VietQR & Vận hành"
+                          className="detail-card"
+                        >
+                          <Descriptions column={{ xs: 1, sm: 2 }} size="small" bordered>
+                            <Descriptions.Item label="Ngân hàng">
+                              {detail.store.settings?.bankName || (
+                                <span style={{ color: '#94a3b8' }}>Chưa cấu hình</span>
+                              )}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="Số tài khoản">
+                              {detail.store.settings?.bankAccountNumber ? (
+                                <Typography.Text copyable strong>
+                                  {detail.store.settings.bankAccountNumber}
+                                </Typography.Text>
+                              ) : (
+                                <span style={{ color: '#94a3b8' }}>Chưa cấu hình</span>
+                              )}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="Chủ tài khoản">
+                              {detail.store.settings?.bankAccountName || (
+                                <span style={{ color: '#94a3b8' }}>Chưa cấu hình</span>
+                              )}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="Giờ chốt ca / ngày">
+                              {detail.store.settings?.businessDayCutoffMinutes !== undefined
+                                ? `${Math.floor(detail.store.settings.businessDayCutoffMinutes / 60)}:00`
+                                : '0:00'}
+                            </Descriptions.Item>
+                          </Descriptions>
+                        </Card>
+
+                        <Card size="small" title="Tính năng nền tảng" className="detail-card">
+                          <div
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                            }}
+                          >
                             <div>
-                              <DesktopOutlined style={{ marginRight: 6, color: '#2563eb' }} />
-                              <Typography.Text strong>{d.name}</Typography.Text>
-                              <div style={{ fontSize: 11, color: '#94a3b8' }}>ID: {d.id}</div>
-                            </div>
-                          ),
-                        },
-                        {
-                          title: 'Trạng thái',
-                          dataIndex: 'status',
-                          key: 'status',
-                          render: (s: 'ACTIVE' | 'REVOKED') => (
-                            <Tag color={s === 'ACTIVE' ? 'success' : 'error'}>
-                              {s === 'ACTIVE' ? 'Hoạt động' : 'Đã thu hồi'}
-                            </Tag>
-                          ),
-                        },
-                        {
-                          title: 'Người kích hoạt',
-                          dataIndex: 'activatedByName',
-                          key: 'activatedByName',
-                        },
-                        {
-                          title: 'Kích hoạt lúc',
-                          dataIndex: 'activatedAt',
-                          key: 'activatedAt',
-                          render: (val: number) => formatDateTime(val),
-                        },
-                        {
-                          title: 'Hoạt động gần nhất',
-                          dataIndex: 'lastSeenAt',
-                          key: 'lastSeenAt',
-                          render: (val: number | null) => (
-                            <div>
-                              <div>{formatDateTime(val)}</div>
-                              <div style={{ fontSize: 11, color: '#10b981' }}>
-                                {formatRelativeTime(val)}
+                              <strong>Realtime POS (Đồng bộ bàn & đơn hàng trực tiếp)</strong>
+                              <div style={{ color: '#64748b', fontSize: 13 }}>
+                                Dùng Cloudflare Durable Objects để đồng bộ tức thì giữa thu ngân và
+                                nhân viên quầy.
                               </div>
                             </div>
-                          ),
-                        },
-                        {
-                          title: 'Phiên trên máy',
-                          key: 'sessionsCount',
-                          render: (_, d) => {
-                            const devSessions = detail.sessions.filter((s) => s.deviceId === d.id);
-                            const activeDevSessions = devSessions.filter(
-                              (s) => s.status === 'ACTIVE' && Date.now() < s.expiresAt,
-                            );
-                            return (
-                              <div>
-                                {activeDevSessions.length > 0 ? (
-                                  <Tag color="success">🟢 {activeDevSessions.length} đang dùng</Tag>
-                                ) : (
-                                  <Tag color="default">{devSessions.length} lịch sử</Tag>
-                                )}
-                              </div>
-                            );
-                          },
-                        },
-                        {
-                          title: 'Thao tác',
-                          key: 'actions',
-                          align: 'right',
-                          render: (_, d) =>
-                            d.status === 'ACTIVE' ? (
-                              <Popconfirm
-                                title="Thu hồi máy POS này?"
-                                description="Thiết bị sẽ bị ngắt kết nối và tất cả phiên đăng nhập trên máy sẽ bị hủy."
-                                okText="Thu hồi"
-                                cancelText="Hủy"
-                                okButtonProps={{ danger: true, loading: submitting }}
-                                onConfirm={() => handleRevokeDevice(d.id)}
-                              >
-                                <Button size="small" danger icon={<StopOutlined />}>
-                                  Thu hồi máy
-                                </Button>
-                              </Popconfirm>
-                            ) : (
-                              <Tag color="default">Đã thu hồi</Tag>
-                            ),
-                        },
-                      ]}
-                    />
-                  ),
-              },
-              {
-                key: 'sessions',
-                label: (
-                  <span>
-                    <ClockCircleOutlined /> Lịch sử đăng nhập ({detail.sessions.length})
-                  </span>
-                ),
-                children: (() => {
-                  const filtered = detail.sessions.filter((s) => {
-                    const matchesStatus =
-                      sessionStatusFilter === 'ALL' ||
-                      (sessionStatusFilter === 'ACTIVE' &&
-                        s.status === 'ACTIVE' &&
-                        Date.now() < s.expiresAt) ||
-                      (sessionStatusFilter === 'REVOKED' && s.status === 'REVOKED') ||
-                      (sessionStatusFilter === 'EXPIRED' &&
-                        (s.status === 'EXPIRED' ||
-                          (s.status === 'ACTIVE' && Date.now() >= s.expiresAt)));
-
-                    const term = sessionSearchTerm.trim().toLowerCase();
-                    const matchesSearch =
-                      !term ||
-                      s.userName.toLowerCase().includes(term) ||
-                      s.userUsername.toLowerCase().includes(term) ||
-                      (s.deviceName && s.deviceName.toLowerCase().includes(term)) ||
-                      (s.deviceId && s.deviceId.toLowerCase().includes(term));
-
-                    return matchesStatus && matchesSearch;
-                  });
-
-                  return (
-                    <div>
-                      <div
-                        style={{
-                          display: 'flex',
-                          flexWrap: 'wrap',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          gap: 12,
-                          marginBottom: 14,
-                        }}
-                      >
-                        <Segmented
-                          value={sessionStatusFilter}
-                          onChange={(val) =>
-                            setSessionStatusFilter(val as typeof sessionStatusFilter)
-                          }
-                          options={[
-                            { label: `Tất cả (${detail.sessions.length})`, value: 'ALL' },
-                            {
-                              label: `Đang hoạt động (${detail.sessions.filter((s) => s.status === 'ACTIVE' && Date.now() < s.expiresAt).length})`,
-                              value: 'ACTIVE',
-                            },
-                            {
-                              label: `Đã thu hồi (${detail.sessions.filter((s) => s.status === 'REVOKED').length})`,
-                              value: 'REVOKED',
-                            },
-                            {
-                              label: `Hết hạn (${detail.sessions.filter((s) => s.status === 'EXPIRED' || (s.status === 'ACTIVE' && Date.now() >= s.expiresAt)).length})`,
-                              value: 'EXPIRED',
-                            },
-                          ]}
-                        />
-                        <Input
-                          placeholder="Tìm theo nhân sự, máy POS..."
-                          prefix={<SearchOutlined style={{ color: '#94a3b8' }} />}
-                          value={sessionSearchTerm}
-                          onChange={(e) => setSessionSearchTerm(e.target.value)}
-                          allowClear
-                          style={{ width: isMobile ? '100%' : 260 }}
-                        />
+                            <Button
+                              type={detail.store.posRealtimeEnabled ? 'primary' : 'default'}
+                              loading={submitting}
+                              onClick={() => toggleRealtime(detail.store)}
+                            >
+                              {detail.store.posRealtimeEnabled ? 'Đang bật' : 'Đang tắt'}
+                            </Button>
+                          </div>
+                        </Card>
                       </div>
-
-                      {filtered.length === 0 ? (
-                        <Empty description="Không có phiên đăng nhập nào phù hợp." />
-                      ) : (
+                    ),
+                  },
+                  {
+                    key: 'members',
+                    label: (
+                      <span>
+                        <TeamOutlined /> Tài khoản & Nhân sự ({detail.members.length})
+                      </span>
+                    ),
+                    children: (
+                      <div>
+                        <div style={{ marginBottom: 14, color: '#64748b', fontSize: 13 }}>
+                          Danh sách tài khoản Chủ quán và Nhân sự. Bấm vào{' '}
+                          <strong>Lịch sử thiết bị</strong> để xem chi tiết tất cả các lần đăng
+                          nhập, thiết bị sử dụng và trạng thái phiên làm việc.
+                        </div>
                         <Table
                           rowKey="id"
-                          size="small"
-                          dataSource={filtered}
-                          pagination={{
-                            pageSize: 10,
-                            size: 'small',
-                            showTotal: (t) => `Tổng ${t} phiên`,
-                          }}
-                          scroll={{ x: 750 }}
+                          size="middle"
+                          dataSource={detail.members}
+                          pagination={false}
+                          scroll={{ x: 720 }}
                           columns={[
                             {
-                              title: 'Người dùng',
+                              title: 'Tài khoản',
                               key: 'user',
-                              render: (_, s) => (
-                                <div>
-                                  <Typography.Text strong>{s.userName}</Typography.Text>
-                                  <div style={{ fontSize: 12, color: '#64748b' }}>
-                                    @{s.userUsername}{' '}
-                                    <Tag color={s.sessionKind === 'OWNER' ? 'gold' : 'blue'}>
-                                      {s.userRoleName || s.sessionKind}
-                                    </Tag>
-                                  </div>
-                                </div>
-                              ),
-                            },
-                            {
-                              title: 'Thiết bị đăng nhập',
-                              key: 'device',
-                              render: (_, s) => (
-                                <div>
-                                  {s.deviceId ? (
-                                    <div>
-                                      <DesktopOutlined
-                                        style={{ marginRight: 6, color: '#2563eb' }}
-                                      />
-                                      <Typography.Text strong>
-                                        {s.deviceName || 'Máy POS'}
-                                      </Typography.Text>
-                                      <div style={{ fontSize: 11, color: '#94a3b8' }}>
-                                        ID: {s.deviceId}
-                                      </div>
-                                      {s.deviceStatus === 'REVOKED' && (
-                                        <Tag color="error" style={{ fontSize: 10, marginTop: 2 }}>
-                                          Máy đã thu hồi
+                              render: (_, m) => (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                  <Avatar
+                                    size={38}
+                                    style={{
+                                      background: m.roleCode === 'OWNER' ? '#f59e0b' : '#3b82f6',
+                                      fontWeight: 700,
+                                    }}
+                                  >
+                                    {getInitials(m.displayName)}
+                                  </Avatar>
+                                  <div>
+                                    <Typography.Text strong style={{ fontSize: 14 }}>
+                                      {m.displayName}
+                                    </Typography.Text>
+                                    <div style={{ fontSize: 12, color: '#64748b' }}>
+                                      @{m.username}{' '}
+                                      {m.roleCode === 'OWNER' ? (
+                                        <Tag color="gold" style={{ borderRadius: 4 }}>
+                                          Chủ cửa hàng
+                                        </Tag>
+                                      ) : (
+                                        <Tag color="blue" style={{ borderRadius: 4 }}>
+                                          {m.roleName}
                                         </Tag>
                                       )}
                                     </div>
+                                  </div>
+                                </div>
+                              ),
+                            },
+                            {
+                              title: 'Email / SĐT',
+                              key: 'contact',
+                              render: (_, m) => (
+                                <div style={{ fontSize: 13 }}>
+                                  {m.email ? (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                      <MailOutlined style={{ color: '#94a3b8' }} />
+                                      <span>{m.email}</span>
+                                    </div>
                                   ) : (
-                                    <div>
-                                      <GlobalOutlined
-                                        style={{ marginRight: 6, color: '#0ea5e9' }}
-                                      />
-                                      <Typography.Text>
-                                        {s.deviceName || 'Trình duyệt trực tiếp'}
-                                      </Typography.Text>
-                                      <div style={{ fontSize: 11, color: '#94a3b8' }}>
-                                        Web Session
-                                      </div>
-                                    </div>
+                                    <span style={{ color: '#94a3b8' }}>Chưa có email</span>
                                   )}
-                                </div>
-                              ),
-                            },
-                            {
-                              title: 'Thời gian đăng nhập',
-                              dataIndex: 'createdAt',
-                              key: 'createdAt',
-                              render: (val: number) => (
-                                <div>
-                                  <div>{formatDateTimeFull(val)}</div>
-                                  <div style={{ fontSize: 11, color: '#64748b' }}>
-                                    {formatRelativeTime(val)}
-                                  </div>
-                                </div>
-                              ),
-                            },
-                            {
-                              title: 'Hoạt động gần nhất',
-                              dataIndex: 'lastSeenAt',
-                              key: 'lastSeenAt',
-                              render: (val: number) => (
-                                <div>
-                                  <div>{formatDateTimeFull(val)}</div>
-                                  <div style={{ fontSize: 11, color: '#10b981' }}>
-                                    {formatRelativeTime(val)}
-                                  </div>
-                                </div>
-                              ),
-                            },
-                            {
-                              title: 'Trạng thái phiên',
-                              key: 'sessionStatus',
-                              render: (_, s) => {
-                                const isLive = s.status === 'ACTIVE' && Date.now() < s.expiresAt;
-                                const isRevoked = s.status === 'REVOKED';
-                                if (isLive) {
-                                  return (
-                                    <div>
-                                      <Tag color="success" style={{ fontWeight: 600 }}>
-                                        🟢 Đang hoạt động
-                                      </Tag>
-                                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
-                                        Hết hạn: {formatDateTime(s.expiresAt)}
-                                      </div>
+                                  {m.phone ? (
+                                    <div
+                                      style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: 4,
+                                        marginTop: 2,
+                                      }}
+                                    >
+                                      <PhoneOutlined style={{ color: '#94a3b8' }} />
+                                      <span style={{ color: '#64748b' }}>{m.phone}</span>
                                     </div>
-                                  );
-                                }
-                                if (isRevoked) {
-                                  return (
-                                    <div>
-                                      <Tag color="error" style={{ fontWeight: 600 }}>
-                                        🔴 Đã thu hồi
-                                      </Tag>
-                                      {s.revokedAt ? (
-                                        <div
-                                          style={{ fontSize: 11, color: '#ef4444', marginTop: 2 }}
-                                        >
-                                          {formatDateTime(s.revokedAt)}
-                                        </div>
-                                      ) : null}
-                                    </div>
-                                  );
-                                }
+                                  ) : null}
+                                </div>
+                              ),
+                            },
+                            {
+                              title: 'Trạng thái',
+                              key: 'status',
+                              render: (_, m) => (
+                                <Badge
+                                  status={m.userStatus === 'ACTIVE' ? 'success' : 'default'}
+                                  text={m.userStatus === 'ACTIVE' ? 'Hoạt động' : 'Đã khóa'}
+                                />
+                              ),
+                            },
+                            {
+                              title: 'Thiết bị & Phiên',
+                              key: 'deviceSummary',
+                              render: (_, m) => {
+                                const userSessions = detail.sessions.filter(
+                                  (s) => s.userId === m.userId,
+                                );
+                                const activeSessions = userSessions.filter(
+                                  (s) => s.status === 'ACTIVE' && Date.now() < s.expiresAt,
+                                );
                                 return (
                                   <div>
-                                    <Tag color="default">⚪ Hết hạn</Tag>
-                                    <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
-                                      {formatDateTime(s.expiresAt)}
-                                    </div>
+                                    {activeSessions.length > 0 ? (
+                                      <Tag
+                                        color="success"
+                                        style={{
+                                          borderRadius: 6,
+                                          fontWeight: 600,
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: 4,
+                                        }}
+                                      >
+                                        <Badge status="processing" color="#10b981" />{' '}
+                                        {activeSessions.length} máy đang online
+                                      </Tag>
+                                    ) : (
+                                      <Tag
+                                        color="default"
+                                        style={{ borderRadius: 6, color: '#64748b' }}
+                                      >
+                                        {userSessions.length > 0
+                                          ? `${userSessions.length} lịch sử phiên`
+                                          : 'Chưa có phiên'}
+                                      </Tag>
+                                    )}
+                                    {userSessions.length > 0 && userSessions[0] ? (
+                                      <div
+                                        style={{ fontSize: 11.5, color: '#94a3b8', marginTop: 3 }}
+                                      >
+                                        Gần nhất:{' '}
+                                        {formatRelativeTime(
+                                          userSessions[0].lastSeenAt || userSessions[0].createdAt,
+                                        )}
+                                      </div>
+                                    ) : null}
                                   </div>
                                 );
                               },
@@ -2265,114 +1931,538 @@ export function SuperAdminPage() {
                               title: 'Thao tác',
                               key: 'actions',
                               align: 'right',
-                              render: (_, s) => {
-                                const isLive = s.status === 'ACTIVE' && Date.now() < s.expiresAt;
-                                return isLive ? (
-                                  <Popconfirm
-                                    title="Đăng xuất thiết bị này?"
-                                    description="Phiên làm việc trên thiết bị sẽ bị hủy ngay lập tức và buộc người dùng đăng nhập lại."
-                                    okText="Đăng xuất"
-                                    cancelText="Hủy"
-                                    okButtonProps={{ danger: true, loading: submitting }}
-                                    onConfirm={() => handleRevokeSession(s.id)}
+                              render: (_, m) => (
+                                <Space size="small">
+                                  <Button
+                                    size="small"
+                                    type="primary"
+                                    ghost
+                                    icon={<HistoryOutlined />}
+                                    onClick={() => {
+                                      setSelectedMemberForHistory(m);
+                                      setMemberHistoryFilter('ALL');
+                                    }}
                                   >
-                                    <Button size="small" danger icon={<StopOutlined />}>
-                                      Thu hồi
-                                    </Button>
-                                  </Popconfirm>
-                                ) : (
-                                  <span style={{ color: '#cbd5e1' }}>—</span>
-                                );
-                              },
+                                    Lịch sử thiết bị
+                                  </Button>
+                                  <Button
+                                    size="small"
+                                    icon={<EditOutlined />}
+                                    onClick={() => handleEditMember(m)}
+                                  >
+                                    Sửa
+                                  </Button>
+                                  <Button
+                                    size="small"
+                                    icon={<KeyOutlined />}
+                                    onClick={() => handleResetPassword(m)}
+                                  >
+                                    Đổi MK
+                                  </Button>
+                                </Space>
+                              ),
                             },
                           ]}
                         />
-                      )}
-                    </div>
-                  );
-                })(),
-              },
-              {
-                key: 'stats',
-                label: (
-                  <span>
-                    <AppstoreOutlined /> Dữ liệu & Thống kê
-                  </span>
-                ),
-                children: (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                    <Row gutter={[16, 16]}>
-                      <Col xs={24} sm={12}>
-                        <Card size="small" className="detail-stat-card">
-                          <Statistic
-                            title="Tổng doanh thu tích lũy"
-                            value={formatVnd(detail.stats.totalRevenue)}
-                            prefix={<CreditCardOutlined style={{ color: '#10b981' }} />}
-                            valueStyle={{ color: '#10b981', fontWeight: 'bold' }}
+                      </div>
+                    ),
+                  },
+                  {
+                    key: 'devices',
+                    label: (
+                      <span>
+                        <DesktopOutlined /> Thiết bị POS ({detail.devices.length})
+                      </span>
+                    ),
+                    children:
+                      detail.devices.length === 0 ? (
+                        <Empty description="Chưa có thiết bị POS nào được kích hoạt." />
+                      ) : (
+                        <Table
+                          rowKey="id"
+                          size="small"
+                          dataSource={detail.devices}
+                          pagination={false}
+                          scroll={{ x: 650 }}
+                          columns={[
+                            {
+                              title: 'Tên thiết bị',
+                              key: 'name',
+                              render: (_, d) => (
+                                <div className="platform-device-name">
+                                  <div className="platform-device-name__icon">
+                                    <DesktopOutlined />
+                                  </div>
+                                  <div>
+                                    <Typography.Text strong>
+                                      {d.name || 'Thiết bị POS'}
+                                    </Typography.Text>
+                                    <div style={{ fontSize: 11, color: '#94a3b8' }}>ID: {d.id}</div>
+                                  </div>
+                                </div>
+                              ),
+                            },
+                            {
+                              title: 'Trạng thái',
+                              dataIndex: 'status',
+                              key: 'status',
+                              render: (s: 'ACTIVE' | 'REVOKED') => (
+                                <Tag color={s === 'ACTIVE' ? 'success' : 'error'}>
+                                  {s === 'ACTIVE' ? 'Hoạt động' : 'Đã thu hồi'}
+                                </Tag>
+                              ),
+                            },
+                            {
+                              title: 'Người kích hoạt',
+                              dataIndex: 'activatedByName',
+                              key: 'activatedByName',
+                            },
+                            {
+                              title: 'Kích hoạt lúc',
+                              dataIndex: 'activatedAt',
+                              key: 'activatedAt',
+                              render: (val: number) => formatDateTime(val),
+                            },
+                            {
+                              title: 'Hoạt động gần nhất',
+                              dataIndex: 'lastSeenAt',
+                              key: 'lastSeenAt',
+                              render: (val: number | null) => (
+                                <div>
+                                  <div>{formatDateTime(val)}</div>
+                                  <div style={{ fontSize: 11, color: '#10b981' }}>
+                                    {formatRelativeTime(val)}
+                                  </div>
+                                </div>
+                              ),
+                            },
+                            {
+                              title: 'Phiên trên máy',
+                              key: 'sessionsCount',
+                              render: (_, d) => {
+                                const devSessions = detail.sessions.filter(
+                                  (s) => s.deviceId === d.id,
+                                );
+                                const activeDevSessions = devSessions.filter(
+                                  (s) => s.status === 'ACTIVE' && Date.now() < s.expiresAt,
+                                );
+                                return (
+                                  <div>
+                                    {activeDevSessions.length > 0 ? (
+                                      <Tag color="success">
+                                        🟢 {activeDevSessions.length} đang dùng
+                                      </Tag>
+                                    ) : (
+                                      <Tag color="default">{devSessions.length} lịch sử</Tag>
+                                    )}
+                                  </div>
+                                );
+                              },
+                            },
+                            {
+                              title: 'Thao tác',
+                              key: 'actions',
+                              align: 'right',
+                              render: (_, d) =>
+                                d.status === 'ACTIVE' ? (
+                                  <Popconfirm
+                                    title="Thu hồi máy POS này?"
+                                    description="Thiết bị sẽ bị ngắt kết nối và tất cả phiên đăng nhập trên máy sẽ bị hủy."
+                                    okText="Thu hồi"
+                                    cancelText="Hủy"
+                                    okButtonProps={{ danger: true, loading: submitting }}
+                                    onConfirm={() => handleRevokeDevice(d.id)}
+                                  >
+                                    <Button size="small" danger icon={<StopOutlined />}>
+                                      Thu hồi máy
+                                    </Button>
+                                  </Popconfirm>
+                                ) : (
+                                  <Tag color="default">Đã thu hồi</Tag>
+                                ),
+                            },
+                          ]}
+                        />
+                      ),
+                  },
+                  {
+                    key: 'sessions',
+                    label: (
+                      <span>
+                        <ClockCircleOutlined /> Lịch sử đăng nhập ({detail.sessions.length})
+                      </span>
+                    ),
+                    children: (() => {
+                      const filtered = detail.sessions.filter((s) => {
+                        const matchesStatus =
+                          sessionStatusFilter === 'ALL' ||
+                          (sessionStatusFilter === 'ACTIVE' &&
+                            s.status === 'ACTIVE' &&
+                            Date.now() < s.expiresAt) ||
+                          (sessionStatusFilter === 'REVOKED' && s.status === 'REVOKED') ||
+                          (sessionStatusFilter === 'EXPIRED' &&
+                            (s.status === 'EXPIRED' ||
+                              (s.status === 'ACTIVE' && Date.now() >= s.expiresAt)));
+
+                        const term = sessionSearchTerm.trim().toLowerCase();
+                        const matchesSearch =
+                          !term ||
+                          s.userName.toLowerCase().includes(term) ||
+                          s.userUsername.toLowerCase().includes(term) ||
+                          (s.deviceName && s.deviceName.toLowerCase().includes(term)) ||
+                          (s.deviceId && s.deviceId.toLowerCase().includes(term));
+
+                        return matchesStatus && matchesSearch;
+                      });
+
+                      return (
+                        <div>
+                          <div
+                            style={{
+                              display: 'flex',
+                              flexWrap: 'wrap',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              gap: 12,
+                              marginBottom: 14,
+                            }}
+                          >
+                            <Segmented
+                              value={sessionStatusFilter}
+                              onChange={(val) =>
+                                setSessionStatusFilter(val as typeof sessionStatusFilter)
+                              }
+                              options={[
+                                { label: `Tất cả (${detail.sessions.length})`, value: 'ALL' },
+                                {
+                                  label: `Đang hoạt động (${detail.sessions.filter((s) => s.status === 'ACTIVE' && Date.now() < s.expiresAt).length})`,
+                                  value: 'ACTIVE',
+                                },
+                                {
+                                  label: `Đã thu hồi (${detail.sessions.filter((s) => s.status === 'REVOKED').length})`,
+                                  value: 'REVOKED',
+                                },
+                                {
+                                  label: `Hết hạn (${detail.sessions.filter((s) => s.status === 'EXPIRED' || (s.status === 'ACTIVE' && Date.now() >= s.expiresAt)).length})`,
+                                  value: 'EXPIRED',
+                                },
+                              ]}
+                            />
+                            <Input
+                              placeholder="Tìm theo nhân sự, máy POS..."
+                              prefix={<SearchOutlined style={{ color: '#94a3b8' }} />}
+                              value={sessionSearchTerm}
+                              onChange={(e) => setSessionSearchTerm(e.target.value)}
+                              allowClear
+                              style={{ width: isMobile ? '100%' : 260 }}
+                            />
+                          </div>
+
+                          {filtered.length === 0 ? (
+                            <Empty description="Không có phiên đăng nhập nào phù hợp." />
+                          ) : (
+                            <Table
+                              rowKey="id"
+                              size="small"
+                              dataSource={filtered}
+                              pagination={{
+                                pageSize: 10,
+                                size: 'small',
+                                showTotal: (t) => `Tổng ${t} phiên`,
+                              }}
+                              scroll={{ x: 750 }}
+                              columns={[
+                                {
+                                  title: 'Người dùng',
+                                  key: 'user',
+                                  render: (_, s) => (
+                                    <div>
+                                      <Typography.Text strong>{s.userName}</Typography.Text>
+                                      <div style={{ fontSize: 12, color: '#64748b' }}>
+                                        @{s.userUsername}{' '}
+                                        <Tag color={s.sessionKind === 'OWNER' ? 'gold' : 'blue'}>
+                                          {s.userRoleName || s.sessionKind}
+                                        </Tag>
+                                      </div>
+                                    </div>
+                                  ),
+                                },
+                                {
+                                  title: 'Thiết bị đăng nhập',
+                                  key: 'device',
+                                  render: (_, s) => (
+                                    <div>
+                                      {s.deviceId ? (
+                                        <div>
+                                          <DesktopOutlined
+                                            style={{ marginRight: 6, color: '#2563eb' }}
+                                          />
+                                          <Typography.Text strong>
+                                            {s.deviceName || 'Máy POS'}
+                                          </Typography.Text>
+                                          <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                                            ID: {s.deviceId}
+                                          </div>
+                                          {s.deviceStatus === 'REVOKED' && (
+                                            <Tag
+                                              color="error"
+                                              style={{ fontSize: 10, marginTop: 2 }}
+                                            >
+                                              Máy đã thu hồi
+                                            </Tag>
+                                          )}
+                                        </div>
+                                      ) : (
+                                        <div>
+                                          <GlobalOutlined
+                                            style={{ marginRight: 6, color: '#0ea5e9' }}
+                                          />
+                                          <Typography.Text>
+                                            {s.deviceName || 'Trình duyệt trực tiếp'}
+                                          </Typography.Text>
+                                          <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                                            Web Session
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  ),
+                                },
+                                {
+                                  title: 'Thời gian đăng nhập',
+                                  dataIndex: 'createdAt',
+                                  key: 'createdAt',
+                                  render: (val: number) => (
+                                    <div>
+                                      <div>{formatDateTimeFull(val)}</div>
+                                      <div style={{ fontSize: 11, color: '#64748b' }}>
+                                        {formatRelativeTime(val)}
+                                      </div>
+                                    </div>
+                                  ),
+                                },
+                                {
+                                  title: 'Hoạt động gần nhất',
+                                  dataIndex: 'lastSeenAt',
+                                  key: 'lastSeenAt',
+                                  render: (val: number) => (
+                                    <div>
+                                      <div>{formatDateTimeFull(val)}</div>
+                                      <div style={{ fontSize: 11, color: '#10b981' }}>
+                                        {formatRelativeTime(val)}
+                                      </div>
+                                    </div>
+                                  ),
+                                },
+                                {
+                                  title: 'Trạng thái phiên',
+                                  key: 'sessionStatus',
+                                  render: (_, s) => {
+                                    const isLive =
+                                      s.status === 'ACTIVE' && Date.now() < s.expiresAt;
+                                    const isRevoked = s.status === 'REVOKED';
+                                    if (isLive) {
+                                      return (
+                                        <div>
+                                          <Tag color="success" style={{ fontWeight: 600 }}>
+                                            🟢 Đang hoạt động
+                                          </Tag>
+                                          <div
+                                            style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}
+                                          >
+                                            Hết hạn: {formatDateTime(s.expiresAt)}
+                                          </div>
+                                        </div>
+                                      );
+                                    }
+                                    if (isRevoked) {
+                                      return (
+                                        <div>
+                                          <Tag color="error" style={{ fontWeight: 600 }}>
+                                            🔴 Đã thu hồi
+                                          </Tag>
+                                          {s.revokedAt ? (
+                                            <div
+                                              style={{
+                                                fontSize: 11,
+                                                color: '#ef4444',
+                                                marginTop: 2,
+                                              }}
+                                            >
+                                              {formatDateTime(s.revokedAt)}
+                                            </div>
+                                          ) : null}
+                                        </div>
+                                      );
+                                    }
+                                    return (
+                                      <div>
+                                        <Tag color="default">⚪ Hết hạn</Tag>
+                                        <div
+                                          style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}
+                                        >
+                                          {formatDateTime(s.expiresAt)}
+                                        </div>
+                                      </div>
+                                    );
+                                  },
+                                },
+                                {
+                                  title: 'Thao tác',
+                                  key: 'actions',
+                                  align: 'right',
+                                  render: (_, s) => {
+                                    const isLive =
+                                      s.status === 'ACTIVE' && Date.now() < s.expiresAt;
+                                    return isLive ? (
+                                      <Popconfirm
+                                        title="Đăng xuất thiết bị này?"
+                                        description="Phiên làm việc trên thiết bị sẽ bị hủy ngay lập tức và buộc người dùng đăng nhập lại."
+                                        okText="Đăng xuất"
+                                        cancelText="Hủy"
+                                        okButtonProps={{ danger: true, loading: submitting }}
+                                        onConfirm={() => handleRevokeSession(s.id)}
+                                      >
+                                        <Button size="small" danger icon={<StopOutlined />}>
+                                          Thu hồi
+                                        </Button>
+                                      </Popconfirm>
+                                    ) : (
+                                      <span style={{ color: '#cbd5e1' }}>—</span>
+                                    );
+                                  },
+                                },
+                              ]}
+                            />
+                          )}
+                        </div>
+                      );
+                    })(),
+                  },
+                  {
+                    key: 'stats',
+                    label: (
+                      <span>
+                        <AppstoreOutlined /> Dữ liệu & Thống kê
+                      </span>
+                    ),
+                    children: (
+                      <div className="platform-store-analytics">
+                        <div className="platform-store-kpi-grid">
+                          <Card className="platform-store-kpi platform-store-kpi--primary">
+                            <Statistic
+                              title="Doanh thu hôm nay"
+                              value={formatCompactVnd(detail.analytics.summary.todayRevenue)}
+                              prefix={<DollarOutlined />}
+                            />
+                            <span>
+                              30 ngày:{' '}
+                              {formatCompactVnd(detail.analytics.summary.last30DaysRevenue)}
+                            </span>
+                          </Card>
+                          <Card className="platform-store-kpi">
+                            <Statistic
+                              title="Doanh thu 7 ngày"
+                              value={formatCompactVnd(detail.analytics.summary.last7DaysRevenue)}
+                              prefix={<RiseOutlined />}
+                            />
+                            <span>Tích lũy: {formatCompactVnd(detail.stats.totalRevenue)}</span>
+                          </Card>
+                          <Card className="platform-store-kpi">
+                            <Statistic
+                              title="Giá trị hóa đơn TB"
+                              value={formatCompactVnd(detail.analytics.summary.avgInvoiceValue)}
+                              prefix={<CreditCardOutlined />}
+                            />
+                            <span>{detail.stats.totalInvoices} hóa đơn đã xuất</span>
+                          </Card>
+                          <Card className="platform-store-kpi">
+                            <Statistic
+                              title="Tỷ lệ hoàn tất đơn"
+                              value={detail.analytics.summary.completionRate}
+                              suffix="%"
+                              prefix={<TrophyOutlined />}
+                            />
+                            <span>
+                              {detail.stats.paidOrders}/{detail.stats.totalOrders} đơn đã thanh toán
+                            </span>
+                          </Card>
+                        </div>
+
+                        <Card className="platform-chart-card">
+                          <div className="platform-chart-header">
+                            <div className="platform-chart-title">
+                              <LineChartOutlined style={{ color: '#2563eb' }} />
+                              Xu hướng 14 ngày gần nhất
+                            </div>
+                            <Segmented
+                              size="small"
+                              value={trendMetric}
+                              onChange={(value) => setTrendMetric(value as 'revenue' | 'invoices')}
+                              options={[
+                                { label: 'Doanh thu', value: 'revenue' },
+                                { label: 'Hóa đơn', value: 'invoices' },
+                              ]}
+                            />
+                          </div>
+                          <RevenueTrendChart
+                            data={detail.analytics.revenueTrend}
+                            metric={trendMetric}
                           />
                         </Card>
-                      </Col>
-                      <Col xs={24} sm={12}>
-                        <Card size="small" className="detail-stat-card">
-                          <Statistic
-                            title="Tổng số hóa đơn xuất"
-                            value={detail.stats.totalInvoices}
-                            prefix={<ShoppingOutlined style={{ color: '#2563eb' }} />}
-                          />
-                        </Card>
-                      </Col>
-                      <Col xs={12} sm={8}>
-                        <Card size="small" className="detail-stat-card">
-                          <Statistic
-                            title="Tổng số bàn"
-                            value={detail.stats.totalTables}
-                            suffix={`(${detail.stats.totalAreas} khu vực)`}
-                          />
-                        </Card>
-                      </Col>
-                      <Col xs={12} sm={8}>
-                        <Card size="small" className="detail-stat-card">
-                          <Statistic
-                            title="Bàn đang mở khách"
-                            value={detail.stats.openTables}
-                            valueStyle={{ color: '#eab308' }}
-                          />
-                        </Card>
-                      </Col>
-                      <Col xs={12} sm={8}>
-                        <Card size="small" className="detail-stat-card">
-                          <Statistic
-                            title="Số mặt hàng (Menu)"
-                            value={detail.stats.totalProducts}
-                          />
-                        </Card>
-                      </Col>
-                      <Col xs={12} sm={12}>
-                        <Card size="small" className="detail-stat-card">
-                          <Statistic
-                            title="Tổng số đơn hàng"
-                            value={detail.stats.totalOrders}
-                            suffix={`(${detail.stats.paidOrders} đã thanh toán)`}
-                          />
-                        </Card>
-                      </Col>
-                      <Col xs={12} sm={12}>
-                        <Card size="small" className="detail-stat-card">
-                          <Statistic
-                            title="Đơn hàng đang phục vụ"
-                            value={detail.stats.openOrders}
-                            valueStyle={{ color: '#3b82f6' }}
-                          />
-                        </Card>
-                      </Col>
-                    </Row>
-                  </div>
-                ),
-              },
-            ]}
-          />
-        ) : null}
-      </Drawer>
+
+                        <div className="platform-two-col-grid">
+                          <Card
+                            className="platform-chart-card"
+                            title="Cơ cấu phương thức thanh toán"
+                          >
+                            <PaymentDonutChart data={detail.analytics.paymentMethods} />
+                          </Card>
+                          <Card
+                            className="platform-chart-card"
+                            title="Khung giờ phát sinh doanh thu"
+                          >
+                            <HourlyPeakChart data={detail.analytics.hourlyDistribution} />
+                          </Card>
+                        </div>
+
+                        <div className="platform-two-col-grid platform-store-data-grid">
+                          <Card className="platform-chart-card" title="Mặt hàng bán chạy">
+                            <TopProductsWidget products={detail.analytics.topProducts} />
+                          </Card>
+                          <Card
+                            className="platform-chart-card"
+                            title="Quy mô & trạng thái vận hành"
+                          >
+                            <div className="platform-store-operation-grid">
+                              <Statistic title="Khu vực" value={detail.stats.totalAreas} />
+                              <Statistic
+                                title="Bàn đang phục vụ"
+                                value={detail.stats.openTables}
+                                suffix={`/ ${detail.stats.totalTables}`}
+                              />
+                              <Statistic title="Mặt hàng menu" value={detail.stats.totalProducts} />
+                              <Statistic title="Đơn đang mở" value={detail.stats.openOrders} />
+                              <Statistic
+                                title="Nhân sự hoạt động"
+                                value={detail.analytics.summary.activeMembers}
+                              />
+                              <Statistic
+                                title="Thiết bị hoạt động"
+                                value={detail.analytics.summary.activeDevices}
+                              />
+                            </div>
+                          </Card>
+                        </div>
+                      </div>
+                    ),
+                  },
+                ]}
+              />
+            ) : null}
+          </div>
+        </main>
+      ) : null}
 
       {/* Modal Lịch Sử Đăng Nhập Thiết Bị Của Thành Viên */}
       <Modal

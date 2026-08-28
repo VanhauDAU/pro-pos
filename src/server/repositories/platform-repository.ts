@@ -332,7 +332,7 @@ export class PlatformRepository {
 
     if (!store) return null;
 
-    const [members, devices, sessions, stats] = await Promise.all([
+    const [members, devices, sessions, stats, analytics] = await Promise.all([
       this.db
         .prepare(
           `SELECT
@@ -461,6 +461,7 @@ export class PlatformRepository {
           .bind(storeId)
           .first<{ total: number; revenue: number | null }>(),
       ]),
+      this.getStoreAnalytics(storeId, 14),
     ]);
 
     const [areasCount, tablesCount, productsCount, ordersCount, invoicesCount] = stats;
@@ -521,14 +522,18 @@ export class PlatformRepository {
         userId: s.userId,
         userName: s.userName,
         userUsername: s.userUsername,
+        userRoleCode: s.userRoleCode,
+        userRoleName: s.userRoleName,
         deviceId: s.deviceId,
         deviceName: s.deviceName,
+        deviceStatus: s.deviceStatus,
         sessionKind: s.sessionKind,
         status: s.status,
         createdAt: s.createdAt,
         lastSeenAt: s.lastSeenAt,
         expiresAt: s.expiresAt,
         idleExpiresAt: s.idleExpiresAt,
+        revokedAt: s.revokedAt,
       })),
       stats: {
         totalAreas: areasCount?.count ?? 0,
@@ -541,6 +546,176 @@ export class PlatformRepository {
         totalInvoices: invoicesCount?.total ?? 0,
         totalRevenue: invoicesCount?.revenue ?? 0,
       },
+      analytics,
+    };
+  }
+
+  async getStoreAnalytics(storeId: string, days = 14) {
+    const now = Date.now();
+    const todayStart = new Date(
+      new Date(now).toLocaleDateString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' }),
+    ).getTime();
+    const last7DaysStart = now - 7 * 24 * 60 * 60 * 1000;
+    const last30DaysStart = now - 30 * 24 * 60 * 60 * 1000;
+    const trendStart = now - days * 24 * 60 * 60 * 1000;
+
+    const [
+      invoiceSummary,
+      orderSummary,
+      activeDevices,
+      activeMembers,
+      trendRows,
+      paymentRows,
+      hourlyRows,
+      productRows,
+    ] = await Promise.all([
+      this.db
+        .prepare(
+          `SELECT
+               COUNT(*) AS totalInvoices,
+               COALESCE(SUM(total), 0) AS totalRevenue,
+               COALESCE(SUM(CASE WHEN issued_at >= ? THEN total ELSE 0 END), 0) AS todayRevenue,
+               COALESCE(SUM(CASE WHEN issued_at >= ? THEN total ELSE 0 END), 0) AS last7DaysRevenue,
+               COALESCE(SUM(CASE WHEN issued_at >= ? THEN total ELSE 0 END), 0) AS last30DaysRevenue
+             FROM invoices
+             WHERE store_id = ? AND status = 'COMPLETED'`,
+        )
+        .bind(todayStart, last7DaysStart, last30DaysStart, storeId)
+        .first<{
+          totalInvoices: number;
+          totalRevenue: number;
+          todayRevenue: number;
+          last7DaysRevenue: number;
+          last30DaysRevenue: number;
+        }>(),
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS totalOrders,
+                    COALESCE(SUM(CASE WHEN status = 'PAID' THEN 1 ELSE 0 END), 0) AS paidOrders
+             FROM orders WHERE store_id = ?`,
+        )
+        .bind(storeId)
+        .first<{ totalOrders: number; paidOrders: number }>(),
+      this.db
+        .prepare(`SELECT COUNT(*) AS count FROM devices WHERE store_id = ? AND status = 'ACTIVE'`)
+        .bind(storeId)
+        .first<{ count: number }>(),
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM store_memberships
+             WHERE store_id = ? AND status = 'ACTIVE'`,
+        )
+        .bind(storeId)
+        .first<{ count: number }>(),
+      this.db
+        .prepare(
+          `SELECT date(issued_at / 1000, 'unixepoch', '+7 hours') AS dayStr,
+                    COALESCE(SUM(total), 0) AS revenue,
+                    COUNT(*) AS invoiceCount
+             FROM invoices
+             WHERE store_id = ? AND status = 'COMPLETED' AND issued_at >= ?
+             GROUP BY dayStr ORDER BY dayStr ASC`,
+        )
+        .bind(storeId, trendStart)
+        .all<{ dayStr: string; revenue: number; invoiceCount: number }>(),
+      this.db
+        .prepare(
+          `SELECT method, COUNT(*) AS count, COALESCE(SUM(amount), 0) AS totalAmount
+             FROM payments
+             WHERE store_id = ? AND status = 'SUCCEEDED'
+             GROUP BY method`,
+        )
+        .bind(storeId)
+        .all<{ method: string; count: number; totalAmount: number }>(),
+      this.db
+        .prepare(
+          `SELECT CAST(strftime('%H', issued_at / 1000, 'unixepoch', '+7 hours') AS INTEGER) AS hr,
+                    COUNT(*) AS orderCount, COALESCE(SUM(total), 0) AS revenue
+             FROM invoices
+             WHERE store_id = ? AND status = 'COMPLETED'
+             GROUP BY hr`,
+        )
+        .bind(storeId)
+        .all<{ hr: number; orderCount: number; revenue: number }>(),
+      this.db
+        .prepare(
+          `SELECT oi.product_name_snapshot AS name, oi.product_type AS productType,
+                    COALESCE(SUM(oi.quantity_milli) / 1000, 0) AS totalQuantity,
+                    COALESCE(SUM(oi.line_total), 0) AS totalRevenue
+             FROM order_items oi
+             JOIN orders o ON o.id = oi.order_id AND o.status = 'PAID'
+             WHERE oi.store_id = ?
+             GROUP BY oi.product_name_snapshot, oi.product_type
+             ORDER BY totalRevenue DESC LIMIT 8`,
+        )
+        .bind(storeId)
+        .all<{ name: string; productType: string; totalQuantity: number; totalRevenue: number }>(),
+    ]);
+
+    const trendMap = new Map(
+      (trendRows.results ?? []).map((row) => [
+        row.dayStr,
+        { revenue: row.revenue, invoiceCount: row.invoiceCount },
+      ]),
+    );
+    const revenueTrend = Array.from({ length: days }, (_, index) => {
+      const date = new Date(now - (days - index - 1) * 24 * 60 * 60 * 1000);
+      const yyyy = date.getFullYear();
+      const mm = String(date.getMonth() + 1).padStart(2, '0');
+      const dd = String(date.getDate()).padStart(2, '0');
+      const dayKey = `${yyyy}-${mm}-${dd}`;
+      const value = trendMap.get(dayKey) ?? { revenue: 0, invoiceCount: 0 };
+      return {
+        date: dayKey,
+        dateLabel: `${dd}/${mm}`,
+        revenue: value.revenue,
+        invoiceCount: value.invoiceCount,
+        orderCount: value.invoiceCount,
+      };
+    });
+
+    const paymentTotal = (paymentRows.results ?? []).reduce(
+      (sum, payment) => sum + payment.totalAmount,
+      0,
+    );
+    const paymentMethods = (paymentRows.results ?? []).map((payment) =>
+      Object.assign(payment, {
+        label:
+          payment.method === 'CASH'
+            ? 'Tiền mặt'
+            : payment.method === 'BANK_TRANSFER'
+              ? 'Chuyển khoản VietQR'
+              : payment.method,
+        percentage: paymentTotal > 0 ? Math.round((payment.totalAmount / paymentTotal) * 100) : 0,
+      }),
+    );
+
+    const hourlyMap = new Map((hourlyRows.results ?? []).map((row) => [row.hr, row]));
+    const hourlyDistribution = Array.from({ length: 24 }, (_, hour) => ({
+      hour,
+      label: `${String(hour).padStart(2, '0')}:00`,
+      orderCount: hourlyMap.get(hour)?.orderCount ?? 0,
+      revenue: hourlyMap.get(hour)?.revenue ?? 0,
+    }));
+
+    const totalRevenue = invoiceSummary?.totalRevenue ?? 0;
+    const totalInvoices = invoiceSummary?.totalInvoices ?? 0;
+    const totalOrders = orderSummary?.totalOrders ?? 0;
+    return {
+      summary: {
+        todayRevenue: invoiceSummary?.todayRevenue ?? 0,
+        last7DaysRevenue: invoiceSummary?.last7DaysRevenue ?? 0,
+        last30DaysRevenue: invoiceSummary?.last30DaysRevenue ?? 0,
+        avgInvoiceValue: totalInvoices > 0 ? Math.round(totalRevenue / totalInvoices) : 0,
+        completionRate:
+          totalOrders > 0 ? Math.round(((orderSummary?.paidOrders ?? 0) / totalOrders) * 100) : 0,
+        activeDevices: activeDevices?.count ?? 0,
+        activeMembers: activeMembers?.count ?? 0,
+      },
+      revenueTrend,
+      paymentMethods,
+      hourlyDistribution,
+      topProducts: productRows.results ?? [],
     };
   }
 
@@ -983,19 +1158,7 @@ export class PlatformRepository {
       .all<{ objectKey: string }>();
     const mediaKeys = (mediaRows.results ?? []).map((r) => r.objectKey);
 
-    // 2. Identify users who only belong to this store and are not SUPER_ADMIN
-    const orphanUsersResult = await this.db
-      .prepare(
-        `SELECT user_id AS userId FROM store_memberships
-         WHERE store_id = ?
-           AND user_id NOT IN (SELECT user_id FROM store_memberships WHERE store_id != ?)
-           AND user_id NOT IN (SELECT id FROM users WHERE platform_role = 'SUPER_ADMIN')`,
-      )
-      .bind(storeId, storeId)
-      .all<{ userId: string }>();
-    const orphanUserIds = (orphanUsersResult.results ?? []).map((r) => r.userId);
-
-    // Large stores can exceed D1's execution window when a whole table is deleted
+    // 2. Large stores can exceed D1's execution window when a whole table is deleted
     // in one statement. Keep the referential delete order, but remove at most this
     // many rows per statement so every round stays bounded and retry-safe.
     const DELETE_CHUNK_SIZE = 500;
@@ -1143,20 +1306,45 @@ export class PlatformRepository {
     }
     await deleteDeviceCredentials();
     await deleteStoreRows('devices');
-    await this.db.prepare('DELETE FROM stores WHERE id = ?').bind(storeId).run();
 
-    // 3. Delete orphan users if any
-    for (const userId of orphanUserIds) {
+    // 3. Memberships have now been removed, so this also repairs accounts left
+    // behind by older store-deletion attempts. Do this before deleting the store:
+    // if a foreign-key problem is found, the request fails visibly and remains
+    // retryable instead of reporting success with orphan accounts still present.
+    const orphanUsers = await this.db
+      .prepare(
+        `SELECT u.id
+         FROM users u
+         WHERE u.platform_role IS NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM store_memberships sm WHERE sm.user_id = u.id
+           )
+         ORDER BY u.created_at ASC`,
+      )
+      .all<{ id: string }>();
+
+    for (const orphanUser of orphanUsers.results ?? []) {
       try {
         await this.db.batch([
-          this.db.prepare('DELETE FROM password_credentials WHERE user_id = ?').bind(userId),
-          this.db.prepare('DELETE FROM access_identities WHERE user_id = ?').bind(userId),
-          this.db.prepare('DELETE FROM users WHERE id = ?').bind(userId),
+          this.db.prepare('DELETE FROM auth_sessions WHERE user_id = ?').bind(orphanUser.id),
+          this.db.prepare('DELETE FROM pin_credentials WHERE user_id = ?').bind(orphanUser.id),
+          this.db.prepare('DELETE FROM pin_verifiers WHERE user_id = ?').bind(orphanUser.id),
+          this.db
+            .prepare('DELETE FROM store_employee_usernames WHERE user_id = ?')
+            .bind(orphanUser.id),
+          this.db.prepare('DELETE FROM password_credentials WHERE user_id = ?').bind(orphanUser.id),
+          this.db.prepare('DELETE FROM access_identities WHERE user_id = ?').bind(orphanUser.id),
+          this.db.prepare('DELETE FROM users WHERE id = ?').bind(orphanUser.id),
         ]);
-      } catch {
-        // Ignore if user cannot be deleted
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'unknown database error';
+        throw new Error(`orphan user cleanup failed for ${orphanUser.id}: ${message}`, {
+          cause: error,
+        });
       }
     }
+
+    await this.db.prepare('DELETE FROM stores WHERE id = ?').bind(storeId).run();
 
     return { storeId, mediaKeys };
   }

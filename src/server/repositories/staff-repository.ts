@@ -272,7 +272,7 @@ export class StaffRepository {
           `UPDATE pin_verifiers
            SET salt = ?, digest = ?,
                credential_version = credential_version + 1, updated_at = ?
-           WHERE store_id = ? AND user_id = ? AND session_kind = 'EMPLOYEE'`,
+           WHERE store_id = ? AND user_id = ?`,
         )
         .bind(input.salt, input.digest, input.now, input.storeId, input.userId),
       this.db

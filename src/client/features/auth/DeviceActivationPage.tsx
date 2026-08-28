@@ -20,11 +20,29 @@ function activationError(error: unknown) {
   return error instanceof ApiError ? error.message : 'Không thể kích hoạt máy POS.';
 }
 
+function suggestDeviceName() {
+  if (typeof navigator === 'undefined') return 'Máy thu ngân chính';
+
+  const userAgent = navigator.userAgent;
+  if (/iPad/i.test(userAgent) || (/Macintosh/i.test(userAgent) && navigator.maxTouchPoints > 1)) {
+    return 'iPad';
+  }
+  if (/iPhone/i.test(userAgent)) return 'iPhone';
+  if (/Android/i.test(userAgent)) {
+    const model = userAgent.match(/Android[^;]*;\s*([^;)]+?)(?:\s+Build\/|\))/i)?.[1]?.trim();
+    return model || 'Thiết bị Android';
+  }
+  if (/Macintosh|Mac OS X/i.test(userAgent)) return 'Máy Mac';
+  if (/Windows/i.test(userAgent)) return 'Máy tính Windows';
+  return 'Máy thu ngân chính';
+}
+
 export function DeviceActivationPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [defaultDeviceName] = useState(suggestDeviceName);
 
   const handleActivate = async (values: DirectActivationValues) => {
     setSubmitting(true);
@@ -67,7 +85,7 @@ export function DeviceActivationPage() {
       <Form<DirectActivationValues>
         layout="vertical"
         requiredMark={false}
-        initialValues={{ deviceName: 'Máy thu ngân chính' }}
+        initialValues={{ deviceName: defaultDeviceName }}
         onFinish={handleActivate}
       >
         <Form.Item
@@ -99,15 +117,16 @@ export function DeviceActivationPage() {
         </Form.Item>
 
         <Form.Item
-          label="Tên máy POS tại quầy"
+          label="Tên thiết bị POS"
           name="deviceName"
+          extra="Tên này sẽ hiển thị trong danh sách thiết bị quản trị, ví dụ: iPad quầy chính."
           rules={[{ required: true, message: 'Vui lòng đặt tên cho máy POS.' }]}
         >
           <Input
             size="large"
             maxLength={80}
             prefix={<DesktopOutlined style={{ color: '#94a3b8' }} />}
-            placeholder="Ví dụ: Máy thu ngân chính"
+            placeholder="Ví dụ: iPad quầy chính, iPhone quản lý"
             disabled={submitting}
           />
         </Form.Item>

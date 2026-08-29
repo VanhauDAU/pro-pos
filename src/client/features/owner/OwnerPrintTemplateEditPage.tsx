@@ -953,15 +953,12 @@ export function OwnerPrintTemplateEditPage() {
                     )}
 
                     {showProvisionalTotal && (
-                      <>
-                        <div className="thermal-receipt-divider-dash" />
-                        <div className="thermal-receipt-grand-total">
-                          <span>
-                            {previewInvoiceType === 'PROVISIONAL' ? 'TỔNG TẠM TÍNH' : 'TỔNG CỘNG'}
-                          </span>
-                          <span className="thermal-receipt-grand-total-amount">163,000đ</span>
-                        </div>
-                      </>
+                      <div className="thermal-receipt-grand-total">
+                        <span>
+                          {previewInvoiceType === 'PROVISIONAL' ? 'TỔNG TẠM TÍNH' : 'TỔNG CỘNG'}
+                        </span>
+                        <span className="thermal-receipt-grand-total-amount">163,000đ</span>
+                      </div>
                     )}
                   </div>
 

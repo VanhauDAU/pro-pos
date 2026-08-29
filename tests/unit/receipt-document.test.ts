@@ -5,12 +5,21 @@ import {
   buildVietQrPaymentPayload,
   createReceiptDocument,
 } from '../../src/domain/receipt/receipt-document';
-import type {
-  PosReceiptPrintData,
-  PosReceiptPrintOptions,
+import {
+  buildEscPosReceipt,
+  type PosReceiptPrintData,
+  type PosReceiptPrintOptions,
 } from '../../src/domain/receipt/receipt-generator';
 import { generateThermalReceiptHtml } from '../../src/client/lib/pos-receipt-printer';
+import { imageDataToEscPosRaster } from '../../src/printing/escpos/escpos-raster';
 import { buildEscPosTextReceipt } from '../../src/printing/escpos/escpos-text-builder';
+import { receiptRasterCss } from '../../src/printing/receipt/receipt-template';
+
+function containsByteSequence(bytes: Uint8Array, sequence: readonly number[]): boolean {
+  return bytes.some((_, index) =>
+    sequence.every((value, offset) => bytes[index + offset] === value),
+  );
+}
 
 function paymentData(): PosReceiptPrintData {
   return {
@@ -113,6 +122,45 @@ function options(settings: StorePrintSettings): PosReceiptPrintOptions {
 }
 
 describe('canonical receipt document', () => {
+  it('uses receipt-oriented fonts for raster preview and both ESC/POS renderers', () => {
+    const settings = printSettings();
+    const currentBytes = buildEscPosTextReceipt(paymentData(), {
+      printSettings: settings,
+      storeInfo: options(settings).storeInfo,
+      vietnameseMode: 'UNACCENTED',
+    });
+    const legacyBytes = new TextEncoder().encode(buildEscPosReceipt(options(settings)).escPosData);
+
+    expect(Array.from(currentBytes.slice(0, 5))).toEqual([0x1b, 0x40, 0x1b, 0x4d, 0x00]);
+    expect(Array.from(legacyBytes.slice(0, 5))).toEqual([0x1b, 0x40, 0x1b, 0x4d, 0x00]);
+    expect(receiptRasterCss(576)).toContain('"Roboto Mono"');
+    expect(receiptRasterCss(576)).toContain('monospace');
+  });
+
+  it('omits the unpaid banner from provisional preview and print output', () => {
+    const settings = printSettings();
+    const provisionalOptions: PosReceiptPrintOptions = {
+      ...options(settings),
+      data: { ...paymentData(), receiptType: 'PROVISIONAL' },
+    };
+    const html = generateThermalReceiptHtml(provisionalOptions);
+    const escPosText = new TextDecoder().decode(
+      buildEscPosTextReceipt(provisionalOptions.data, {
+        printSettings: settings,
+        storeInfo: provisionalOptions.storeInfo,
+        vietnameseMode: 'UNACCENTED',
+      }),
+    );
+    const legacyEscPosText = buildEscPosReceipt(provisionalOptions).escPosData;
+
+    expect(html).toContain('HÓA ĐƠN TẠM TÍNH');
+    expect(escPosText).toContain('HOA DON TAM TINH');
+    expect(legacyEscPosText).toContain('HÓA ĐƠN TẠM TÍNH');
+    expect(`${html}${escPosText}${legacyEscPosText}`).not.toMatch(
+      /CHƯA THANH TOÁN|CHUA THANH TOAN/u,
+    );
+  });
+
   it('resolves Owner visibility rules once for preview and ESC/POS', () => {
     const settings = printSettings({
       templateConfigJson: JSON.stringify({
@@ -175,6 +223,42 @@ describe('canonical receipt document', () => {
     expect(text).toContain('DAI BILLIARDS');
     expect(`${html}${text}`).not.toContain('PRO POS');
     expect(`${html}${text}`).not.toContain('Pro POS - Hân hạnh phục vụ');
+  });
+
+  it('prints logo and store information in the same horizontal ESC/POS header', () => {
+    const logoPixels = Uint8ClampedArray.from({ length: 48 * 48 * 4 }, (_, index) =>
+      index % 4 === 3 ? 255 : 0,
+    );
+    const logoRasterBytes = imageDataToEscPosRaster(
+      { width: 48, height: 48, data: logoPixels },
+      576,
+    );
+    const bytes = buildEscPosTextReceipt(paymentData(), {
+      printSettings: printSettings({ logoHorizontalLayout: true }),
+      storeInfo: {
+        storeName: 'ĐẠI BILLIARDS',
+        address: '57 610B Hà Tây An, Gò Nổi, Đà Nẵng',
+        phone: '0905486466',
+      },
+      vietnameseMode: 'UNACCENTED',
+      logoRasterBytes,
+    });
+    const text = new TextDecoder().decode(bytes);
+
+    expect(containsByteSequence(bytes, [0x1b, 0x2a, 33])).toBe(true);
+    expect(containsByteSequence(bytes, [0x1d, 0x76, 0x30, 0x00])).toBe(false);
+    expect(text).toContain('DAI BILLIARDS');
+    expect(text).toContain('57 610B Ha Tay An');
+    expect(text).toContain('SDT: 0905486466');
+
+    const verticalBytes = buildEscPosTextReceipt(paymentData(), {
+      printSettings: printSettings({ logoHorizontalLayout: false }),
+      storeName: 'ĐẠI BILLIARDS',
+      vietnameseMode: 'UNACCENTED',
+      logoRasterBytes,
+    });
+    expect(containsByteSequence(verticalBytes, [0x1b, 0x2a, 33])).toBe(false);
+    expect(containsByteSequence(verticalBytes, [0x1d, 0x76, 0x30, 0x00])).toBe(true);
   });
 
   it('builds a payment EMV payload rather than a VietQR image URL', () => {
@@ -261,5 +345,31 @@ describe('canonical receipt document', () => {
       footerSequence.every((value, offset) => bytes[index + offset] === value),
     );
     expect(containsFooterSequence).toBe(true);
+  });
+
+  it('keeps each hourly date and duration on one compact line in print and preview', () => {
+    const settings = printSettings({
+      templateConfigJson: JSON.stringify({
+        PAYMENT: {
+          showHourlyDetail: true,
+          hourlyDetailMode: 'FULL_TIMELOG',
+          showHourlyUnitPrice: true,
+        },
+      }),
+    });
+    const html = generateThermalReceiptHtml(options(settings));
+    expect(html).toMatch(
+      /thermal-receipt-time-meta[\s\S]*?<span>\d{2}\/\d{2}\/\d{4}<\/span>[\s\S]*?<span>=1 giờ<\/span>/u,
+    );
+
+    const text = new TextDecoder().decode(
+      buildEscPosTextReceipt(paymentData(), {
+        printSettings: settings,
+        storeName: 'DAI BILLIARDS',
+        vietnameseMode: 'UNACCENTED',
+      }),
+    );
+    expect(text).toMatch(/\d{2}\/\d{2}\/\d{4}  =1 gio/u);
+    expect(text).not.toMatch(/\d{2}\/\d{2}\/\d{4}\n\s*=1 gio/u);
   });
 });

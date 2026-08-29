@@ -87,12 +87,40 @@ test('cash checkout refreshes Areas without a browser reload', async ({ page }) 
     );
     await page.getByRole('button', { name: /^Thanh toán(?: & in)?:/ }).click();
     await checkout;
-    await expect(page.getByText('Thanh toán thành công!')).toBeVisible();
-    await expect(page.locator('.pos-payment-celebration button')).toHaveCount(2);
-    await page.getByRole('button', { name: 'Hoàn tất', exact: true }).click();
+    await expect(page.getByText('Thanh toán thành công!')).toBeHidden();
     await expect(page).toHaveURL(/\/pos\/areas/, { timeout: 10_000 });
     await expectTableAvailable(page, fixture.tableId);
     expect(await activeOrderIds(page)).not.toContain(fixture.orderId);
+  } finally {
+    await cancelOrder(page, fixture.orderId);
+  }
+});
+
+test('mobile checkout keeps separate print and complete actions', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const fixture = await createTimedDineInOrder(page);
+  try {
+    await page.goto(`/pos/orders/${fixture.orderId}/payment`);
+    await expect(page.getByText('Đang dừng giờ và chốt số tiền trên máy chủ...')).toBeHidden({
+      timeout: 20_000,
+    });
+    const checkout = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        response.url().endsWith(`/api/v1/pos/orders/${fixture.orderId}/checkout`) &&
+        response.ok(),
+    );
+    await page.getByRole('button', { name: /^Thanh toán:/ }).click();
+    await checkout;
+
+    await expect(page.getByText('Thanh toán thành công!')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'In', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Hoàn tất', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'In & Hoàn tất', exact: true })).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Hoàn tất', exact: true }).click();
+    await expect(page).toHaveURL(/\/pos\/areas/, { timeout: 10_000 });
+    await expectTableAvailable(page, fixture.tableId);
   } finally {
     await cancelOrder(page, fixture.orderId);
   }

@@ -15,6 +15,17 @@ import { parsePrinterDeviceConfig, type StorePrintSettings } from '@contracts/st
 
 type PrintDocumentApi = Pick<AgentApiClient, 'get'>;
 
+/**
+ * WPC1258 relies on combining accent bytes that many ESC/POS-compatible printers
+ * advertise but render as stray symbols. Keep the agent output deterministic on
+ * those devices; UTF-8 remains available when the printer explicitly supports it.
+ */
+export function resolveAgentVietnameseMode(
+  mode: 'WPC1258' | 'UNACCENTED' | 'UTF8',
+): 'UNACCENTED' | 'UTF8' {
+  return mode === 'UTF8' ? 'UTF8' : 'UNACCENTED';
+}
+
 export class PrintJobProcessingError extends Error {
   constructor(
     readonly code: string,
@@ -123,7 +134,8 @@ export class JobProcessor {
     label: string,
   ): Promise<Uint8Array | null> {
     if (!mediaId) return null;
-    const cached = this.rasterCache.get(mediaId);
+    const cacheKey = `media:${mediaId}:${maximumWidthDots}x${maximumHeightDots}`;
+    const cached = this.rasterCache.get(cacheKey);
     if (cached) return cached;
     try {
       const media = await this.apiClient.getBytes(`/api/v1/pos/print-media/${mediaId}`);
@@ -135,7 +147,7 @@ export class JobProcessor {
         const oldestKey = this.rasterCache.keys().next().value as string | undefined;
         if (oldestKey) this.rasterCache.delete(oldestKey);
       }
-      this.rasterCache.set(mediaId, raster);
+      this.rasterCache.set(cacheKey, raster);
       return raster;
     } catch (error) {
       console.warn(`[PrintAgent] Bỏ qua ${label} optional ${mediaId}: ${errorMessage(error)}`);
@@ -273,12 +285,17 @@ export class JobProcessor {
         },
       });
       const maximumDots = receiptDocument.profile.defaultPrintableDots;
+      const horizontalLogo = Boolean(
+        printSettings.logoHorizontalLayout && receiptDocument.media.logoUrl,
+      );
       const [logoRasterBytes, bottomRasterBytes] = await Promise.all([
         receiptDocument.media.logoUrl
           ? this.loadOptionalRaster(
               printSettings.logoMediaId,
-              Math.round(maximumDots * 0.6),
-              180,
+              Math.round(
+                maximumDots * (horizontalLogo ? (receiptDocument.isK58 ? 0.24 : 0.22) : 0.6),
+              ),
+              horizontalLogo ? (receiptDocument.isK58 ? 72 : 96) : 180,
               'logo',
             )
           : null,
@@ -317,7 +334,7 @@ export class JobProcessor {
                 bankAccountName: storeInfo.bankAccountName,
               },
               copy: { index: copyIndex, total: copyCount },
-              vietnameseMode: printerConfig.vietnameseMode,
+              vietnameseMode: resolveAgentVietnameseMode(printerConfig.vietnameseMode),
               logoRasterBytes,
               bottomRasterBytes,
             }),

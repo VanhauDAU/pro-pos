@@ -1460,15 +1460,12 @@ export function OwnerPrintSettingsPage() {
                     </div>
 
                     {templateConfig.showProvisionalTotal && (
-                      <>
-                        <div className="thermal-receipt-divider-dash" />
-                        <div className="thermal-receipt-grand-total">
-                          <span>
-                            {previewInvoiceType === 'PROVISIONAL' ? 'TỔNG TẠM TÍNH' : 'TỔNG CỘNG'}
-                          </span>
-                          <span className="thermal-receipt-grand-total-amount">163,000đ</span>
-                        </div>
-                      </>
+                      <div className="thermal-receipt-grand-total">
+                        <span>
+                          {previewInvoiceType === 'PROVISIONAL' ? 'TỔNG TẠM TÍNH' : 'TỔNG CỘNG'}
+                        </span>
+                        <span className="thermal-receipt-grand-total-amount">163,000đ</span>
+                      </div>
                     )}
 
                     {/* Star Separator */}
@@ -1711,13 +1708,13 @@ export function OwnerPrintSettingsPage() {
                   <Form.Item
                     name="vietnameseMode"
                     label={<span style={{ fontWeight: 600 }}>Chế độ tiếng Việt</span>}
-                    extra="WPC1258 giữ dấu tiếng Việt trên máy in hỗ trợ code page 52."
+                    extra="Không dấu ổn định trên mọi máy; chỉ chọn UTF-8 khi máy in xác nhận hỗ trợ."
                   >
                     <Select
                       size="large"
                       options={[
-                        { value: 'WPC1258', label: 'WPC1258 có dấu (khuyến nghị)' },
-                        { value: 'UNACCENTED', label: 'Không dấu (tương thích cao)' },
+                        { value: 'UNACCENTED', label: 'Không dấu (khuyến nghị)' },
+                        { value: 'WPC1258', label: 'WPC1258 (có thể lỗi dấu)' },
                         { value: 'UTF8', label: 'UTF-8 (chỉ máy in hỗ trợ)' },
                       ]}
                     />

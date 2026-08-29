@@ -127,6 +127,7 @@ import {
 } from '@domain/receipt/receipt-generator';
 import logoBlack from '@client/assets/logo-black.svg?url';
 import { PosCustomerSelector } from './PosCustomerSelector';
+import { getPosCustomerAccess } from './pos-customer-access';
 import { PosAppSplash } from './PosAppSplash';
 import { toast } from 'sonner';
 import type { CustomerSummary } from '@contracts/customer';
@@ -5869,7 +5870,10 @@ function OrderEditor({
   const canCancelOrder =
     hasStaffPermission('order.cancel_unpaid') || hasStaffPermission('order.manage');
   const canTransferTable = hasStaffPermission('table.transfer');
-  const canAttachCustomer = hasStaffPermission('order.add_customer');
+  const { canAttachCustomer, canCreateCustomer } = getPosCustomerAccess(
+    staffPermissions,
+    isOwnerActor,
+  );
   const canApplyPromotion = hasStaffPermission('promotion.apply');
 
   useEffect(() => {
@@ -9494,7 +9498,7 @@ function OrderEditor({
                     <PosCustomerSelector
                       customerId={customerId}
                       csrfToken={csrf}
-                      allowCreate={false}
+                      allowCreate={canCreateCustomer}
                       onSelect={saveCustomerInfo}
                     />
                   </div>
@@ -10864,7 +10868,7 @@ function OrderEditor({
         <PosCustomerSelector
           customerId={customerId}
           csrfToken={csrf}
-          allowCreate={false}
+          allowCreate={canCreateCustomer}
           reopenPickerOnDeselect={isMobile}
           onSelect={async (customer) => {
             await saveCustomerInfo(customer);
@@ -11426,35 +11430,56 @@ function PaymentPage({
     }
   }, [orderId, paymentSnapshotId, queryClient, quote.data, quoteReady]);
 
+  const completePaidOrder = useCallback(
+    (completedOrder: { id: string; orderType: 'DINE_IN' | 'TAKEAWAY' }) => {
+      if (completionInFlightRef.current) return;
+      completionInFlightRef.current = true;
+      clearPaymentPageActive(completedOrder.id);
+      queryClient.removeQueries({ queryKey: ['pos-order-quote', completedOrder.id] });
+      queryClient.removeQueries({ queryKey: ['pos-payment-snapshot', completedOrder.id] });
+      void queryClient.invalidateQueries({ queryKey: ['pos-overview'], refetchType: 'none' });
+      setPaymentSuccessData(null);
+      completionInFlightRef.current = false;
+      if (completedOrder.orderType === 'TAKEAWAY') {
+        navigate('/pos/areas?tab=takeaway', {
+          replace: true,
+          state: { selectedArea: '__TAKEAWAY__' },
+        });
+      } else {
+        navigate('/pos/areas', { replace: true });
+      }
+    },
+    [navigate, queryClient],
+  );
+
   const handleCelebrationComplete = useCallback(() => {
     if (completionInFlightRef.current) return;
     if (!paymentSuccessData) return;
-    const completedOrder = {
+    completePaidOrder({
       id: paymentSuccessData.orderId,
       orderType: paymentSuccessData.orderType,
-    };
-    completionInFlightRef.current = true;
-    clearPaymentPageActive(completedOrder.id);
-    queryClient.removeQueries({ queryKey: ['pos-order-quote', completedOrder.id] });
-    queryClient.removeQueries({ queryKey: ['pos-payment-snapshot', completedOrder.id] });
-    void queryClient.invalidateQueries({ queryKey: ['pos-overview'], refetchType: 'none' });
-    setPaymentSuccessData(null);
-    completionInFlightRef.current = false;
-    if (completedOrder.orderType === 'TAKEAWAY') {
-      navigate('/pos/areas?tab=takeaway', {
-        replace: true,
-        state: { selectedArea: '__TAKEAWAY__' },
-      });
-    } else {
-      navigate('/pos/areas', { replace: true });
-    }
-  }, [navigate, paymentSuccessData, queryClient]);
+    });
+  }, [completePaidOrder, paymentSuccessData]);
 
-  const handlePrintAndComplete = useCallback(() => {
+  const handlePrintAfterPayment = useCallback(() => {
     if (!paymentSuccessData) return;
     const { receiptOptions } = paymentSuccessData;
+    setPaymentSuccessData((current) =>
+      current ? { ...current, printStatus: 'PRINTING', printError: null } : current,
+    );
     void printReceipt(receiptOptions, invoicePrintIdentity(paymentSuccessData.invoiceId))
       .then((printResult) => {
+        setPaymentSuccessData((current) =>
+          current
+            ? {
+                ...current,
+                printStatus: printResult.success ? 'PRINTED' : 'FAILED',
+                printError: printResult.success
+                  ? null
+                  : (printResult.message ?? 'Không thể in hóa đơn.'),
+              }
+            : current,
+        );
         if (!printResult.success) {
           messageApi.warning(
             `Thanh toán thành công nhưng chưa in được hóa đơn: ${printResult.message ?? 'Không rõ lỗi'}`,
@@ -11462,10 +11487,12 @@ function PaymentPage({
         }
       })
       .catch((error: unknown) => {
+        setPaymentSuccessData((current) =>
+          current ? { ...current, printStatus: 'FAILED', printError: errorText(error) } : current,
+        );
         messageApi.warning(`Thanh toán thành công nhưng chưa in được hóa đơn: ${errorText(error)}`);
       });
-    handleCelebrationComplete();
-  }, [handleCelebrationComplete, messageApi, paymentSuccessData]);
+  }, [messageApi, paymentSuccessData]);
 
   const [celebrationCountdown, setCelebrationCountdown] = useState(5);
 
@@ -11881,7 +11908,7 @@ function PaymentPage({
         },
       };
       playPosSound('PAYMENT_SUCCESS', { dedupeKey: `payment:${resolvedCode}` });
-      setPaymentSuccessData({
+      const successData = {
         orderId: quote.data.order.id,
         invoiceId: result.invoiceId,
         orderType: quote.data.order.orderType,
@@ -11895,7 +11922,8 @@ function PaymentPage({
         printError: null,
         receiptOptions,
         shownAt: Date.now(),
-      });
+      } satisfies NonNullable<typeof paymentSuccessData>;
+      if (!isDesktopOrTablet) setPaymentSuccessData(successData);
       if (paymentPrintIdentity) {
         void printReceipt(receiptOptions, paymentPrintIdentity)
           .then((printResult) => {
@@ -11930,6 +11958,13 @@ function PaymentPage({
               `Thanh toán thành công nhưng chưa in được hóa đơn: ${errorText(error)}`,
             );
           });
+      }
+      if (isDesktopOrTablet) {
+        messageApi.success('Thanh toán thành công.');
+        completePaidOrder({
+          id: completedOrderId,
+          orderType: quote.data.order.orderType,
+        });
       }
     } catch (error) {
       if (
@@ -12727,10 +12762,11 @@ function PaymentPage({
                 type="primary"
                 size="large"
                 icon={<PrinterOutlined />}
+                loading={paymentSuccessData.printStatus === 'PRINTING'}
                 className="pos-payment-celebration__btn pos-payment-celebration__btn--print"
-                onClick={() => void handlePrintAndComplete()}
+                onClick={() => void handlePrintAfterPayment()}
               >
-                In & Hoàn tất
+                In
               </Button>
             </div>
             <div className="pos-payment-celebration__countdown">

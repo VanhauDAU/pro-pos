@@ -236,6 +236,7 @@ export function buildEscPosReceipt(
   const divider = '-'.repeat(chars);
 
   const escInit = '\x1B\x40';
+  const escFontA = '\x1B\x4D\x00';
   const escCenter = '\x1B\x61\x01';
   const escLeft = '\x1B\x61\x00';
   const escBoldOn = '\x1B\x45\x01';
@@ -243,7 +244,8 @@ export function buildEscPosReceipt(
   const escCut = '\x1D\x56\x41\x00';
   const escDrawer = '\x1B\x70\x00\x19\xFA';
 
-  let raw = escInit;
+  // Do not inherit Font B/C from a previous print job.
+  let raw = escInit + escFontA;
 
   // 1. Header (Store Name, Address, Phone)
   const storeName = document.store.name;
@@ -263,9 +265,6 @@ export function buildEscPosReceipt(
         ? 'PHIẾU THU CÔNG NỢ'
         : 'HÓA ĐƠN THANH TOÁN';
   raw += '\n' + escBoldOn + title + '\n' + escBoldOff;
-  if (data.receiptType === 'PROVISIONAL') {
-    raw += escBoldOn + '*** CHƯA THANH TOÁN ***\n' + escBoldOff;
-  }
   raw += `Liên ${copy?.index ?? 1}/${copy?.total ?? 1}\n`;
   const code = data.invoiceCode || data.orderCode;
   raw += `Số: ${code}\n`;
@@ -360,34 +359,25 @@ export function buildEscPosReceipt(
               const totCol1 = totalStr.padStart(11).slice(-11);
               raw += `${leftCol1} ${priceCol1} ${totCol1}\n`;
 
-              const leftCol2 = dateStr.padEnd(26).slice(0, 26);
+              const leftCol2 = `${dateStr}  ${durLabel}`.padEnd(26).slice(0, 26);
               raw += `${leftCol2}\n`;
-
-              const leftCol3 = durLabel.padEnd(26).slice(0, 26);
-              const priceCol2 = ''.padStart(9);
-              const totCol2 = ''.padStart(11);
-              raw += `${leftCol3} ${priceCol2} ${totCol2}\n`;
             } else {
               const leftCol1 = timeRange.padEnd(35).slice(0, 35);
               const totCol1 = totalStr.padStart(12).slice(-12);
               raw += `${leftCol1} ${totCol1}\n`;
 
-              raw += `${dateStr}\n`;
-              const leftCol2 = durLabel.padEnd(35).slice(0, 35);
+              const leftCol2 = `${dateStr}  ${durLabel}`.padEnd(35).slice(0, 35);
               raw += `${leftCol2}\n`;
             }
-            raw += '\n';
           } else {
             // K58 single column
             const leftCol1 = timeRange.padEnd(22).slice(0, 22);
             const totCol1 = totalStr.padStart(11);
             raw += `${leftCol1} ${totCol1}\n`;
-            raw += `${dateStr}\n`;
-            raw += `${durLabel}\n`;
+            raw += `${dateStr}  ${durLabel}\n`;
             if (template.showHourlyUnitPrice) {
               raw += `   Đ.Giá: ${priceStr}\n`;
             }
-            raw += '\n';
           }
         }
         continue;

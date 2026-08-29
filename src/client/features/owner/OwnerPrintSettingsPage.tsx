@@ -1622,7 +1622,12 @@ export function OwnerPrintSettingsPage() {
                 {
                   title: 'Trạng thái',
                   key: 'status',
-                  render: () => <Tag color="green">Sẵn sàng</Tag>,
+                  render: (_: unknown, record: PrintAgentInfo) =>
+                    record.is_online ? (
+                      <Tag color="green">Đang online</Tag>
+                    ) : (
+                      <Tag>Đang offline</Tag>
+                    ),
                 },
                 {
                   title: 'Vai trò',

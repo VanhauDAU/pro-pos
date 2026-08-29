@@ -4,6 +4,7 @@ import type { PrintAgentConfig } from '../../apps/print-agent/src/config';
 import { AgentRealtimeClient } from '../../apps/print-agent/src/realtime-client';
 import { PrinterError } from '../../src/printing/printer-errors';
 import { AgentApiClient, AgentApiError } from '../../apps/print-agent/src/api-client';
+import type { PrintJob } from '../../src/contracts/print-job';
 
 const pairedConfig: PrintAgentConfig = {
   serverUrl: 'https://pos.example',
@@ -13,6 +14,33 @@ const pairedConfig: PrintAgentConfig = {
   printerIp: '192.168.1.73',
   printerPort: 9100,
 };
+
+function queuedJob(id: string): PrintJob {
+  return {
+    id,
+    storeId: 'STORE-1',
+    targetDeviceId: null,
+    printerRole: 'receipt',
+    documentType: 'invoice',
+    documentId: `INV-${id}`,
+    idempotencyKey: `print-${id}`,
+    status: 'QUEUED',
+    requestedByUserId: null,
+    requestedByDeviceId: null,
+    claimedByDeviceId: null,
+    createdAt: Date.now(),
+    claimedAt: null,
+    printingAt: null,
+    completedAt: null,
+    failedAt: null,
+    attemptCount: 0,
+    failureCode: null,
+    failureMessage: null,
+    claimLeaseExpiresAt: null,
+    claimGeneration: 0,
+    claimProtocolVersion: 2,
+  };
+}
 
 function makeConfigStore(config: PrintAgentConfig) {
   return {
@@ -317,7 +345,9 @@ describe('AgentRuntime', () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(get).toHaveBeenCalledWith('/api/v1/pos/print-jobs/pending?limit=50');
+    expect(get.mock.calls.map(([path]) => path)).toContain(
+      '/api/v1/pos/print-jobs/pending?limit=50',
+    );
     expect(onConnected).toHaveBeenCalledOnce();
     client.destroy();
   });
@@ -343,12 +373,31 @@ describe('AgentRuntime', () => {
   it('scans immediately on disconnect mode and backs offline polling from 2s to 30s', async () => {
     vi.useFakeTimers();
     const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
-    const get = vi.fn(async () => ({ jobs: [], nextCursor: null }));
+    const get = vi.fn(async (_path: string) => ({ jobs: [], nextCursor: null }));
     const client = new AgentRealtimeClient(pairedConfig, { get } as never);
 
     expect((client as any).nextPollDelay()).toBe(2_000);
-    (client as any).offlinePollAttempt = 4;
-    expect((client as any).nextPollDelay()).toBe(30_000);
+    for (const [attempt, delay] of [
+      [0, 2_000],
+      [1, 4_000],
+      [2, 8_000],
+      [3, 16_000],
+      [4, 30_000],
+    ]) {
+      (client as any).offlinePollAttempt = attempt;
+      expect((client as any).nextPollDelay()).toBe(delay);
+    }
+    (client as any).offlinePollAttempt = 0;
+    random.mockReturnValueOnce(0);
+    expect((client as any).nextPollDelay()).toBe(1_600);
+    random.mockReturnValueOnce(1);
+    expect((client as any).nextPollDelay()).toBe(2_400);
+    (client as any).isReady = true;
+    random.mockReturnValueOnce(0);
+    expect((client as any).nextPollDelay()).toBe(255_000);
+    random.mockReturnValueOnce(1);
+    expect((client as any).nextPollDelay()).toBe(345_000);
+    (client as any).isReady = false;
     (client as any).offlinePollAttempt = 0;
     (client as any).startPollingFallback(true);
     await vi.advanceTimersByTimeAsync(0);
@@ -356,6 +405,205 @@ describe('AgentRuntime', () => {
 
     client.destroy();
     random.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it('uses only three five-minute safety scans during fifteen healthy online minutes', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const get = vi.fn(async (_path: string) => ({ jobs: [], nextCursor: null }));
+    const client = new AgentRealtimeClient(pairedConfig, { get } as never);
+    (client as any).isReady = true;
+    (client as any).handshakeAcknowledged = true;
+
+    (client as any).startPollingFallback(false, 'SAFETY');
+    await vi.advanceTimersByTimeAsync(15 * 60_000);
+
+    expect(get).toHaveBeenCalledTimes(3);
+    expect(get.mock.calls[0]?.[0]).toBe('/api/v1/pos/print-jobs/pending?limit=50');
+    client.destroy();
+    random.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it('reconnect scans once immediately, cancels offline polling and restores five-minute safety', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const get = vi.fn(async () => ({ jobs: [], nextCursor: null }));
+    const onConnected = vi.fn();
+    const printCache = { prewarm: vi.fn(async () => undefined), invalidate: vi.fn() };
+    const client = new AgentRealtimeClient(
+      pairedConfig,
+      { get } as never,
+      { onConnected },
+      printCache as never,
+    );
+    (client as any).startPollingFallback(false, 'OFFLINE');
+
+    (client as any).handleMessage({
+      type: 'ready',
+      connectionId: 'reconnect',
+      serverNowMs: Date.now(),
+      reauthAtMs: Date.now() + 60_000,
+      schemaVersion: 1,
+      sync: { mode: 'FULL_SYNC', cursor: 0, serverNowMs: Date.now(), reason: 'NO_CURSOR' },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(get).toHaveBeenCalledOnce();
+    expect(onConnected).toHaveBeenCalledOnce();
+    expect((client as any).isReady).toBe(true);
+    expect((client as any).nextPollDelay()).toBe(5 * 60_000);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(get).toHaveBeenCalledOnce();
+    client.destroy();
+    random.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it('single-flights a safety timer and reconnect scan that race', async () => {
+    let release!: (value: unknown) => void;
+    const pending = new Promise((resolve) => {
+      release = resolve;
+    });
+    const get = vi.fn(() => pending);
+    const printCache = { prewarm: vi.fn(async () => undefined), invalidate: vi.fn() };
+    const client = new AgentRealtimeClient(pairedConfig, { get } as never, {}, printCache as never);
+
+    const safety = client.recoverPendingJobs('SAFETY');
+    (client as any).handleMessage({
+      type: 'ready',
+      connectionId: 'race',
+      serverNowMs: Date.now(),
+      reauthAtMs: Date.now() + 60_000,
+      schemaVersion: 1,
+      sync: { mode: 'FULL_SYNC', cursor: 0, serverNowMs: Date.now(), reason: 'NO_CURSOR' },
+    });
+    release({ jobs: [], nextCursor: null });
+    await expect(safety).resolves.toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(get).toHaveBeenCalledOnce();
+    client.destroy();
+  });
+
+  it('logs missed realtime jobs, dedupes a later event and adapts safety for two minutes', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const job = queuedJob('MISSED');
+    const get = vi
+      .fn()
+      .mockResolvedValueOnce({ jobs: [job], nextCursor: null })
+      .mockResolvedValue({ jobs: [], nextCursor: null });
+    const processJob = vi.fn(async () => true);
+    const client = new AgentRealtimeClient(pairedConfig, { get } as never);
+    (client as any).processor = { processJob };
+    (client as any).isReady = true;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await client.recoverPendingJobs('SAFETY');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(processJob).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('realtime_missed_job'));
+    expect((client as any).nextPollDelay()).toBe(30_000);
+
+    (client as any).handleMessage({
+      type: 'events',
+      events: [
+        {
+          schemaVersion: 1,
+          eventId: 'late-event',
+          sequence: 1,
+          type: 'pos.print_job.created',
+          storeId: 'STORE-1',
+          aggregate: { type: 'PRINT_JOB', id: job.id, version: 1 },
+          occurredAtMs: Date.now(),
+          actor: null,
+          deviceId: null,
+          clientMutationId: null,
+          topics: ['pos.print_jobs'],
+          data: {
+            reason: 'PRINT_JOB_CREATED',
+            printJobId: job.id,
+            printJobStatus: 'QUEUED',
+            printJob: job,
+          },
+        },
+      ],
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(processJob).toHaveBeenCalledOnce();
+
+    await vi.advanceTimersByTimeAsync(2 * 60_000 + 1);
+    await client.recoverPendingJobs('SAFETY');
+    expect((client as any).nextPollDelay()).toBe(5 * 60_000);
+    client.destroy();
+    warn.mockRestore();
+    random.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it('destroy clears safety, offline, reconnect and heartbeat activity', async () => {
+    vi.useFakeTimers();
+    const get = vi.fn(async () => ({ jobs: [], nextCursor: null }));
+    const post = vi.fn(async () => ({}));
+    const client = new AgentRealtimeClient(pairedConfig, { get, post } as never);
+    (client as any).isReady = true;
+    (client as any).startPollingFallback(false, 'SAFETY');
+    (client as any).startHeartbeat();
+    (client as any).scheduleReconnect();
+
+    client.destroy();
+    await vi.advanceTimersByTimeAsync(15 * 60_000);
+
+    expect(get).not.toHaveBeenCalled();
+    expect(post).not.toHaveBeenCalled();
+    expect((client as any).pollFallbackTimer).toBeNull();
+    expect((client as any).heartbeatTimer).toBeNull();
+    expect((client as any).reconnectTimer).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it('destroy aborts an in-flight pending request and prevents post-stop enqueue', async () => {
+    let pendingSignal: AbortSignal | undefined;
+    const get = vi.fn(
+      (_path: string, options?: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          pendingSignal = options?.signal;
+          options?.signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('aborted', 'AbortError')),
+            { once: true },
+          );
+        }),
+    );
+    const client = new AgentRealtimeClient(pairedConfig, { get } as never);
+    const recovery = client.recoverPendingJobs('MANUAL');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    client.destroy();
+
+    expect(pendingSignal?.aborted).toBe(true);
+    await expect(recovery).resolves.toBe(false);
+    expect((client as any).processingJobs.size).toBe(0);
+  });
+
+  it('keeps WebSocket ping at twenty seconds without HTTP last-seen requests', async () => {
+    vi.useFakeTimers();
+    const post = vi.fn(async () => ({}));
+    const send = vi.fn();
+    const client = new AgentRealtimeClient(pairedConfig, { post } as never);
+    (client as any).ws = { readyState: WebSocket.OPEN, send, close: vi.fn() };
+
+    (client as any).startHeartbeat();
+    await vi.advanceTimersByTimeAsync(90_000);
+
+    expect(send).toHaveBeenCalledTimes(4);
+    expect(post).not.toHaveBeenCalled();
+    client.destroy();
     vi.useRealTimers();
   });
 

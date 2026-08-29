@@ -28,21 +28,31 @@ export interface RealtimeConnection {
   destroy(): void;
 }
 
+type PendingScanReason =
+  'DISCONNECT' | 'OFFLINE' | 'HANDSHAKE' | 'SAFETY' | 'LEGACY_EVENT' | 'MANUAL';
+
+const ONLINE_SAFETY_POLL_MS = 5 * 60_000;
+const ADAPTIVE_SAFETY_POLL_MS = 30_000;
+const ADAPTIVE_SAFETY_WINDOW_MS = 2 * 60_000;
+const ONLINE_POLL_JITTER_RATIO = 0.15;
+const OFFLINE_POLL_JITTER_RATIO = 0.2;
+
 export class AgentRealtimeClient implements RealtimeConnection {
   private ws: WebSocket | null = null;
   private isDestroyed = false;
   private reconnectAttempt = 0;
   private heartbeatTimer: NodeJS.Timeout | null = null;
-  private lastSeenTimer: NodeJS.Timeout | null = null;
   private pollFallbackTimer: NodeJS.Timeout | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private recoveryPromise: Promise<boolean> | null = null;
-  private heartbeatPromise: Promise<unknown> | null = null;
+  private recoveryAbortController: AbortController | null = null;
   private isReady = false;
   private handshakeAcknowledged = false;
   private offlinePollAttempt = 0;
   private supportsPendingFeed = true;
   private serverClockOffsetMs = 0;
+  private adaptiveSafetyUntil = 0;
+  private pollGeneration = 0;
   private readonly jobQueue = new JobQueue();
   private readonly processor: JobProcessor;
   private readonly processingJobs = new Set<string>();
@@ -105,7 +115,7 @@ export class AgentRealtimeClient implements RealtimeConnection {
             `[Realtime] Mất kết nối (code: ${code}${reasonStr ? `, lý do: ${reasonStr}` : ''}). Đang thử kết nối lại...`,
           );
           this.events.onDisconnected?.(reasonStr || `WebSocket closed (${code})`);
-          this.startPollingFallback(true);
+          this.startPollingFallback(true, 'DISCONNECT');
           this.scheduleReconnect();
         }
       });
@@ -116,7 +126,7 @@ export class AgentRealtimeClient implements RealtimeConnection {
       });
     } catch (err: any) {
       console.error('[Realtime] Lỗi khởi tạo WebSocket:', err?.message || err);
-      this.startPollingFallback(true);
+      this.startPollingFallback(true, 'DISCONNECT');
       this.scheduleReconnect();
     }
   }
@@ -148,9 +158,12 @@ export class AgentRealtimeClient implements RealtimeConnection {
     this.events.onPhase?.('SUBSCRIBED');
     this.events.onPhase?.('SYNCING');
     if (frame.sync?.mode === 'REPLAY') await this.receiveEvents(frame.sync.events);
-    const [, synced] = await Promise.all([this.printCache.prewarm(), this.recoverPendingJobs()]);
+    const [, synced] = await Promise.all([
+      this.printCache.prewarm(),
+      this.recoverPendingJobs('HANDSHAKE'),
+    ]);
     if (!synced || this.isDestroyed) {
-      this.startPollingFallback();
+      this.startPollingFallback(false, 'OFFLINE');
       return;
     }
     this.markReady();
@@ -162,7 +175,7 @@ export class AgentRealtimeClient implements RealtimeConnection {
     this.isReady = true;
     this.offlinePollAttempt = 0;
     this.startHeartbeat();
-    this.startPollingFallback();
+    this.startPollingFallback(false, 'SAFETY');
     console.log('[PRINT-AGENT] Sync complete; print delivery is ready.');
     this.events.onConnected?.();
   }
@@ -191,19 +204,25 @@ export class AgentRealtimeClient implements RealtimeConnection {
       console.log(`[PRINT-AGENT] Job received id=${job.id}`);
       this.enqueueJob(job, undefined, eventReceivedAt);
     }
-    if (needsPendingScan) await this.recoverPendingJobs();
+    if (needsPendingScan) await this.recoverPendingJobs('LEGACY_EVENT');
   }
 
-  async recoverPendingJobs(): Promise<boolean> {
+  async recoverPendingJobs(reason: PendingScanReason = 'MANUAL'): Promise<boolean> {
     if (this.isDestroyed) return false;
     if (this.recoveryPromise) return this.recoveryPromise;
-    this.recoveryPromise = this.performPendingRecovery().finally(() => {
+    const controller = new AbortController();
+    this.recoveryAbortController = controller;
+    this.recoveryPromise = this.performPendingRecovery(reason, controller.signal).finally(() => {
+      if (this.recoveryAbortController === controller) this.recoveryAbortController = null;
       this.recoveryPromise = null;
     });
     return this.recoveryPromise;
   }
 
-  private async performPendingRecovery(): Promise<boolean> {
+  private async performPendingRecovery(
+    reason: PendingScanReason,
+    signal: AbortSignal,
+  ): Promise<boolean> {
     try {
       const jobs: PrintJob[] = [];
       if (this.supportsPendingFeed) {
@@ -214,7 +233,7 @@ export class AgentRealtimeClient implements RealtimeConnection {
             : '/api/v1/pos/print-jobs/pending?limit=50';
           let page: PendingPrintJobPage;
           try {
-            page = await this.apiClient.get<PendingPrintJobPage>(query);
+            page = await this.apiClient.get<PendingPrintJobPage>(query, { signal });
           } catch (error) {
             const isMissing =
               (error instanceof AgentApiError && error.status === 404) ||
@@ -232,6 +251,7 @@ export class AgentRealtimeClient implements RealtimeConnection {
       if (!this.supportsPendingFeed) {
         const legacyJobs = await this.apiClient.get<PrintJob[]>(
           '/api/v1/pos/print-jobs?status=QUEUED&limit=20',
+          { signal },
         );
         jobs.push(
           ...legacyJobs.filter(
@@ -239,11 +259,31 @@ export class AgentRealtimeClient implements RealtimeConnection {
           ),
         );
       }
+      if (this.isDestroyed) return false;
       console.log(`[PRINT-AGENT] Sync pending jobs found=${jobs.length}`);
+      let newlyEnqueued = 0;
+      const newlyEnqueuedJobIds: string[] = [];
       if (jobs.length > 0) {
         for (const job of jobs) {
-          this.enqueueJob(job, undefined, performance.now());
+          if (this.enqueueJob(job, undefined, performance.now())) {
+            newlyEnqueued += 1;
+            newlyEnqueuedJobIds.push(job.id);
+          }
         }
+      }
+      if (reason === 'SAFETY' && newlyEnqueued > 0) {
+        this.adaptiveSafetyUntil = Date.now() + ADAPTIVE_SAFETY_WINDOW_MS;
+        console.warn(
+          JSON.stringify({
+            level: 'warn',
+            event: 'realtime_missed_job',
+            missedJobCount: newlyEnqueued,
+            jobIds: newlyEnqueuedJobIds.slice(0, 20),
+            adaptiveSafetyUntil: this.adaptiveSafetyUntil,
+          }),
+        );
+      } else if (reason === 'SAFETY' && Date.now() >= this.adaptiveSafetyUntil) {
+        this.adaptiveSafetyUntil = 0;
       }
       return true;
     } catch (error) {
@@ -265,11 +305,11 @@ export class AgentRealtimeClient implements RealtimeConnection {
     job: PrintJob,
     printerKey = this.config.printerIp || 'default',
     eventReceivedAt = performance.now(),
-  ): void {
+  ): boolean {
     this.pruneRecentJobs();
     if (this.processingJobs.has(job.id) || this.recentJobs.has(job.id)) {
       console.info(`[Realtime] Bỏ qua print job trùng lặp: ${job.id}`);
-      return;
+      return false;
     }
     this.processingJobs.add(job.id);
     this.events.onJobReceived?.(job.id, job.documentType);
@@ -288,6 +328,7 @@ export class AgentRealtimeClient implements RealtimeConnection {
         this.pruneRecentJobs();
       }
     });
+    return true;
   }
 
   private pruneRecentJobs(): void {
@@ -306,23 +347,6 @@ export class AgentRealtimeClient implements RealtimeConnection {
         this.ws.send(JSON.stringify({ type: 'ping' }));
       }
     }, 20000);
-    void this.touchLastSeen();
-    this.lastSeenTimer = setInterval(() => void this.touchLastSeen(), 45_000);
-  }
-
-  private touchLastSeen(): Promise<unknown> {
-    if (this.heartbeatPromise) return this.heartbeatPromise;
-    this.heartbeatPromise = this.apiClient
-      .post('/api/v1/print-agent/heartbeat', {})
-      .catch((error) => {
-        this.events.onDegraded?.(
-          `HEARTBEAT_FAILED: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      })
-      .finally(() => {
-        this.heartbeatPromise = null;
-      });
-    return this.heartbeatPromise;
   }
 
   private stopHeartbeat(): void {
@@ -330,28 +354,42 @@ export class AgentRealtimeClient implements RealtimeConnection {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
-    if (this.lastSeenTimer) {
-      clearInterval(this.lastSeenTimer);
-      this.lastSeenTimer = null;
-    }
   }
 
-  private startPollingFallback(immediate = false): void {
+  private startPollingFallback(
+    immediate = false,
+    reason: PendingScanReason = this.isReady ? 'SAFETY' : 'OFFLINE',
+  ): void {
     if (this.pollFallbackTimer) return;
-    this.schedulePendingScan(immediate ? 0 : this.nextPollDelay());
+    this.schedulePendingScan(immediate ? 0 : this.nextPollDelay(), reason);
   }
 
   private nextPollDelay(): number {
-    if (this.isReady) return 30_000;
+    if (this.isReady) {
+      const adaptiveRemaining = this.adaptiveSafetyUntil - Date.now();
+      if (adaptiveRemaining > 0) {
+        return Math.min(
+          this.withJitter(ADAPTIVE_SAFETY_POLL_MS, ONLINE_POLL_JITTER_RATIO),
+          adaptiveRemaining,
+        );
+      }
+      return this.withJitter(ONLINE_SAFETY_POLL_MS, ONLINE_POLL_JITTER_RATIO);
+    }
     const base = Math.min(2_000 * 2 ** this.offlinePollAttempt, 30_000);
-    return Math.round(base * (0.8 + Math.random() * 0.4));
+    return this.withJitter(base, OFFLINE_POLL_JITTER_RATIO);
   }
 
-  private schedulePendingScan(delayMs: number): void {
+  private withJitter(baseMs: number, ratio: number): number {
+    return Math.round(baseMs * (1 - ratio + Math.random() * ratio * 2));
+  }
+
+  private schedulePendingScan(delayMs: number, reason: PendingScanReason): void {
+    const generation = this.pollGeneration;
     this.pollFallbackTimer = setTimeout(async () => {
       this.pollFallbackTimer = null;
       if (this.isDestroyed) return;
-      const synced = await this.recoverPendingJobs();
+      const synced = await this.recoverPendingJobs(reason);
+      if (this.isDestroyed || generation !== this.pollGeneration) return;
       if (!this.isReady) {
         if (synced && this.ws?.readyState === WebSocket.OPEN && this.handshakeAcknowledged) {
           this.markReady();
@@ -361,11 +399,12 @@ export class AgentRealtimeClient implements RealtimeConnection {
       } else {
         this.offlinePollAttempt = 0;
       }
-      this.schedulePendingScan(this.nextPollDelay());
+      this.schedulePendingScan(this.nextPollDelay(), this.isReady ? 'SAFETY' : 'OFFLINE');
     }, delayMs);
   }
 
   private stopPollingFallback(): void {
+    this.pollGeneration += 1;
     if (this.pollFallbackTimer) {
       clearTimeout(this.pollFallbackTimer);
       this.pollFallbackTimer = null;
@@ -388,9 +427,13 @@ export class AgentRealtimeClient implements RealtimeConnection {
 
   destroy(): void {
     this.isDestroyed = true;
+    this.recoveryAbortController?.abort();
+    this.recoveryAbortController = null;
     this.stopHeartbeat();
     this.stopPollingFallback();
     this.isReady = false;
+    this.handshakeAcknowledged = false;
+    this.adaptiveSafetyUntil = 0;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
     if (this.ws) {

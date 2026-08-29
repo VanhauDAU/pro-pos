@@ -239,6 +239,18 @@ export class StoreRealtimeRoom extends DurableObject<CloudflareBindings> {
     return closed;
   }
 
+  async listConnectedDeviceIds(storeId: string): Promise<string[]> {
+    this.ensureStore(storeId);
+    const connected = new Set<string>();
+    for (const ws of this.ctx.getWebSockets()) {
+      const attachment = ws.deserializeAttachment() as RealtimeConnectionAttachment | null;
+      if (attachment?.storeId === storeId && attachment.deviceId) {
+        connected.add(attachment.deviceId);
+      }
+    }
+    return [...connected];
+  }
+
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
     if (typeof message === 'string' && message === '{"type":"ping"}') {
       ws.send('{"type":"pong"}');

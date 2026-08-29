@@ -86,11 +86,22 @@ export class AgentApiClient {
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       let response: Response;
       try {
+        const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
+        const signal = init.signal ? AbortSignal.any([init.signal, timeoutSignal]) : timeoutSignal;
         response = await fetch(url, {
           ...init,
-          signal: AbortSignal.timeout(this.timeoutMs),
+          signal,
         });
       } catch (error) {
+        if (init.signal?.aborted) {
+          throw new AgentApiError(
+            `API ${init.method ?? 'GET'} ${path} aborted.`,
+            null,
+            path,
+            false,
+            { cause: error },
+          );
+        }
         lastError = new AgentApiError(
           `API ${init.method ?? 'GET'} ${path} network failure: ${error instanceof Error ? error.message : String(error)}`,
           null,
@@ -147,8 +158,14 @@ export class AgentApiClient {
     return (value && typeof value === 'object' && 'data' in value ? value.data : value) as T;
   }
 
-  async get<T>(path: string): Promise<T> {
-    return this.json<T>(await this.request(path, { method: 'GET', headers: this.headers }));
+  async get<T>(path: string, options?: { signal?: AbortSignal }): Promise<T> {
+    return this.json<T>(
+      await this.request(path, {
+        method: 'GET',
+        headers: this.headers,
+        ...(options?.signal ? { signal: options.signal } : {}),
+      }),
+    );
   }
 
   async getBytes(path: string): Promise<{ bytes: Uint8Array; contentType: string | null }> {

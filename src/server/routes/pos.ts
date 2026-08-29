@@ -60,6 +60,7 @@ import { pushNotificationRoutes } from '@server/routes/push-notifications';
 import type { AppEnv } from '@server/types';
 import { addRequestTiming, measureRequestTiming } from '@server/lib/performance';
 import { MediaService } from '@server/services/media-service';
+import { PrintAgentService } from '@server/services/print-agent-service';
 
 const posRoutes = new Hono<AppEnv>();
 posRoutes.use('*', requireActorOrPrintAgent());
@@ -193,6 +194,12 @@ posRoutes.get(
     );
     const deviceId = c.get('device')?.id;
     if (deviceId) headers.set('X-Propos-Realtime-Device', deviceId);
+    const agentId = c.req.header('X-Agent-Id');
+    if (agentId) {
+      c.executionCtx.waitUntil(
+        new PrintAgentService(c.env).heartbeat(agentId).catch(() => undefined),
+      );
+    }
 
     const room = c.env.STORE_REALTIME.getByName(storeId);
     return room.fetch(new Request(c.req.url, { method: 'GET', headers }));

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 export function createAgentWindow(startHidden = false): BrowserWindow {
   const iconPath = join(__dirname, '../renderer/icon.png');
+  const hasIcon = existsSync(iconPath);
   const window = new BrowserWindow({
     width: 540,
     height: 700,
@@ -12,7 +13,7 @@ export function createAgentWindow(startHidden = false): BrowserWindow {
     backgroundColor: '#f3f5f8',
     show: false,
     title: 'PRO POS Print Agent',
-    icon: existsSync(iconPath) ? iconPath : undefined,
+    ...(hasIcon ? { icon: iconPath } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/preload.cjs'),
       nodeIntegration: false,

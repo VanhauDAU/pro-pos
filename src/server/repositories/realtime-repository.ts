@@ -34,9 +34,11 @@ export function mapRealtimeEvent(row: RealtimeEventRow): RealtimeEventV1 {
   const data = parseJson<RealtimeEventV1['data']>(row.dataJson, {
     reason: 'ITEM_UPDATED',
   });
-  const aggregateType: 'ORDER' | 'PRINT_JOB' = row.eventType.startsWith('pos.print_job')
+  const aggregateType: 'ORDER' | 'PRINT_JOB' | 'STORE' = row.eventType.startsWith('pos.print_job')
     ? 'PRINT_JOB'
-    : 'ORDER';
+    : row.eventType === 'pos.print_config.updated'
+      ? 'STORE'
+      : 'ORDER';
   return {
     schemaVersion: row.schemaVersion,
     eventId: row.eventId,

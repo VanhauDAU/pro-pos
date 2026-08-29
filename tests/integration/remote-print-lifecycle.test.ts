@@ -95,6 +95,31 @@ describe('Remote Print & Print Agent Lifecycle (Integration Test)', () => {
       expect(job.documentType).toBe('provisional');
       expect(job.documentId).toBe(orderId);
       jobId = job.id;
+
+      const event = await env.DB.prepare(
+        `SELECT event_type AS eventType, aggregate_type AS aggregateType,
+                aggregate_id AS aggregateId, data_json AS dataJson
+         FROM realtime_events
+         WHERE store_id = ? AND json_extract(data_json, '$.printJobId') = ?
+         ORDER BY sequence DESC LIMIT 1`,
+      )
+        .bind(storeId, job.id)
+        .first<{
+          eventType: string;
+          aggregateType: string;
+          aggregateId: string;
+          dataJson: string;
+        }>();
+      expect(event).toMatchObject({
+        eventType: 'pos.print_job.created',
+        aggregateType: 'PRINT_JOB',
+        aggregateId: job.id,
+      });
+      expect(JSON.parse(event!.dataJson).printJob).toMatchObject({
+        id: job.id,
+        status: 'QUEUED',
+        documentId: orderId,
+      });
     });
 
     it('returns the existing job when re-submitting with identical idempotencyKey', async () => {

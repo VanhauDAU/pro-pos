@@ -295,6 +295,7 @@ export class PrintJobRepository {
       claimedByDeviceId: params.job.claimedByDeviceId,
       failureCode: params.job.failureCode,
       failureMessage: params.job.failureMessage,
+      printJob: params.job,
     };
 
     await this.db.batch([
@@ -316,7 +317,7 @@ export class PrintJobRepository {
            ) VALUES (
              ?, ?,
              (SELECT last_sequence FROM realtime_store_sequences WHERE store_id = ?),
-             1, 'pos.order.changed', 'ORDER', ?, 1,
+             1, ?, 'PRINT_JOB', ?, 1,
              ?,
              (SELECT id FROM users WHERE id = ?),
              (SELECT id FROM devices WHERE id = ?),
@@ -328,7 +329,8 @@ export class PrintJobRepository {
           params.eventId,
           params.storeId,
           params.storeId,
-          params.job.documentId,
+          params.eventType,
+          params.job.id,
           params.actorKind ?? null,
           params.actorUserId ?? null,
           params.deviceId ?? null,

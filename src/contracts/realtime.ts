@@ -1,3 +1,5 @@
+import type { PrintJob } from './print-job';
+
 export const REALTIME_SUBPROTOCOL = 'propos.realtime.v1';
 export const REALTIME_SCHEMA_VERSION = 1 as const;
 export const REALTIME_REPLAY_LIMIT = 500;
@@ -6,6 +8,7 @@ export type PosRealtimeTopic =
   | 'pos.orders'
   | 'pos.tables'
   | 'pos.print_jobs'
+  | 'pos.print_config'
   | 'guest.orders'
   | 'guest.services'
   | 'guest.table-open-requests'
@@ -43,7 +46,8 @@ export type PosRealtimeReason =
   | 'PRINT_JOB_STARTED'
   | 'PRINT_JOB_COMPLETED'
   | 'PRINT_JOB_FAILED'
-  | 'PRINT_JOB_UNCERTAIN';
+  | 'PRINT_JOB_UNCERTAIN'
+  | 'PRINT_CONFIG_UPDATED';
 
 export interface RealtimeEventV1 {
   schemaVersion: typeof REALTIME_SCHEMA_VERSION;
@@ -54,10 +58,11 @@ export interface RealtimeEventV1 {
     | 'pos.order.changed'
     | 'pos.order.closed'
     | 'pos.print_job.created'
-    | 'pos.print_job.updated';
+    | 'pos.print_job.updated'
+    | 'pos.print_config.updated';
   storeId: string;
   aggregate: {
-    type: 'ORDER' | 'PRINT_JOB';
+    type: 'ORDER' | 'PRINT_JOB' | 'STORE';
     id: string;
     version: number;
   };
@@ -84,6 +89,8 @@ export interface RealtimeEventV1 {
     claimedByDeviceId?: string | null;
     failureCode?: string | null;
     failureMessage?: string | null;
+    printJob?: PrintJob;
+    configVersion?: number;
   };
 }
 

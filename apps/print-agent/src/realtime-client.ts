@@ -30,6 +30,10 @@ export class AgentRealtimeClient implements RealtimeConnection {
   private isRecovering = false;
   private readonly jobQueue = new JobQueue();
   private readonly processor: JobProcessor;
+  private readonly processingJobs = new Set<string>();
+  private readonly recentJobs = new Map<string, number>();
+  private readonly recentJobTtlMs = 5 * 60_000;
+  private readonly maxRecentJobs = 500;
 
   constructor(
     private readonly config: PrintAgentConfig,
@@ -112,17 +116,7 @@ export class AgentRealtimeClient implements RealtimeConnection {
       const job: PrintJob = message.payload || message.data;
       if (job && job.id) {
         console.log(`[Realtime] Nhận thông báo in: Job ID ${job.id}`);
-        this.events.onJobReceived?.(job.id, job.documentType);
-        const printerKey = this.config.printerIp || 'default';
-        this.jobQueue.enqueue(printerKey, async () => {
-          this.events.onJobStarted?.(job.id);
-          const completed = await this.processor.processJob(job);
-          if (completed) {
-            this.events.onJobCompleted?.(job.id, Date.now());
-          } else {
-            this.events.onJobFailed?.(job.id, 'PRINT_FAILED', false);
-          }
-        });
+        this.enqueueJob(job);
       }
     }
   }
@@ -137,16 +131,7 @@ export class AgentRealtimeClient implements RealtimeConnection {
       if (Array.isArray(jobs) && jobs.length > 0) {
         const printerKey = this.config.printerIp || 'default';
         for (const job of jobs) {
-          this.jobQueue.enqueue(printerKey, async () => {
-            this.events.onJobReceived?.(job.id, job.documentType);
-            this.events.onJobStarted?.(job.id);
-            const completed = await this.processor.processJob(job);
-            if (completed) {
-              this.events.onJobCompleted?.(job.id, Date.now());
-            } else {
-              this.events.onJobFailed?.(job.id, 'PRINT_FAILED', false);
-            }
-          });
+          this.enqueueJob(job, printerKey);
         }
       }
     } catch (err: any) {
@@ -161,6 +146,37 @@ export class AgentRealtimeClient implements RealtimeConnection {
       }
     } finally {
       this.isRecovering = false;
+    }
+  }
+
+  private enqueueJob(job: PrintJob, printerKey = this.config.printerIp || 'default'): void {
+    this.pruneRecentJobs();
+    if (this.processingJobs.has(job.id) || this.recentJobs.has(job.id)) {
+      console.info(`[Realtime] Bỏ qua print job trùng lặp: ${job.id}`);
+      return;
+    }
+    this.processingJobs.add(job.id);
+    this.events.onJobReceived?.(job.id, job.documentType);
+    this.jobQueue.enqueue(printerKey, async () => {
+      try {
+        this.events.onJobStarted?.(job.id);
+        const completed = await this.processor.processJob(job);
+        if (completed) this.events.onJobCompleted?.(job.id, Date.now());
+        else this.events.onJobFailed?.(job.id, 'PRINT_FAILED', false);
+      } finally {
+        this.processingJobs.delete(job.id);
+        this.recentJobs.set(job.id, Date.now());
+        this.pruneRecentJobs();
+      }
+    });
+  }
+
+  private pruneRecentJobs(): void {
+    const cutoff = Date.now() - this.recentJobTtlMs;
+    for (const [jobId, completedAt] of this.recentJobs) {
+      if (completedAt < cutoff || this.recentJobs.size > this.maxRecentJobs) {
+        this.recentJobs.delete(jobId);
+      }
     }
   }
 

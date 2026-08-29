@@ -1,92 +1,26 @@
-import * as net from 'node:net';
+import { TcpEscPosTransport, type TcpTransportOptions } from '@printing/transports/tcp-transport';
 
 export interface TcpPrintOptions {
   host: string;
   port?: number;
-  connectTimeoutMs?: number;
-  writeTimeoutMs?: number;
 }
 
+/** Compatibility adapter for the CLI/runtime API; TCP behaviour lives in the shared printing core. */
 export class AgentTcpTransport {
-  private readonly connectTimeoutMs: number;
-  private readonly writeTimeoutMs: number;
+  private readonly transport: TcpEscPosTransport;
 
-  constructor(options?: { connectTimeoutMs?: number; writeTimeoutMs?: number }) {
-    this.connectTimeoutMs = options?.connectTimeoutMs ?? 5000;
-    this.writeTimeoutMs = options?.writeTimeoutMs ?? 10000;
+  constructor(options?: TcpTransportOptions) {
+    this.transport = new TcpEscPosTransport(options);
   }
 
-  async send(data: Uint8Array, options: TcpPrintOptions): Promise<void> {
-    const host = options.host.trim();
-    const port = options.port ?? 9100;
-
-    if (!host) {
-      throw new Error('Địa chỉ IP máy in không hợp lệ.');
-    }
-
-    return new Promise<void>((resolve, reject) => {
-      const socket = new net.Socket();
-      let hasWritten = false;
-      let settled = false;
-
-      const cleanup = () => {
-        socket.removeAllListeners();
-        if (!socket.destroyed) {
-          socket.destroy();
-        }
-      };
-
-      const fail = (err: Error) => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        reject(err);
-      };
-
-      const succeed = () => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        resolve();
-      };
-
-      socket.setTimeout(this.connectTimeoutMs);
-
-      socket.on('timeout', () => {
-        if (!hasWritten) {
-          fail(
-            new Error(
-              `Timeout kết nối tới máy in LAN (${host}:${port}) sau ${this.connectTimeoutMs}ms`,
-            ),
-          );
-        } else {
-          fail(
-            new Error(
-              `Timeout truyền dữ liệu tới máy in LAN (${host}:${port}) sau ${this.writeTimeoutMs}ms`,
-            ),
-          );
-        }
-      });
-
-      socket.on('error', (err) => {
-        fail(new Error(`Lỗi kết nối máy in (${host}:${port}): ${err.message}`));
-      });
-
-      socket.connect(port, host, () => {
-        socket.setTimeout(this.writeTimeoutMs);
-        hasWritten = true;
-
-        const buffer = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
-        socket.write(buffer, (err) => {
-          if (err) {
-            fail(new Error(`Lỗi khi gửi dữ liệu in: ${err.message}`));
-            return;
-          }
-          socket.end(() => {
-            succeed();
-          });
-        });
-      });
+  send(data: Uint8Array, options: TcpPrintOptions): Promise<void> {
+    return this.transport.print(data, {
+      connectionType: 'NETWORK_TCP',
+      networkIp: options.host,
+      networkPort: options.port ?? 9100,
+      paperSize: 'K80',
+      autoCut: false,
+      openCashDrawer: false,
     });
   }
 }

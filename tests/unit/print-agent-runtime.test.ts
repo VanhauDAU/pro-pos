@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AgentRuntime } from '../../apps/print-agent/src/core/agent-runtime';
 import type { PrintAgentConfig } from '../../apps/print-agent/src/config';
+import { AgentRealtimeClient } from '../../apps/print-agent/src/realtime-client';
 
 const pairedConfig: PrintAgentConfig = {
   serverUrl: 'https://pos.example',
@@ -78,5 +79,18 @@ describe('AgentRuntime', () => {
     expect(result).toEqual({ ok: true, host: '192.168.1.73', port: 9100 });
     expect(send).toHaveBeenCalledOnce();
     expect(runtime.getState().printer).toBe('READY');
+  });
+
+  it('deduplicates the same job delivered by websocket and recovery before it reaches the queue', async () => {
+    const client = new AgentRealtimeClient(pairedConfig, {} as never);
+    const processJob = vi.fn(async () => true);
+    (client as any).processor = { processJob };
+    const job = { id: 'JOB-1', documentType: 'invoice', documentId: 'INV-1' };
+
+    (client as any).handleMessage({ type: 'print_job.created', payload: job });
+    (client as any).handleMessage({ type: 'print_job.created', payload: job });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(processJob).toHaveBeenCalledOnce();
   });
 });

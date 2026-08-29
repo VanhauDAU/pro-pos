@@ -12,6 +12,7 @@ import { buildEscPosTextReceipt } from '@printing/escpos/escpos-text-builder';
 import { createReceiptDocument } from '@domain/receipt/receipt-document';
 import type { PrintJob } from '@contracts/print-job';
 import { parsePrinterDeviceConfig, type StorePrintSettings } from '@contracts/store';
+import { PrinterError, type PrinterFailureStage } from '@printing/printer-errors';
 
 type PrintDocumentApi = Pick<AgentApiClient, 'get'>;
 
@@ -30,11 +31,16 @@ export class PrintJobProcessingError extends Error {
   constructor(
     readonly code: string,
     message: string,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { failureStage?: PrinterFailureStage; retryable?: boolean },
   ) {
     super(message, options);
     this.name = 'PrintJobProcessingError';
+    this.failureStage = options?.failureStage ?? 'BEFORE_WRITE';
+    this.retryable = options?.retryable ?? this.failureStage === 'BEFORE_WRITE';
   }
+
+  readonly failureStage: PrinterFailureStage;
+  readonly retryable: boolean;
 }
 
 function errorMessage(error: unknown): string {
@@ -364,11 +370,17 @@ export class JobProcessor {
         await this.transport.send(escposBytes, { host: printerIp, port: printerPort });
       } catch (error) {
         const message = errorMessage(error);
-        const unreachable = /connect|kết nối|ECONN|timeout/i.test(message);
+        const printerError = error instanceof PrinterError ? error : null;
+        const failureStage = printerError?.failureStage ?? 'BEFORE_WRITE';
+        const code =
+          printerError?.code ??
+          (/connect|kết nối|ECONN|timeout/i.test(message)
+            ? 'NETWORK_PRINTER_UNREACHABLE'
+            : 'SOCKET_WRITE_ERROR');
         throw new PrintJobProcessingError(
-          unreachable ? 'PRINTER_UNREACHABLE' : 'TCP_WRITE_FAILED',
+          code,
           message,
-          { cause: error },
+          { cause: error, failureStage, retryable: failureStage === 'BEFORE_WRITE' },
         );
       }
 
@@ -388,12 +400,14 @@ export class JobProcessor {
       );
       if (claimed) {
         try {
-          await this.apiClient.post(`/api/v1/pos/print-jobs/${job.id}/fail`, {
+          const endpoint =
+            processingError.failureStage === 'DURING_WRITE' ? 'uncertain' : 'fail';
+          await this.apiClient.post(`/api/v1/pos/print-jobs/${job.id}/${endpoint}`, {
             failureCode: processingError.code,
             failureMessage: processingError.message,
           });
         } catch (failError) {
-          console.error('[PrintAgent] Không thể cập nhật trạng thái FAILED:', failError);
+          console.error('[PrintAgent] Không thể cập nhật trạng thái print job:', failError);
         }
       }
       return false;

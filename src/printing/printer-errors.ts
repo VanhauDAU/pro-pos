@@ -8,6 +8,12 @@ export type PrinterErrorCode =
   | 'CONNECTION_TIMEOUT'
   | 'SOCKET_WRITE_ERROR';
 
+export type PrinterFailureStage = 'BEFORE_WRITE' | 'DURING_WRITE';
+
+export interface PrinterErrorOptions extends ErrorOptions {
+  failureStage?: PrinterFailureStage;
+}
+
 const DEFAULT_MESSAGES: Record<PrinterErrorCode, string> = {
   AGENT_OFFLINE: 'Print Agent tại quầy đang ngoại tuyến. Vui lòng kiểm tra máy tính quầy.',
   PRINTER_OFFLINE: 'Máy in đang ngoại tuyến. Vui lòng kiểm tra nguồn và kết nối cáp mạng.',
@@ -21,16 +27,18 @@ const DEFAULT_MESSAGES: Record<PrinterErrorCode, string> = {
 
 export class PrinterError extends Error {
   readonly code: PrinterErrorCode;
+  readonly failureStage: PrinterFailureStage;
 
-  constructor(code: PrinterErrorCode, message = DEFAULT_MESSAGES[code], options?: ErrorOptions) {
+  constructor(code: PrinterErrorCode, message = DEFAULT_MESSAGES[code], options?: PrinterErrorOptions) {
     super(message, options);
     this.name = 'PrinterError';
     this.code = code;
+    this.failureStage = options?.failureStage ?? 'BEFORE_WRITE';
   }
 }
 
 export class PrinterConnectionError extends PrinterError {
-  constructor(message = DEFAULT_MESSAGES.NETWORK_PRINTER_UNREACHABLE, options?: ErrorOptions) {
+  constructor(message = DEFAULT_MESSAGES.NETWORK_PRINTER_UNREACHABLE, options?: PrinterErrorOptions) {
     super('NETWORK_PRINTER_UNREACHABLE', message, options);
     this.name = 'PrinterConnectionError';
   }

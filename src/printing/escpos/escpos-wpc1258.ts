@@ -49,14 +49,31 @@ const REASSIGNED_LATIN1_BYTES = new Set([
 
 const VIETNAMESE_TONE_MARKS = new Set(['\u0300', '\u0301', '\u0303', '\u0309', '\u0323']);
 
+function canEncodeDirectly(codePoint: number): boolean {
+  if (SPECIAL_BYTES.has(codePoint)) return true;
+  if (codePoint >= 0 && codePoint <= 0x7f) return true;
+  return (
+    codePoint >= 0xa0 &&
+    codePoint <= 0xff &&
+    !REASSIGNED_LATIN1_BYTES.has(codePoint)
+  );
+}
+
 /**
- * Windows-1258 stores Vietnamese tone marks as combining bytes. Keep the
- * vowel modifier (ă/â/ê/ô/ơ/ư) composed and move only the tone mark to a
- * separate code point before encoding.
+ * Windows-1258 stores only the Vietnamese combinations that do not already
+ * have their own byte as base letter + a combining tone byte. Characters such
+ * as ú/é/ó must remain composed because their byte is also used by ESC/POS
+ * binary command parameters (for example the drawer pulse's 0xFA byte).
  */
 export function normalizeVietnameseForWpc1258(input: string): string {
   let output = '';
   for (const character of input.normalize('NFC')) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint !== undefined && canEncodeDirectly(codePoint)) {
+      output += character;
+      continue;
+    }
+
     const decomposed = character.normalize('NFD');
     let base = '';
     let tone = '';

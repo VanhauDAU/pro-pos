@@ -198,6 +198,15 @@ printJobRoutes.post(
   '/:id/uncertain',
   requirePermission(...orderWorkspacePermissionKeys, 'order.proforma_print', 'invoice.print'),
   async (c) => {
+    let failureCode: string | undefined;
+    let failureMessage: string | undefined;
+    try {
+      const body = await parseJson(c.req.raw, failPrintJobSchema);
+      failureCode = body.failureCode;
+      failureMessage = body.failureMessage;
+    } catch {
+      // Agent versions prior to the failure-boundary update send no body.
+    }
     const actor = c.get('actor');
     const device = c.get('device');
     const service = new PrintJobService(c.env);
@@ -205,8 +214,8 @@ printJobRoutes.post(
     const job = await service.uncertainPrintJob(
       actor.storeId!,
       c.req.param('id'),
-      'PRINT_UNCERTAIN',
-      'Mất kết nối máy in trong quá trình in',
+      failureCode ?? 'PRINT_UNCERTAIN',
+      failureMessage ?? 'Mất kết nối máy in trong quá trình in',
       {
         actorUserId: actor.id,
         actorKind: actor.kind as 'OWNER' | 'EMPLOYEE',

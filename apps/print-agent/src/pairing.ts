@@ -14,7 +14,10 @@ export class PairingHandler {
     private config: PrintAgentConfig,
   ) {}
 
-  async startPairingFlow(onCodeReady?: (code: string) => void): Promise<PrintAgentConfig> {
+  async startPairingFlow(options?: {
+    signal?: AbortSignal;
+    onCodeReady?: (code: string, expiresAt: number) => void;
+  }): Promise<PrintAgentConfig> {
     const client = new AgentApiClient(this.config);
 
     console.log('\n========================================');
@@ -64,13 +67,23 @@ export class PairingHandler {
     console.log(`3. Nhập mã số: \x1b[1m${pairingCode}\x1b[0m để hoàn tất ghép nối.\n`);
     console.log('Đang chờ xác nhận từ POS (hết hạn sau 5 phút)...');
 
-    if (onCodeReady) {
-      onCodeReady(pairingCode);
-    }
+    options?.onCodeReady?.(pairingCode, expiresAt);
 
     // Poll until approved or expired
     while (Date.now() < expiresAt) {
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      if (options?.signal?.aborted) throw new Error('Đã hủy ghép nối.');
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          clearTimeout(timer);
+          reject(new Error('Đã hủy ghép nối.'));
+        };
+        const timer = setTimeout(() => {
+          options?.signal?.removeEventListener('abort', onAbort);
+          resolve();
+        }, 2000);
+        options?.signal?.addEventListener('abort', onAbort, { once: true });
+      });
+      if (options?.signal?.aborted) throw new Error('Đã hủy ghép nối.');
 
       try {
         const statusRes = await client.get<{

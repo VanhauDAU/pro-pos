@@ -1,0 +1,35 @@
+appId: com.propos.print-agent
+productName: PRO POS Print Agent
+directories:
+  output: release
+files:
+  - dist/desktop/**
+  - package.json
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: PRO POS Print Agent
+  uninstallDisplayName: PRO POS Print Agent
+portable:
+  artifactName: ${productName}-${version}-${arch}-Portable.${ext}
+mac:
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  category: public.app-category.business
+  darkModeSupport: true
+  identity: null
+dmg:
+  title: ${productName} ${version}
+  artifactName: ${productName}-${version}-${arch}.${ext}

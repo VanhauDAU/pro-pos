@@ -412,7 +412,34 @@ describe('7-Day Database Retention Cleanup Maintenance', () => {
       freshTakeawayOrder: crypto.randomUUID(),
       oldPrintJob: crypto.randomUUID(),
       freshPrintJob: crypto.randomUUID(),
+      activeAgent: crypto.randomUUID(),
+      oldPairing: crypto.randomUUID(),
+      freshPairing: crypto.randomUUID(),
     };
+    await env.DB.prepare(
+      `INSERT INTO print_agents (
+         id, store_id, device_name, agent_secret_hash, printer_role, created_at, updated_at
+       ) VALUES (?, ?, 'Cashier Printer', 'hash', 'receipt', ?, ?)`,
+    )
+      .bind(cleanupIds.activeAgent, storeId, tenDaysAgo, tenDaysAgo)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO print_agent_pairings (
+         session_id, pairing_code, store_id, agent_id, agent_secret, status, expires_at, created_at
+       ) VALUES (?, '111222', ?, ?, 'secret', 'APPROVED', ?, ?)`,
+    )
+      .bind(cleanupIds.oldPairing, storeId, cleanupIds.activeAgent, tenDaysAgo, tenDaysAgo)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO print_agent_pairings (
+         session_id, pairing_code, status, expires_at, created_at
+       ) VALUES (?, '333444', 'PENDING', ?, ?)`,
+    )
+      .bind(cleanupIds.freshPairing, twoDaysAgo + 300000, twoDaysAgo)
+      .run();
+
     await env.DB.prepare(
       `INSERT INTO print_jobs (
          id, store_id, idempotency_key, document_type, document_id, printer_role,
@@ -608,6 +635,7 @@ describe('7-Day Database Retention Cleanup Maintenance', () => {
     expect(result.tables['order_call_batches']).toBeGreaterThanOrEqual(1);
     expect(result.tables['order_call_batch_entries']).toBeGreaterThanOrEqual(1);
     expect(result.tables['create_takeaway_order_commands']).toBeGreaterThanOrEqual(1);
+    expect(result.tables['print_agent_pairings']).toBeGreaterThanOrEqual(1);
     for (const commandTable of RETENTION_COMMAND_TABLES) {
       expect(result.tables).toHaveProperty(commandTable);
     }
@@ -673,6 +701,11 @@ describe('7-Day Database Retention Cleanup Maintenance', () => {
         'SELECT 1 AS found FROM realtime_batch_contexts WHERE store_id = ? AND command_id = ?',
       )
         .bind(storeId, cleanupIds.oldRealtimeBatch)
+        .first(),
+    ).toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 AS found FROM print_agent_pairings WHERE session_id = ?')
+        .bind(cleanupIds.oldPairing)
         .first(),
     ).toBeNull();
     expect(
@@ -767,6 +800,16 @@ describe('7-Day Database Retention Cleanup Maintenance', () => {
         'SELECT 1 AS found FROM realtime_batch_contexts WHERE store_id = ? AND command_id = ?',
       )
         .bind(storeId, cleanupIds.freshRealtimeBatch)
+        .first(),
+    ).not.toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 AS found FROM print_agent_pairings WHERE session_id = ?')
+        .bind(cleanupIds.freshPairing)
+        .first(),
+    ).not.toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 AS found FROM print_agents WHERE id = ?')
+        .bind(cleanupIds.activeAgent)
         .first(),
     ).not.toBeNull();
   });

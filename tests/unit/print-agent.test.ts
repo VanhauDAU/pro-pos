@@ -10,6 +10,7 @@ import {
 } from '../../apps/print-agent/src/job-processor';
 import type { AgentApiClient } from '../../apps/print-agent/src/api-client';
 import type { PrintJob } from '../../src/contracts/print-job';
+import { PrinterError } from '../../src/printing/printer-errors';
 
 describe('Pro POS Print Agent Unit Tests', () => {
   it('uses reliable text encoding when a printer reports the problematic WPC1258 mode', () => {
@@ -128,6 +129,54 @@ describe('Pro POS Print Agent Unit Tests', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('Bỏ qua logo optional'));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('không trả store context'));
     warn.mockRestore();
+  });
+
+  it('marks a job UNCERTAIN rather than retrying when socket failure follows a write attempt', async () => {
+    const post = vi.fn(async () => ({}));
+    const get = vi.fn(async (path: string) => {
+      if (path === '/api/v1/pos/context') return { storeName: 'ĐẠI BILLIARDS' };
+      if (path === '/api/v1/pos/print-settings') {
+        return {
+          storeId: 'STORE-1',
+          paperSize: 'K80',
+          printersJson: JSON.stringify({ networkIp: '192.168.1.10', networkPort: 9100 }),
+          paymentCopyCount: 1,
+          provisionalCopyCount: 1,
+        };
+      }
+      if (path === '/api/v1/pos/invoices/INV_2') {
+        return {
+          invoice: { id: 'INV_2', displayCode: 'HD-2', totalVnd: 100000, issuedAt: 1720000000000 },
+          lines: [],
+          payment: { method: 'CASH' },
+        };
+      }
+      throw new Error(`Unexpected GET ${path}`);
+    });
+    const api = { get, getBytes: vi.fn(), post } as unknown as AgentApiClient;
+    const processor = new JobProcessor(
+      { serverUrl: 'https://pos.example', agentId: 'AGENT-1', storeName: 'ĐẠI BILLIARDS' },
+      api,
+      {
+        send: async () => {
+          throw new PrinterError('SOCKET_WRITE_ERROR', 'socket closed', {
+            failureStage: 'DURING_WRITE',
+          });
+        },
+      },
+    );
+
+    await expect(
+      processor.processJob({
+        id: 'JOB-UNCERTAIN',
+        documentType: 'invoice',
+        documentId: 'INV_2',
+      } as PrintJob),
+    ).resolves.toBe(false);
+    expect(post).toHaveBeenLastCalledWith('/api/v1/pos/print-jobs/JOB-UNCERTAIN/uncertain', {
+      failureCode: 'SOCKET_WRITE_ERROR',
+      failureMessage: 'socket closed',
+    });
   });
 
   it('detects desktop vs mobile platforms accurately', () => {

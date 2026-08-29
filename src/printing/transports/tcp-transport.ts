@@ -62,6 +62,7 @@ export class TcpEscPosTransport implements PrintTransport {
             new PrinterError(
               'CONNECTION_TIMEOUT',
               `Quá thời gian kết nối tới máy in LAN (${host}:${port}).`,
+              { failureStage: 'BEFORE_WRITE' },
             ),
           );
         } else {
@@ -69,6 +70,7 @@ export class TcpEscPosTransport implements PrintTransport {
             new PrinterError(
               'SOCKET_WRITE_ERROR',
               `Quá thời gian truyền dữ liệu in tới máy in (${host}:${port}).`,
+              { failureStage: 'DURING_WRITE' },
             ),
           );
         }
@@ -80,7 +82,7 @@ export class TcpEscPosTransport implements PrintTransport {
             new PrinterError(
               'NETWORK_PRINTER_UNREACHABLE',
               `Không thể kết nối tới máy in LAN (${host}:${port}): ${err.message}`,
-              { cause: err },
+              { cause: err, failureStage: 'BEFORE_WRITE' },
             ),
           );
         } else {
@@ -88,7 +90,7 @@ export class TcpEscPosTransport implements PrintTransport {
             new PrinterError(
               'SOCKET_WRITE_ERROR',
               `Lỗi truyền dữ liệu tới máy in (${host}:${port}): ${err.message}`,
-              { cause: err },
+              { cause: err, failureStage: 'DURING_WRITE' },
             ),
           );
         }
@@ -106,7 +108,7 @@ export class TcpEscPosTransport implements PrintTransport {
               new PrinterError(
                 'SOCKET_WRITE_ERROR',
                 `Lỗi khi ghi dữ liệu tới máy in: ${err.message}`,
-                { cause: err },
+                { cause: err, failureStage: 'DURING_WRITE' },
               ),
             );
             return;

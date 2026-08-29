@@ -9,13 +9,13 @@ import {
 import { orderWorkspacePermissionKeys } from '@contracts/staff';
 import { success } from '@server/lib/response';
 import { parseJson } from '@server/lib/validation';
-import { requireActor, requirePermission } from '@server/middleware/authorization';
+import { requireActorOrPrintAgent, requirePermission } from '@server/middleware/authorization';
 import { PrintJobService } from '@server/services/print-job-service';
 import type { AppEnv } from '@server/types';
 
 export const printJobRoutes = new Hono<AppEnv>();
 
-printJobRoutes.use('*', requireActor('OWNER', 'EMPLOYEE'));
+printJobRoutes.use('*', requireActorOrPrintAgent());
 
 /**
  * POST /api/v1/pos/print-jobs

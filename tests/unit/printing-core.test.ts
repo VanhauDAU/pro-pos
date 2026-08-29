@@ -1,40 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const qzMocks = vi.hoisted(() => ({
-  connect: vi.fn(async () => undefined),
-  disconnect: vi.fn(async () => undefined),
-  isActive: vi.fn(() => true),
-  find: vi.fn(async (): Promise<string[]> => ['KPOS ZY307']),
-  create: vi.fn(() => ({ printer: 'mock' })),
-  print: vi.fn(async (_config: unknown, _jobs: Array<Record<string, unknown>>) => undefined),
-}));
-
-vi.mock('qz-tray', () => ({
-  default: {
-    api: { getVersion: vi.fn(async () => '2.2.6') },
-    configs: { create: qzMocks.create },
-    print: qzMocks.print,
-    printers: { find: qzMocks.find },
-    security: {
-      setCertificatePromise: vi.fn(),
-      setSignatureAlgorithm: vi.fn(),
-      setSignaturePromise: vi.fn(),
-    },
-    websocket: {
-      connect: qzMocks.connect,
-      disconnect: qzMocks.disconnect,
-      isActive: qzMocks.isActive,
-    },
-  },
-}));
-
 import { getReceiptPrintProfile } from '../../src/contracts/store';
 import { buildEscPosRasterReceipt } from '../../src/printing/escpos/escpos-builder';
 import { imageDataToEscPosRaster } from '../../src/printing/escpos/escpos-raster';
+import { buildEscPosTextReceipt } from '../../src/printing/escpos/escpos-text-builder';
 import { PrinterService, validatePrinterConfig } from '../../src/printing/printer-service';
-import { ensureQzConnected, resetQzClientForTests } from '../../src/printing/qz/qz-client';
-import { clearPrinterDiscoveryCache } from '../../src/printing/qz/qz-printer-discovery';
-import { qzPrintRaw } from '../../src/printing/qz/qz-print';
+import type { PrintTransport } from '../../src/printing/transports/print-transport';
 import {
   createTestReceiptHtml,
   receiptRasterCss,
@@ -56,12 +27,12 @@ function solidImage(width: number, height = 1, value = 255) {
 }
 
 describe('printing core', () => {
+  const mockTransport: PrintTransport = {
+    print: vi.fn(async () => undefined),
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
-    qzMocks.isActive.mockReturnValue(true);
-    qzMocks.find.mockResolvedValue(['KPOS ZY307']);
-    clearPrinterDiscoveryCache();
-    resetQzClientForTests();
   });
 
   it('keeps the 80 mm profile within the real 576-dot print head', () => {
@@ -79,11 +50,12 @@ describe('printing core', () => {
         return [solidImage(requests[0]!.profile.defaultPrintableDots)];
       },
     };
-    await new PrinterService(renderer).testPrint(networkConfig, 'PRO POS BILLIARDS');
+    await new PrinterService(renderer, mockTransport).testPrint(networkConfig, 'PRO POS BILLIARDS');
     expect(receivedHtml).toContain('HÓA ĐƠN');
     expect(receivedHtml).toContain('Thu ngân: Văn Hậu');
     expect(receivedHtml).toContain('Khách: Nguyễn Ánh');
     expect(receivedHtml).toContain('Cảm ơn quý khách');
+    expect(mockTransport.print).toHaveBeenCalledOnce();
   });
 
   it('allows long product names to wrap while keeping money right-aligned', () => {
@@ -129,75 +101,6 @@ describe('printing core', () => {
     ).toBe('omit');
   });
 
-  it('shares one in-flight QZ connection between simultaneous jobs', async () => {
-    qzMocks.isActive.mockReturnValue(false);
-    await Promise.all([ensureQzConnected(), ensureQzConnected(), ensureQzConnected()]);
-    expect(qzMocks.connect).toHaveBeenCalledOnce();
-  });
-
-  it('does not attempt reconnect when socket is already active', async () => {
-    qzMocks.isActive.mockReturnValue(true);
-    await ensureQzConnected();
-    expect(qzMocks.connect).not.toHaveBeenCalled();
-  });
-
-  it('returns Chưa kết nối QZ Tray when inactive and connect=false without throwing', async () => {
-    qzMocks.isActive.mockReturnValue(false);
-    const status = await new PrinterService().checkConnection(false);
-    expect(status).toEqual({ connected: false, error: 'Chưa kết nối QZ Tray.' });
-    expect(qzMocks.connect).not.toHaveBeenCalled();
-  });
-
-  it('auto connects when checkConnection(true) is called while inactive', async () => {
-    qzMocks.isActive.mockReturnValue(false);
-    const status = await new PrinterService().checkConnection(true);
-    expect(status).toEqual({ connected: true, version: '2.2.6' });
-    expect(qzMocks.connect).toHaveBeenCalledOnce();
-  });
-
-  it('fails fast when QZ is not running without spending time rasterizing', async () => {
-    qzMocks.isActive.mockReturnValue(false);
-    qzMocks.connect.mockRejectedValueOnce(new Error('WebSocket unavailable'));
-    const renderer: ReceiptRenderer = { renderCopies: vi.fn(async () => [solidImage(576)]) };
-
-    await expect(
-      new PrinterService(renderer).printReceipt({
-        config: networkConfig,
-        htmlCopies: ['HÓA ĐƠN'],
-      }),
-    ).rejects.toMatchObject({ code: 'QZ_NOT_RUNNING' });
-    expect(renderer.renderCopies).not.toHaveBeenCalled();
-  });
-
-  it('returns PRINTER_NOT_FOUND before rendering a missing system printer', async () => {
-    qzMocks.find.mockResolvedValue([]);
-    const renderer: ReceiptRenderer = { renderCopies: vi.fn(async () => [solidImage(576)]) };
-    await expect(
-      new PrinterService(renderer).printReceipt({
-        config: {
-          ...networkConfig,
-          connectionType: 'SYSTEM',
-          printerName: 'KPOS ZY307',
-        },
-        htmlCopies: ['HÓA ĐƠN'],
-      }),
-    ).rejects.toMatchObject({ code: 'PRINTER_NOT_FOUND' });
-    expect(renderer.renderCopies).not.toHaveBeenCalled();
-  });
-
-  it('uses only raw base64 command data, never PostScript, PDF, pixel, or HTML', async () => {
-    await qzPrintRaw(networkConfig, Uint8Array.of(0x1b, 0x40, 0x1d, 0x56, 0x00));
-    const [, jobs] = qzMocks.print.mock.calls[0]!;
-    expect(jobs).toEqual([
-      expect.objectContaining({ type: 'raw', format: 'command', flavor: 'base64' }),
-    ]);
-    const serialized = JSON.stringify(jobs);
-    expect(serialized).not.toContain('pixel');
-    expect(serialized).not.toContain('html');
-    expect(serialized).not.toContain('pdf');
-    expect(serialized).not.toContain('%!PS-Adobe');
-  });
-
   it('packs GS v 0 with the correct 576-dot byte width and row orientation', () => {
     const image = solidImage(576, 2, 255);
     image.data.set([0, 0, 0, 255], 0);
@@ -214,6 +117,41 @@ describe('printing core', () => {
       openCashDrawer: false,
     });
     expect(Array.from(payload.slice(-4))).toEqual([0x1d, 0x56, 0x41, 0x00]);
+  });
+
+  it('generates text ESC/POS receipt with proper commands and line structure', () => {
+    const textReceipt = buildEscPosTextReceipt(
+      {
+        receiptType: 'PAYMENT',
+        orderCode: 'HD-001',
+        invoiceCode: 'HD-001',
+        orderType: 'DINE_IN',
+        total: 120000,
+        subtotal: 120000,
+        discountTotal: 0,
+        issuedAtMs: Date.now(),
+        tableName: 'Bàn 01',
+        cashierName: 'Thu ngân 1',
+        lines: [
+          {
+            id: '1',
+            name: 'Cà phê đá',
+            quantity: 2,
+            unitPrice: 30000,
+            totalPrice: 60000,
+          },
+        ],
+      },
+      {
+        paperSize: 'K80',
+        storeName: 'PRO POS COFFEE',
+        autoCut: true,
+      },
+    );
+    expect(textReceipt.length).toBeGreaterThan(50);
+    // Initializes with ESC @
+    expect(textReceipt[0]).toBe(0x1b);
+    expect(textReceipt[1]).toBe(0x40);
   });
 
   it('validates system and LAN configs without hard-coding one printer profile', () => {

@@ -41,5 +41,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: apps/print-agent/release/*
+          files: |
+            apps/print-agent/release/*.exe
+            apps/print-agent/release/SHA256SUMS.txt
           generate_release_notes: true

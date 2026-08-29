@@ -15,13 +15,13 @@
 
 Mở trang [PRO POS Print Agent Releases](https://github.com/VanhauDAU/pro-pos/releases), chọn bản `print-agent-v0.2.0` hoặc mới hơn và tải một trong hai file:
 
-- `PRO POS Print Agent Setup 0.2.0.exe`: bản cài đặt, phù hợp cho sử dụng hằng ngày.
-- `PRO POS Print Agent-0.2.0-x64-Portable.exe`: bản chạy trực tiếp, phù hợp để kiểm tra nhanh.
+- `PRO.POS.Print.Agent.Setup.0.2.0.exe`: bản cài đặt, phù hợp cho sử dụng hằng ngày.
+- `PRO.POS.Print.Agent-0.2.0-x64-Portable.exe`: bản chạy trực tiếp, phù hợp để kiểm tra nhanh.
 
 Tải thêm `SHA256SUMS.txt` nếu cần xác minh file. Trong PowerShell:
 
 ```powershell
-(Get-FileHash '.\PRO POS Print Agent Setup 0.2.0.exe' -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash '.\PRO.POS.Print.Agent.Setup.0.2.0.exe' -Algorithm SHA256).Hash.ToLower()
 ```
 
 Giá trị phải trùng với dòng tương ứng trong `SHA256SUMS.txt`. Bản hiện tại chưa ký code-signing; Windows SmartScreen có thể hiện cảnh báo. Chỉ chọn **More info → Run anyway** khi file được tải từ trang GitHub chính thức ở trên và checksum khớp.

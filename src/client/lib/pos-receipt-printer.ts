@@ -11,7 +11,6 @@ import {
   reconcileReceiptTimeSegmentAmounts,
   type PosReceiptPrintOptions,
 } from '@domain/receipt/receipt-generator';
-import { printerAction, printerService } from '@printing/printer-service';
 import { ApiError, apiRequest, jsonRequest } from './api';
 
 let cachedPosCsrfToken: string | null = null;
@@ -639,41 +638,26 @@ export function generateThermalReceiptHtml(
   return html;
 }
 
-/** Rasterizes the receipt and sends byte-perfect ESC/POS through the shared QZ Tray service. */
-export async function printReceipt(options: PosReceiptPrintOptions): Promise<{
+import { triggerBrowserPrint } from '@printing/transports/browser-transport';
+
+/** Browser print manual fallback */
+export async function browserPrintFallback(options: PosReceiptPrintOptions): Promise<{
   success: boolean;
   message?: string;
 }> {
-  const printerConfig = parsePrinterDeviceConfig(options.printSettings?.printersJson);
-  const paperSize: PaperSize = options.printSettings?.paperSize || printerConfig.paperSize || 'K80';
-  if (
-    options.data.receiptType === 'PROVISIONAL' &&
-    options.printSettings?.allowProvisionalPrint === false
-  ) {
-    return { success: false, message: 'Cửa hàng đang tắt chức năng in hóa đơn tạm tính.' };
+  try {
+    const html = generateThermalReceiptHtml(options);
+    await triggerBrowserPrint(html);
+    return { success: true };
+  } catch (error) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : 'Không thể in bằng trình duyệt.',
+    };
   }
-  const copies = Math.max(
-    1,
-    options.data.receiptType === 'PROVISIONAL'
-      ? (options.printSettings?.provisionalCopyCount ?? 1)
-      : (options.printSettings?.paymentCopyCount ?? 1),
-  );
-
-  return printerAction(() =>
-    printerService.printReceipt({
-      config: { ...printerConfig, paperSize },
-      htmlCopies: Array.from({ length: copies }, (_, index) =>
-        generateThermalReceiptHtml(options, { index: index + 1, total: copies }),
-      ),
-      openCashDrawer:
-        printerConfig.openCashDrawer &&
-        (options.data.receiptType === 'PAYMENT' ||
-          (options.data.receiptType === 'DEBT_PAYMENT' && options.data.paymentMethod === 'CASH')),
-    }),
-  );
 }
 
-/** Sends an async remote print job to the server for processing by a connected desktop bridge. */
+/** Sends an async remote print job to the server for processing by the active Pro POS Print Agent. */
 export async function dispatchRemotePrintJob(params: {
   documentType: 'invoice' | 'order' | 'provisional' | 'debt_payment';
   documentId: string;
@@ -710,7 +694,7 @@ export async function dispatchRemotePrintJob(params: {
     } catch (err: any) {
       if (err instanceof ApiError && (err.status === 403 || err.code === 'CSRF_TOKEN_INVALID')) {
         if (import.meta.env.DEV) {
-          console.warn('[Remote Print] CSRF token expired or missing, refreshing auth context...');
+          console.warn('[Print Job] CSRF token expired or missing, refreshing auth context...');
         }
         cachedPosCsrfToken = null;
         csrfToken = await resolvePosCsrfToken();
@@ -721,36 +705,28 @@ export async function dispatchRemotePrintJob(params: {
     }
 
     if (import.meta.env.DEV) {
-      console.log('[Remote Print] Job submitted successfully (status=201, QUEUED):', result.jobId);
+      console.log('[Print Job] Job submitted successfully (status=201, QUEUED):', result.jobId);
     }
 
     return {
       success: true,
       jobId: result.jobId,
-      message: 'Đã gửi yêu cầu in tới máy in.',
+      message: 'Đã gửi yêu cầu in tới Print Agent.',
     };
   } catch (error) {
     if (import.meta.env.DEV) {
-      const hasCookie = typeof document !== 'undefined' && document.cookie.includes('session=');
-      const hasHeader = Boolean(csrfToken || params.csrfToken);
-      console.error('[Remote Print] Submit failed:', {
-        hasCookie,
-        hasHeader,
-        tokenMatch: hasCookie && hasHeader,
-        status: error instanceof ApiError ? error.status : undefined,
-        code: error instanceof ApiError ? error.code : 'UNKNOWN',
-      });
+      console.error('[Print Job] Submit failed:', error);
     }
     return {
       success: false,
-      message: error instanceof Error ? error.message : 'Không thể gửi yêu cầu in từ xa.',
+      message: error instanceof Error ? error.message : 'Không thể gửi yêu cầu in.',
     };
   }
 }
 
 /**
- * Smart print router: Attempts direct local printing if on desktop with live QZ Tray;
- * falls back to Remote Print job if on mobile or if local QZ is not available.
+ * Unified printing entrypoint: Routes all invoice/quote prints through the Pro POS Print Agent pipeline.
+ * If user desires manual browser printing, they can explicitly use browserPrintFallback.
  */
 export async function smartPrintReceipt(
   options: PosReceiptPrintOptions,
@@ -760,39 +736,18 @@ export async function smartPrintReceipt(
   },
   csrfToken?: string | null,
 ): Promise<{ success: boolean; isRemote?: boolean; message?: string }> {
-  const isMobile =
-    typeof navigator !== 'undefined' &&
-    /iPhone|iPad|iPod|Android|Mobile/i.test(navigator.userAgent || '');
-
-  if (isMobile && documentIdentity) {
-    const remote = await dispatchRemotePrintJob({
-      documentType: documentIdentity.type,
-      documentId: documentIdentity.id,
-      csrfToken: csrfToken ?? (options as any).csrfToken,
-    });
-    return { ...remote, isRemote: true };
-  }
-
-  const local = await printReceipt(options);
-  if (local.success) {
-    return { success: true, isRemote: false };
-  }
-
-  // If local print fails because QZ Tray is not running and we have documentIdentity, fallback to remote job
   if (documentIdentity) {
-    const remote = await dispatchRemotePrintJob({
+    const res = await dispatchRemotePrintJob({
       documentType: documentIdentity.type,
       documentId: documentIdentity.id,
       csrfToken: csrfToken ?? (options as any).csrfToken,
     });
-    if (remote.success) {
-      return {
-        success: true,
-        isRemote: true,
-        ...(remote.message ? { message: remote.message } : {}),
-      };
-    }
+    return { ...res, isRemote: true };
   }
 
-  return local;
+  // Fallback to browser print if no document identity is passed
+  const fallbackRes = await browserPrintFallback(options);
+  return { ...fallbackRes, isRemote: false };
 }
+
+export const printReceipt = smartPrintReceipt;

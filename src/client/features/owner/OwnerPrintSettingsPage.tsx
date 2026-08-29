@@ -1,8 +1,10 @@
 import {
   CheckCircleOutlined,
   DeleteOutlined,
+  DesktopOutlined,
   EditOutlined,
   PictureOutlined,
+  PlusOutlined,
   PrinterOutlined,
   QrcodeOutlined,
   SaveOutlined,
@@ -10,6 +12,7 @@ import {
 } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  Alert,
   Button,
   Card,
   Checkbox,
@@ -18,13 +21,17 @@ import {
   Form,
   Input,
   InputNumber,
+  Modal,
+  Popconfirm,
   Radio,
   Row,
   Select,
   Skeleton,
   Space,
   Switch,
+  Table,
   Tabs,
+  Tag,
   Typography,
   message,
 } from 'antd';
@@ -42,9 +49,14 @@ import {
   parsePrintTemplateConfigs,
   parsePrinterDeviceConfig,
 } from '@contracts/store';
-import { getClientDeviceName } from '@client/lib/qz-tray-service';
+import {
+  listPrintAgents,
+  confirmPrintAgentPairing,
+  removePrintAgent,
+  type PrintAgentInfo,
+} from '@client/lib/print-bridge-service';
+import { browserPrintFallback, dispatchRemotePrintJob } from '@client/lib/pos-receipt-printer';
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
-import { printerAction, printerService } from '@printing/printer-service';
 import { ReceiptPreviewPaper } from '@client/features/pos/ReceiptPreviewModal';
 import { ThermalHourlySegmentsPreview } from '@client/components/ThermalHourlySegmentsPreview';
 import {
@@ -106,24 +118,16 @@ export function OwnerPrintSettingsPage() {
   const [bottomImageMediaId, setBottomImageMediaId] = useState<string | null>(null);
   const [bottomImagePreviewUrl, setBottomImagePreviewUrl] = useState<string | null>(null);
 
-  // Tab 2: Printer Device Settings & QZ Tray states
+  // Tab 2: Printer Device Settings & Print Agent states
   const [printerForm] = Form.useForm<PrinterDeviceConfig>();
-  const [qzStatus, setQzStatus] = useState<{
-    connected: boolean;
-    version?: string | undefined;
-    error?: string | undefined;
-    loading: boolean;
-  }>({
-    connected: false,
-    loading: false,
-  });
-  const [systemPrinters, setSystemPrinters] = useState<string[]>([]);
-  const [fetchingPrinters, setFetchingPrinters] = useState(false);
   const [testingPrint, setTestingPrint] = useState(false);
-  const [checkingConnection, setCheckingConnection] = useState(false);
+  const [browserTesting, setBrowserTesting] = useState(false);
   const [savingPrinter, setSavingPrinter] = useState(false);
+  const [pairModalOpen, setPairModalOpen] = useState(false);
+  const [pairingCode, setPairingCode] = useState('');
+  const [pairingDeviceName, setPairingDeviceName] = useState('');
+  const [pairingLoading, setPairingLoading] = useState(false);
 
-  const printerConnectionType = Form.useWatch('connectionType', printerForm) ?? 'SYSTEM';
   const printerPaperSize = Form.useWatch('paperSize', printerForm) ?? 'K80';
 
   // Queries
@@ -418,172 +422,101 @@ export function OwnerPrintSettingsPage() {
     printerForm.setFieldsValue(currentPrinterConfig);
   }, [printSettings.data, printerForm]);
 
-  // Initial check for QZ Tray
-  useEffect(() => {
-    let isMounted = true;
-    printerService.checkConnection().then((res) => {
-      if (!isMounted) return;
-      if (res.connected) {
-        setQzStatus({ connected: true, version: res.version, loading: false });
-        printerService
-          .listPrinters()
-          .then((printers) => {
-            if (isMounted) setSystemPrinters(printers);
-          })
-          .catch(() => {});
-      } else {
-        setQzStatus({ connected: false, error: res.error, loading: false });
-      }
-    });
-    return () => {
-      isMounted = false;
-    };
-  }, []);
+  const agentsQuery = useQuery({
+    queryKey: ['pos-print-agents'],
+    queryFn: () => listPrintAgents(),
+    refetchInterval: 10_000,
+  });
 
-  // Connect to QZ Tray & discover printers
-  const handleConnectQzTray = async () => {
-    setQzStatus((prev) => ({ ...prev, loading: true }));
-    const res = qzStatus.connected
-      ? await printerService.reconnect()
-      : await printerService.checkConnection(true);
-    if (res.connected) {
-      setQzStatus({ connected: true, version: res.version, loading: false });
-      messageApi.success(`Đã kết nối QZ Tray thành công (v${res.version || '2.2.x'})`);
-      try {
-        setFetchingPrinters(true);
-        const printers = await printerService.listPrinters();
-        setSystemPrinters(printers);
-      } catch (err: unknown) {
-        console.warn('Could not fetch printers:', err);
-      } finally {
-        setFetchingPrinters(false);
-      }
-    } else {
-      setQzStatus({ connected: false, error: res.error, loading: false });
-      messageApi.warning(res.error || 'Chưa tìm thấy ứng dụng QZ Tray đang chạy trên máy này.');
-    }
-  };
-
-  const handleFetchPrinters = async () => {
+  const handleTestPrintAgent = async () => {
     try {
-      setFetchingPrinters(true);
-      const printers = await printerService.listPrinters(true);
-      setSystemPrinters(printers);
-      messageApi.success(`Tìm thấy ${printers.length} máy in từ hệ thống.`);
+      setTestingPrint(true);
+      const res = await dispatchRemotePrintJob({
+        documentType: 'invoice',
+        documentId: 'TEST-PRINT-JOB',
+        csrfToken: authContext.data?.csrfToken ?? null,
+      });
+      if (res.success) {
+        messageApi.success('Đã gửi lệnh in thử thành công tới Print Agent!');
+      } else {
+        messageApi.error(res.message || 'Gửi lệnh in thử thất bại.');
+      }
     } catch (err: unknown) {
-      messageApi.error(errorMessage(err, 'Không thể lấy danh sách máy in từ QZ Tray.'));
+      messageApi.error(errorMessage(err, 'In thử thất bại'));
     } finally {
-      setFetchingPrinters(false);
+      setTestingPrint(false);
     }
   };
 
-  const handleCheckNetworkConnection = async () => {
-    const ip = printerForm.getFieldValue('networkIp');
-    const port = printerForm.getFieldValue('networkPort') || 9100;
-    if (!ip?.trim()) {
-      messageApi.warning('Vui lòng nhập IP máy in mạng.');
+  const handleBrowserFallbackPrint = async () => {
+    try {
+      setBrowserTesting(true);
+      const res = await browserPrintFallback({
+        data: {
+          receiptType: 'PAYMENT',
+          orderCode: 'TEST-001',
+          invoiceCode: 'TEST-BROWSER',
+          orderType: 'DINE_IN',
+          total: 50000,
+          subtotal: 50000,
+          discountTotal: 0,
+          issuedAtMs: Date.now(),
+          tableName: 'Bàn Test In',
+          cashierName: 'Quản lý Test',
+          lines: [
+            {
+              id: '1',
+              name: 'In thử trình duyệt (Dự phòng)',
+              quantity: 1,
+              unitPrice: 50000,
+              totalPrice: 50000,
+            },
+          ],
+        },
+        storeInfo: { storeName: storeSettings.data?.name || 'PRO POS' },
+      });
+      if (res.success) {
+        messageApi.success('Đã mở hộp thoại in của trình duyệt');
+      } else {
+        messageApi.error(res.message || 'Không thể mở hộp thoại in');
+      }
+    } finally {
+      setBrowserTesting(false);
+    }
+  };
+
+  const handleConfirmPairing = async () => {
+    if (!pairingCode || pairingCode.trim().length < 6) {
+      messageApi.error('Vui lòng nhập đầy đủ mã ghép nối 6 chữ số');
       return;
     }
-    setCheckingConnection(true);
+
     try {
-      const res = await printerAction(() =>
-        printerService.testPrint(
-          {
-            connectionType: 'NETWORK_TCP',
-            networkIp: ip.trim(),
-            networkPort: port,
-            paperSize: printerForm.getFieldValue('paperSize') || 'K80',
-            autoCut: false,
-            openCashDrawer: false,
-          },
-          storeSettings.data?.name || 'PRO POS',
-        ),
+      setPairingLoading(true);
+      const res = await confirmPrintAgentPairing(
+        pairingCode,
+        pairingDeviceName.trim() || undefined,
+        authContext.data?.csrfToken,
       );
-      if (res.success) {
-        const status = await printerService.checkConnection();
-        setQzStatus({
-          connected: status.connected,
-          loading: false,
-          ...(status.version ? { version: status.version } : {}),
-          ...(!status.connected && status.error ? { error: status.error } : {}),
-        });
-        messageApi.success(`Kết nối tới máy in ${ip}:${port} thành công!`);
-      } else {
-        messageApi.error(
-          `Kiểm tra kết nối thất bại: ${res.message || 'Không thể kết nối tới máy in mạng'}`,
-        );
-      }
+      messageApi.success(`Đã ghép nối thành công Print Agent: ${res.deviceName}`);
+      setPairModalOpen(false);
+      setPairingCode('');
+      setPairingDeviceName('');
+      await agentsQuery.refetch();
+    } catch (err: unknown) {
+      messageApi.error(errorMessage(err, 'Mã ghép nối không hợp lệ hoặc đã hết hạn'));
     } finally {
-      setCheckingConnection(false);
+      setPairingLoading(false);
     }
   };
 
-  const handleTestPrint = async () => {
-    const values = printerForm.getFieldsValue();
-    setTestingPrint(true);
+  const handleRemoveAgent = async (agentId: string) => {
     try {
-      const res = await printerAction(() =>
-        printerService.testPrint(
-          {
-            connectionType: values.connectionType || 'SYSTEM',
-            printerName: values.printerName,
-            networkIp: values.networkIp,
-            networkPort: values.networkPort,
-            paperSize: values.paperSize || 'K80',
-            printableDots: values.printableDots,
-            autoCut: Boolean(values.autoCut),
-            openCashDrawer: Boolean(values.openCashDrawer),
-          },
-          storeSettings.data?.name || 'PRO POS',
-        ),
-      );
-      if (res.success) {
-        const status = await printerService.checkConnection();
-        setQzStatus({
-          connected: status.connected,
-          loading: false,
-          ...(status.version ? { version: status.version } : {}),
-          ...(!status.connected && status.error ? { error: status.error } : {}),
-        });
-        messageApi.success('Đã gửi lệnh in thử thành công tới máy in!');
-      } else {
-        messageApi.error(`In thử thất bại: ${res.message || 'Không thể in'}`);
-      }
-    } finally {
-      setTestingPrint(false);
-    }
-  };
-
-  const handleCalibrationTest = async () => {
-    const values = printerForm.getFieldsValue();
-    setTestingPrint(true);
-    try {
-      const res = await printerAction(() =>
-        printerService.calibrationPrint({
-          connectionType: values.connectionType || 'SYSTEM',
-          printerName: values.printerName,
-          networkIp: values.networkIp,
-          networkPort: values.networkPort,
-          paperSize: values.paperSize || 'K80',
-          printableDots: values.printableDots,
-          autoCut: Boolean(values.autoCut),
-          openCashDrawer: false,
-        }),
-      );
-      if (res.success) {
-        const status = await printerService.checkConnection();
-        setQzStatus({
-          connected: status.connected,
-          loading: false,
-          ...(status.version ? { version: status.version } : {}),
-          ...(!status.connected && status.error ? { error: status.error } : {}),
-        });
-        messageApi.success('Đã gửi bản in hiệu chuẩn (Calibration) tới máy in!');
-      } else {
-        messageApi.error(`In hiệu chuẩn thất bại: ${res.message || 'Không thể in'}`);
-      }
-    } finally {
-      setTestingPrint(false);
+      await removePrintAgent(agentId, authContext.data?.csrfToken);
+      messageApi.success('Đã xóa Print Agent');
+      await agentsQuery.refetch();
+    } catch (err: unknown) {
+      messageApi.error(errorMessage(err, 'Xóa Print Agent thất bại'));
     }
   };
 
@@ -1617,93 +1550,98 @@ export function OwnerPrintSettingsPage() {
       ) : (
         /* Tab 2: Cấu hình máy in & thiết bị */
         <div className="owner-printer-devices-container">
-          {/* Card 1: MÁY IN & THIẾT BỊ / Thiết bị hiện tại & QZ Tray */}
+          {/* Card 1: PRO POS PRINT AGENT */}
           <Card
-            title="MÁY IN & THIẾT BỊ"
+            title={
+              <Space>
+                <DesktopOutlined />
+                <span>PRO POS PRINT AGENT (In ngầm tự động)</span>
+              </Space>
+            }
+            extra={
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => setPairModalOpen(true)}>
+                Thêm Print Agent
+              </Button>
+            }
             bordered={false}
             className="owner-print-card"
             style={{ marginBottom: 20 }}
           >
-            <Row gutter={[24, 24]} align="middle">
-              <Col xs={24} md={12}>
-                <div style={{ color: '#64748b', fontSize: 13, marginBottom: 4 }}>
-                  Thiết bị hiện tại
-                </div>
-                <Typography.Title level={4} style={{ margin: 0, color: '#1e293b' }}>
-                  {getClientDeviceName()}
-                </Typography.Title>
-              </Col>
-              <Col xs={24} md={12}>
-                <div className="qz-tray-status-box">
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      marginBottom: 6,
-                    }}
-                  >
-                    <div style={{ fontWeight: 600, fontSize: 14 }}>QZ Tray</div>
-                    {qzStatus.connected ? (
-                      <span className="qz-badge qz-badge--connected">
-                        <span className="qz-badge-dot">●</span> Đã kết nối
-                      </span>
-                    ) : (
-                      <span className="qz-badge qz-badge--disconnected">
-                        <span className="qz-badge-dot">○</span>{' '}
-                        {qzStatus.error ? 'QZ Tray chưa chạy' : 'Chưa kết nối'}
-                      </span>
-                    )}
-                  </div>
+            {agentsQuery.data && agentsQuery.data.length > 0 ? (
+              <Alert
+                type="success"
+                showIcon
+                icon={<CheckCircleOutlined />}
+                message="Print Agent đang hoạt động"
+                description="Mọi yêu cầu in từ Điện thoại / iPad / Web POS sẽ được Print Agent tự động gửi thẳng tới máy in LAN mà không cần bấm xác nhận trên máy tính."
+              />
+            ) : (
+              <Alert
+                type="warning"
+                showIcon
+                message="Chưa có Print Agent nào được ghép nối"
+                description="Vui lòng mở ứng dụng Pro POS Print Agent trên máy tính quầy, sau đó bấm 'Thêm Print Agent' và nhập mã 6 số để tự động in hóa đơn."
+              />
+            )}
 
-                  {qzStatus.connected ? (
-                    <div
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        marginTop: 8,
-                      }}
+            <Divider style={{ margin: '16px 0' }} />
+
+            <Typography.Title level={5}>Danh sách Print Agent đã ghép nối</Typography.Title>
+            <Table
+              dataSource={agentsQuery.data || []}
+              rowKey="id"
+              pagination={false}
+              locale={{ emptyText: 'Chưa có Print Agent nào' }}
+              columns={[
+                {
+                  title: 'Tên thiết bị',
+                  dataIndex: 'device_name',
+                  key: 'device_name',
+                  render: (val: string) => (
+                    <Space>
+                      <DesktopOutlined />
+                      <Typography.Text strong>{val}</Typography.Text>
+                    </Space>
+                  ),
+                },
+                {
+                  title: 'Trạng thái',
+                  key: 'status',
+                  render: () => <Tag color="green">Sẵn sàng</Tag>,
+                },
+                {
+                  title: 'Vai trò',
+                  dataIndex: 'printer_role',
+                  key: 'printer_role',
+                  render: (val: string) => <Tag color="blue">{val || 'receipt'}</Tag>,
+                },
+                {
+                  title: 'Thao tác',
+                  key: 'action',
+                  render: (_: unknown, record: PrintAgentInfo) => (
+                    <Popconfirm
+                      title="Xóa Print Agent này?"
+                      description="Thiết bị này sẽ không thể nhận lệnh in từ xa nữa."
+                      onConfirm={() => handleRemoveAgent(record.id)}
+                      okText="Xóa"
+                      cancelText="Hủy"
                     >
-                      <span style={{ fontSize: 13, color: '#64748b' }}>
-                        Phiên bản: <strong>{qzStatus.version || '2.2.x'}</strong>
-                      </span>
-                      <Button size="small" onClick={handleConnectQzTray} loading={qzStatus.loading}>
-                        Kết nối lại
+                      <Button danger type="link" size="small">
+                        Xóa
                       </Button>
-                    </div>
-                  ) : (
-                    <div>
-                      <p style={{ fontSize: 12.5, color: '#64748b', margin: '4px 0 12px' }}>
-                        {qzStatus.error ||
-                          'Để in trực tiếp không cần hộp thoại, hãy cài QZ Tray trên máy này.'}
-                      </p>
-                      <Space>
-                        <Button
-                          type="default"
-                          href="https://qz.io/download/"
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          Tải QZ Tray
-                        </Button>
-                        <Button
-                          type="primary"
-                          onClick={handleConnectQzTray}
-                          loading={qzStatus.loading}
-                        >
-                          Thử kết nối
-                        </Button>
-                      </Space>
-                    </div>
-                  )}
-                </div>
-              </Col>
-            </Row>
+                    </Popconfirm>
+                  ),
+                },
+              ]}
+            />
           </Card>
 
           {/* Card 2: MÁY IN HÓA ĐƠN */}
-          <Card title="MÁY IN HÓA ĐƠN" bordered={false} className="owner-print-card">
+          <Card
+            title="CẤU HÌNH MÁY IN LAN (TCP PORT 9100)"
+            bordered={false}
+            className="owner-print-card"
+          >
             <Form
               form={printerForm}
               layout="vertical"
@@ -1713,107 +1651,23 @@ export function OwnerPrintSettingsPage() {
               <Row gutter={[24, 16]}>
                 <Col xs={24} md={16}>
                   <Form.Item
-                    name="configurationName"
-                    label={<span style={{ fontWeight: 600 }}>Tên cấu hình</span>}
-                    rules={[{ required: true, message: 'Vui lòng nhập tên cấu hình' }]}
+                    name="networkIp"
+                    label={<span style={{ fontWeight: 600 }}>Địa chỉ IP Máy in LAN</span>}
+                    rules={[{ required: true, message: 'Vui lòng nhập địa chỉ IP' }]}
+                    tooltip="Ví dụ: 192.168.1.73"
                   >
-                    <Input placeholder="Máy in quầy" size="large" />
+                    <Input placeholder="192.168.1.73" prefix={<WifiOutlined />} size="large" />
                   </Form.Item>
                 </Col>
                 <Col xs={24} md={8}>
                   <Form.Item
-                    name="isDefault"
-                    valuePropName="checked"
-                    label={<span style={{ fontWeight: 600 }}>Máy in mặc định</span>}
+                    name="networkPort"
+                    label={<span style={{ fontWeight: 600 }}>Cổng kết nối (Port)</span>}
+                    rules={[{ required: true, message: 'Vui lòng nhập cổng' }]}
                   >
-                    <Switch checkedChildren="MẶC ĐỊNH" unCheckedChildren="KHÔNG" />
+                    <InputNumber size="large" min={1} max={65535} style={{ width: '100%' }} />
                   </Form.Item>
                 </Col>
-                {/* Chế độ / Kiểu kết nối */}
-                <Col xs={24}>
-                  <Form.Item
-                    name="connectionType"
-                    label={<span style={{ fontWeight: 600 }}>Chế độ / Kiểu kết nối</span>}
-                  >
-                    <Radio.Group>
-                      <Space direction="horizontal" size={24}>
-                        <Radio value="SYSTEM">Máy in hệ thống</Radio>
-                        <Radio value="NETWORK_TCP">LAN / TCP (Máy in mạng TCP/IP)</Radio>
-                      </Space>
-                    </Radio.Group>
-                  </Form.Item>
-                </Col>
-
-                {/* System Printer Dropdown */}
-                {printerConnectionType === 'SYSTEM' ? (
-                  <Col xs={24} md={16}>
-                    <Form.Item
-                      name="printerName"
-                      label={<span style={{ fontWeight: 600 }}>Máy in</span>}
-                      extra={
-                        systemPrinters.length === 0
-                          ? 'Chưa tìm thấy máy in. Hãy kết nối QZ Tray để tự động nhận diện danh sách máy in trên máy tính.'
-                          : `Tìm thấy ${systemPrinters.length} máy in từ hệ thống.`
-                      }
-                    >
-                      <Select
-                        placeholder="-- Chọn máy in hệ thống --"
-                        size="large"
-                        loading={fetchingPrinters}
-                        options={systemPrinters.map((p) => ({ value: p, label: p }))}
-                        suffixIcon={
-                          <Button
-                            type="link"
-                            size="small"
-                            style={{ padding: 0 }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleFetchPrinters();
-                            }}
-                          >
-                            Làm mới
-                          </Button>
-                        }
-                      />
-                    </Form.Item>
-                  </Col>
-                ) : (
-                  <>
-                    <Col xs={24} md={10}>
-                      <Form.Item
-                        name="networkIp"
-                        label={<span style={{ fontWeight: 600 }}>IP máy in</span>}
-                        rules={[{ required: true, message: 'Vui lòng nhập IP máy in mạng' }]}
-                      >
-                        <Input placeholder="192.168.1.73" size="large" />
-                      </Form.Item>
-                    </Col>
-                    <Col xs={24} md={6}>
-                      <Form.Item
-                        name="networkPort"
-                        label={<span style={{ fontWeight: 600 }}>Port</span>}
-                        rules={[{ required: true, message: 'Vui lòng nhập Port' }]}
-                      >
-                        <InputNumber
-                          placeholder="9100"
-                          style={{ width: '100%' }}
-                          size="large"
-                          min={1}
-                          max={65535}
-                        />
-                      </Form.Item>
-                    </Col>
-                    <Col
-                      xs={24}
-                      md={8}
-                      style={{ display: 'flex', alignItems: 'center', paddingTop: 8 }}
-                    >
-                      <Button onClick={handleCheckNetworkConnection} loading={checkingConnection}>
-                        Kiểm tra kết nối
-                      </Button>
-                    </Col>
-                  </>
-                )}
 
                 {/* Khổ giấy */}
                 <Col xs={24}>
@@ -1839,7 +1693,7 @@ export function OwnerPrintSettingsPage() {
                         Số dot in thực tế (Printable Dots Calibration)
                       </span>
                     }
-                    extra="Tùy chọn: Để trống để dùng chuẩn mặc định (K80: 576 dots, K58: 420 dots). Tùy chỉnh nếu model máy in nhiệt của bạn có thông số vùng in khác."
+                    extra="Tùy chọn: Để trống để dùng chuẩn mặc định (K80: 576 dots, K58: 420 dots)."
                   >
                     <InputNumber
                       placeholder={printerPaperSize === 'K58' ? '420' : '576'}
@@ -1886,19 +1740,19 @@ export function OwnerPrintSettingsPage() {
                     </Button>
                     <Button
                       icon={<PrinterOutlined />}
-                      onClick={handleTestPrint}
+                      onClick={handleTestPrintAgent}
                       loading={testingPrint}
                       size="large"
                     >
-                      In thử hóa đơn
+                      In thử qua Print Agent
                     </Button>
                     <Button
-                      icon={<CheckCircleOutlined />}
-                      onClick={handleCalibrationTest}
-                      loading={testingPrint}
+                      icon={<PrinterOutlined />}
+                      onClick={handleBrowserFallbackPrint}
+                      loading={browserTesting}
                       size="large"
                     >
-                      In hiệu chuẩn (Calibration)
+                      In bằng trình duyệt (Dự phòng)
                     </Button>
                   </Space>
                 </Col>
@@ -1907,6 +1761,47 @@ export function OwnerPrintSettingsPage() {
           </Card>
         </div>
       )}
+
+      {/* Modal: Ghép nối Print Agent */}
+      <Modal
+        title="Ghép nối Pro POS Print Agent"
+        open={pairModalOpen}
+        onCancel={() => setPairModalOpen(false)}
+        onOk={handleConfirmPairing}
+        confirmLoading={pairingLoading}
+        okText="Xác nhận ghép nối"
+        cancelText="Hủy"
+      >
+        <Space direction="vertical" size="middle" style={{ width: '100%', marginTop: 8 }}>
+          <Alert
+            type="info"
+            message="Cách lấy mã ghép nối:"
+            description="Mở ứng dụng Print Agent trên máy tính quầy (Terminal / Daemon). Ứng dụng sẽ hiển thị mã gồm 6 chữ số."
+          />
+
+          <div>
+            <Typography.Text strong>Mã ghép nối (6 chữ số):</Typography.Text>
+            <Input
+              size="large"
+              placeholder="VD: 748291 hoặc 748-291"
+              value={pairingCode}
+              onChange={(e) => setPairingCode(e.target.value)}
+              style={{ textAlign: 'center', fontSize: 22, letterSpacing: 4, marginTop: 4 }}
+              maxLength={10}
+            />
+          </div>
+
+          <div>
+            <Typography.Text strong>Tên gợi nhớ thiết bị (tùy chọn):</Typography.Text>
+            <Input
+              placeholder="VD: Mac quầy thu ngân"
+              value={pairingDeviceName}
+              onChange={(e) => setPairingDeviceName(e.target.value)}
+              style={{ marginTop: 4 }}
+            />
+          </div>
+        </Space>
+      </Modal>
     </div>
   );
 }

@@ -1,16 +1,17 @@
 import { env } from 'cloudflare:workers';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { PlatformService } from '@server/services/platform-service';
 import { PosService } from '@server/services/pos-service';
 import { PrintJobService } from '@server/services/print-job-service';
-import { getDefaultQzCertificate, signQzPayload } from '@server/lib/qz-crypto';
+import { PrintAgentService } from '@server/services/print-agent-service';
 
-describe('Remote Print & QZ Security Lifecycle (Integration Test)', () => {
+describe('Remote Print & Print Agent Lifecycle (Integration Test)', () => {
   let storeId: string;
   let ownerUserId: string;
   let orderId: string;
   let printJobService: PrintJobService;
+  let printAgentService: PrintAgentService;
 
   beforeAll(async () => {
     const platform = new PlatformService(env);
@@ -36,17 +37,38 @@ describe('Remote Print & QZ Security Lifecycle (Integration Test)', () => {
     });
     orderId = order.orderId;
     printJobService = new PrintJobService(env);
+    printAgentService = new PrintAgentService(env);
   });
 
-  describe('QZ Security & Signing Integration', () => {
-    it('provides public certificate and valid RSA-SHA512 signatures', async () => {
-      const cert = getDefaultQzCertificate();
-      expect(cert).toContain('BEGIN CERTIFICATE');
+  afterAll(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  });
 
-      const challenge = 'test-challenge-12345';
-      const signature = await signQzPayload(challenge);
-      expect(typeof signature).toBe('string');
-      expect(signature.length).toBeGreaterThan(64);
+  describe('Print Agent Pairing & Authentication', () => {
+    it('creates 6-digit pairing code, confirms via POS, and verifies agent credentials', async () => {
+      // Step 1: Agent requests pairing code
+      const session = await printAgentService.createPairingSession();
+      expect(session.pairingCode).toMatch(/^\d{6}$/);
+
+      // Step 2: POS owner confirms pairing with 6-digit code
+      const confirmed = await printAgentService.confirmPairing(
+        session.pairingCode,
+        storeId,
+        'Mac Quầy Thu Ngân',
+      );
+      expect(confirmed.agentId).toBeDefined();
+      expect(confirmed.deviceName).toBe('Mac Quầy Thu Ngân');
+
+      // Step 3: Agent polls status and receives credentials
+      const status = await printAgentService.getPairingStatus(session.sessionId);
+      expect(status.status).toBe('APPROVED');
+      expect(status.agentId).toBe(confirmed.agentId);
+      expect(status.agentSecret).toBeDefined();
+
+      // Step 4: Agent authenticates with credentials
+      const agent = await printAgentService.verifyAgent(status.agentId!, status.agentSecret!);
+      expect(agent.id).toBe(confirmed.agentId);
+      expect(agent.store_id).toBe(storeId);
     });
   });
 
@@ -87,15 +109,15 @@ describe('Remote Print & QZ Security Lifecycle (Integration Test)', () => {
       expect(duplicateJob.id).toBe(jobId);
     });
 
-    it('allows Desktop Bridge A to atomically claim the job', async () => {
-      const claimed = await printJobService.claimPrintJob(storeId, jobId, 'desktop-mac-counter');
+    it('allows Print Agent A to atomically claim the job', async () => {
+      const claimed = await printJobService.claimPrintJob(storeId, jobId, 'print-agent-mac');
       expect(claimed.status).toBe('CLAIMED');
-      expect(claimed.claimedByDeviceId).toBe('desktop-mac-counter');
+      expect(claimed.claimedByDeviceId).toBe('print-agent-mac');
     });
 
-    it('rejects Desktop Bridge B when trying to claim the already claimed job (409 Conflict)', async () => {
+    it('rejects Print Agent B when trying to claim the already claimed job (409 Conflict)', async () => {
       await expect(
-        printJobService.claimPrintJob(storeId, jobId, 'desktop-win-kitchen'),
+        printJobService.claimPrintJob(storeId, jobId, 'print-agent-win'),
       ).rejects.toMatchObject({
         code: 'PRINT_JOB_CONFLICT',
         status: 409,
@@ -129,7 +151,7 @@ describe('Remote Print & QZ Security Lifecycle (Integration Test)', () => {
         idempotencyKey: failIdemp,
       });
 
-      await printJobService.claimPrintJob(storeId, job.id, 'bridge-1');
+      await printJobService.claimPrintJob(storeId, job.id, 'agent-1');
       await printJobService.startPrintJob(storeId, job.id);
 
       const failed = await printJobService.failPrintJob(
@@ -153,7 +175,7 @@ describe('Remote Print & QZ Security Lifecycle (Integration Test)', () => {
         idempotencyKey: uncertainIdemp,
       });
 
-      await printJobService.claimPrintJob(storeId, job.id, 'bridge-1');
+      await printJobService.claimPrintJob(storeId, job.id, 'agent-1');
       await printJobService.startPrintJob(storeId, job.id);
 
       const uncertain = await printJobService.uncertainPrintJob(

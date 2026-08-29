@@ -27,7 +27,7 @@ import { success } from '@server/lib/response';
 import { parseJson } from '@server/lib/validation';
 import {
   assertPermission,
-  requireActor,
+  requireActorOrPrintAgent,
   requirePermission,
 } from '@server/middleware/authorization';
 import { PosService } from '@server/services/pos-service';
@@ -60,7 +60,7 @@ import type { AppEnv } from '@server/types';
 import { addRequestTiming, measureRequestTiming } from '@server/lib/performance';
 
 const posRoutes = new Hono<AppEnv>();
-posRoutes.use('*', requireActor('OWNER', 'EMPLOYEE'));
+posRoutes.use('*', requireActorOrPrintAgent());
 
 function producesRealtimeEvent(path: string) {
   return (

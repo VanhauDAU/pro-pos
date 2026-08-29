@@ -1039,9 +1039,9 @@ export function buildPrintDataFromInvoice(invoice: {
     promotions:
       invoiceSnapshot.promotions ?? (invoiceSnapshot.promotion ? [invoiceSnapshot.promotion] : []),
     total: invoice.invoice.total,
-    paymentMethod: invoice.payment.method,
-    cashReceived: invoice.payment.cashReceived ?? null,
-    cashChange: invoice.payment.cashChange ?? null,
+    paymentMethod: invoice.payment?.method ?? 'CASH',
+    cashReceived: invoice.payment?.cashReceived ?? null,
+    cashChange: invoice.payment?.cashChange ?? null,
     lines,
   };
 }

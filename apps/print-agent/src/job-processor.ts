@@ -12,8 +12,9 @@ import { buildEscPosTextReceipt } from '@printing/escpos/escpos-text-builder';
 import { createReceiptDocument } from '@domain/receipt/receipt-document';
 import type { PrintJob } from '@contracts/print-job';
 import { parsePrinterDeviceConfig, type StorePrintSettings } from '@contracts/store';
+import { getReceiptPrintProfile } from '@contracts/store';
 import { PrinterError, type PrinterFailureStage } from '@printing/printer-errors';
-import type { PrintStoreContext } from '@contracts/print-bootstrap';
+import type { PrintBootstrap, PrintStoreContext } from '@contracts/print-bootstrap';
 import { AgentPrintCache } from './core/print-cache';
 
 type PrintDocumentApi = Pick<AgentApiClient, 'get'>;
@@ -177,6 +178,45 @@ export class JobProcessor {
     }
   }
 
+  private async preloadConfiguredMedia(bootstrap: PrintBootstrap): Promise<{
+    paperSize: 'K80' | 'K58';
+    logoRasterBytes: Uint8Array | null;
+    bottomRasterBytes: Uint8Array | null;
+  }> {
+    const printSettings = bootstrap.printSettings;
+    const printerConfig = parsePrinterDeviceConfig(printSettings.printersJson);
+    const paperSize =
+      printSettings.paperSize || printerConfig.paperSize || this.config.paperSize || 'K80';
+    const profile = getReceiptPrintProfile(paperSize, printerConfig.printableDots);
+    const isK58 = paperSize === 'K58';
+    const horizontalLogo = Boolean(printSettings.logoHorizontalLayout && printSettings.logoMediaId);
+    const [logoRasterBytes, bottomRasterBytes] = await Promise.all([
+      printSettings.logoMediaId
+        ? this.loadOptionalRaster(
+            printSettings.logoMediaId,
+            Math.round(
+              profile.defaultPrintableDots * (horizontalLogo ? (isK58 ? 0.24 : 0.22) : 0.6),
+            ),
+            horizontalLogo ? (isK58 ? 72 : 96) : 180,
+            'logo',
+            paperSize,
+            bootstrap.configVersion,
+          )
+        : null,
+      printSettings.bottomImageType === 'UPLOAD' && printSettings.bottomImageMediaId
+        ? this.loadOptionalRaster(
+            printSettings.bottomImageMediaId,
+            profile.defaultPrintableDots,
+            500,
+            'bottom image',
+            paperSize,
+            bootstrap.configVersion,
+          )
+        : null,
+    ]);
+    return { paperSize, logoRasterBytes, bottomRasterBytes };
+  }
+
   async processJob(job: PrintJob): Promise<boolean> {
     if (this.inFlight.has(job.id)) return false;
     this.inFlight.add(job.id);
@@ -200,33 +240,25 @@ export class JobProcessor {
         return false;
       }
 
-      try {
-        await this.apiClient.post(`/api/v1/pos/print-jobs/${job.id}/start`, {});
-      } catch (error) {
-        throw new PrintJobProcessingError(
-          'PRINT_JOB_START_FAILED',
-          `Không thể bắt đầu print job: ${errorMessage(error)}`,
-          { cause: error },
-        );
-      }
-
-      let context: PrintStoreContext | null;
-      let printSettings: StorePrintSettings;
-      let configVersion: number;
-      try {
-        const bootstrap = await this.printCache.resolve();
-        context = bootstrap.context;
-        printSettings = bootstrap.printSettings;
-        configVersion = bootstrap.configVersion;
-      } catch (error) {
+      const bootstrapPromise = this.printCache.resolve().catch((error) => {
         throw new PrintJobProcessingError(
           'PRINT_BOOTSTRAP_FETCH_FAILED',
           `Không thể nạp bootstrap in: ${errorMessage(error)}`,
           { cause: error },
         );
-      }
-
-      const printData = await loadPrintDataForJob(this.apiClient, job);
+      });
+      const printDataPromise = loadPrintDataForJob(this.apiClient, job);
+      const mediaPromise = bootstrapPromise.then((bootstrap) =>
+        this.preloadConfiguredMedia(bootstrap),
+      );
+      const [bootstrap, printData, preloadedMedia] = await Promise.all([
+        bootstrapPromise,
+        printDataPromise,
+        mediaPromise,
+      ]);
+      const context: PrintStoreContext | null = bootstrap.context;
+      const printSettings: StorePrintSettings = bootstrap.printSettings;
+      const configVersion = bootstrap.configVersion;
       const safeContext = context ?? {};
       if (!context) {
         console.warn(
@@ -280,7 +312,8 @@ export class JobProcessor {
       );
       const [logoRasterBytes, bottomRasterBytes] = await Promise.all([
         receiptDocument.media.logoUrl
-          ? this.loadOptionalRaster(
+          ? (preloadedMedia.logoRasterBytes ??
+            this.loadOptionalRaster(
               printSettings.logoMediaId,
               Math.round(
                 maximumDots * (horizontalLogo ? (receiptDocument.isK58 ? 0.24 : 0.22) : 0.6),
@@ -289,17 +322,18 @@ export class JobProcessor {
               'logo',
               paperSize,
               configVersion,
-            )
+            ))
           : null,
         printSettings.bottomImageType === 'UPLOAD' && receiptDocument.media.bottomImageUrl
-          ? this.loadOptionalRaster(
+          ? (preloadedMedia.bottomRasterBytes ??
+            this.loadOptionalRaster(
               printSettings.bottomImageMediaId,
               maximumDots,
               500,
               'bottom image',
               paperSize,
               configVersion,
-            )
+            ))
           : receiptDocument.media.vietQrPayload
             ? null
             : this.loadOptionalVietQrRaster(
@@ -359,6 +393,15 @@ export class JobProcessor {
       console.log(
         `[PrintAgent] Đang gửi ${copyCount} liên tới máy in LAN ${printerIp}:${printerPort}...`,
       );
+      try {
+        await this.apiClient.post(`/api/v1/pos/print-jobs/${job.id}/start`, {});
+      } catch (error) {
+        throw new PrintJobProcessingError(
+          'PRINT_JOB_START_FAILED',
+          `Không thể bắt đầu print job: ${errorMessage(error)}`,
+          { cause: error },
+        );
+      }
       try {
         await this.transport.send(escposBytes, { host: printerIp, port: printerPort });
       } catch (error) {

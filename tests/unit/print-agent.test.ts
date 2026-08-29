@@ -285,6 +285,73 @@ describe('Pro POS Print Agent Unit Tests', () => {
     });
   });
 
+  it('renders all data before start and starts immediately before the TCP write', async () => {
+    const order: string[] = [];
+    const get = vi.fn(async (path: string) => {
+      if (path === '/api/v1/pos/print-bootstrap') {
+        order.push('bootstrap');
+        return {
+          context: { storeName: 'FAST STORE' },
+          configVersion: 1,
+          printSettings: {
+            storeId: 'STORE-1',
+            updatedAt: 1,
+            paperSize: 'K80',
+            printersJson: JSON.stringify({ networkIp: '192.168.1.10', networkPort: 9100 }),
+            paymentCopyCount: 1,
+            provisionalCopyCount: 1,
+          },
+        };
+      }
+      if (path === '/api/v1/pos/invoices/INV-ORDER') {
+        order.push('document');
+        return {
+          invoice: {
+            id: 'INV-ORDER',
+            displayCode: 'HD-ORDER',
+            totalVnd: 10000,
+            issuedAt: 1720000000000,
+          },
+          lines: [],
+          payment: { method: 'CASH' },
+        };
+      }
+      throw new Error(`Unexpected GET ${path}`);
+    });
+    const post = vi.fn(async (path: string) => {
+      if (path.endsWith('/claim')) order.push('claim');
+      if (path.endsWith('/start')) order.push('start');
+      if (path.endsWith('/complete')) order.push('complete');
+      return {};
+    });
+    const send = vi.fn(async () => {
+      order.push('tcp');
+    });
+    const processor = new JobProcessor(
+      { serverUrl: 'https://pos.example', agentId: 'AGENT-1' },
+      { get, getBytes: vi.fn(), post } as unknown as AgentApiClient,
+      { send },
+    );
+
+    await expect(
+      processor.processJob({
+        id: 'JOB-ORDER',
+        documentType: 'invoice',
+        documentId: 'INV-ORDER',
+      } as PrintJob),
+    ).resolves.toBe(true);
+
+    expect(order.indexOf('claim')).toBeLessThan(order.indexOf('bootstrap'));
+    expect(order.indexOf('claim')).toBeLessThan(order.indexOf('document'));
+    expect(order.indexOf('bootstrap')).toBeLessThan(order.indexOf('start'));
+    expect(order.indexOf('document')).toBeLessThan(order.indexOf('start'));
+    expect(order).toEqual(
+      expect.arrayContaining(['claim', 'bootstrap', 'document', 'start', 'tcp', 'complete']),
+    );
+    expect(order.indexOf('start')).toBeLessThan(order.indexOf('tcp'));
+    expect(order.indexOf('tcp')).toBeLessThan(order.indexOf('complete'));
+  });
+
   it('detects desktop vs mobile platforms accurately', () => {
     vi.stubGlobal('window', {});
     vi.stubGlobal('navigator', {

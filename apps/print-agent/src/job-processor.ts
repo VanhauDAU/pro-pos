@@ -2,13 +2,38 @@ import { AgentApiClient } from './api-client';
 import type { PrintAgentConfig } from './config';
 import { AgentTcpTransport } from './tcp-transport';
 import {
+  buildEscPosReceipt,
   buildPrintDataFromInvoice,
   buildPrintDataFromQuote,
   type PosReceiptPrintData,
 } from '@domain/receipt/receipt-generator';
-import { buildEscPosTextReceipt } from '@printing/escpos/escpos-text-builder';
+import { encodeEscPosWpc1258 } from '@printing/escpos/escpos-wpc1258';
 import type { PrintJob } from '@contracts/print-job';
 import type { StorePrintSettings } from '@contracts/store';
+
+const CASH_DRAWER_COMMAND = '\x1b\x70\x00\x19\xfa';
+
+function combinePayloads(payloads: Uint8Array[]): Uint8Array {
+  const totalLength = payloads.reduce((sum, payload) => sum + payload.length, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const payload of payloads) {
+    result.set(payload, offset);
+    offset += payload.length;
+  }
+  return result;
+}
+
+function resolveCopyCount(
+  printData: PosReceiptPrintData,
+  printSettings: StorePrintSettings | null,
+): number {
+  const configured =
+    printData.receiptType === 'PROVISIONAL'
+      ? printSettings?.provisionalCopyCount
+      : printSettings?.paymentCopyCount;
+  return Math.max(1, Math.min(9, configured ?? 1));
+}
 
 export class JobProcessor {
   private readonly inFlight = new Set<string>();
@@ -48,8 +73,15 @@ export class JobProcessor {
 
       let printData: PosReceiptPrintData | null = null;
       let printSettings: StorePrintSettings | null = null;
-      let storeInfo: { name: string; address?: string; phone?: string } = {
-        name: this.config.storeName || 'PRO POS',
+      let storeInfo: {
+        storeName: string;
+        address?: string;
+        phone?: string;
+        bankName?: string;
+        bankAccountNumber?: string;
+        bankAccountName?: string;
+      } = {
+        storeName: this.config.storeName || 'PRO POS',
       };
 
       try {
@@ -60,9 +92,12 @@ export class JobProcessor {
 
         if (contextRes?.store) {
           storeInfo = {
-            name: contextRes.store.name || storeInfo.name,
+            storeName: contextRes.store.name || storeInfo.storeName,
             address: contextRes.store.address || undefined,
             phone: contextRes.store.phone || undefined,
+            bankName: contextRes.store.bankName || undefined,
+            bankAccountNumber: contextRes.store.bankAccountNumber || undefined,
+            bankAccountName: contextRes.store.bankAccountName || undefined,
           };
         }
         if (settingsRes) {
@@ -93,46 +128,63 @@ export class JobProcessor {
         return false;
       }
 
-      // 3. Render ESC/POS Bytes
-      let paperSize: 'K80' | 'K58' = this.config.paperSize || 'K80';
-      let autoCut = this.config.autoCut ?? true;
-      let openCashDrawer = this.config.openCashDrawer ?? false;
-
-      if (printSettings?.printersJson) {
-        try {
-          const parsed = JSON.parse(printSettings.printersJson);
-          if (parsed.paperSize) paperSize = parsed.paperSize;
-          if (parsed.autoCut !== undefined) autoCut = parsed.autoCut;
-          if (parsed.openCashDrawer !== undefined) openCashDrawer = parsed.openCashDrawer;
-        } catch {
-          // ignore
-        }
+      // 3. Render the canonical receipt used by Owner print-template settings.
+      // The previous Print Agent used a reduced text-only builder, which ignored
+      // templateConfigJson, footer/Wi-Fi/custom address, copy counts and other
+      // configured fields. Keep the domain receipt generator as the single source
+      // of truth, then encode its Vietnamese text using the printer's WPC1258 page.
+      let effectivePrintSettings = printSettings;
+      if (!effectivePrintSettings) {
+        effectivePrintSettings = {
+          paperSize: this.config.paperSize || 'K80',
+          printersJson: JSON.stringify({
+            paperSize: this.config.paperSize || 'K80',
+            autoCut: this.config.autoCut ?? true,
+            openCashDrawer: this.config.openCashDrawer ?? false,
+          }),
+          paymentCopyCount: 1,
+          provisionalCopyCount: 1,
+        } as StorePrintSettings;
       }
 
-      const escposBytes = buildEscPosTextReceipt(printData, {
-        paperSize,
-        autoCut,
-        openCashDrawer: openCashDrawer && printData.receiptType === 'PAYMENT',
-        storeName: storeInfo.name,
-        storeAddress: storeInfo.address,
-        storePhone: storeInfo.phone,
-      });
+      const copyCount = resolveCopyCount(printData, effectivePrintSettings);
+      const payloads: Uint8Array[] = [];
+      for (let copyIndex = 0; copyIndex < copyCount; copyIndex += 1) {
+        const receipt = buildEscPosReceipt(
+          {
+            data: printData,
+            printSettings: effectivePrintSettings,
+            storeInfo,
+          },
+          { index: copyIndex + 1, total: copyCount },
+        );
+
+        // A cash drawer pulse must happen only once for a multi-copy payment.
+        const raw =
+          copyIndex === copyCount - 1
+            ? receipt.escPosData
+            : receipt.escPosData.replaceAll(CASH_DRAWER_COMMAND, '');
+        payloads.push(encodeEscPosWpc1258(raw));
+      }
+      const escposBytes = combinePayloads(payloads);
 
       // 4. Send to LAN Printer via TCP 9100
       let printerIp = this.config.printerIp || '192.168.1.73';
       let printerPort = this.config.printerPort || 9100;
 
-      if (printSettings?.printersJson) {
+      if (effectivePrintSettings?.printersJson) {
         try {
-          const parsed = JSON.parse(printSettings.printersJson);
+          const parsed = JSON.parse(effectivePrintSettings.printersJson);
           if (parsed.networkIp) printerIp = parsed.networkIp;
           if (parsed.networkPort) printerPort = parsed.networkPort;
         } catch {
-          // ignore
+          // ignore malformed legacy config and keep agent fallback
         }
       }
 
-      console.log(`[PrintAgent] Đang gửi lệnh in tới máy in LAN ${printerIp}:${printerPort}...`);
+      console.log(
+        `[PrintAgent] Đang gửi ${copyCount} liên tới máy in LAN ${printerIp}:${printerPort}...`,
+      );
       await this.transport.send(escposBytes, {
         host: printerIp,
         port: printerPort,

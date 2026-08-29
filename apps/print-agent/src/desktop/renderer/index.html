@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self';" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PRO POS Print Agent</title>
+    <style>
+      body { margin: 0; background: #f5f7fa; color: #172033; font: 15px system-ui, sans-serif; }
+      main { max-width: 420px; margin: 32px auto; padding: 28px; background: #fff; border-radius: 14px; box-shadow: 0 4px 24px #17203318; }
+      h1 { margin: 0 0 8px; font-size: 24px; } .status { font-weight: 700; color: #6b7280; } .online { color: #16803c; } .degraded, .offline { color: #b45309; }
+      section { display: flex; justify-content: space-between; gap: 20px; padding: 14px 0; border-top: 1px solid #e5e7eb; } section span { text-align: right; }
+      .code { font-size: 20px; font-weight: 700; letter-spacing: 2px; } .error { color: #b91c1c; } .message { color: #0369a1; }
+      .actions { display: flex; gap: 12px; margin-top: 24px; } button { border: 0; border-radius: 8px; padding: 10px 16px; background: #0f766e; color: white; cursor: pointer; } button + button { background: #334155; }
+    </style>
+  </head>
+  <body><div id="root"></div><script src="./renderer.js"></script></body>
+</html>

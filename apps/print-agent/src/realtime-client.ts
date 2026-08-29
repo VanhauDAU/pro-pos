@@ -145,24 +145,25 @@ export class AgentRealtimeClient implements RealtimeConnection {
   }
 
   private async receiveEvents(events: RealtimeEventV1[]): Promise<void> {
+    let needsPendingScan = false;
     for (const event of events) {
       if (event.type !== 'pos.print_job.created' || event.data.printJobStatus !== 'QUEUED')
         continue;
       if (event.data.targetDeviceId && event.data.targetDeviceId !== this.config.agentId) continue;
-      const jobId = event.data.printJobId;
-      if (!jobId) continue;
-      try {
-        const job = await this.apiClient.get<PrintJob>(`/api/v1/pos/print-jobs/${jobId}`);
-        if (job.status === 'QUEUED') {
-          console.log(`[PRINT-AGENT] Job received id=${job.id}`);
-          this.enqueueJob(job);
-        }
-      } catch (error) {
-        this.events.onDegraded?.(
-          `JOB_FETCH_FAILED: ${error instanceof Error ? error.message : String(error)}`,
-        );
+      const job = event.data.printJob;
+      if (!job) {
+        // Compatibility with servers that predate embedded print-job snapshots.
+        // Scan the canonical pending collection; never add a detail GET back to
+        // the realtime hot path.
+        needsPendingScan = true;
+        continue;
       }
+      if (job.status !== 'QUEUED') continue;
+      if (job.targetDeviceId && job.targetDeviceId !== this.config.agentId) continue;
+      console.log(`[PRINT-AGENT] Job received id=${job.id}`);
+      this.enqueueJob(job);
     }
+    if (needsPendingScan) await this.recoverPendingJobs();
   }
 
   async recoverPendingJobs(): Promise<boolean> {

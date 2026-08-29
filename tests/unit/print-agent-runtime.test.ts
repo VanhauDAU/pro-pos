@@ -191,10 +191,31 @@ describe('AgentRuntime', () => {
     expect(createTransport).not.toHaveBeenCalled();
   });
 
-  it('loads a realtime job from the canonical API and deduplicates duplicate events', async () => {
-    const job = { id: 'JOB-1', documentType: 'invoice', documentId: 'INV-1', status: 'QUEUED' };
+  it('enqueues the embedded realtime snapshot without fetching job detail and deduplicates events', async () => {
+    const job = {
+      id: 'JOB-1',
+      storeId: 'STORE-1',
+      targetDeviceId: null,
+      printerRole: 'receipt',
+      documentType: 'invoice',
+      documentId: 'INV-1',
+      idempotencyKey: 'print-job-1',
+      status: 'QUEUED',
+      requestedByUserId: null,
+      requestedByDeviceId: null,
+      claimedByDeviceId: null,
+      createdAt: Date.now(),
+      claimedAt: null,
+      printingAt: null,
+      completedAt: null,
+      failedAt: null,
+      attemptCount: 0,
+      failureCode: null,
+      failureMessage: null,
+    } as const;
+    const get = vi.fn();
     const client = new AgentRealtimeClient(pairedConfig, {
-      get: vi.fn(async () => job),
+      get,
     } as never);
     const processJob = vi.fn(async () => true);
     (client as any).processor = { processJob };
@@ -210,12 +231,64 @@ describe('AgentRuntime', () => {
       deviceId: null,
       clientMutationId: null,
       topics: ['pos.print_jobs'],
-      data: { reason: 'PRINT_JOB_CREATED', printJobId: 'JOB-1', printJobStatus: 'QUEUED' },
+      data: {
+        reason: 'PRINT_JOB_CREATED',
+        printJobId: 'JOB-1',
+        printJobStatus: 'QUEUED',
+        printJob: job,
+      },
     } as const;
 
     (client as any).handleMessage({ type: 'events', events: [event, event] });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
+    expect(processJob).toHaveBeenCalledOnce();
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it('runs an immediate pending scan for a legacy realtime event without a snapshot', async () => {
+    const job = {
+      id: 'JOB-LEGACY',
+      documentType: 'invoice',
+      documentId: 'INV-LEGACY',
+      status: 'QUEUED',
+      targetDeviceId: null,
+    };
+    const get = vi.fn(async (path: string) => {
+      expect(path).toBe('/api/v1/pos/print-jobs?status=QUEUED&limit=20');
+      return [job];
+    });
+    const client = new AgentRealtimeClient(pairedConfig, { get } as never);
+    const processJob = vi.fn(async () => true);
+    (client as any).processor = { processJob };
+
+    (client as any).handleMessage({
+      type: 'events',
+      events: [
+        {
+          schemaVersion: 1,
+          eventId: 'legacy-event',
+          sequence: 1,
+          type: 'pos.print_job.created',
+          storeId: 'STORE-1',
+          aggregate: { type: 'PRINT_JOB', id: 'JOB-LEGACY', version: 1 },
+          occurredAtMs: Date.now(),
+          actor: null,
+          deviceId: null,
+          clientMutationId: null,
+          topics: ['pos.print_jobs'],
+          data: {
+            reason: 'PRINT_JOB_CREATED',
+            printJobId: 'JOB-LEGACY',
+            printJobStatus: 'QUEUED',
+          },
+        },
+      ],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(get).toHaveBeenCalledOnce();
+    expect(get.mock.calls[0]?.[0]).not.toMatch(/\/print-jobs\/JOB-LEGACY$/);
     expect(processJob).toHaveBeenCalledOnce();
   });
 

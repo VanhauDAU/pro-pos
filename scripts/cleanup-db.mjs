@@ -103,7 +103,14 @@ const queries = [
      AND NOT EXISTS (SELECT 1 FROM reject_guest_order_request_commands command WHERE command.actor_session_id = auth_sessions.id)`,
   `DELETE FROM login_attempts WHERE updated_at < ${cutoffMs} AND (locked_until IS NULL OR locked_until < ${nowMs})`,
   `DELETE FROM activation_grants WHERE status IN ('CONSUMED', 'EXPIRED', 'CANCELLED') AND (created_at < ${cutoffMs} OR expires_at < ${cutoffMs})`,
+  `DELETE FROM media_objects WHERE status = 'DELETED' AND deleted_at < ${cutoffMs}`,
+  `DELETE FROM print_jobs
+   WHERE (status IN ('COMPLETED', 'FAILED', 'CANCELLED', 'UNCERTAIN') AND (completed_at < ${cutoffMs} OR failed_at < ${cutoffMs} OR created_at < ${cutoffMs}))
+      OR created_at < ${cutoffMs}`,
   `DELETE FROM access_auth_requests WHERE expires_at < ${nowMs} OR created_at < ${cutoffMs}`,
+  `DELETE FROM print_agent_pairings
+   WHERE (status IN ('APPROVED', 'EXPIRED') OR expires_at < ${nowMs})
+     AND (expires_at < ${cutoffMs} OR created_at < ${cutoffMs})`,
 ];
 const args = ['wrangler', 'd1', 'execute', 'DB', '--command', `${queries.join('; ')};`];
 if (environment === 'local') args.push('--local');

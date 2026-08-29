@@ -228,9 +228,16 @@ const StaffPrinterSettingsPage = lazy(async () => {
   return { default: module.StaffPrinterSettingsPage };
 });
 
-async function printReceipt(options: PosReceiptPrintOptions) {
+async function printReceipt(
+  options: PosReceiptPrintOptions,
+  documentIdentity?: {
+    type: 'invoice' | 'order' | 'provisional' | 'debt_payment';
+    id: string;
+  },
+  csrfToken?: string | null,
+) {
   const printer = await import('@client/lib/pos-receipt-printer');
-  return printer.printReceipt(options);
+  return printer.smartPrintReceipt(options, documentIdentity, csrfToken);
 }
 
 function PosRouteLoadingFallback() {
@@ -5751,8 +5758,8 @@ function OrderEditor({
   const printSettings = useQuery({
     queryKey: ['pos-print-settings'],
     queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
-    staleTime: Infinity,
-    refetchOnMount: false,
+    staleTime: 30_000,
+    refetchOnMount: true,
   });
   const staffContext = useQuery({
     queryKey: ['pos-context'],
@@ -5971,18 +5978,24 @@ function OrderEditor({
 
   const printProvisionalReceipt = async () => {
     if (!quote.data) return;
-    const result = await printReceipt({
-      data: buildPrintDataFromQuote(quote.data, 'PROVISIONAL'),
-      printSettings: printSettings.data,
-      storeInfo: {
-        storeName: staffContext.data?.storeName ?? null,
-        phone: staffContext.data?.storePhone ?? null,
-        address: staffContext.data?.storeAddress ?? null,
-        bankName: staffContext.data?.bankName ?? null,
-        bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
-        bankAccountName: staffContext.data?.bankAccountName ?? null,
+    const result = await printReceipt(
+      {
+        data: buildPrintDataFromQuote(quote.data, 'PROVISIONAL'),
+        printSettings: printSettings.data,
+        storeInfo: {
+          storeName: staffContext.data?.storeName ?? null,
+          phone: staffContext.data?.storePhone ?? null,
+          address: staffContext.data?.storeAddress ?? null,
+          bankName: staffContext.data?.bankName ?? null,
+          bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
+          bankAccountName: staffContext.data?.bankAccountName ?? null,
+        },
       },
-    });
+      {
+        type: 'order',
+        id: quote.data.order.id,
+      },
+    );
     if (result.success) messageApi.success('Đã gửi lệnh in phiếu tạm tính!');
     else messageApi.error(result.message ?? 'Không thể in phiếu tạm tính.');
   };
@@ -10840,8 +10853,8 @@ function InvoicePage() {
   const printSettings = useQuery({
     queryKey: ['pos-print-settings'],
     queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
-    staleTime: Infinity,
-    refetchOnMount: false,
+    staleTime: 30_000,
+    refetchOnMount: true,
   });
   const staffContext = useQuery({
     queryKey: ['pos-context'],
@@ -11107,7 +11120,10 @@ function InvoicePage() {
           onClick={async () => {
             setPrinting(true);
             try {
-              const result = await printReceipt(invoicePrintOptions);
+              const result = await printReceipt(invoicePrintOptions, {
+                type: 'invoice',
+                id: data.invoice.id,
+              });
               if (result.success) messageApi.success('Đã gửi lệnh in hóa đơn!');
               else messageApi.error(result.message ?? 'Không thể in hóa đơn.');
             } finally {
@@ -11299,8 +11315,8 @@ function PaymentPage({
   const printSettings = useQuery({
     queryKey: ['pos-print-settings'],
     queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
-    staleTime: Infinity,
-    refetchOnMount: false,
+    staleTime: 30_000,
+    refetchOnMount: true,
   });
 
   const staffContext = useQuery({
@@ -11355,7 +11371,10 @@ function PaymentPage({
   const handlePrintAndComplete = useCallback(() => {
     if (!paymentSuccessData) return;
     const { receiptOptions } = paymentSuccessData;
-    void printReceipt(receiptOptions)
+    void printReceipt(receiptOptions, {
+      type: 'order',
+      id: paymentSuccessData.orderId,
+    })
       .then((printResult) => {
         if (!printResult.success) {
           messageApi.warning(
@@ -11794,7 +11813,10 @@ function PaymentPage({
         shownAt: Date.now(),
       });
       if (andPrint) {
-        void printReceipt(receiptOptions)
+        void printReceipt(receiptOptions, {
+          type: 'order',
+          id: quote.data.order.id,
+        })
           .then((printResult) => {
             setPaymentSuccessData((current) =>
               current?.orderId === completedOrderId

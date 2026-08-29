@@ -410,7 +410,26 @@ describe('7-Day Database Retention Cleanup Maintenance', () => {
       freshTakeawayCommand: crypto.randomUUID(),
       oldTakeawayOrder: crypto.randomUUID(),
       freshTakeawayOrder: crypto.randomUUID(),
+      oldPrintJob: crypto.randomUUID(),
+      freshPrintJob: crypto.randomUUID(),
     };
+    await env.DB.prepare(
+      `INSERT INTO print_jobs (
+         id, store_id, idempotency_key, document_type, document_id, printer_role,
+         status, attempt_count, created_at, completed_at
+       ) VALUES (?, ?, 'idemp-old-pj', 'order', ?, 'receipt', 'COMPLETED', 1, ?, ?)`,
+    )
+      .bind(cleanupIds.oldPrintJob, storeId, paidOrderId, tenDaysAgo, tenDaysAgo)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO print_jobs (
+         id, store_id, idempotency_key, document_type, document_id, printer_role,
+         status, attempt_count, created_at
+       ) VALUES (?, ?, 'idemp-fresh-pj', 'order', ?, 'receipt', 'QUEUED', 0, ?)`,
+    )
+      .bind(cleanupIds.freshPrintJob, storeId, openOrderId, twoDaysAgo)
+      .run();
     await env.DB.batch([
       env.DB.prepare(
         `INSERT INTO pos_save_commands
@@ -640,6 +659,7 @@ describe('7-Day Database Retention Cleanup Maintenance', () => {
           ['table_open_requests', cleanupIds.oldTableOpen],
           ['order_call_batches', cleanupIds.oldCallBatch],
           ['create_takeaway_order_commands', cleanupIds.oldTakeawayCommand],
+          ['print_jobs', cleanupIds.oldPrintJob],
         ] as const
       ).map(async ([table, id]) => {
         const deleted = await env.DB.prepare(`SELECT 1 AS found FROM ${table} WHERE id = ?`)
@@ -733,6 +753,7 @@ describe('7-Day Database Retention Cleanup Maintenance', () => {
           ['table_open_requests', cleanupIds.freshTableOpen],
           ['order_call_batches', cleanupIds.activeCallBatch],
           ['create_takeaway_order_commands', cleanupIds.freshTakeawayCommand],
+          ['print_jobs', cleanupIds.freshPrintJob],
         ] as const
       ).map(async ([table, id]) => {
         const retained = await env.DB.prepare(`SELECT 1 AS found FROM ${table} WHERE id = ?`)

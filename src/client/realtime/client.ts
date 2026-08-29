@@ -8,6 +8,7 @@ import {
   type RealtimeSyncResponse,
 } from '@contracts/realtime';
 import { apiRequest } from '@client/lib/api';
+import { processPrintJob, recoverPendingPrintJobs } from '@client/lib/print-bridge-service';
 
 export type RealtimeConnectionStatus = 'DISABLED' | 'CONNECTING' | 'CONNECTED' | 'RECONNECTING';
 
@@ -290,6 +291,7 @@ export class PosRealtimeClient {
         this.setCursor(response.toSequence);
       }
       this.onStatus('CONNECTED');
+      void recoverPendingPrintJobs();
       if (this.stableConnectionTimer !== null) {
         window.clearTimeout(this.stableConnectionTimer);
       }
@@ -348,6 +350,24 @@ export class PosRealtimeClient {
     if (event.topics.includes(`pos.order:${event.aggregate.id}`)) {
       this.pendingOrderIds.add(event.aggregate.id);
     }
+    if (
+      event.type === 'pos.print_job.created' ||
+      event.type === 'pos.print_job.updated' ||
+      event.topics.includes('pos.print_jobs')
+    ) {
+      if (
+        event.data.printJobId &&
+        (event.data.printJobStatus === 'QUEUED' || event.data.reason === 'PRINT_JOB_CREATED')
+      ) {
+        void processPrintJob({
+          id: event.data.printJobId,
+          documentType: event.data.documentType || 'invoice',
+          documentId: event.data.documentId || event.aggregate.id,
+          targetDeviceId: event.data.targetDeviceId ?? null,
+          ...(event.data.printJobStatus ? { status: event.data.printJobStatus } : {}),
+        });
+      }
+    }
     this.scheduleInvalidationFlush();
   }
 
@@ -360,6 +380,14 @@ export class PosRealtimeClient {
       this.pendingTopics.clear();
       this.pendingOrderIds.clear();
       const invalidations: Array<Promise<unknown>> = [];
+      if (topics.has('pos.print_jobs')) {
+        invalidations.push(
+          this.queryClient.invalidateQueries({
+            queryKey: ['pos-print-jobs'],
+            refetchType: 'active',
+          }),
+        );
+      }
       if (topics.has('pos.tables') || topics.has('pos.orders')) {
         invalidations.push(
           this.queryClient.invalidateQueries({ queryKey: ['pos-overview'], refetchType: 'active' }),

@@ -5,10 +5,12 @@ export const REALTIME_REPLAY_LIMIT = 500;
 export type PosRealtimeTopic =
   | 'pos.orders'
   | 'pos.tables'
+  | 'pos.print_jobs'
   | 'guest.orders'
   | 'guest.services'
   | 'guest.table-open-requests'
-  | `pos.order:${string}`;
+  | `pos.order:${string}`
+  | `pos.print_job:${string}`;
 
 export type PosRealtimeReason =
   | 'CREATED'
@@ -34,16 +36,28 @@ export type PosRealtimeReason =
   | 'SERVICE_REQUEST_CREATED'
   | 'SERVICE_REQUEST_UPDATED'
   | 'TABLE_OPEN_REQUEST_CREATED'
-  | 'TABLE_OPEN_REQUEST_UPDATED';
+  | 'TABLE_OPEN_REQUEST_UPDATED'
+  | 'PRINT_JOB_CREATED'
+  | 'PRINT_JOB_UPDATED'
+  | 'PRINT_JOB_CLAIMED'
+  | 'PRINT_JOB_STARTED'
+  | 'PRINT_JOB_COMPLETED'
+  | 'PRINT_JOB_FAILED'
+  | 'PRINT_JOB_UNCERTAIN';
 
 export interface RealtimeEventV1 {
   schemaVersion: typeof REALTIME_SCHEMA_VERSION;
   eventId: string;
   sequence: number;
-  type: 'pos.order.created' | 'pos.order.changed' | 'pos.order.closed';
+  type:
+    | 'pos.order.created'
+    | 'pos.order.changed'
+    | 'pos.order.closed'
+    | 'pos.print_job.created'
+    | 'pos.print_job.updated';
   storeId: string;
   aggregate: {
-    type: 'ORDER';
+    type: 'ORDER' | 'PRINT_JOB';
     id: string;
     version: number;
   };
@@ -60,6 +74,16 @@ export interface RealtimeEventV1 {
     serviceRequestType?: 'CALL_STAFF' | 'CHECKOUT_REQUEST';
     tableOpenRequestId?: string;
     tableOpenRequestStatus?: 'OPEN' | 'COMPLETED' | 'CANCELLED';
+    printJobId?: string;
+    printJobStatus?:
+      'QUEUED' | 'CLAIMED' | 'PRINTING' | 'COMPLETED' | 'FAILED' | 'UNCERTAIN' | 'CANCELLED';
+    targetDeviceId?: string | null;
+    printerRole?: string;
+    documentType?: string;
+    documentId?: string;
+    claimedByDeviceId?: string | null;
+    failureCode?: string | null;
+    failureMessage?: string | null;
   };
 }
 

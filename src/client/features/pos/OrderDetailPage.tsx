@@ -58,7 +58,7 @@ import type { StorePrintSettings } from '@contracts/store';
 import { calculateTimePrice } from '@domain/pricing/engine';
 import { apiRequest } from '@client/lib/api';
 import {
-  printReceipt,
+  smartPrintReceipt,
   type PosReceiptPrintData,
   type PosReceiptPrintOptions,
   type PosReceiptTimeSegment,
@@ -494,8 +494,8 @@ export function OrderDetailPage({
   const printSettings = useQuery({
     queryKey: ['pos-print-settings'],
     queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
-    staleTime: Infinity,
-    refetchOnMount: false,
+    staleTime: 30_000,
+    refetchOnMount: true,
   });
 
   const staffContext = useQuery({
@@ -666,20 +666,32 @@ export function OrderDetailPage({
     if (!data) return;
     const printData = buildReceiptPrintData(receiptType);
 
-    const result = await printReceipt({
-      data: printData,
-      printSettings: printSettings.data,
-      storeInfo: {
-        storeName: staffContext.data?.storeName ?? data.order.storeName,
-        phone: staffContext.data?.storePhone ?? null,
-        address: staffContext.data?.storeAddress ?? null,
-        bankName: staffContext.data?.bankName ?? null,
-        bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
-        bankAccountName: staffContext.data?.bankAccountName ?? null,
+    const result = await smartPrintReceipt(
+      {
+        data: printData,
+        printSettings: printSettings.data,
+        storeInfo: {
+          storeName: staffContext.data?.storeName ?? data.order.storeName,
+          phone: staffContext.data?.storePhone ?? null,
+          address: staffContext.data?.storeAddress ?? null,
+          bankName: staffContext.data?.bankName ?? null,
+          bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
+          bankAccountName: staffContext.data?.bankAccountName ?? null,
+        },
       },
-    });
-    if (result.success) messageApi.success('Đã gửi lệnh in hóa đơn.');
-    else messageApi.error(result.message ?? 'Không thể in hóa đơn.');
+      {
+        type: receiptType === 'PAYMENT' ? 'invoice' : 'order',
+        id: data.order.id,
+      },
+      authQuery.data?.csrfToken,
+    );
+    if (result.success) {
+      messageApi.success(
+        result.isRemote ? 'Đã gửi yêu cầu in tới máy in!' : 'Đã gửi lệnh in hóa đơn.',
+      );
+    } else {
+      messageApi.error(result.message ?? 'Không thể in hóa đơn.');
+    }
   };
 
   if (detailQuery.isLoading) {

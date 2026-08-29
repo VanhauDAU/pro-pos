@@ -5,13 +5,41 @@ import {
   parsePrinterDeviceConfig,
 } from '@contracts/store';
 import {
-  buildEscPosReceipt,
   formatDateOnly,
   formatSegmentDurationLabel,
   formatTimeOnly,
+  reconcileReceiptTimeSegmentAmounts,
   type PosReceiptPrintOptions,
 } from '@domain/receipt/receipt-generator';
-import { checkQzTrayStatus, connectQzTray, printEscPosReceipt } from './qz-tray-service';
+import { printerAction, printerService } from '@printing/printer-service';
+import { ApiError, apiRequest, jsonRequest } from './api';
+
+let cachedPosCsrfToken: string | null = null;
+
+export function setPosReceiptCsrfToken(token: string | null) {
+  cachedPosCsrfToken = token;
+}
+
+async function resolvePosCsrfToken(explicitToken?: string | null): Promise<string> {
+  if (explicitToken) {
+    cachedPosCsrfToken = explicitToken;
+    return explicitToken;
+  }
+  if (cachedPosCsrfToken) return cachedPosCsrfToken;
+
+  try {
+    const auth = await apiRequest<{ csrfToken?: string }>('/api/v1/auth/context');
+    if (auth?.csrfToken) {
+      cachedPosCsrfToken = auth.csrfToken;
+      return cachedPosCsrfToken;
+    }
+  } catch (error) {
+    if (import.meta.env.DEV) {
+      console.warn('[Remote Print] Failed to fetch auth context for CSRF token:', error);
+    }
+  }
+  return '';
+}
 
 export * from '@domain/receipt/receipt-generator';
 
@@ -53,65 +81,6 @@ function escapeHtml(value: unknown): string {
     .replaceAll("'", '&#039;');
 }
 
-function thermalReceiptDocument(html: string, paperSize: PaperSize, printableWidthMm: number) {
-  const isK58 = paperSize === 'K58';
-  return `<!doctype html><html><head><meta charset="utf-8"><style>
-    @page { size: ${paperSize === 'K58' ? 58 : 80}mm auto; margin: 0; }
-    * { box-sizing: border-box; }
-    html, body { margin: 0; padding: 0; width: ${printableWidthMm}mm; background: #fff; color: #000; }
-    body { font-family: Arial, "Helvetica Neue", sans-serif; font-size: ${isK58 ? 9.5 : 11}px; line-height: 1.25; }
-    .thermal-receipt-preview { width: ${printableWidthMm}mm; max-width: ${printableWidthMm}mm; padding: 2mm 0; margin: 0; border: 0; box-shadow: none; }
-    .thermal-receipt-inner { display: flex; flex-direction: column; gap: 2px; }
-    .thermal-receipt-header-vertical, .thermal-receipt-title, .thermal-receipt-copy-count, .thermal-receipt-star-divider, .thermal-receipt-footer-text, .thermal-receipt-wifi { text-align: center; }
-    .thermal-receipt-header-horizontal { display: flex; align-items: center; gap: 2mm; }
-    .thermal-receipt-store-info { flex: 1; min-width: 0; }
-    .thermal-receipt-store-name { font-size: ${isK58 ? 11 : 13.5}px; font-weight: 700; text-transform: uppercase; }
-    .thermal-receipt-store-address, .thermal-receipt-store-phone { font-size: ${isK58 ? 9 : 11}px; }
-    .thermal-receipt-title { font-size: ${isK58 ? 11.5 : 14.5}px; font-weight: 800; margin-top: 1mm; }
-    .thermal-receipt-unpaid { margin: .8mm 0; border: 1px solid #000; padding: .8mm; text-align: center; font-size: ${isK58 ? 10 : 12}px; font-weight: 800; }
-    .thermal-receipt-copy-count { font-size: ${isK58 ? 9 : 11}px; }
-    .thermal-receipt-divider-dash { border-bottom: 1px dashed #000; margin: 1mm 0; }
-    .thermal-receipt-meta, .thermal-receipt-summary { display: flex; flex-direction: column; gap: .5mm; }
-    .thermal-receipt-row, .thermal-receipt-item-main, .thermal-receipt-table-header, .thermal-receipt-grand-total { display: flex; justify-content: space-between; gap: 1mm; }
-    .thermal-receipt-table-header { font-weight: 700; border-bottom: 1px dashed #000; }
-    .thermal-receipt-item-row { margin-bottom: .7mm; }
-    .thermal-receipt-item-sub { font-size: ${isK58 ? 8.5 : 10}px; padding-left: 1mm; }
-    .thermal-receipt-items--bordered { border: 1px solid #000; padding: 1mm; }
-    .thermal-receipt-grand-total { font-size: ${isK58 ? 11 : 13.5}px; font-weight: 800; }
-    .thermal-receipt-bottom-qr-img { display: block; margin: 0 auto; }
-    .thermal-receipt-wifi { margin: 1mm 0; }
-  </style></head><body>${html}</body></html>`;
-}
-
-async function inlineReceiptImages(html: string) {
-  if (typeof window === 'undefined' || typeof DOMParser === 'undefined') return html;
-  const documentNode = new DOMParser().parseFromString(html, 'text/html');
-  const images = Array.from(documentNode.querySelectorAll('img'));
-  await Promise.all(
-    images.map(async (image) => {
-      const source = image.getAttribute('src');
-      if (!source || source.startsWith('data:')) return;
-      try {
-        const response = await fetch(new URL(source, window.location.origin), {
-          credentials: 'include',
-        });
-        if (!response.ok) return;
-        const blob = await response.blob();
-        const dataUrl = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.addEventListener('load', () => resolve(String(reader.result)), { once: true });
-          reader.addEventListener('error', () => reject(reader.error), { once: true });
-          reader.readAsDataURL(blob);
-        });
-        image.setAttribute('src', dataUrl);
-      } catch {
-        image.setAttribute('src', new URL(source, window.location.origin).href);
-      }
-    }),
-  );
-  return `<!doctype html>${documentNode.documentElement.outerHTML}`;
-}
-
 /**
  * Generates an exact HTML document string matching the store's thermal receipt preview.
  */
@@ -123,6 +92,7 @@ export function generateThermalReceiptHtml(
   const templateConfigs = parsePrintTemplateConfigs(printSettings?.templateConfigJson);
   const template =
     data.receiptType === 'PROVISIONAL' ? templateConfigs.PROVISIONAL : templateConfigs.PAYMENT;
+  const customerDisplayName = data.customerName?.trim() || 'Khách lẻ';
 
   const printerConfig = parsePrinterDeviceConfig(printSettings?.printersJson);
   const paperSize: PaperSize = printSettings?.paperSize || printerConfig.paperSize || 'K80';
@@ -255,15 +225,15 @@ export function generateThermalReceiptHtml(
   if (
     (template.showCustomerPhone && data.guestPhone) ||
     (template.showCustomerAddress && data.guestAddress) ||
-    (template.showCustomerName && data.customerName) ||
+    template.showCustomerName ||
     (template.showOrderNote && data.note)
   ) {
     html += `<div class="thermal-receipt-divider-dash"></div>`;
-    if (template.showCustomerName && data.customerName) {
+    if (template.showCustomerName) {
       html += `
         <div class="thermal-receipt-row">
           <span class="thermal-receipt-label">Khách hàng</span>
-        <span class="thermal-receipt-value">${escapeHtml(data.customerName)}</span>
+          <span class="thermal-receipt-value">${escapeHtml(customerDisplayName)}</span>
         </div>
       `;
     }
@@ -312,23 +282,20 @@ export function generateThermalReceiptHtml(
       : template.itemFontSize === 'LARGE'
         ? '12px'
         : '10.5px';
+  const itemFontSizeClass = `thermal-receipt-items--${template.itemFontSize.toLowerCase()}`;
 
   // 4. Section: Hourly Services (Thông tin giờ)
   if (timeLines.length > 0) {
     html += `
-      <div class="thermal-receipt-items" style="font-size: ${itemFontSizePx};">
+      <div class="thermal-receipt-items thermal-receipt-items--time ${itemFontSizeClass} ${!isK58 && template.showHourlyUnitPrice ? 'thermal-receipt-items--with-unit-price' : ''}" style="font-size: ${itemFontSizePx};">
         <div class="thermal-receipt-table-header">
-          <span style="flex: 1;">Thông tin giờ</span>
-          ${!isK58 && template.showHourlyUnitPrice ? `<span style="width: 65px; text-align: right;">Đ.Giá</span>` : ''}
-          <span style="width: ${isK58 ? '48px' : '65px'}; text-align: right;">T.Tiền</span>
+          <span class="thermal-receipt-col-name" style="flex: 1;">Thông tin giờ</span>
+          ${!isK58 && template.showHourlyUnitPrice ? `<span class="thermal-receipt-col-unit-price" style="width: 65px; text-align: right;">Đ.Giá</span>` : ''}
+          <span class="thermal-receipt-col-total" style="width: ${isK58 ? '48px' : '65px'}; text-align: right;">${isK58 ? 'T.Tiền' : 'Thành tiền'}</span>
         </div>
     `;
 
-    let timeIdx = 1;
     for (const line of timeLines) {
-      const prefix = template.showItemIndex ? `${timeIdx}. ` : '';
-      timeIdx++;
-
       if (
         line.tableSegments &&
         line.tableSegments.length > 1 &&
@@ -338,8 +305,8 @@ export function generateThermalReceiptHtml(
         html += `
           <div class="thermal-receipt-item-row" style="margin-top: 3px;">
             <div class="thermal-receipt-item-main">
-              <span style="flex: 1; font-weight: 600;">${prefix}Tiền giờ (Chuyển bàn)</span>
-              <span style="width: ${isK58 ? '48px' : '65px'}; text-align: right; font-weight: 600;">${formatVnd(line.totalPrice)}</span>
+              <span class="thermal-receipt-col-name" style="flex: 1; font-weight: 600;">Chuyển bàn</span>
+              <span class="thermal-receipt-col-total" style="width: ${isK58 ? '48px' : '65px'}; text-align: right; font-weight: 600;">${formatVnd(line.totalPrice)}</span>
             </div>
         `;
         if (template.showHourlyDetail) {
@@ -359,12 +326,11 @@ export function generateThermalReceiptHtml(
         line.timeSegments &&
         line.timeSegments.length > 0
       ) {
+        const displaySegments =
+          reconcileReceiptTimeSegmentAmounts(line.timeSegments, line.totalPrice) ?? [];
         html += `
           <div class="thermal-receipt-item-row" style="margin-top: 3px;">
-            <div class="thermal-receipt-item-main">
-              <span style="flex: 1; font-weight: 600;">${prefix}${escapeHtml(line.name)}</span>
-            </div>
-            ${line.timeSegments
+            ${displaySegments
               .map((seg, sIdx) => {
                 const startStr = formatTimeOnly(
                   seg.startedAtMs,
@@ -378,16 +344,16 @@ export function generateThermalReceiptHtml(
                 const durationLabel = formatSegmentDurationLabel(seg);
                 return `
                   <div class="thermal-receipt-time-segment" style="margin-top: ${sIdx > 0 ? '6px' : '3px'};">
-                    <div style="display: flex; align-items: baseline;">
-                      <span style="flex: 1;">${timeRangeStr}</span>
-                      ${!isK58 && template.showHourlyUnitPrice ? `<span style="width: 65px; text-align: right; white-space: nowrap;">${formatVnd(seg.priceVnd)}${template.showHourlyUnitDuration ? '/1h' : ''}</span>` : ''}
-                      <span style="width: ${isK58 ? '48px' : '65px'}; text-align: right; font-weight: 600;">${formatVnd(seg.amount)}</span>
+                    <div class="thermal-receipt-time-row" style="display: flex; align-items: baseline;">
+                      <span class="thermal-receipt-col-name" style="flex: 1;">${timeRangeStr}</span>
+                      ${!isK58 && template.showHourlyUnitPrice ? `<span class="thermal-receipt-col-unit-price" style="width: 65px; text-align: right; white-space: nowrap;">${formatVnd(seg.priceVnd)}${template.showHourlyUnitDuration ? '/1h' : ''}</span>` : ''}
+                      <span class="thermal-receipt-col-total" style="width: ${isK58 ? '48px' : '65px'}; text-align: right; font-weight: 600;">${formatVnd(seg.amount)}</span>
                     </div>
                     <div>${dateStr}</div>
-                    <div style="display: flex; align-items: baseline;">
-                      <span style="flex: 1; color: #64748b;">${durationLabel}</span>
-                      ${!isK58 && template.showHourlyUnitPrice ? `<span style="width: 65px;"></span>` : ''}
-                      <span style="width: ${isK58 ? '48px' : '65px'};"></span>
+                    <div class="thermal-receipt-time-row" style="display: flex; align-items: baseline;">
+                      <span class="thermal-receipt-col-name" style="flex: 1; color: #64748b;">${durationLabel}</span>
+                      ${!isK58 && template.showHourlyUnitPrice ? `<span class="thermal-receipt-col-unit-price" style="width: 65px;"></span>` : ''}
+                      <span class="thermal-receipt-col-total" style="width: ${isK58 ? '48px' : '65px'};"></span>
                     </div>
                     ${isK58 && template.showHourlyUnitPrice ? `<div class="thermal-receipt-item-sub">Đ.Giá: ${formatVnd(seg.priceVnd)}${template.showHourlyUnitDuration ? '/1h' : ''}</div>` : ''}
                   </div>
@@ -397,12 +363,15 @@ export function generateThermalReceiptHtml(
           </div>
         `;
       } else {
+        const timeSummaryLabel = line.timeElapsedSeconds
+          ? `Tổng thời gian (${formatDuration(line.timeElapsedSeconds)})`
+          : 'Tổng thời gian';
         html += `
           <div class="thermal-receipt-item-row" style="margin-top: 3px;">
             <div class="thermal-receipt-item-main">
-              <span style="flex: 1; font-weight: 600;">${prefix}${escapeHtml(line.name)}</span>
-              ${!isK58 && template.showHourlyUnitPrice ? `<span style="width: 65px; text-align: right;">${formatVnd(line.unitPrice)}${template.showHourlyUnitDuration ? '/1h' : ''}</span>` : ''}
-              <span style="width: ${isK58 ? '48px' : '65px'}; text-align: right; font-weight: 600;">${formatVnd(line.totalPrice)}</span>
+              <span class="thermal-receipt-col-name" style="flex: 1; font-weight: 600;">${timeSummaryLabel}</span>
+              ${!isK58 && template.showHourlyUnitPrice ? `<span class="thermal-receipt-col-unit-price" style="width: 65px; text-align: right;">${formatVnd(line.unitPrice)}${template.showHourlyUnitDuration ? '/1h' : ''}</span>` : ''}
+              <span class="thermal-receipt-col-total" style="width: ${isK58 ? '48px' : '65px'}; text-align: right; font-weight: 600;">${formatVnd(line.totalPrice)}</span>
             </div>
             ${isK58 && template.showHourlyUnitPrice ? `<div class="thermal-receipt-item-sub">Đ.Giá: ${formatVnd(line.unitPrice)}${template.showHourlyUnitDuration ? '/1h' : ''}</div>` : ''}
             ${
@@ -426,12 +395,12 @@ export function generateThermalReceiptHtml(
   // 5. Section: Products / Goods (Mặt hàng)
   if (productLines.length > 0) {
     html += `
-      <div class="thermal-receipt-items ${template.showItemTableBorder ? 'thermal-receipt-items--bordered' : ''}" style="font-size: ${itemFontSizePx};">
+      <div class="thermal-receipt-items thermal-receipt-items--products ${itemFontSizeClass} ${!isK58 && template.showItemUnitPrice && template.itemUnitPricePlacement === 'SEPARATE_COLUMN' ? 'thermal-receipt-items--with-unit-price' : ''} ${template.showItemTableBorder ? 'thermal-receipt-items--bordered' : ''}" style="font-size: ${itemFontSizePx};">
         <div class="thermal-receipt-table-header">
-          <span style="flex: 1;">Mặt hàng</span>
-          <span style="width: ${isK58 ? '24px' : '45px'}; text-align: center;">${isK58 ? 'SL' : 'SL/TL'}</span>
-          ${!isK58 && template.showItemUnitPrice && template.itemUnitPricePlacement === 'SEPARATE_COLUMN' ? `<span style="width: 60px; text-align: right;">Đ.Giá</span>` : ''}
-          <span style="width: ${isK58 ? '48px' : '65px'}; text-align: right;">T.Tiền</span>
+          <span class="thermal-receipt-col-name" style="flex: 1;">Mặt hàng</span>
+          <span class="thermal-receipt-col-quantity" style="width: ${isK58 ? '24px' : '45px'}; text-align: center;">${isK58 ? 'SL' : 'SL/TL'}</span>
+          ${!isK58 && template.showItemUnitPrice && template.itemUnitPricePlacement === 'SEPARATE_COLUMN' ? `<span class="thermal-receipt-col-unit-price" style="width: 60px; text-align: right;">Đ.Giá</span>` : ''}
+          <span class="thermal-receipt-col-total" style="width: ${isK58 ? '48px' : '65px'}; text-align: right;">${isK58 ? 'T.Tiền' : 'Thành tiền'}</span>
         </div>
     `;
 
@@ -445,10 +414,10 @@ export function generateThermalReceiptHtml(
       html += `
         <div class="thermal-receipt-item-row" style="margin-top: 3px;">
           <div class="thermal-receipt-item-main">
-            <span style="flex: 1; font-weight: 600;">${prefix}${escapeHtml(line.name)}${template.showItemPriceName ? ' (Giá chuẩn)' : ''}</span>
-            <span style="width: ${isK58 ? '24px' : '45px'}; text-align: center;">${line.quantity}</span>
-            ${!isK58 && template.showItemUnitPrice && template.itemUnitPricePlacement === 'SEPARATE_COLUMN' ? `<span style="width: 60px; text-align: right;">${formatVnd(line.unitPrice)}</span>` : ''}
-            <span style="width: ${isK58 ? '48px' : '65px'}; text-align: right; font-weight: 600;">${formatVnd(line.totalPrice)}</span>
+            <span class="thermal-receipt-col-name" style="flex: 1; font-weight: 600;">${prefix}${escapeHtml(line.name)}${template.showItemPriceName ? ' (Giá chuẩn)' : ''}</span>
+            <span class="thermal-receipt-col-quantity" style="width: ${isK58 ? '24px' : '45px'}; text-align: center;">${line.quantity}</span>
+            ${!isK58 && template.showItemUnitPrice && template.itemUnitPricePlacement === 'SEPARATE_COLUMN' ? `<span class="thermal-receipt-col-unit-price" style="width: 60px; text-align: right;">${formatVnd(line.unitPrice)}</span>` : ''}
+            <span class="thermal-receipt-col-total" style="width: ${isK58 ? '48px' : '65px'}; text-align: right; font-weight: 600;">${formatVnd(line.totalPrice)}</span>
           </div>
           ${
             template.showItemUnitPrice && (template.itemUnitPricePlacement === 'INLINE' || isK58)
@@ -479,7 +448,7 @@ export function generateThermalReceiptHtml(
   // 5. Summary & Totals
   html += `<div class="thermal-receipt-summary">`;
   if (timeLines.length > 0) {
-    html += `<div class="thermal-receipt-row"><span>Tiền giờ (${timeLines.length})</span><span>${formatVnd(timeTotal)}đ</span></div>`;
+    html += `<div class="thermal-receipt-row"><span>Tiền giờ</span><span>${formatVnd(timeTotal)}đ</span></div>`;
   }
   if (productLines.length > 0) {
     html += `<div class="thermal-receipt-row"><span>Tiền hàng (${productLines.length})</span><span>${formatVnd(goodsTotal)}đ</span></div>`;
@@ -670,9 +639,7 @@ export function generateThermalReceiptHtml(
   return html;
 }
 
-/**
- * Triggers printing using either QZ Tray direct hardware connection, or browser thermal print fallback.
- */
+/** Rasterizes the receipt and sends byte-perfect ESC/POS through the shared QZ Tray service. */
 export async function printReceipt(options: PosReceiptPrintOptions): Promise<{
   success: boolean;
   message?: string;
@@ -692,128 +659,140 @@ export async function printReceipt(options: PosReceiptPrintOptions): Promise<{
       : (options.printSettings?.paymentCopyCount ?? 1),
   );
 
-  // Check if QZ Tray is active
+  return printerAction(() =>
+    printerService.printReceipt({
+      config: { ...printerConfig, paperSize },
+      htmlCopies: Array.from({ length: copies }, (_, index) =>
+        generateThermalReceiptHtml(options, { index: index + 1, total: copies }),
+      ),
+      openCashDrawer:
+        printerConfig.openCashDrawer &&
+        (options.data.receiptType === 'PAYMENT' ||
+          (options.data.receiptType === 'DEBT_PAYMENT' && options.data.paymentMethod === 'CASH')),
+    }),
+  );
+}
+
+/** Sends an async remote print job to the server for processing by a connected desktop bridge. */
+export async function dispatchRemotePrintJob(params: {
+  documentType: 'invoice' | 'order' | 'provisional' | 'debt_payment';
+  documentId: string;
+  printerRole?: string;
+  targetDeviceId?: string | null;
+  csrfToken?: string | null;
+}): Promise<{ success: boolean; jobId?: string; message?: string }> {
+  const idempotencyKey = `print:${params.documentType}:${params.documentId}:${crypto.randomUUID()}`;
+  let csrfToken = await resolvePosCsrfToken(params.csrfToken);
+
+  const executePost = async (token: string) => {
+    return jsonRequest<{ jobId: string; status: string }>(
+      '/api/v1/pos/print-jobs',
+      {
+        documentType: params.documentType,
+        documentId: params.documentId,
+        printerRole: params.printerRole ?? 'receipt',
+        targetDeviceId: params.targetDeviceId ?? null,
+        idempotencyKey,
+      },
+      {
+        headers: {
+          'Idempotency-Key': idempotencyKey,
+          ...(token ? { 'X-CSRF-Token': token } : {}),
+        },
+      },
+    );
+  };
+
   try {
-    let qzStatus = await checkQzTrayStatus();
-    const hasDirectPrinterConfig =
-      (printerConfig.connectionType === 'SYSTEM' && Boolean(printerConfig.printerName?.trim())) ||
-      (printerConfig.connectionType === 'NETWORK_TCP' && Boolean(printerConfig.networkIp?.trim()));
-    if (!qzStatus.connected && hasDirectPrinterConfig) {
-      qzStatus = await connectQzTray();
-    }
-    if (qzStatus.connected) {
-      const profile = getReceiptPrintProfile(paperSize, printerConfig.printableDots);
-      const escPosCopies =
-        printerConfig.connectionType === 'NETWORK_TCP'
-          ? Array.from(
-              { length: copies },
-              (_, index) =>
-                buildEscPosReceipt(options, { index: index + 1, total: copies }).escPosData,
-            )
-          : [];
-      const htmlCopies =
-        printerConfig.connectionType === 'SYSTEM'
-          ? await Promise.all(
-              Array.from({ length: copies }, (_, index) =>
-                inlineReceiptImages(
-                  thermalReceiptDocument(
-                    generateThermalReceiptHtml(options, { index: index + 1, total: copies }),
-                    paperSize,
-                    profile.printableWidthMm,
-                  ),
-                ),
-              ),
-            )
-          : [];
-      const qzResult = await printEscPosReceipt({
-        connectionType: printerConfig.connectionType,
-        printerName: printerConfig.printerName,
-        networkIp: printerConfig.networkIp,
-        networkPort: printerConfig.networkPort,
-        paperSize,
-        printableDots: printerConfig.printableDots,
-        autoCut: printerConfig.autoCut,
-        openCashDrawer:
-          printerConfig.openCashDrawer &&
-          (options.data.receiptType === 'PAYMENT' ||
-            (options.data.receiptType === 'DEBT_PAYMENT' && options.data.paymentMethod === 'CASH')),
-        storeName: options.storeInfo?.storeName || 'PRO POS',
-        escPosData: escPosCopies,
-        htmlData: htmlCopies,
-        paperWidthMm: profile.paperWidthMm,
-      });
-      if (qzResult.success) {
-        return { success: true };
+    let result: { jobId: string; status: string };
+    try {
+      result = await executePost(csrfToken);
+    } catch (err: any) {
+      if (err instanceof ApiError && (err.status === 403 || err.code === 'CSRF_TOKEN_INVALID')) {
+        if (import.meta.env.DEV) {
+          console.warn('[Remote Print] CSRF token expired or missing, refreshing auth context...');
+        }
+        cachedPosCsrfToken = null;
+        csrfToken = await resolvePosCsrfToken();
+        result = await executePost(csrfToken);
+      } else {
+        throw err;
       }
-      return { success: false, message: qzResult.message ?? 'QZ Tray không thể in hóa đơn.' };
     }
-  } catch {
-    // QZ Tray wasn't active, fallback to browser print
+
+    if (import.meta.env.DEV) {
+      console.log('[Remote Print] Job submitted successfully (status=201, QUEUED):', result.jobId);
+    }
+
+    return {
+      success: true,
+      jobId: result.jobId,
+      message: 'Đã gửi yêu cầu in tới máy in.',
+    };
+  } catch (error) {
+    if (import.meta.env.DEV) {
+      const hasCookie = typeof document !== 'undefined' && document.cookie.includes('session=');
+      const hasHeader = Boolean(csrfToken || params.csrfToken);
+      console.error('[Remote Print] Submit failed:', {
+        hasCookie,
+        hasHeader,
+        tokenMatch: hasCookie && hasHeader,
+        status: error instanceof ApiError ? error.status : undefined,
+        code: error instanceof ApiError ? error.code : 'UNKNOWN',
+      });
+    }
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : 'Không thể gửi yêu cầu in từ xa.',
+    };
   }
+}
 
-  // Browser Print Fallback with thermal-receipt-print-root container
-  if (typeof window !== 'undefined' && typeof document !== 'undefined') {
-    return new Promise((resolve) => {
-      let printRoot = document.getElementById('thermal-receipt-print-root');
-      if (!printRoot) {
-        printRoot = document.createElement('div');
-        printRoot.id = 'thermal-receipt-print-root';
-        document.body.appendChild(printRoot);
-      }
-      const profile = getReceiptPrintProfile(paperSize, printerConfig.printableDots);
-      let printStyle = document.getElementById('thermal-receipt-page-style');
-      if (!printStyle) {
-        printStyle = document.createElement('style');
-        printStyle.id = 'thermal-receipt-page-style';
-        document.head.appendChild(printStyle);
-      }
-      printStyle.textContent = `@page { size: ${profile.paperWidthMm}mm auto; margin: 0; }
-        @media print {
-          #thermal-receipt-print-root { width: ${profile.paperWidthMm}mm !important; }
-          #thermal-receipt-print-root .thermal-receipt-preview { width: ${profile.printableWidthMm}mm !important; max-width: ${profile.printableWidthMm}mm !important; box-sizing: border-box !important; }
-          #thermal-receipt-print-root .thermal-receipt-copy-page:not(:last-child) { break-after: page; page-break-after: always; }
-        }`;
-      printRoot.innerHTML = Array.from(
-        { length: copies },
-        (_, index) =>
-          `<section class="thermal-receipt-copy-page">${generateThermalReceiptHtml(options, { index: index + 1, total: copies })}</section>`,
-      ).join('');
+/**
+ * Smart print router: Attempts direct local printing if on desktop with live QZ Tray;
+ * falls back to Remote Print job if on mobile or if local QZ is not available.
+ */
+export async function smartPrintReceipt(
+  options: PosReceiptPrintOptions,
+  documentIdentity?: {
+    type: 'invoice' | 'order' | 'provisional' | 'debt_payment';
+    id: string;
+  },
+  csrfToken?: string | null,
+): Promise<{ success: boolean; isRemote?: boolean; message?: string }> {
+  const isMobile =
+    typeof navigator !== 'undefined' &&
+    /iPhone|iPad|iPod|Android|Mobile/i.test(navigator.userAgent || '');
 
-      // Preload all images (logo, VietQR) inside printRoot before opening print dialog
-      const images = Array.from(printRoot.querySelectorAll('img'));
-      const waitForImages =
-        images.length > 0
-          ? Promise.all(
-              images.map(
-                (img) =>
-                  new Promise<void>((resolveImg) => {
-                    if (img.complete && img.naturalHeight !== 0) {
-                      resolveImg();
-                      return;
-                    }
-                    img.addEventListener('load', () => resolveImg(), { once: true });
-                    img.addEventListener('error', () => resolveImg(), { once: true });
-                    setTimeout(() => resolveImg(), 2000); // 2s fallback
-                  }),
-              ),
-            )
-          : Promise.resolve();
-
-      waitForImages.then(() => {
-        setTimeout(() => {
-          window.print();
-
-          // Cleanup after print dialog completes
-          setTimeout(() => {
-            if (printRoot) {
-              printRoot.innerHTML = '';
-            }
-            resolve({ success: true });
-          }, 300);
-        }, 100);
-      });
+  if (isMobile && documentIdentity) {
+    const remote = await dispatchRemotePrintJob({
+      documentType: documentIdentity.type,
+      documentId: documentIdentity.id,
+      csrfToken: csrfToken ?? (options as any).csrfToken,
     });
+    return { ...remote, isRemote: true };
   }
 
-  return { success: false, message: 'Không thể kích hoạt lệnh in.' };
+  const local = await printReceipt(options);
+  if (local.success) {
+    return { success: true, isRemote: false };
+  }
+
+  // If local print fails because QZ Tray is not running and we have documentIdentity, fallback to remote job
+  if (documentIdentity) {
+    const remote = await dispatchRemotePrintJob({
+      documentType: documentIdentity.type,
+      documentId: documentIdentity.id,
+      csrfToken: csrfToken ?? (options as any).csrfToken,
+    });
+    if (remote.success) {
+      return {
+        success: true,
+        isRemote: true,
+        ...(remote.message ? { message: remote.message } : {}),
+      };
+    }
+  }
+
+  return local;
 }

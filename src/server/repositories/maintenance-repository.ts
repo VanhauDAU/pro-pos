@@ -73,6 +73,16 @@ export class MaintenanceRepository {
       "DELETE FROM media_objects WHERE status = 'DELETED' AND deleted_at < ?",
       cutoff,
     );
+    await remove(
+      'print_jobs',
+      `DELETE FROM print_jobs
+       WHERE (status IN ('COMPLETED', 'FAILED', 'CANCELLED', 'UNCERTAIN') AND (completed_at < ? OR failed_at < ? OR created_at < ?))
+          OR created_at < ?`,
+      cutoff,
+      cutoff,
+      cutoff,
+      cutoff,
+    );
 
     // Remove terminal QR-order data child-first. Pending requests are always retained.
     const terminalGuestRequests = `

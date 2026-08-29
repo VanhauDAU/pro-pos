@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { CatalogService } from '@server/services/catalog-service';
 import { PlatformService } from '@server/services/platform-service';
@@ -8,6 +8,7 @@ import { PromotionService } from '@server/services/promotion-service';
 import { QrOrderService } from '@server/services/qr-order-service';
 import { StoreService } from '@server/services/store-service';
 import { QrOrderRepository } from '@server/repositories/qr-order-repository';
+import { PosRepository } from '@server/repositories/pos-repository';
 
 describe('online POS vertical slice', () => {
   let storeId: string;
@@ -1624,6 +1625,199 @@ describe('online POS vertical slice', () => {
       grossLineTotalVnd: 80_000,
       netLineTotalVnd: 80_000,
     });
+  });
+
+  it('loads sale variants once when saveOrderCommand adds eight item lines', async () => {
+    const pos = new PosService(env);
+    const order = await pos.createTakeaway({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-batched-variant-order',
+      idempotencyKey: 'batched-variant-order-001',
+      note: null,
+    });
+    const before = await pos.quote(storeId, order.orderId);
+    const batchedLookup = vi.spyOn(PosRepository.prototype, 'findSaleVariants');
+    const singleLookup = vi.spyOn(PosRepository.prototype, 'findSaleVariant');
+
+    try {
+      const saved = await pos.saveOrderCommand({
+        storeId,
+        actorId: ownerUserId,
+        requestId: 'request-batched-variant-save',
+        idempotencyKey: 'batched-variant-save-001',
+        orderId: order.orderId,
+        values: {
+          expectedOrderVersion: before.order.version,
+          nextAction: 'STAY',
+          addedItems: Array.from({ length: 8 }, (_, index) => ({
+            productId,
+            variantId,
+            quantityMilli: 1_000,
+            note: `Dòng batch ${index + 1}`,
+            discount: null,
+          })),
+          updatedItems: [],
+        },
+      });
+
+      expect(saved.quote.items).toHaveLength(8);
+      expect(batchedLookup).toHaveBeenCalledTimes(1);
+      expect(batchedLookup).toHaveBeenCalledWith(storeId, Array(8).fill(productId));
+      expect(singleLookup).not.toHaveBeenCalled();
+    } finally {
+      batchedLookup.mockRestore();
+      singleLookup.mockRestore();
+    }
+  });
+
+  it('loads TIME item pricing snapshots in one batch during saveOrderCommand', async () => {
+    const catalog = new CatalogService(env);
+    const table = await catalog.createTable({
+      storeId,
+      areaId,
+      timeProductId,
+      name: 'Bàn test batch TIME pricing',
+      sortOrder: 17,
+    });
+    const pos = new PosService(env);
+    const opened = await pos.openOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-batched-time-open',
+      idempotencyKey: 'batched-time-open-001',
+      values: {
+        orderType: 'DINE_IN',
+        tableId: table.id,
+        expectedTableVersion: 1,
+        items: [],
+      },
+    });
+    const pricingBatch = vi.spyOn(PosRepository.prototype, 'listProductPricingSnapshots');
+    const singlePricing = vi.spyOn(PosService.prototype, 'productPricingSnapshot');
+    const endedAtMs = Date.now() - 1_000;
+
+    try {
+      const saved = await pos.saveOrderCommand({
+        storeId,
+        actorId: ownerUserId,
+        requestId: 'request-batched-time-save',
+        idempotencyKey: 'batched-time-save-001',
+        orderId: opened.order.id,
+        values: {
+          expectedOrderVersion: opened.order.version,
+          nextAction: 'STAY',
+          addedItems: [
+            {
+              productId: timeProductId,
+              variantId: null,
+              quantityMilli: 1_000,
+              timeStartedAtMs: endedAtMs - 60 * 60_000,
+              timeEndedAtMs: endedAtMs,
+              note: 'Khung giờ 1',
+              discount: null,
+            },
+            {
+              productId: timeProductId,
+              variantId: null,
+              quantityMilli: 1_000,
+              timeStartedAtMs: endedAtMs - 30 * 60_000,
+              timeEndedAtMs: endedAtMs,
+              note: 'Khung giờ 2',
+              discount: null,
+            },
+          ],
+          updatedItems: [],
+        },
+      });
+
+      expect(saved.quote.items.filter((item) => item.productType === 'TIME')).toHaveLength(2);
+      expect(
+        pricingBatch.mock.calls.filter(
+          ([targetStoreId, productIds]) => targetStoreId === storeId && productIds.length === 2,
+        ),
+      ).toEqual([[storeId, [timeProductId, timeProductId]]]);
+      expect(singlePricing).not.toHaveBeenCalled();
+    } finally {
+      pricingBatch.mockRestore();
+      singlePricing.mockRestore();
+    }
+  });
+
+  it('loads changed variants once when saveOrderCommand edits multiple saved items', async () => {
+    const catalog = new CatalogService(env);
+    const product = await catalog.createProduct(storeId, {
+      name: 'Nước ép batch variant',
+      productType: 'QUANTITY',
+      variants: [
+        { name: 'Ly M', salePriceVnd: 25_000, costPriceVnd: 0, promptPrice: false },
+        { name: 'Ly L', salePriceVnd: 35_000, costPriceVnd: 0, promptPrice: false },
+      ],
+    });
+    const variants = await env.DB.prepare(
+      'SELECT id, name FROM product_variants WHERE store_id = ? AND product_id = ?',
+    )
+      .bind(storeId, product.id)
+      .all<{ id: string; name: string }>();
+    const medium = variants.results.find((variant) => variant.name === 'Ly M')!;
+    const large = variants.results.find((variant) => variant.name === 'Ly L')!;
+    const pos = new PosService(env);
+    const opened = await pos.openOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-batched-update-open',
+      idempotencyKey: 'batched-update-open-001',
+      values: {
+        orderType: 'TAKEAWAY',
+        items: [
+          {
+            productId: product.id,
+            variantId: medium.id,
+            quantityMilli: 1_000,
+            note: 'Dòng A',
+            discount: null,
+          },
+          {
+            productId: product.id,
+            variantId: medium.id,
+            quantityMilli: 1_000,
+            note: 'Dòng B',
+            discount: null,
+          },
+        ],
+      },
+    });
+    const batchedLookup = vi.spyOn(PosRepository.prototype, 'findSaleVariants');
+    const singleLookup = vi.spyOn(PosRepository.prototype, 'findSaleVariant');
+
+    try {
+      const saved = await pos.saveOrderCommand({
+        storeId,
+        actorId: ownerUserId,
+        requestId: 'request-batched-update-save',
+        idempotencyKey: 'batched-update-save-001',
+        orderId: opened.order.id,
+        values: {
+          expectedOrderVersion: opened.order.version,
+          nextAction: 'STAY',
+          addedItems: [],
+          updatedItems: opened.quote.items.map((item) => ({
+            itemId: item.id,
+            quantityMilli: item.quantityMilli,
+            variantId: large.id,
+          })),
+        },
+      });
+
+      expect(saved.quote.items).toHaveLength(2);
+      expect(saved.quote.items.every((item) => item.variantId === large.id)).toBe(true);
+      expect(batchedLookup).toHaveBeenCalledTimes(1);
+      expect(batchedLookup).toHaveBeenCalledWith(storeId, [product.id, product.id]);
+      expect(singleLookup).not.toHaveBeenCalled();
+    } finally {
+      batchedLookup.mockRestore();
+      singleLookup.mockRestore();
+    }
   });
 
   it('updates price version variant and discount on existing order items', async () => {

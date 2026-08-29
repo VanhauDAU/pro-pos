@@ -121,6 +121,23 @@ export class PrintJobRepository {
     return row ? mapPrintJob(row) : null;
   }
 
+  async countEffectiveDocumentPrints(
+    storeId: string,
+    documentType: PrintJobDocumentType,
+    documentId: string,
+  ): Promise<number> {
+    const row = await this.db
+      .prepare(
+        `SELECT COUNT(*) AS total
+         FROM print_jobs
+         WHERE store_id = ? AND document_type = ? AND document_id = ?
+           AND status IN ('QUEUED', 'CLAIMED', 'PRINTING', 'COMPLETED', 'UNCERTAIN')`,
+      )
+      .bind(storeId, documentType, documentId)
+      .first<{ total: number }>();
+    return Number(row?.total ?? 0);
+  }
+
   /**
    * Atomically claims a QUEUED job for a specific print bridge device.
    * Returns the updated job if successful, or null if already claimed by another device.

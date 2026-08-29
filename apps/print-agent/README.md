@@ -67,12 +67,13 @@ Thông tin ghép nối được mã hóa bằng cơ chế bảo vệ credential 
 - Kiểm tra nguồn, giấy và dây mạng của máy in.
 - In trang self-test của máy in để xác nhận IP hiện tại.
 - Từ máy tính quầy, kiểm tra cổng: `Test-NetConnection <IP-máy-in> -Port 9100`.
+- Nếu lệnh trên thất bại, kiểm tra Windows Firewall, antivirus và việc máy tính/máy in có bị tách VLAN hoặc client isolation hay không.
 - Mở **Cài đặt nâng cao**, sửa IP/port rồi chạy **In thử**.
 
 ### Print Agent mất kết nối máy chủ
 
 - Kiểm tra Internet và firewall/proxy của Windows.
-- Chọn **Kết nối lại**; runtime cũng tự reconnect khi mạng phục hồi.
+- Runtime tự reconnect khi mạng phục hồi. Có thể dùng **Kết nối lại** trong menu tray để yêu cầu kết nối Cloud ngay.
 - Mở **Cài đặt nâng cao → Mở thư mục nhật ký** để thu thập diagnostics.
 
 ### Ghép nối lại hoặc chuyển cửa hàng
@@ -108,6 +109,36 @@ pnpm --filter @propos/print-agent dist:mac:x64
 
 File `.dmg` và `.zip` xuất ra tại thư mục `apps/print-agent/release/`.
 
+Các lệnh `dist:mac*` tự kiểm tra app đã đóng gói và sẽ fail nếu `Info.plist` không có đúng:
+
+- `CFBundleIdentifier = com.propos.print-agent`
+- `NSLocalNetworkUsageDescription = PRO POS Print Agent cần truy cập mạng nội bộ để kết nối và gửi dữ liệu tới máy in hóa đơn trong cửa hàng.`
+
+Có thể kiểm tra thủ công bản ARM64:
+
+```bash
+plutil -p "apps/print-agent/release/mac-arm64/PRO POS Print Agent.app/Contents/Info.plist"
+pnpm --filter @propos/print-agent verify:mac:plist -- arm64
+```
+
+Bundle ID production luôn là `com.propos.print-agent`; không đổi ID giữa các release vì cấu hình người dùng và Local Network privacy cần nhận diện cùng một ứng dụng. Repo không dùng bundle ID development riêng.
+
+#### Local Network permission trên macOS
+
+macOS 15 trở lên kiểm soát kết nối trực tiếp tới IP nội bộ, bao gồm TCP 9100. Sau khi cài app:
+
+1. Mở `.dmg`, kéo **PRO POS Print Agent** vào **Applications**.
+2. Mở app từ Finder: **Applications → PRO POS Print Agent**, không chạy executable trong bundle từ Terminal để xác minh production.
+3. Chọn **Allow** khi macOS hỏi quyền Local Network. Có thể kiểm tra lại tại **System Settings → Privacy & Security → Local Network**.
+4. Bấm **In thử**. Chỉ khi TCP connect và gửi dữ liệu ESC/POS thành công, trạng thái máy in mới chuyển sang **Sẵn sàng**.
+5. Quit hoàn toàn rồi mở lại từ Finder và in thử lần nữa để kiểm tra quyền được duy trì.
+
+Terminal và app mở từ Finder có privacy context/identity khác nhau. Việc executable chạy thành công từ Terminal không chứng minh bundle `.app` đã được macOS cấp quyền Local Network đúng.
+
+App development vẫn có thể build khi chưa có Apple Developer ID. Tuy nhiên, Local Network privacy theo dõi danh tính chương trình bằng code signature; app unsigned hoặc ad-hoc có thể bị nhận diện thiếu ổn định giữa các build. Cấu hình builder không còn ép `identity: null`, vì vậy release production nên cung cấp chứng thư **Developer ID Application** cho electron-builder và giữ cùng bundle ID để permission bền vững qua update. Developer ID không phải điều kiện để phát triển hoặc kiểm thử cục bộ, nhưng là khuyến nghị cho phân phối production lâu dài.
+
+Khi máy build không có identity hợp lệ, hook đóng gói macOS sẽ ad-hoc sign toàn bộ `.app` sau khi Electron hoàn tất packaging và trước khi tạo DMG/ZIP. Cách này tạo code-signing identifier `com.propos.print-agent`, seal resources và ổn định hơn bundle thực sự unsigned trong development. Nếu electron-builder đã ký hợp lệ bằng Developer ID, hook không ký đè. Hook trả về ngay trên non-macOS nên Windows artifacts không bị thay đổi.
+
 #### Cài đặt và mở file .dmg trên macOS:
 
 1. Nhấp đúp vào file `.dmg` và kéo biểu tượng ứng dụng vào thư mục **Applications**.
@@ -116,7 +147,9 @@ File `.dmg` và `.zip` xuất ra tại thư mục `apps/print-agent/release/`.
    xattr -cr "/Applications/PRO POS Print Agent.app"
    ```
    (hoặc vào **System Settings** → **Privacy & Security** → bấm **Open Anyway**).
-3. Mở ứng dụng và cho phép quyền truy cập mạng cục bộ (Local Network) khi được hỏi.
+3. Mở ứng dụng từ Finder và cho phép quyền truy cập mạng cục bộ (Local Network) khi được hỏi.
+
+Nếu TCP 9100 vẫn lỗi sau khi đã cho phép, mở **Xem chi tiết** để xem `errorCode`, `host`, `port`, `failureStage` và `localAddress` (nếu Node cung cấp). Diagnostics chỉ chứa metadata kết nối, không chứa token hoặc `agentSecret`.
 
 ### Đóng gói cho Windows (.exe)
 
@@ -127,3 +160,5 @@ pnpm --filter @propos/print-agent dist:win
 ```
 
 Workflow `.github/workflows/print-agent-release.yml` build NSIS, portable executable, checksum và chỉ publish GitHub Release khi tag `print-agent-v<package-version>` khớp chính xác.
+
+Windows không có Local Network permission tương tự macOS. Cấu hình `NSLocalNetworkUsageDescription` chỉ được đưa vào macOS `Info.plist`; NSIS, portable executable, TCP 9100, autostart, pairing và realtime trên Windows không thay đổi.

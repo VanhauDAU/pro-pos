@@ -91,6 +91,7 @@ export interface OrderItemDetail {
   productType: 'QUANTITY' | 'WEIGHT' | 'TIME';
   productNameSnapshot: string;
   variantNameSnapshot: string | null;
+  priceVariantCount: number;
   unitNameSnapshot: string | null;
   unitPriceSnapshot: number;
   quantityMilli: number;

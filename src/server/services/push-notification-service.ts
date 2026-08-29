@@ -4,15 +4,22 @@ import { PushSubscriptionRepository } from '@server/repositories/push-subscripti
 
 export interface StorePushNotification {
   storeId: string;
-  kind: 'QR_ORDER' | 'CALL_STAFF' | 'CHECKOUT_REQUEST' | 'TABLE_OPEN_REQUEST';
-  soundType: 'NEW_QR_ORDER' | 'CHECKOUT_REQUEST' | 'TABLE_OPEN_REQUEST';
+  kind:
+    | 'QR_ORDER'
+    | 'CALL_STAFF'
+    | 'CHECKOUT_REQUEST'
+    | 'TABLE_OPEN_REQUEST'
+    | 'PRINT_COMPLETED'
+    | 'PRINT_FAILED'
+    | 'PRINT_UNCERTAIN';
+  soundType?: 'NEW_QR_ORDER' | 'CHECKOUT_REQUEST' | 'TABLE_OPEN_REQUEST' | 'NOTIFICATION_CHIME';
   title: string;
   body: string;
   url: string;
   tag: string;
   timestamp: number;
-  requestId: string;
-  orderId: string;
+  requestId?: string;
+  orderId?: string;
   actionTitle?: string;
   badgeCount?: number;
   requireInteraction?: boolean;

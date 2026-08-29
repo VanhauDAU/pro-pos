@@ -133,7 +133,7 @@ describe('canonical receipt document', () => {
 
     expect(Array.from(currentBytes.slice(0, 5))).toEqual([0x1b, 0x40, 0x1b, 0x4d, 0x00]);
     expect(Array.from(legacyBytes.slice(0, 5))).toEqual([0x1b, 0x40, 0x1b, 0x4d, 0x00]);
-    expect(receiptRasterCss(576)).toContain('"Roboto Mono"');
+    expect(receiptRasterCss(576)).toContain('"Courier New"');
     expect(receiptRasterCss(576)).toContain('monospace');
   });
 
@@ -159,6 +159,51 @@ describe('canonical receipt document', () => {
     expect(`${html}${escPosText}${legacyEscPosText}`).not.toMatch(
       /CHƯA THANH TOÁN|CHUA THANH TOAN/u,
     );
+  });
+
+  it('shows the selected price name only when a product has multiple price variants', () => {
+    const settings = printSettings();
+    const data: PosReceiptPrintData = {
+      ...paymentData(),
+      lines: [
+        {
+          id: 'single-price',
+          name: 'Nước suối',
+          priceName: 'Giá chuẩn',
+          priceVariantCount: 1,
+          quantity: 1,
+          unitPrice: 10_000,
+          totalPrice: 10_000,
+        },
+        {
+          id: 'multi-price',
+          name: 'Sting',
+          priceName: 'Sting vàng',
+          priceVariantCount: 2,
+          quantity: 1,
+          unitPrice: 12_000,
+          totalPrice: 12_000,
+        },
+      ],
+    };
+    const receiptOptions = { ...options(settings), data };
+    const html = generateThermalReceiptHtml(receiptOptions);
+    const escPosText = new TextDecoder().decode(
+      buildEscPosTextReceipt(data, {
+        printSettings: settings,
+        storeInfo: receiptOptions.storeInfo,
+        vietnameseMode: 'UNACCENTED',
+      }),
+    );
+    const legacyEscPosText = buildEscPosReceipt(receiptOptions).escPosData;
+
+    expect(html).toContain('Sting (Sting vàng)');
+    expect(escPosText).toContain('Sting (Sting');
+    expect(escPosText).toContain('\nvang)');
+    expect(legacyEscPosText).toContain('Sting (Sting vàng)');
+    expect(html).not.toContain('Nước suối (Giá chuẩn)');
+    expect(escPosText).not.toContain('Nuoc suoi (Gia chuan)');
+    expect(legacyEscPosText).not.toContain('Nước suối (Giá chuẩn)');
   });
 
   it('resolves Owner visibility rules once for preview and ESC/POS', () => {
@@ -371,5 +416,79 @@ describe('canonical receipt document', () => {
     );
     expect(text).toMatch(/\d{2}\/\d{2}\/\d{4}  =1 gio/u);
     expect(text).not.toMatch(/\d{2}\/\d{2}\/\d{4}\n\s*=1 gio/u);
+  });
+
+  it('applies Owner item font size setting to both ESC/POS commands and HTML preview', () => {
+    const smallSettings = printSettings({
+      templateConfigJson: JSON.stringify({
+        PAYMENT: { itemFontSize: 'SMALL' },
+      }),
+    });
+    const smallBytes = buildEscPosTextReceipt(paymentData(), {
+      printSettings: smallSettings,
+      storeName: 'DAI BILLIARDS',
+      vietnameseMode: 'UNACCENTED',
+    });
+    // ESC_POS.selectFontB = [0x1b, 0x4d, 0x01]
+    expect(containsByteSequence(smallBytes, [0x1b, 0x4d, 0x01])).toBe(true);
+    // Reset back to Font A at the end of items = [0x1b, 0x21, 0x00, 0x1b, 0x4d, 0x00]
+    expect(containsByteSequence(smallBytes, [0x1b, 0x21, 0x00, 0x1b, 0x4d, 0x00])).toBe(true);
+
+    const smallHtml = generateThermalReceiptHtml(options(smallSettings));
+    expect(smallHtml).toContain('thermal-receipt-items--small');
+
+    const largeSettings = printSettings({
+      templateConfigJson: JSON.stringify({
+        PAYMENT: { itemFontSize: 'LARGE' },
+      }),
+    });
+    const largeBytes = buildEscPosTextReceipt(paymentData(), {
+      printSettings: largeSettings,
+      storeName: 'DAI BILLIARDS',
+      vietnameseMode: 'UNACCENTED',
+    });
+    // ESC_POS.doubleHeightOn = [0x1b, 0x21, 0x10]
+    expect(containsByteSequence(largeBytes, [0x1b, 0x21, 0x10])).toBe(true);
+    expect(containsByteSequence(largeBytes, [0x1b, 0x21, 0x00, 0x1b, 0x4d, 0x00])).toBe(true);
+
+    const largeHtml = generateThermalReceiptHtml(options(largeSettings));
+    expect(largeHtml).toContain('thermal-receipt-items--large');
+  });
+
+  it('renders goods table borders in ESC/POS text and HTML preview when enabled', () => {
+    const borderedSettings = printSettings({
+      templateConfigJson: JSON.stringify({
+        PAYMENT: { showItemTableBorder: true },
+      }),
+    });
+    const borderedBytes = buildEscPosTextReceipt(paymentData(), {
+      printSettings: borderedSettings,
+      storeName: 'DAI BILLIARDS',
+      vietnameseMode: 'UNACCENTED',
+    });
+    const borderedText = new TextDecoder().decode(borderedBytes);
+    expect(borderedText).toMatch(/\+[-+]+\+/u);
+    expect(borderedText).toMatch(/\|.*Mat hang.*\|/u);
+    expect(borderedText).toMatch(/\|.*Nuoc suoi.*\|/u);
+
+    const borderedHtml = generateThermalReceiptHtml(options(borderedSettings));
+    expect(borderedHtml).toContain('thermal-receipt-items--bordered');
+
+    const unborderedSettings = printSettings({
+      templateConfigJson: JSON.stringify({
+        PAYMENT: { showItemTableBorder: false },
+      }),
+    });
+    const unborderedBytes = buildEscPosTextReceipt(paymentData(), {
+      printSettings: unborderedSettings,
+      storeName: 'DAI BILLIARDS',
+      vietnameseMode: 'UNACCENTED',
+    });
+    const unborderedText = new TextDecoder().decode(unborderedBytes);
+    expect(unborderedText).not.toMatch(/\+[-+]+\+/u);
+    expect(unborderedText).not.toMatch(/\|.*Mat hang.*\|/u);
+
+    const unborderedHtml = generateThermalReceiptHtml(options(unborderedSettings));
+    expect(unborderedHtml).not.toContain('thermal-receipt-items--bordered');
   });
 });

@@ -451,6 +451,16 @@ export function OwnerPrintSettingsPage() {
   const handleBrowserFallbackPrint = async () => {
     try {
       setBrowserTesting(true);
+      const browserPrintSettings = {
+        ...printSettings.data,
+        ...form.getFieldsValue(true),
+        storeId: printSettings.data?.storeId ?? '',
+        updatedAt: printSettings.data?.updatedAt ?? Date.now(),
+        paperSize: previewPaperSize,
+        logoMediaId: logoMediaId ?? null,
+        bottomImageMediaId: bottomImageMediaId ?? null,
+        templateConfigJson: printSettings.data?.templateConfigJson ?? null,
+      } as StorePrintSettings;
       const res = await browserPrintFallback({
         data: {
           receiptType: 'PAYMENT',
@@ -473,7 +483,15 @@ export function OwnerPrintSettingsPage() {
             },
           ],
         },
-        storeInfo: { storeName: storeSettings.data?.name || 'PRO POS' },
+        printSettings: browserPrintSettings,
+        storeInfo: {
+          storeName: storeSettings.data?.name || 'PRO POS',
+          phone: storeSettings.data?.phone ?? null,
+          address: storeSettings.data?.address ?? null,
+          bankName: storeSettings.data?.bankName ?? null,
+          bankAccountNumber: storeSettings.data?.bankAccountNumber ?? null,
+          bankAccountName: storeSettings.data?.bankAccountName ?? null,
+        },
       });
       if (res.success) {
         messageApi.success('Đã mở hộp thoại in của trình duyệt');
@@ -1321,8 +1339,8 @@ export function OwnerPrintSettingsPage() {
                         <div className="thermal-receipt-item-row">
                           <div className="thermal-receipt-item-main">
                             <span style={{ flex: 1, fontWeight: 600 }}>
-                              {templateConfig.showItemIndex ? '1. ' : ''}Trà sữa ô long (size L)
-                              {templateConfig.showItemPriceName ? ' (Giá chuẩn)' : ''}
+                              {templateConfig.showItemIndex ? '1. ' : ''}Trà sữa ô long
+                              {templateConfig.showItemPriceName ? ' (Size L)' : ''}
                             </span>
                             <span
                               style={{

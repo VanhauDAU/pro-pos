@@ -318,7 +318,7 @@ describe('Pro POS Print Agent Unit Tests', () => {
     expect(text).toContain('Mat hang');
     expect(text).toContain('SL/TL');
     expect(text).toContain('D.Gia');
-    expect(text).toContain('Thanh tien');
+    expect(text).toContain('T.tien');
     expect(text).toContain('65.000');
     expect(text).toContain('50.000');
     expect(text).not.toContain('┬╥');

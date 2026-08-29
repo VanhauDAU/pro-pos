@@ -5,8 +5,11 @@ import {
   presentCloudStatus,
   presentFriendlyError,
   presentOverallStatus,
+  presentPrinterErrorDetails,
   presentPrinterStatus,
 } from '../../apps/print-agent/src/desktop/renderer/presentation';
+import { requestPrinterCheck } from '../../apps/print-agent/src/desktop/renderer/printer-actions';
+import { vi } from 'vitest';
 
 const state = (
   status: AgentRuntimeState['status'],
@@ -16,6 +19,7 @@ const state = (
   printer,
   pairing: { code: null, expiresAt: null },
   lastError: null,
+  printerDiagnostics: null,
   updatedAt: 0,
 });
 
@@ -54,5 +58,43 @@ describe('Print Agent desktop presentation', () => {
 
   it('formats the six-digit pairing code for quick visual scanning', () => {
     expect(formatPairingCode('583214')).toBe('583 214');
+  });
+
+  it('formats whitelisted TCP diagnostics for the details disclosure', () => {
+    expect(
+      presentPrinterErrorDetails('connect EHOSTUNREACH', {
+        errorCode: 'EHOSTUNREACH',
+        printerCode: 'NETWORK_PRINTER_UNREACHABLE',
+        host: '192.168.1.73',
+        port: 9100,
+        failureStage: 'BEFORE_WRITE',
+        localAddress: '192.168.1.144',
+      }),
+    ).toBe(
+      [
+        'message: connect EHOSTUNREACH',
+        'errorCode: EHOSTUNREACH',
+        'printerCode: NETWORK_PRINTER_UNREACHABLE',
+        'host: 192.168.1.73',
+        'port: 9100',
+        'failureStage: BEFORE_WRITE',
+        'localAddress: 192.168.1.144',
+      ].join('\n'),
+    );
+  });
+
+  it('routes printer recheck to testPrinter, never cloud reconnect', async () => {
+    const testPrinter = vi.fn(async () => ({
+      ok: true,
+      host: '192.168.1.73',
+      port: 9100,
+    }));
+    const reconnect = vi.fn();
+    const api = { testPrinter, reconnect };
+
+    await requestPrinterCheck(api);
+
+    expect(testPrinter).toHaveBeenCalledOnce();
+    expect(reconnect).not.toHaveBeenCalled();
   });
 });

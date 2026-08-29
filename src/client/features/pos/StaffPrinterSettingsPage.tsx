@@ -170,6 +170,7 @@ export function StaffPrinterSettingsPage({
             },
           ],
         },
+        printSettings: settings.data,
         storeInfo: { storeName: storeName },
       });
       if (res.success) {

@@ -626,9 +626,11 @@ body,
 }
 
 .staff-area-content {
-  padding: 20px 24px 80px;
+  padding: 20px 24px 20px;
   background: #f8fafc;
   min-height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .staff-desktop-status-bar {
@@ -711,14 +713,14 @@ body,
 
 .staff-table-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+  gap: 16px;
 }
 
 .staff-table-card {
-  min-height: 98px;
-  padding: 12px 14px;
-  border-radius: 14px;
+  min-height: 132px;
+  padding: 18px 20px;
+  border-radius: 18px;
   text-align: left;
   font: inherit;
   display: flex;
@@ -747,7 +749,7 @@ body,
 }
 
 .staff-table-card__name {
-  font-size: 16.5px;
+  font-size: 19px;
   font-weight: 700;
   line-height: 1.25;
   color: #0f172a;
@@ -767,17 +769,17 @@ body,
 
 .staff-table-card__body {
   margin-top: auto;
-  padding-top: 6px;
+  padding-top: 10px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
 
 .staff-table-card__meta {
   display: flex;
   align-items: center;
-  gap: 5px;
-  font-size: 12.5px;
+  gap: 6px;
+  font-size: 13.5px;
   font-weight: 500;
   color: #64748b;
 }
@@ -788,11 +790,87 @@ body,
 }
 
 .staff-table-card__total {
-  font-size: 16.5px;
+  font-size: 20px;
   font-weight: 800;
   color: #0975f7;
   letter-spacing: -0.3px;
   line-height: 1.2;
+}
+
+/* Sticky Status Legend for Table Cards */
+.staff-table-status-legend {
+  position: sticky;
+  bottom: 12px;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  padding: 7px 18px;
+  margin-top: auto;
+  align-self: flex-start;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.05);
+  user-select: none;
+  cursor: default;
+}
+
+.staff-table-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #334155;
+  white-space: nowrap;
+  user-select: none;
+  cursor: default;
+}
+
+.staff-table-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.staff-table-legend-dot--available {
+  background: #ffffff;
+  border: 2px dashed #94a3b8;
+}
+
+.staff-table-legend-dot--occupied {
+  background: #0975f7;
+  box-shadow: 0 0 0 2px rgba(9, 117, 247, 0.2);
+}
+
+.staff-table-legend-dot--disabled {
+  background: #f59e0b;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
+}
+
+.staff-table-legend-label {
+  line-height: 1;
+}
+
+.staff-table-legend-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+  line-height: 1;
 }
 
 .staff-table-card--occupied {
@@ -843,7 +921,9 @@ body,
   flex-direction: column !important;
   align-items: flex-start !important;
   justify-content: flex-start !important;
-  padding: 12px 14px !important;
+  min-height: 132px !important;
+  padding: 18px 20px !important;
+  border-radius: 18px !important;
   cursor: pointer !important;
   transition:
     transform 0.16s ease,
@@ -864,18 +944,18 @@ body,
 .staff-takeaway-create-header {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .staff-takeaway-create-icon {
   flex-shrink: 0;
-  width: 38px;
-  height: 25px;
+  width: 48px;
+  height: 32px;
   display: block;
 }
 
 .staff-takeaway-create-title {
-  font-size: 16.5px;
+  font-size: 19px;
   font-weight: 700;
   color: #0f172a;
   line-height: 1.2;
@@ -5214,9 +5294,11 @@ body,
   }
 
   .staff-area-content {
-    padding: 12px 12px calc(96px + env(safe-area-inset-bottom, 16px));
+    padding: 12px 12px calc(130px + env(safe-area-inset-bottom, 16px));
     background: #f8fafc;
     min-height: 100%;
+    display: flex;
+    flex-direction: column;
   }
 
   .staff-table-grid {
@@ -5245,6 +5327,50 @@ body,
 
   .staff-table-card__total {
     font-size: 17px;
+  }
+
+  .staff-table-status-legend {
+    position: fixed;
+    bottom: calc(80px + env(safe-area-inset-bottom, 0px) + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 25;
+    align-self: center;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 4px 12px;
+    margin: 0;
+    background: rgba(255, 255, 255, 0.94);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(226, 232, 240, 0.9);
+    border-radius: 999px;
+    box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
+    pointer-events: none;
+    user-select: none;
+    max-width: calc(100vw - 32px);
+    white-space: nowrap;
+  }
+
+  .staff-table-legend-item {
+    font-size: 11.5px;
+    gap: 5px;
+    color: #334155;
+  }
+
+  .staff-table-legend-dot {
+    width: 7.5px;
+    height: 7.5px;
+  }
+
+  .staff-table-legend-count {
+    min-width: 17px;
+    height: 17px;
+    padding: 0 4px;
+    font-size: 10.5px;
+    border-radius: 999px;
   }
 
   .staff-area-picker-modal {
@@ -18674,7 +18800,8 @@ body {
   border-radius: 8px;
   margin: 0 auto;
   padding: 18px 16px;
-  font-family: 'Roboto Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  font-family: 'Courier New', Courier, monospace;
+  font-synthesis: none;
   font-variant-numeric: tabular-nums;
   color: #0f172a;
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.06);
@@ -18685,17 +18812,17 @@ body {
   width: 100%;
   max-width: 310px;
   padding: 14px 15px;
-  font-size: 11px;
-  line-height: 1.3;
+  font-size: 12px;
+  line-height: 1.25;
 }
 
 .thermal-receipt-preview--k58 {
   width: 100%;
   max-width: 228px;
   padding: 10px 11px;
-  font-size: 9.5px;
+  font-size: 10.5px;
   line-height: 1.25;
-  letter-spacing: -0.2px;
+  letter-spacing: 0;
 }
 
 .thermal-receipt-preview--k58 .thermal-receipt-header-horizontal {
@@ -18942,6 +19069,19 @@ body {
   color: #475569;
   padding-left: 4px;
   line-height: 1.3;
+}
+
+/* Owner item-size setting must flow through every row instead of being overridden by defaults. */
+.thermal-receipt-items .thermal-receipt-table-header,
+.thermal-receipt-items .thermal-receipt-item-row,
+.thermal-receipt-items .thermal-receipt-item-main,
+.thermal-receipt-items .thermal-receipt-time-segment,
+.thermal-receipt-items .thermal-receipt-time-row {
+  font-size: inherit;
+}
+
+.thermal-receipt-items .thermal-receipt-item-sub {
+  font-size: 0.9em;
 }
 
 .thermal-receipt-time-meta {
@@ -19264,11 +19404,15 @@ body {
 }
 .pos-receipt-preview-stage--k58 .pos-receipt-preview-paper {
   width: 58mm;
+  padding: 2.75mm;
 }
 .pos-receipt-preview-paper .thermal-receipt-preview {
   width: 100% !important;
   max-width: 100% !important;
   margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
   box-shadow: none !important;
 }
 @media (max-width: 600px) {

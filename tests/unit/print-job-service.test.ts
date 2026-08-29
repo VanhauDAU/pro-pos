@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PrintJobService } from '../../src/server/services/print-job-service';
 
-function createMockDb() {
+function createMockDb(
+  printPolicy: { maxReceiptReprintCount?: number; allowProvisionalPrint?: boolean } = {},
+) {
   const printJobs = new Map<string, any>();
   const idempotencyMap = new Map<string, any>();
   const invoices = new Set<string>(['store-1:inv-100', 'store-1:inv-200']);
@@ -14,6 +16,30 @@ function createMockDb() {
         bind(...args: any[]) {
           return {
             async first<T = any>(): Promise<T | null> {
+              if (sql.includes('FROM store_print_settings')) {
+                return {
+                  maxReceiptReprintCount: printPolicy.maxReceiptReprintCount ?? 0,
+                  allowProvisionalPrint: printPolicy.allowProvisionalPrint ?? true,
+                } as T;
+              }
+              if (sql.includes('COUNT(*) AS total') && sql.includes('FROM print_jobs')) {
+                const [storeId, documentType, documentId] = args;
+                const effectiveStatuses = new Set([
+                  'QUEUED',
+                  'CLAIMED',
+                  'PRINTING',
+                  'COMPLETED',
+                  'UNCERTAIN',
+                ]);
+                const total = Array.from(printJobs.values()).filter(
+                  (job) =>
+                    job.store_id === storeId &&
+                    job.document_type === documentType &&
+                    job.document_id === documentId &&
+                    effectiveStatuses.has(job.status),
+                ).length;
+                return { total } as T;
+              }
               if (sql.includes('FROM invoices') || sql.includes('FROM takeaway_invoices')) {
                 const [storeId, docId] = args;
                 if (invoices.has(`${storeId}:${docId}`)) {
@@ -242,6 +268,51 @@ describe('PrintJobService', () => {
     });
 
     expect(job2.id).toBe(job1.id);
+  });
+
+  it('enforces the Owner provisional-print switch on the server', async () => {
+    const policyDb = createMockDb({ allowProvisionalPrint: false });
+    const policyService = new PrintJobService({
+      DB: policyDb,
+      STORE_REALTIME: {
+        getByName: vi.fn(() => ({ broadcast: vi.fn(async () => ({ deliveredConnections: 1 })) })),
+      },
+    } as unknown as CloudflareBindings);
+
+    await expect(
+      policyService.createPrintJob({
+        storeId: 'store-1',
+        documentType: 'provisional',
+        documentId: 'ord-100',
+        printerRole: 'receipt',
+        idempotencyKey: 'disabled-provisional',
+      }),
+    ).rejects.toMatchObject({ code: 'PROVISIONAL_PRINT_DISABLED', status: 403 });
+  });
+
+  it('enforces the Owner receipt print limit while preserving idempotent retries', async () => {
+    const policyDb = createMockDb({ maxReceiptReprintCount: 2 });
+    const policyService = new PrintJobService({
+      DB: policyDb,
+      STORE_REALTIME: {
+        getByName: vi.fn(() => ({ broadcast: vi.fn(async () => ({ deliveredConnections: 1 })) })),
+      },
+    } as unknown as CloudflareBindings);
+    const request = {
+      storeId: 'store-1',
+      documentType: 'invoice' as const,
+      documentId: 'inv-100',
+      printerRole: 'receipt',
+    };
+
+    const first = await policyService.createPrintJob({ ...request, idempotencyKey: 'limit-1' });
+    await policyService.createPrintJob({ ...request, idempotencyKey: 'limit-2' });
+    await expect(
+      policyService.createPrintJob({ ...request, idempotencyKey: 'limit-3' }),
+    ).rejects.toMatchObject({ code: 'RECEIPT_PRINT_LIMIT_REACHED', status: 409 });
+    await expect(
+      policyService.createPrintJob({ ...request, idempotencyKey: 'limit-1' }),
+    ).resolves.toMatchObject({ id: first.id });
   });
 
   it('handles atomic claim so that only one device wins and the other gets 409 conflict', async () => {

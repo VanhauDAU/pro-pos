@@ -5,6 +5,7 @@ directories:
 files:
   - dist/desktop/**
   - package.json
+artifactBuildStarted: ../../scripts/ensure-print-agent-macos-signature.cjs
 win:
   target:
     - target: nsis
@@ -29,7 +30,8 @@ mac:
       arch: [arm64, x64]
   category: public.app-category.business
   darkModeSupport: true
-  identity: null
+  extendInfo:
+    NSLocalNetworkUsageDescription: PRO POS Print Agent cần truy cập mạng nội bộ để kết nối và gửi dữ liệu tới máy in hóa đơn trong cửa hàng.
 dmg:
   title: ${productName} ${version}
   artifactName: ${productName}-${version}-${arch}.${ext}

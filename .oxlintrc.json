@@ -4,5 +4,14 @@
     "suspicious": "error",
     "perf": "warn"
   },
-  "ignorePatterns": ["dist/**", "coverage/**", "worker-configuration.d.ts"]
+  "rules": {
+    "eslint/no-await-in-loop": "off",
+    "oxc/no-map-spread": "off"
+  },
+  "ignorePatterns": [
+    "dist/**",
+    "coverage/**",
+    "worker-configuration.d.ts",
+    "worker-configuration.access.d.ts"
+  ]
 }

@@ -2,38 +2,13 @@ import { AgentApiClient } from './api-client';
 import type { PrintAgentConfig } from './config';
 import { AgentTcpTransport } from './tcp-transport';
 import {
-  buildEscPosReceipt,
   buildPrintDataFromInvoice,
   buildPrintDataFromQuote,
   type PosReceiptPrintData,
 } from '@domain/receipt/receipt-generator';
-import { encodeEscPosWpc1258 } from '@printing/escpos/escpos-wpc1258';
+import { buildEscPosTextReceipt } from '@printing/escpos/escpos-text-builder';
 import type { PrintJob } from '@contracts/print-job';
 import type { StorePrintSettings } from '@contracts/store';
-
-const CASH_DRAWER_COMMAND = '\x1b\x70\x00\x19\xfa';
-
-function combinePayloads(payloads: Uint8Array[]): Uint8Array {
-  const totalLength = payloads.reduce((sum, payload) => sum + payload.length, 0);
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const payload of payloads) {
-    result.set(payload, offset);
-    offset += payload.length;
-  }
-  return result;
-}
-
-function resolveCopyCount(
-  printData: PosReceiptPrintData,
-  printSettings: StorePrintSettings | null,
-): number {
-  const configured =
-    printData.receiptType === 'PROVISIONAL'
-      ? printSettings?.provisionalCopyCount
-      : printSettings?.paymentCopyCount;
-  return Math.max(1, Math.min(9, configured ?? 1));
-}
 
 export class JobProcessor {
   private readonly inFlight = new Set<string>();
@@ -157,11 +132,26 @@ export class JobProcessor {
         } as StorePrintSettings;
       }
 
+      let paperSize: 'K80' | 'K58' = this.config.paperSize || 'K80';
+      let autoCut = this.config.autoCut ?? true;
+      let openCashDrawer = this.config.openCashDrawer ?? false;
+
+      if (effectivePrintSettings?.printersJson) {
+        try {
+          const parsed = JSON.parse(effectivePrintSettings.printersJson);
+          if (parsed.paperSize) paperSize = parsed.paperSize;
+          if (parsed.autoCut !== undefined) autoCut = parsed.autoCut;
+          if (parsed.openCashDrawer !== undefined) openCashDrawer = parsed.openCashDrawer;
+        } catch {
+          // ignore
+        }
+      }
+
       const copyCount = Math.max(
         1,
         printData.receiptType === 'PROVISIONAL'
-          ? (printSettings?.provisionalCopyCount ?? 1)
-          : (printSettings?.paymentCopyCount ?? 1),
+          ? (effectivePrintSettings?.provisionalCopyCount ?? 1)
+          : (effectivePrintSettings?.paymentCopyCount ?? 1),
       );
 
       const copyByteArrays: Uint8Array[] = [];
@@ -173,7 +163,7 @@ export class JobProcessor {
           storeName: storeInfo.name,
           storeAddress: storeInfo.address,
           storePhone: storeInfo.phone,
-          printSettings,
+          printSettings: effectivePrintSettings,
           storeInfo: {
             storeName: storeInfo.name,
             address: storeInfo.address,

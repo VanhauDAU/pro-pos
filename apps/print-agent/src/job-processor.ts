@@ -10,7 +10,7 @@ import {
 } from '@domain/receipt/receipt-generator';
 import { buildEscPosTextReceipt } from '@printing/escpos/escpos-text-builder';
 import { createReceiptDocument } from '@domain/receipt/receipt-document';
-import type { PrintJob } from '@contracts/print-job';
+import type { PrintJob, PrintJobClaimResponse } from '@contracts/print-job';
 import { parsePrinterDeviceConfig, type StorePrintSettings } from '@contracts/store';
 import { getReceiptPrintProfile } from '@contracts/store';
 import { PrinterError, type PrinterFailureStage } from '@printing/printer-errors';
@@ -221,6 +221,7 @@ export class JobProcessor {
     if (this.inFlight.has(job.id)) return false;
     this.inFlight.add(job.id);
     let claimed = false;
+    let claimToken: string | null = null;
 
     try {
       console.log(
@@ -228,9 +229,13 @@ export class JobProcessor {
       );
 
       try {
-        await this.apiClient.post(`/api/v1/pos/print-jobs/${job.id}/claim`, {
-          claimedByDeviceId: this.config.agentId || 'print-agent',
-        });
+        const claim = await this.apiClient.post<PrintJobClaimResponse>(
+          `/api/v1/pos/print-jobs/${job.id}/claim`,
+          {
+            claimedByDeviceId: this.config.agentId || 'print-agent',
+          },
+        );
+        claimToken = claim.claimToken ?? null;
         claimed = true;
       } catch (error) {
         console.warn(
@@ -394,7 +399,10 @@ export class JobProcessor {
         `[PrintAgent] Đang gửi ${copyCount} liên tới máy in LAN ${printerIp}:${printerPort}...`,
       );
       try {
-        await this.apiClient.post(`/api/v1/pos/print-jobs/${job.id}/start`, {});
+        await this.apiClient.post(
+          `/api/v1/pos/print-jobs/${job.id}/start`,
+          claimToken ? { claimToken } : {},
+        );
       } catch (error) {
         throw new PrintJobProcessingError(
           'PRINT_JOB_START_FAILED',
@@ -420,7 +428,10 @@ export class JobProcessor {
         });
       }
 
-      await this.apiClient.post(`/api/v1/pos/print-jobs/${job.id}/complete`, {});
+      await this.apiClient.post(
+        `/api/v1/pos/print-jobs/${job.id}/complete`,
+        claimToken ? { claimToken } : {},
+      );
       console.log(
         `\x1b[32m✔ [PrintAgent] In thành công job ${job.id} (${printData.orderCode || job.documentId})\x1b[0m`,
       );
@@ -440,6 +451,7 @@ export class JobProcessor {
           await this.apiClient.post(`/api/v1/pos/print-jobs/${job.id}/${endpoint}`, {
             failureCode: processingError.code,
             failureMessage: processingError.message,
+            ...(claimToken ? { claimToken } : {}),
           });
         } catch (failError) {
           console.error('[PrintAgent] Không thể cập nhật trạng thái print job:', failError);

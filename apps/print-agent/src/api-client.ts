@@ -7,6 +7,7 @@ export class AgentApiClient {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       Accept: 'application/json',
+      'X-Print-Agent-Protocol': '2',
     };
     if (this.config.agentId && this.config.agentSecret) {
       headers['X-Agent-Id'] = this.config.agentId;

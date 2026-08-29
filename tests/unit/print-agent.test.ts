@@ -287,6 +287,7 @@ describe('Pro POS Print Agent Unit Tests', () => {
 
   it('renders all data before start and starts immediately before the TCP write', async () => {
     const order: string[] = [];
+    const claimToken = '11111111-1111-4111-8111-111111111111';
     const get = vi.fn(async (path: string) => {
       if (path === '/api/v1/pos/print-bootstrap') {
         order.push('bootstrap');
@@ -322,7 +323,7 @@ describe('Pro POS Print Agent Unit Tests', () => {
       if (path.endsWith('/claim')) order.push('claim');
       if (path.endsWith('/start')) order.push('start');
       if (path.endsWith('/complete')) order.push('complete');
-      return {};
+      return path.endsWith('/claim') ? { claimToken } : {};
     });
     const send = vi.fn(async () => {
       order.push('tcp');
@@ -350,6 +351,8 @@ describe('Pro POS Print Agent Unit Tests', () => {
     );
     expect(order.indexOf('start')).toBeLessThan(order.indexOf('tcp'));
     expect(order.indexOf('tcp')).toBeLessThan(order.indexOf('complete'));
+    expect(post).toHaveBeenCalledWith('/api/v1/pos/print-jobs/JOB-ORDER/start', { claimToken });
+    expect(post).toHaveBeenCalledWith('/api/v1/pos/print-jobs/JOB-ORDER/complete', { claimToken });
   });
 
   it('detects desktop vs mobile platforms accurately', () => {

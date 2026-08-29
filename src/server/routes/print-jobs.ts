@@ -5,6 +5,7 @@ import {
   createPrintJobSchema,
   failPrintJobSchema,
   printJobQuerySchema,
+  transitionPrintJobSchema,
 } from '@contracts/print-job';
 import { orderWorkspacePermissionKeys } from '@contracts/staff';
 import { success } from '@server/lib/response';
@@ -94,8 +95,11 @@ printJobRoutes.post(
 
     const actor = c.get('actor');
     const device = c.get('device');
-    const finalClaimedByDeviceId =
-      claimedByDeviceId?.trim() || device?.id || actor.id || 'desktop-bridge';
+    const isPrintAgent = Boolean(c.req.header('X-Agent-Id'));
+    const finalClaimedByDeviceId = isPrintAgent
+      ? device?.id || actor.id
+      : claimedByDeviceId?.trim() || device?.id || actor.id || 'desktop-bridge';
+    const protocolVersion = isPrintAgent && c.req.header('X-Print-Agent-Protocol') === '2' ? 2 : 1;
 
     const service = new PrintJobService(c.env);
     const job = await service.claimPrintJob(
@@ -108,6 +112,7 @@ printJobRoutes.post(
         deviceId: device?.id ?? null,
         requestId: c.get('requestId'),
       },
+      protocolVersion,
     );
 
     return success(c, job);
@@ -122,16 +127,27 @@ printJobRoutes.post(
   '/:id/start',
   requirePermission(...orderWorkspacePermissionKeys, 'order.proforma_print', 'invoice.print'),
   async (c) => {
+    let claimToken: string | undefined;
+    try {
+      claimToken = (await parseJson(c.req.raw, transitionPrintJobSchema)).claimToken;
+    } catch {
+      // Legacy agents send an empty body.
+    }
     const actor = c.get('actor');
     const device = c.get('device');
     const service = new PrintJobService(c.env);
 
-    const job = await service.startPrintJob(actor.storeId!, c.req.param('id'), {
-      actorUserId: actor.id,
-      actorKind: actor.kind as 'OWNER' | 'EMPLOYEE',
-      deviceId: device?.id ?? null,
-      requestId: c.get('requestId'),
-    });
+    const job = await service.startPrintJob(
+      actor.storeId!,
+      c.req.param('id'),
+      {
+        actorUserId: actor.id,
+        actorKind: actor.kind as 'OWNER' | 'EMPLOYEE',
+        deviceId: device?.id ?? null,
+        requestId: c.get('requestId'),
+      },
+      claimToken ?? null,
+    );
 
     return success(c, job);
   },
@@ -145,16 +161,27 @@ printJobRoutes.post(
   '/:id/complete',
   requirePermission(...orderWorkspacePermissionKeys, 'order.proforma_print', 'invoice.print'),
   async (c) => {
+    let claimToken: string | undefined;
+    try {
+      claimToken = (await parseJson(c.req.raw, transitionPrintJobSchema)).claimToken;
+    } catch {
+      // Legacy agents send an empty body.
+    }
     const actor = c.get('actor');
     const device = c.get('device');
     const service = new PrintJobService(c.env);
 
-    const job = await service.completePrintJob(actor.storeId!, c.req.param('id'), {
-      actorUserId: actor.id,
-      actorKind: actor.kind as 'OWNER' | 'EMPLOYEE',
-      deviceId: device?.id ?? null,
-      requestId: c.get('requestId'),
-    });
+    const job = await service.completePrintJob(
+      actor.storeId!,
+      c.req.param('id'),
+      {
+        actorUserId: actor.id,
+        actorKind: actor.kind as 'OWNER' | 'EMPLOYEE',
+        deviceId: device?.id ?? null,
+        requestId: c.get('requestId'),
+      },
+      claimToken ?? null,
+    );
 
     return success(c, job);
   },
@@ -184,6 +211,7 @@ printJobRoutes.post(
         deviceId: device?.id ?? null,
         requestId: c.get('requestId'),
       },
+      body.claimToken ?? null,
     );
 
     return success(c, job);
@@ -200,10 +228,12 @@ printJobRoutes.post(
   async (c) => {
     let failureCode: string | undefined;
     let failureMessage: string | undefined;
+    let claimToken: string | undefined;
     try {
       const body = await parseJson(c.req.raw, failPrintJobSchema);
       failureCode = body.failureCode;
       failureMessage = body.failureMessage;
+      claimToken = body.claimToken;
     } catch {
       // Agent versions prior to the failure-boundary update send no body.
     }
@@ -222,6 +252,7 @@ printJobRoutes.post(
         deviceId: device?.id ?? null,
         requestId: c.get('requestId'),
       },
+      claimToken ?? null,
     );
 
     return success(c, job);

@@ -8,7 +8,7 @@
     "dev": "tsx src/index.ts",
     "build": "esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js --external:ws --alias:@contracts=../../src/contracts --alias:@domain=../../src/domain --alias:@printing=../../src/printing",
     "start": "node dist/index.js",
-    "dev:desktop": "pnpm build:desktop && electron .",
+    "dev:desktop": "pnpm build:desktop && node ../../scripts/run-print-agent-electron.mjs",
     "build:desktop": "esbuild src/desktop/main/main.ts --bundle --platform=node --format=cjs --outfile=dist/desktop/main/main.cjs --external:electron --external:ws --alias:@contracts=../../src/contracts --alias:@domain=../../src/domain --alias:@printing=../../src/printing && esbuild src/desktop/preload/preload.ts --bundle --platform=node --format=cjs --outfile=dist/desktop/preload/preload.cjs --external:electron && esbuild src/desktop/renderer/main.tsx --bundle --platform=browser --format=iife --outfile=dist/desktop/renderer/renderer.js && node ../../scripts/copy-desktop-renderer.mjs",
     "dist:win": "pnpm build:desktop && electron-builder --win nsis portable --x64 && node ../../scripts/write-print-agent-checksums.mjs",
     "typecheck": "tsc --noEmit"

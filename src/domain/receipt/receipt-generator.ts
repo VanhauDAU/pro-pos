@@ -2,9 +2,9 @@ import {
   type PaperSize,
   type StorePrintSettings,
   getReceiptPrintProfile,
-  parsePrintTemplateConfigs,
   parsePrinterDeviceConfig,
 } from '@contracts/store';
+import { createReceiptDocument } from './receipt-document';
 
 export interface PosReceiptTimeSegment {
   name: string;
@@ -225,10 +225,9 @@ export function buildEscPosReceipt(
   autoCut: boolean;
   openCashDrawer: boolean;
 } {
-  const { data, printSettings, storeInfo } = options;
-  const templateConfigs = parsePrintTemplateConfigs(printSettings?.templateConfigJson);
-  const template =
-    data.receiptType === 'PROVISIONAL' ? templateConfigs.PROVISIONAL : templateConfigs.PAYMENT;
+  const document = createReceiptDocument(options);
+  const { data, template } = document;
+  const printSettings = options.printSettings;
 
   const printerConfig = parsePrinterDeviceConfig(printSettings?.printersJson);
   const paperSize: PaperSize = printSettings?.paperSize || printerConfig.paperSize || 'K80';
@@ -237,6 +236,7 @@ export function buildEscPosReceipt(
   const divider = '-'.repeat(chars);
 
   const escInit = '\x1B\x40';
+  const escFontA = '\x1B\x4D\x00';
   const escCenter = '\x1B\x61\x01';
   const escLeft = '\x1B\x61\x00';
   const escBoldOn = '\x1B\x45\x01';
@@ -244,16 +244,16 @@ export function buildEscPosReceipt(
   const escCut = '\x1D\x56\x41\x00';
   const escDrawer = '\x1B\x70\x00\x19\xFA';
 
-  let raw = escInit;
+  // Do not inherit Font B/C from a previous print job.
+  let raw = escInit + escFontA;
 
   // 1. Header (Store Name, Address, Phone)
-  const storeName = storeInfo?.storeName || 'PRO POS';
-  const storeAddress = printSettings?.customAddressEnabled
-    ? printSettings.customAddress
-    : storeInfo?.address;
-  const storePhone = storeInfo?.phone;
+  const storeName = document.store.name;
+  const storeAddress = document.store.address;
+  const storePhone = document.store.phone;
 
-  raw += escCenter + escBoldOn + storeName.toUpperCase() + '\n' + escBoldOff;
+  raw += escCenter;
+  if (storeName) raw += escBoldOn + storeName.toUpperCase() + '\n' + escBoldOff;
   if (storeAddress) raw += storeAddress + '\n';
   if (storePhone) raw += `SĐT: ${storePhone}\n`;
 
@@ -265,9 +265,6 @@ export function buildEscPosReceipt(
         ? 'PHIẾU THU CÔNG NỢ'
         : 'HÓA ĐƠN THANH TOÁN';
   raw += '\n' + escBoldOn + title + '\n' + escBoldOff;
-  if (data.receiptType === 'PROVISIONAL') {
-    raw += escBoldOn + '*** CHƯA THANH TOÁN ***\n' + escBoldOff;
-  }
   raw += `Liên ${copy?.index ?? 1}/${copy?.total ?? 1}\n`;
   const code = data.invoiceCode || data.orderCode;
   raw += `Số: ${code}\n`;
@@ -362,34 +359,25 @@ export function buildEscPosReceipt(
               const totCol1 = totalStr.padStart(11).slice(-11);
               raw += `${leftCol1} ${priceCol1} ${totCol1}\n`;
 
-              const leftCol2 = dateStr.padEnd(26).slice(0, 26);
+              const leftCol2 = `${dateStr}  ${durLabel}`.padEnd(26).slice(0, 26);
               raw += `${leftCol2}\n`;
-
-              const leftCol3 = durLabel.padEnd(26).slice(0, 26);
-              const priceCol2 = ''.padStart(9);
-              const totCol2 = ''.padStart(11);
-              raw += `${leftCol3} ${priceCol2} ${totCol2}\n`;
             } else {
               const leftCol1 = timeRange.padEnd(35).slice(0, 35);
               const totCol1 = totalStr.padStart(12).slice(-12);
               raw += `${leftCol1} ${totCol1}\n`;
 
-              raw += `${dateStr}\n`;
-              const leftCol2 = durLabel.padEnd(35).slice(0, 35);
+              const leftCol2 = `${dateStr}  ${durLabel}`.padEnd(35).slice(0, 35);
               raw += `${leftCol2}\n`;
             }
-            raw += '\n';
           } else {
             // K58 single column
             const leftCol1 = timeRange.padEnd(22).slice(0, 22);
             const totCol1 = totalStr.padStart(11);
             raw += `${leftCol1} ${totCol1}\n`;
-            raw += `${dateStr}\n`;
-            raw += `${durLabel}\n`;
+            raw += `${dateStr}  ${durLabel}\n`;
             if (template.showHourlyUnitPrice) {
               raw += `   Đ.Giá: ${priceStr}\n`;
             }
-            raw += '\n';
           }
         }
         continue;
@@ -670,81 +658,7 @@ export function buildEscPosReceipt(
 }
 
 export function buildPrintDataFromQuote(
-  quote: {
-    order: {
-      id: string;
-      displayCode: string | null;
-      orderType: 'DINE_IN' | 'TAKEAWAY';
-      tableName: string | null;
-      areaName?: string | null | undefined;
-      cashierName?: string | null | undefined;
-      openedByName?: string | null | undefined;
-      customerName?: string | null | undefined;
-      customerPhone?: string | null | undefined;
-      guestPhone?: string | null | undefined;
-      guestAddress?: string | null | undefined;
-      note?: string | null | undefined;
-      openedAt: number;
-    };
-    items: Array<{
-      id: string;
-      productName: string;
-      quantityMilli: number;
-      unitPriceVnd: number;
-      netLineTotalVnd: number;
-      discountAmountVnd?: number | undefined;
-      discountReason?: string | null | undefined;
-      promotionGift?: { promotionName: string } | undefined;
-      unitName?: string | null | undefined;
-      note?: string | null | undefined;
-    }>;
-    time?:
-      | {
-          startedAtMs: number;
-          endedAtMs: number | null | undefined;
-          elapsedSeconds: number;
-          amountAfterRoundingVnd: number;
-          pricingConfig?: { basePriceVnd: number } | undefined;
-          segments?:
-            | Array<{
-                name: string;
-                type?: 'BASE' | 'FIRST_PERIOD' | 'SPECIAL' | string | undefined;
-                startedAtMs?: number | undefined;
-                endedAtMs?: number | null | undefined;
-                elapsedSeconds: number;
-                priceVnd?: number | undefined;
-                amountBeforeRoundingVnd?: number | undefined;
-                amountAfterRoundingVnd?: number | undefined;
-              }>
-            | undefined;
-          tableSegments?:
-            | Array<{
-                tableName: string;
-                startedAtMs: number;
-                endedAtMs: number | null | undefined;
-                elapsedSeconds: number;
-                amountBeforeRoundingVnd?: number | undefined;
-                amountAfterRoundingVnd?: number | undefined;
-                pricingConfig?: { basePriceVnd: number } | undefined;
-              }>
-            | undefined;
-        }
-      | null
-      | undefined;
-    subtotalVnd?: number | undefined;
-    discountTotalVnd?: number | undefined;
-    promotionDiscountVnd?: number | undefined;
-    promotion?: PosReceiptPromotion | null | undefined;
-    promotions?: PosReceiptPromotion[] | undefined;
-    totalVnd?: number | undefined;
-    totals?:
-      | {
-          subtotalVnd: number;
-          discountTotalVnd: number;
-          totalVnd: number;
-        }
-      | undefined;
-  },
+  quote: any,
   receiptType: 'PROVISIONAL' | 'PAYMENT' = 'PROVISIONAL',
   paymentMethod?: 'CASH' | 'BANK_TRANSFER' | null | undefined,
   cashReceived?: number | null | undefined,
@@ -765,7 +679,7 @@ export function buildPrintDataFromQuote(
       timeElapsedSeconds: quote.time.elapsedSeconds,
       timeSegments: reconcileReceiptTimeSegmentAmounts(
         compactReceiptTimeSegments(
-          quote.time.segments?.map((s): PosReceiptTimeSegment => ({
+          quote.time.segments?.map((s: any): PosReceiptTimeSegment => ({
             name: s.name,
             type: s.type,
             startedAtMs: s.startedAtMs ?? quote.time!.startedAtMs,
@@ -775,195 +689,255 @@ export function buildPrintDataFromQuote(
               s.priceVnd ??
               quote.time!.pricingConfig?.basePriceVnd ??
               quote.time!.amountAfterRoundingVnd,
-            amount: s.amountAfterRoundingVnd ?? s.amountBeforeRoundingVnd ?? 0,
+            amount: s.amountAfterRoundingVnd ?? s.amountBeforeRoundingVnd ?? s.amount ?? 0,
           })),
         ),
         quote.time.amountAfterRoundingVnd,
       ),
-      tableSegments: quote.time.tableSegments?.map((t) => ({
+      tableSegments: quote.time.tableSegments?.map((t: any) => ({
         tableName: t.tableName,
         startedAtMs: t.startedAtMs,
         endedAtMs: t.endedAtMs ?? null,
         elapsedSeconds: t.elapsedSeconds,
         amount: t.amountAfterRoundingVnd ?? t.amountBeforeRoundingVnd ?? 0,
-        hourlyPrice: t.pricingConfig?.basePriceVnd,
+        hourlyPrice: t.pricingConfig?.basePriceVnd ?? t.hourlyPrice,
+      })),
+    });
+  } else if (quote.timeSegments && quote.timeSegments.length > 0) {
+    const totalTimeAmt =
+      quote.totals?.timeAmountVnd ??
+      quote.timeSummary?.totalAmountAfterRoundingVnd ??
+      quote.timeSegments.reduce(
+        (sum: number, s: any) => sum + (s.amountAfterRoundingVnd ?? s.amount ?? 0),
+        0,
+      );
+    const totalElapsed =
+      quote.timeSummary?.totalElapsedSeconds ??
+      quote.timeSegments.reduce((sum: number, s: any) => sum + (s.elapsedSeconds ?? 0), 0);
+
+    lines.push({
+      id: 'time-session',
+      name: 'Tiền giờ',
+      quantity: 1,
+      unitPrice: quote.timeSegments[0]?.unitPriceSnapshot ?? totalTimeAmt,
+      totalPrice: totalTimeAmt,
+      isTime: true,
+      timeStartedAtMs: quote.timeSegments[0]?.startedAt,
+      timeEndedAtMs: quote.order?.status === 'OPEN' ? null : quote.order?.closedAt,
+      timeElapsedSeconds: totalElapsed,
+      timeSegments: reconcileReceiptTimeSegmentAmounts(
+        compactReceiptTimeSegments(
+          quote.timeSegments.map((s: any): PosReceiptTimeSegment => ({
+            name: s.rateNameSnapshot || s.name || 'Giá tính giờ',
+            type: s.type || 'BASE',
+            startedAtMs: s.startedAt,
+            endedAtMs: s.endedAt ?? null,
+            elapsedSeconds: s.elapsedSeconds,
+            priceVnd: s.unitPriceSnapshot ?? s.priceVnd ?? totalTimeAmt,
+            amount: s.amountAfterRoundingVnd ?? s.amountBeforeRoundingVnd ?? s.amount ?? 0,
+          })),
+        ),
+        totalTimeAmt,
+      ),
+      tableSegments: quote.timeSegments.map((s: any) => ({
+        tableName: s.tableName,
+        startedAtMs: s.startedAt,
+        endedAtMs: s.endedAt ?? null,
+        elapsedSeconds: s.elapsedSeconds,
+        amount: s.amountAfterRoundingVnd ?? s.amount ?? 0,
+        hourlyPrice: s.unitPriceSnapshot,
       })),
     });
   }
 
   // 2. Regular items
-  for (const item of quote.items) {
+  const rawItems = quote.items || [];
+  for (const item of rawItems) {
+    const isItemTime = item.productType === 'TIME';
+    if (isItemTime && lines.some((l) => l.isTime)) continue;
+
     lines.push({
       id: item.id,
-      name: item.productName,
-      quantity: item.quantityMilli / 1000,
-      unitPrice: item.unitPriceVnd,
-      totalPrice: item.netLineTotalVnd,
-      unitName: item.unitName ?? null,
+      name: item.productNameSnapshot || item.productName || item.description || '',
+      quantity:
+        typeof item.quantityMilli === 'number'
+          ? item.quantityMilli / 1000
+          : typeof item.quantity === 'number'
+            ? item.quantity
+            : 1,
+      unitPrice: item.unitPriceSnapshot ?? item.unitPriceVnd ?? item.unitPrice ?? 0,
+      totalPrice: item.netLineTotalVnd ?? item.lineTotal ?? 0,
+      unitName: item.unitNameSnapshot ?? item.unitName ?? null,
       note: item.note ?? null,
-      discountAmount: item.discountAmountVnd ?? 0,
+      discountAmount: item.discountAmountVnd ?? item.discountAmount ?? 0,
       discountReason: item.discountReason ?? null,
-      adjustmentSource: item.promotionGift ? 'PROMOTION_GIFT' : 'MANUAL',
-      promotionName: item.promotionGift?.promotionName ?? null,
+      adjustmentSource:
+        item.promotionGift || item.adjustmentSource === 'PROMOTION_GIFT'
+          ? 'PROMOTION_GIFT'
+          : 'MANUAL',
+      promotionName: item.promotionGift?.promotionName ?? item.promotionName ?? null,
+      isTime: isItemTime,
+      timeStartedAtMs: item.timeStartedAtMs,
+      timeEndedAtMs: item.timeEndedAtMs,
     });
   }
 
-  const subtotal = quote.subtotalVnd ?? quote.totals?.subtotalVnd ?? 0;
-  const discountTotal = quote.discountTotalVnd ?? quote.totals?.discountTotalVnd ?? 0;
-  const total = quote.totalVnd ?? quote.totals?.totalVnd ?? 0;
+  const subtotal =
+    quote.subtotalVnd ??
+    quote.totals?.subtotalVnd ??
+    quote.subtotal ??
+    quote.invoice?.subtotalVnd ??
+    0;
+  const discountTotal =
+    quote.discountTotalVnd ??
+    quote.totals?.totalDiscountVnd ??
+    quote.totals?.discountTotalVnd ??
+    quote.discountTotal ??
+    quote.invoice?.discountTotalVnd ??
+    0;
+  const total =
+    quote.totalVnd ?? quote.totals?.totalVnd ?? quote.total ?? quote.invoice?.totalVnd ?? 0;
 
+  const resolvedPaymentMethod =
+    paymentMethod ??
+    quote.paymentMethod ??
+    quote.payments?.[0]?.method ??
+    quote.paymentAllocations?.[0]?.method ??
+    null;
+  const resolvedCashReceived =
+    cashReceived ??
+    quote.cashReceived ??
+    quote.payments?.[0]?.cashReceived ??
+    quote.paymentAllocations?.[0]?.tenderedVnd ??
+    null;
   const cashChange =
-    paymentMethod === 'CASH' && cashReceived !== null && cashReceived !== undefined
-      ? Math.max(0, cashReceived - total)
-      : null;
+    resolvedPaymentMethod === 'CASH' &&
+    resolvedCashReceived !== null &&
+    resolvedCashReceived !== undefined
+      ? Math.max(0, resolvedCashReceived - total)
+      : (quote.cashChange ?? quote.totals?.changeAmountVnd ?? null);
+
+  const orderObj = quote.order || {};
+  const customerObj = quote.customer || {};
 
   return {
     receiptType,
     orderCode:
-      quote.order.displayCode ||
-      (quote.order.id ? `D-${quote.order.id.slice(0, 8).toUpperCase()}` : '—'),
-    invoiceCode: quote.order.displayCode || null,
-    orderType: quote.order.orderType,
-    tableName: quote.order.tableName,
-    areaName: quote.order.areaName ?? null,
-    cashierName: quote.order.cashierName ?? quote.order.openedByName ?? null,
-    customerName: quote.order.customerName ?? null,
-    guestPhone: quote.order.guestPhone ?? quote.order.customerPhone ?? null,
-    guestAddress: quote.order.guestAddress ?? null,
-    note: quote.order.note ?? null,
-    checkInTimeMs: quote.time?.startedAtMs || quote.order.openedAt,
-    issuedAtMs: Date.now(),
+      orderObj.displayCode ||
+      quote.invoice?.displayCode ||
+      (orderObj.id ? `D-${orderObj.id.slice(0, 8).toUpperCase()}` : '—'),
+    invoiceCode: quote.invoice?.displayCode || orderObj.displayCode || null,
+    orderType: orderObj.orderType || 'DINE_IN',
+    tableName: orderObj.tableName ?? null,
+    areaName: orderObj.areaName ?? null,
+    cashierName:
+      quote.invoice?.issuedByName ??
+      orderObj.cashierName ??
+      orderObj.openedByName ??
+      quote.cashierName ??
+      null,
+    customerName: customerObj.name ?? orderObj.customerName ?? quote.customerName ?? null,
+    guestPhone:
+      customerObj.phone ??
+      orderObj.guestPhone ??
+      orderObj.customerPhone ??
+      quote.guestPhone ??
+      null,
+    guestAddress: orderObj.guestAddress ?? quote.guestAddress ?? null,
+    note: orderObj.note ?? quote.note ?? null,
+    checkInTimeMs: quote.time?.startedAtMs || orderObj.openedAt || quote.checkInTimeMs || null,
+    issuedAtMs: quote.invoice?.issuedAt || Date.now(),
     subtotal,
     discountTotal,
-    promotionDiscount: quote.promotionDiscountVnd ?? quote.promotion?.discountAmountVnd ?? 0,
-    promotion: quote.promotion ?? null,
+    promotionDiscount:
+      quote.promotionDiscountVnd ??
+      quote.totals?.orderDiscountAmountVnd ??
+      quote.promotion?.discountAmountVnd ??
+      0,
+    promotion: quote.promotion ?? quote.promotions?.[0] ?? null,
     promotions: quote.promotions ?? (quote.promotion ? [quote.promotion] : []),
     total,
-    paymentMethod: paymentMethod ?? null,
-    cashReceived: cashReceived ?? null,
+    paymentMethod: resolvedPaymentMethod,
+    cashReceived: resolvedCashReceived,
     cashChange,
+    paymentAllocations:
+      quote.paymentAllocations?.map((a: any) => ({
+        method: a.method,
+        amountVnd: a.amountVnd ?? a.amount ?? 0,
+      })) ??
+      quote.allocations?.map((a: any) => ({
+        method: a.method,
+        amountVnd: a.amountVnd ?? a.amount ?? 0,
+      })),
+    paidAmountVnd: quote.totals?.paidAmountVnd ?? quote.paidAmountVnd,
+    debtAmountVnd: quote.totals?.debtAmountVnd ?? quote.debtAmountVnd,
     lines,
   };
 }
 
-export function buildPrintDataFromInvoice(invoice: {
-  invoice: {
-    id: string;
-    displayCode: string;
-    orderType: 'DINE_IN' | 'TAKEAWAY';
-    tableName?: string | null | undefined;
-    cashierName?: string | null | undefined;
-    guestPhone?: string | null | undefined;
-    guestAddress?: string | null | undefined;
-    note?: string | null | undefined;
-    snapshotJson?: string | null | undefined;
-    issuedAt: number;
-    subtotal: number;
-    discountTotal: number;
-    total: number;
-  };
-  payment: {
-    method: 'CASH' | 'BANK_TRANSFER';
-    cashReceived?: number | null | undefined;
-    cashChange?: number | null | undefined;
-  };
-  lines: Array<{
-    id: string;
-    lineType: 'PRODUCT' | 'TIME';
-    description: string;
-    quantityMilli: number;
-    unitPrice: number;
-    lineTotal: number;
-    snapshotJson: string;
-  }>;
-}): PosReceiptPrintData {
-  const lines: PosReceiptLineItem[] = [];
-  let invoiceSnapshot: {
-    order?: {
-      tableName?: string | null;
-      areaName?: string | null;
-      openedAt?: number;
-      openedByName?: string | null;
-      customerName?: string | null;
-      customerPhone?: string | null;
-      note?: string | null;
-    };
-    items?: Array<{
-      productId: string;
-      variantId?: string | null;
-      discountAmountVnd?: number;
-      discountReason?: string | null;
-      promotionGift?: { promotionName: string };
-    }>;
-    time?: {
-      startedAtMs?: number;
-      endedAtMs?: number | null;
-      elapsedSeconds?: number;
-      amountBeforeRoundingVnd?: number;
-      amountAfterRoundingVnd?: number;
-      segments?: Array<{
-        name: string;
-        type?: 'BASE' | 'FIRST_PERIOD' | 'SPECIAL' | string | undefined;
-        startedAtMs?: number | undefined;
-        endedAtMs?: number | null | undefined;
-        elapsedSeconds: number;
-        priceVnd?: number | undefined;
-        amountBeforeRoundingVnd?: number | undefined;
-        amountAfterRoundingVnd?: number | undefined;
-      }>;
-    };
-    promotion?: PosReceiptPromotion | null;
-    promotions?: PosReceiptPromotion[];
-  } = {};
-  try {
-    invoiceSnapshot = invoice.invoice.snapshotJson
-      ? (JSON.parse(invoice.invoice.snapshotJson) as typeof invoiceSnapshot)
-      : {};
-  } catch {
-    // Older invoices may not contain a parseable snapshot.
+export function buildPrintDataFromInvoice(rawInvoiceData: any): PosReceiptPrintData {
+  if (!rawInvoiceData) {
+    throw new Error('Dữ liệu hóa đơn không hợp lệ.');
   }
 
-  for (const line of invoice.lines) {
-    let snapshot: {
-      productId?: string;
-      variantId?: string | null;
-      productType?: 'QUANTITY' | 'WEIGHT' | 'TIME';
-      unitName?: string | null;
-      variantName?: string | null;
-      note?: string | null;
-      elapsedSeconds?: number;
-      startedAtMs?: number;
-      endedAtMs?: number | null;
-      segments?: Array<{
-        name: string;
-        type?: 'BASE' | 'FIRST_PERIOD' | 'SPECIAL' | string | undefined;
-        startedAtMs?: number | undefined;
-        endedAtMs?: number | null | undefined;
-        elapsedSeconds: number;
-        priceVnd?: number | undefined;
-        amountBeforeRoundingVnd?: number | undefined;
-        amountAfterRoundingVnd?: number | undefined;
-      }>;
-      tableSegments?: Array<{
-        tableName: string;
-        startedAtMs: number;
-        endedAtMs: number | null;
-        elapsedSeconds: number;
-        amountAfterRoundingVnd: number;
-        pricingConfig?: { basePriceVnd: number };
-      }>;
-      promotionGift?: { promotionName: string };
-    } = {};
+  // Case 1: OrderDetailData structure ({ order, customer, items, timeSegments, payments, paymentAllocations, invoice, promotions, totals })
+  if (rawInvoiceData.order && rawInvoiceData.invoice) {
+    const printData = buildPrintDataFromQuote(rawInvoiceData, 'PAYMENT');
+    printData.orderCode = rawInvoiceData.invoice.displayCode || printData.orderCode;
+    printData.invoiceCode = rawInvoiceData.invoice.displayCode || printData.invoiceCode;
+    printData.cashierName =
+      rawInvoiceData.invoice.issuedByName ||
+      rawInvoiceData.invoice.cashierName ||
+      printData.cashierName;
+    printData.issuedAtMs = rawInvoiceData.invoice.issuedAt || printData.issuedAtMs;
+    printData.subtotal =
+      rawInvoiceData.invoice.subtotalVnd ?? rawInvoiceData.invoice.subtotal ?? printData.subtotal;
+    printData.discountTotal =
+      rawInvoiceData.invoice.discountTotalVnd ??
+      rawInvoiceData.invoice.discountTotal ??
+      printData.discountTotal;
+    printData.total =
+      rawInvoiceData.invoice.totalVnd ?? rawInvoiceData.invoice.total ?? printData.total;
 
+    const successfulPayment = rawInvoiceData.payments?.find((p: any) => p.status === 'SUCCEEDED');
+    if (successfulPayment) {
+      printData.paymentMethod = successfulPayment.method;
+      printData.cashReceived = successfulPayment.cashReceived ?? printData.cashReceived;
+      printData.cashChange = successfulPayment.cashChange ?? printData.cashChange;
+    }
+    if (rawInvoiceData.paymentAllocations?.length) {
+      printData.paymentAllocations = rawInvoiceData.paymentAllocations.map((a: any) => ({
+        method: a.method,
+        amountVnd: a.amountVnd ?? a.amount ?? 0,
+      }));
+      printData.paidAmountVnd = rawInvoiceData.totals?.paidAmountVnd;
+      printData.debtAmountVnd = rawInvoiceData.totals?.debtAmountVnd;
+    }
+    return printData;
+  }
+
+  // Case 2: InvoiceDetailData structure ({ invoice: {...}, lines: [...], payment: {...}, allocations: [...] })
+  const invoice = rawInvoiceData.invoice || rawInvoiceData;
+  const lines: PosReceiptLineItem[] = [];
+  let invoiceSnapshot: any = {};
+  try {
+    invoiceSnapshot = invoice.snapshotJson ? JSON.parse(invoice.snapshotJson) : {};
+  } catch {
+    // ignore
+  }
+
+  const rawLines = rawInvoiceData.lines || invoice.lines || [];
+  for (const line of rawLines) {
+    let snapshot: any = {};
     try {
-      snapshot = JSON.parse(line.snapshotJson);
+      snapshot = line.snapshotJson ? JSON.parse(line.snapshotJson) : {};
     } catch {
       // ignore
     }
 
     const isTime = line.lineType === 'TIME' || snapshot.productType === 'TIME';
     const orderItemSnapshot = invoiceSnapshot.items?.find(
-      (item) =>
+      (item: any) =>
         item.productId === snapshot.productId &&
         (item.variantId ?? null) === (snapshot.variantId ?? null) &&
         Boolean(item.promotionGift) === Boolean(snapshot.promotionGift),
@@ -972,14 +946,19 @@ export function buildPrintDataFromInvoice(invoice: {
 
     lines.push({
       id: line.id,
-      name: line.description,
-      quantity: line.quantityMilli / 1000,
-      unitPrice: line.unitPrice,
-      totalPrice: line.lineTotal,
+      name: line.description || line.productName || snapshot.productName || '',
+      quantity:
+        typeof line.quantityMilli === 'number'
+          ? line.quantityMilli / 1000
+          : typeof line.quantity === 'number'
+            ? line.quantity
+            : 1,
+      unitPrice: line.unitPrice ?? snapshot.unitPrice ?? 0,
+      totalPrice: line.lineTotal ?? line.totalPrice ?? 0,
       unitName: snapshot.unitName ?? null,
-      note: snapshot.note ?? null,
-      discountAmount: orderItemSnapshot?.discountAmountVnd ?? 0,
-      discountReason: orderItemSnapshot?.discountReason ?? null,
+      note: snapshot.note ?? line.note ?? null,
+      discountAmount: orderItemSnapshot?.discountAmountVnd ?? line.discountAmount ?? 0,
+      discountReason: orderItemSnapshot?.discountReason ?? line.discountReason ?? null,
       adjustmentSource: promotionGift ? 'PROMOTION_GIFT' : 'MANUAL',
       promotionName: promotionGift?.promotionName ?? null,
       isTime,
@@ -1001,36 +980,44 @@ export function buildPrintDataFromInvoice(invoice: {
         ),
         line.lineTotal,
       ),
-      tableSegments: snapshot.tableSegments?.map((t) => ({
+      tableSegments: snapshot.tableSegments?.map((t: any) => ({
         tableName: t.tableName,
         startedAtMs: t.startedAtMs,
         endedAtMs: t.endedAtMs ?? null,
         elapsedSeconds: t.elapsedSeconds,
-        amount: t.amountAfterRoundingVnd,
+        amount: t.amountAfterRoundingVnd ?? t.amount ?? 0,
         hourlyPrice: t.pricingConfig?.basePriceVnd,
       })),
     });
   }
 
+  const payment = rawInvoiceData.payment || invoice.payment || {};
+  const allocations = rawInvoiceData.allocations || rawInvoiceData.paymentAllocations || [];
+
   return {
     receiptType: 'PAYMENT',
-    orderCode: invoice.invoice.displayCode,
-    invoiceCode: invoice.invoice.displayCode,
-    orderType: invoice.invoice.orderType,
-    tableName: invoice.invoice.tableName ?? invoiceSnapshot.order?.tableName ?? null,
+    orderCode: invoice.displayCode || invoice.id || '—',
+    invoiceCode: invoice.displayCode || null,
+    orderType: invoice.orderType || 'DINE_IN',
+    tableName: invoice.tableName ?? invoiceSnapshot.order?.tableName ?? null,
     areaName: invoiceSnapshot.order?.areaName ?? null,
-    cashierName: invoice.invoice.cashierName ?? invoiceSnapshot.order?.openedByName ?? null,
-    customerName: invoiceSnapshot.order?.customerName ?? null,
-    guestPhone: invoice.invoice.guestPhone ?? invoiceSnapshot.order?.customerPhone ?? null,
-    guestAddress: invoice.invoice.guestAddress ?? null,
-    note: invoice.invoice.note ?? invoiceSnapshot.order?.note ?? null,
-    checkInTimeMs: invoiceSnapshot.order?.openedAt ?? null,
-    issuedAtMs: invoice.invoice.issuedAt,
-    subtotal: invoice.invoice.subtotal,
-    discountTotal: invoice.invoice.discountTotal,
+    cashierName:
+      invoice.issuedByName ?? invoice.cashierName ?? invoiceSnapshot.order?.openedByName ?? null,
+    customerName: invoiceSnapshot.order?.customerName ?? invoice.customerName ?? null,
+    guestPhone:
+      invoice.guestPhone ??
+      invoiceSnapshot.order?.customerPhone ??
+      invoiceSnapshot.order?.guestPhone ??
+      null,
+    guestAddress: invoice.guestAddress ?? invoiceSnapshot.order?.guestAddress ?? null,
+    note: invoice.note ?? invoiceSnapshot.order?.note ?? null,
+    checkInTimeMs: invoiceSnapshot.order?.openedAt ?? invoice.checkInTimeMs ?? null,
+    issuedAtMs: invoice.issuedAt || Date.now(),
+    subtotal: invoice.subtotalVnd ?? invoice.subtotal ?? 0,
+    discountTotal: invoice.discountTotalVnd ?? invoice.discountTotal ?? 0,
     promotionDiscount:
       invoiceSnapshot.promotions?.reduce(
-        (sum, promotion) => sum + promotion.discountAmountVnd,
+        (sum: number, promotion: any) => sum + (promotion.discountAmountVnd || 0),
         0,
       ) ??
       invoiceSnapshot.promotion?.discountAmountVnd ??
@@ -1038,10 +1025,67 @@ export function buildPrintDataFromInvoice(invoice: {
     promotion: invoiceSnapshot.promotion ?? null,
     promotions:
       invoiceSnapshot.promotions ?? (invoiceSnapshot.promotion ? [invoiceSnapshot.promotion] : []),
-    total: invoice.invoice.total,
-    paymentMethod: invoice.payment?.method ?? 'CASH',
-    cashReceived: invoice.payment?.cashReceived ?? null,
-    cashChange: invoice.payment?.cashChange ?? null,
+    total: invoice.totalVnd ?? invoice.total ?? 0,
+    paymentMethod: payment.method ?? allocations[0]?.method ?? 'CASH',
+    cashReceived: payment.cashReceived ?? null,
+    cashChange: payment.cashChange ?? null,
+    paymentAllocations: allocations.length
+      ? allocations.map((a: any) => ({
+          method: a.method,
+          amountVnd: a.amountVnd ?? a.amount ?? 0,
+        }))
+      : undefined,
+    paidAmountVnd: allocations.length
+      ? allocations
+          .filter((a: any) => a.method !== 'DEBT')
+          .reduce((sum: number, a: any) => sum + (a.amountVnd ?? a.amount ?? 0), 0)
+      : (invoice.totalVnd ?? invoice.total),
+    debtAmountVnd: allocations.length
+      ? allocations
+          .filter((a: any) => a.method === 'DEBT')
+          .reduce((sum: number, a: any) => sum + (a.amountVnd ?? a.amount ?? 0), 0)
+      : 0,
     lines,
+  };
+}
+
+export function buildPrintDataFromDebtPayment(rawPaymentData: unknown): PosReceiptPrintData {
+  if (!rawPaymentData || typeof rawPaymentData !== 'object') {
+    throw new Error('Dữ liệu phiếu thu công nợ không hợp lệ.');
+  }
+  const payment = rawPaymentData as {
+    id?: string;
+    referenceCode?: string | null;
+    amountVnd?: number;
+    paymentMethod?: 'CASH' | 'BANK_TRANSFER';
+    createdAt?: number;
+    customerName?: string | null;
+    customerPhone?: string | null;
+    customerAddress?: string | null;
+    debtBeforeVnd?: number;
+    debtAfterVnd?: number;
+  };
+  if (!payment.id || !payment.amountVnd || payment.amountVnd <= 0) {
+    throw new Error('Dữ liệu phiếu thu công nợ không đầy đủ.');
+  }
+  const referenceCode = payment.referenceCode || payment.id;
+  return {
+    receiptType: 'DEBT_PAYMENT',
+    orderCode: referenceCode,
+    invoiceCode: referenceCode,
+    orderType: 'TAKEAWAY',
+    customerName: payment.customerName ?? null,
+    guestPhone: payment.customerPhone ?? null,
+    guestAddress: payment.customerAddress ?? null,
+    issuedAtMs: payment.createdAt ?? Date.now(),
+    subtotal: payment.debtBeforeVnd ?? payment.amountVnd,
+    discountTotal: 0,
+    total: payment.amountVnd,
+    paymentMethod: payment.paymentMethod ?? null,
+    debtBeforeVnd: payment.debtBeforeVnd ?? payment.amountVnd,
+    debtPaymentVnd: payment.amountVnd,
+    debtAfterVnd: payment.debtAfterVnd ?? 0,
+    referenceCode,
+    lines: [],
   };
 }

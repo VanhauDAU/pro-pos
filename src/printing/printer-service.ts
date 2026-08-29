@@ -89,7 +89,7 @@ export async function printerAction(action: () => Promise<void>): Promise<Printe
     return { success: true };
   } catch (error) {
     const printerError = asPrinterError(error);
-    if (import.meta.env.DEV) console.error('[printing]', printerError.code, error);
+    if ((import.meta as any).env?.DEV) console.error('[printing]', printerError.code, error);
     return { success: false, code: printerError.code, message: printerError.message };
   }
 }

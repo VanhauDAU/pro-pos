@@ -265,6 +265,15 @@ export class MaintenanceRepository {
       startedAt,
       cutoff,
     );
+    await remove(
+      'print_agent_pairings',
+      `DELETE FROM print_agent_pairings
+       WHERE (status IN ('APPROVED', 'EXPIRED') OR expires_at < ?)
+         AND (expires_at < ? OR created_at < ?)`,
+      startedAt,
+      cutoff,
+      cutoff,
+    );
 
     return {
       cutoffMs: cutoff,

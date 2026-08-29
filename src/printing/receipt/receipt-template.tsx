@@ -11,14 +11,15 @@ export function receiptRasterCss(printableDots: number) {
   const smallItemFontDots = compact ? 17 : 21;
   const largeItemFontDots = compact ? 21 : 25;
   const root = '.receipt-raster-root';
+  const receiptFont = '"Roboto Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace';
   return `
     ${root}, ${root} * { box-sizing: border-box; }
-    ${root} { width: ${printableDots}px; margin: 0; padding: 0 8px; overflow: hidden; background: #fff; color: #000; font-family: Arial, "Helvetica Neue", sans-serif; }
+    ${root} { width: ${printableDots}px; margin: 0; padding: 0 8px; overflow: hidden; background: #fff; color: #000; font-family: ${receiptFont}; }
     ${root}, ${root} * { color: #000 !important; opacity: 1 !important; }
     ${root} .thermal-receipt-preview {
       width: ${safeContentDots}px; max-width: ${safeContentDots}px; margin: 0; padding: 12px 0 0;
       overflow: hidden; border: 0; border-radius: 0; box-shadow: none; background: #fff;
-      font-family: Arial, "Helvetica Neue", sans-serif; font-size: ${bodyFontDots}px !important; line-height: 1.3; color: #000;
+      font-family: ${receiptFont}; font-size: ${bodyFontDots}px !important; line-height: 1.3; color: #000;
     }
     ${root} .thermal-receipt-inner, ${root} .thermal-receipt-inner * { min-width: 0; max-width: 100%; }
     ${root} .thermal-receipt-inner { display: flex; flex-direction: column; gap: 4px; }
@@ -29,7 +30,6 @@ export function receiptRasterCss(printableDots: number) {
     ${root} .thermal-receipt-store-name { font-size: 27px; font-weight: 800; text-transform: uppercase; text-align: center; }
     ${root} .thermal-receipt-store-address, ${root} .thermal-receipt-store-phone { font-size: ${compact ? 18 : 20}px !important; font-weight: 500; text-align: center; }
     ${root} .thermal-receipt-title { font-size: 29px; font-weight: 800; margin-top: 8px; }
-    ${root} .thermal-receipt-unpaid { margin: 5px 0; border: 2px solid #000; padding: 5px; text-align: center; font-size: 24px; font-weight: 800; }
     ${root} .thermal-receipt-copy-count { font-size: 20px; }
     ${root} .thermal-receipt-divider-dash { border-bottom: 2px dashed #000; margin: 8px 0; }
     ${root} .thermal-receipt-meta { display: flex; flex-direction: column; gap: 5px; font-size: ${metaFontDots}px !important; font-weight: 500; line-height: 1.3; }
@@ -50,6 +50,7 @@ export function receiptRasterCss(printableDots: number) {
     ${root} .thermal-receipt-item-main { flex-wrap: nowrap; align-items: flex-start; font-size: inherit !important; line-height: 1.3; }
     ${root} .thermal-receipt-time-segment { font-size: inherit !important; font-weight: 500; line-height: 1.3; }
     ${root} .thermal-receipt-time-row { display: grid !important; align-items: baseline; column-gap: 10px; }
+    ${root} .thermal-receipt-time-meta { display: flex; align-items: baseline; gap: 10px; white-space: nowrap; }
     ${root} .thermal-receipt-items--time.thermal-receipt-items--with-unit-price .thermal-receipt-table-header,
     ${root} .thermal-receipt-items--time.thermal-receipt-items--with-unit-price .thermal-receipt-time-row { display: grid !important; grid-template-columns: minmax(0, 1fr) ${unitPriceColumnDots}px ${totalColumnDots}px; column-gap: 10px; }
     ${root} .thermal-receipt-items--time:not(.thermal-receipt-items--with-unit-price) .thermal-receipt-table-header,
@@ -65,7 +66,7 @@ export function receiptRasterCss(printableDots: number) {
     ${root} .thermal-receipt-row > :last-child, ${root} .thermal-receipt-grand-total-amount { font-variant-numeric: tabular-nums; }
     ${root} .thermal-receipt-star-divider { margin: 6px 0; font-size: ${subFontDots}px !important; }
     ${root} .thermal-receipt-bottom-qr-img { display: block; width: ${compact ? 160 : 200}px !important; height: ${compact ? 160 : 200}px !important; margin: 0 auto; object-fit: contain; image-rendering: pixelated; }
-    ${root} .thermal-receipt-qr-desc { font-size: ${footerFontDots}px !important; font-weight: 600; }
+    ${root} .thermal-receipt-qr-desc { width: 100%; font-size: ${footerFontDots}px !important; font-weight: 600; text-align: center; }
     ${root} .thermal-receipt-wifi { margin: 8px 0; padding: 5px; font-size: ${footerFontDots}px !important; font-weight: 600; line-height: 1.3; background: #fff !important; }
     ${root} .thermal-receipt-footer-text { margin: 4px 0; font-size: ${footerFontDots}px !important; font-weight: 600; line-height: 1.3; }
     ${root} img { object-fit: contain; }

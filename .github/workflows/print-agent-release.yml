@@ -1,0 +1,47 @@
+name: Print Agent Windows Release
+
+on:
+  push:
+    tags: ['print-agent-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Verify release tag matches package version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          $version = node -p "require('./apps/print-agent/package.json').version"
+          if ($env:GITHUB_REF_NAME -ne "print-agent-v$version") {
+            throw "Tag $env:GITHUB_REF_NAME does not match package version $version"
+          }
+      - run: pnpm --filter @propos/print-agent typecheck
+      - run: pnpm exec vitest run tests/unit/print-agent.test.ts tests/unit/print-agent-runtime.test.ts tests/unit/print-agent-credential-store.test.ts tests/unit/print-agent-autostart.test.ts tests/unit/print-agent-presentation.test.ts
+      - run: pnpm --filter @propos/print-agent dist:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: print-agent-windows-${{ github.run_id }}
+          path: apps/print-agent/release/*
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            apps/print-agent/release/*.exe
+            apps/print-agent/release/SHA256SUMS.txt
+          generate_release_notes: true

@@ -28,29 +28,12 @@ export class PrintJobService {
   ): Promise<void> {
     if (documentType === 'invoice') {
       const row = await this.env.DB.prepare(
-        `SELECT id FROM invoices WHERE store_id = ? AND (id = ? OR order_id = ? OR display_code = ?)
+        `SELECT id FROM invoices WHERE store_id = ? AND id = ?
          UNION ALL
-         SELECT id FROM takeaway_invoices WHERE store_id = ? AND (id = ? OR order_id = ? OR display_code = ?)
-         UNION ALL
-         SELECT id FROM orders WHERE store_id = ? AND id = ?
-         UNION ALL
-         SELECT id FROM takeaway_orders WHERE store_id = ? AND id = ?
+         SELECT id FROM takeaway_invoices WHERE store_id = ? AND id = ?
          LIMIT 1`,
       )
-        .bind(
-          storeId,
-          documentId,
-          documentId,
-          documentId,
-          storeId,
-          documentId,
-          documentId,
-          documentId,
-          storeId,
-          documentId,
-          storeId,
-          documentId,
-        )
+        .bind(storeId, documentId, storeId, documentId)
         .first<{ id: string }>();
       if (!row) {
         throw new AppError(
@@ -62,31 +45,14 @@ export class PrintJobService {
       return;
     }
 
-    if (documentType === 'order' || documentType === 'provisional') {
+    if (documentType === 'provisional') {
       const row = await this.env.DB.prepare(
         `SELECT id FROM orders WHERE store_id = ? AND id = ?
          UNION ALL
          SELECT id FROM takeaway_orders WHERE store_id = ? AND id = ?
-         UNION ALL
-         SELECT id FROM invoices WHERE store_id = ? AND (id = ? OR order_id = ? OR display_code = ?)
-         UNION ALL
-         SELECT id FROM takeaway_invoices WHERE store_id = ? AND (id = ? OR order_id = ? OR display_code = ?)
          LIMIT 1`,
       )
-        .bind(
-          storeId,
-          documentId,
-          storeId,
-          documentId,
-          storeId,
-          documentId,
-          documentId,
-          documentId,
-          storeId,
-          documentId,
-          documentId,
-          documentId,
-        )
+        .bind(storeId, documentId, storeId, documentId)
         .first<{ id: string }>();
       if (!row) {
         throw new AppError(
@@ -99,6 +65,21 @@ export class PrintJobService {
     }
 
     if (documentType === 'debt_payment') {
+      const row = await this.env.DB.prepare(
+        `SELECT id FROM customer_debt_entries
+         WHERE store_id = ? AND entry_type = 'PAYMENT'
+           AND (id = ? OR idempotency_key = ? OR reference = ?)
+         LIMIT 1`,
+      )
+        .bind(storeId, documentId, documentId, documentId)
+        .first<{ id: string }>();
+      if (!row) {
+        throw new AppError(
+          'DEBT_PAYMENT_NOT_FOUND',
+          'Phiếu thu công nợ không tồn tại hoặc không thuộc cửa hàng.',
+          404,
+        );
+      }
       return;
     }
 

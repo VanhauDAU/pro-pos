@@ -1250,6 +1250,8 @@ export class PlatformRepository {
       'realtime_event_requests',
       'realtime_batch_contexts',
       'print_jobs',
+      'print_agent_pairings',
+      'print_agents',
       'create_time_session_commands',
       'remove_time_session_commands',
       // QR, customer, promotion, payment and call-history leaves.

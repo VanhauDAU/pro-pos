@@ -273,6 +273,7 @@ export interface PrinterDeviceConfig {
   networkPort?: number | undefined;
   paperSize: PaperSize;
   printableDots?: number | undefined;
+  vietnameseMode: 'WPC1258' | 'UNACCENTED' | 'UTF8';
   autoCut: boolean;
   openCashDrawer: boolean;
 }
@@ -286,6 +287,7 @@ export const defaultPrinterDeviceConfig: PrinterDeviceConfig = {
   networkPort: 9100,
   paperSize: 'K80',
   printableDots: undefined,
+  vietnameseMode: 'UNACCENTED',
   autoCut: true,
   openCashDrawer: false,
 };
@@ -313,6 +315,7 @@ export const updatePrinterDeviceSettingsSchema = z
     networkPort: z.number().int().min(1).max(65535).optional(),
     paperSize: z.enum(['K80', 'K58']),
     printableDots: z.number().int().min(200).max(1200).optional(),
+    vietnameseMode: z.enum(['WPC1258', 'UNACCENTED', 'UTF8']).default('UNACCENTED'),
     autoCut: z.boolean(),
     openCashDrawer: z.boolean(),
   })

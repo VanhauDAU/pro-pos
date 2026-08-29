@@ -223,8 +223,8 @@ export function OwnerPrintSettingsPage() {
 
   // Upload helper
   const handleUploadFile = async (file: File): Promise<string | null> => {
-    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
-      messageApi.error('Chỉ chấp nhận file ảnh PNG, JPEG hoặc WebP.');
+    if (file.type !== 'image/png') {
+      messageApi.error('Print Agent hiện hỗ trợ ảnh PNG để raster hóa logo/QR.');
       return null;
     }
     if (file.size > 1024 * 1024) {
@@ -611,14 +611,14 @@ export function OwnerPrintSettingsPage() {
         type="file"
         ref={logoInputRef}
         style={{ display: 'none' }}
-        accept="image/png,image/jpeg,image/webp"
+        accept="image/png"
         onChange={handleLogoFileChange}
       />
       <input
         type="file"
         ref={bottomImageInputRef}
         style={{ display: 'none' }}
-        accept="image/png,image/jpeg,image/webp"
+        accept="image/png"
         onChange={handleBottomImageFileChange}
       />
 
@@ -768,7 +768,7 @@ export function OwnerPrintSettingsPage() {
                           Thiết lập logo hiển thị trên đầu hóa đơn
                         </p>
                         <ul style={{ margin: 0, paddingLeft: 18, color: '#64748b' }}>
-                          <li>Kích thước ảnh không quá 512 x 512px, dung lượng tối đa 1Mb</li>
+                          <li>Định dạng PNG, không quá 512 x 512px, dung lượng tối đa 1Mb</li>
                         </ul>
                       </div>
                       <div style={{ marginTop: 16 }}>
@@ -833,7 +833,7 @@ export function OwnerPrintSettingsPage() {
                                     QR code thanh toán, QR code trang bán hàng online ...
                                   </p>
                                   <p style={{ margin: '0 0 12px', color: '#64748b', fontSize: 13 }}>
-                                    Kích thước ảnh không quá 512 x 512px, dung lượng tối đa 1Mb
+                                    Định dạng PNG, không quá 512 x 512px, dung lượng tối đa 1Mb
                                   </p>
                                   <Space>
                                     <Button
@@ -874,7 +874,9 @@ export function OwnerPrintSettingsPage() {
                                       placeholder="Chọn ngân hàng"
                                       optionFilterProp="label"
                                       options={(vietqrBanks.data ?? []).map((b) => ({
-                                        value: b.shortName,
+                                        // Persist the NAPAS BIN so the Print Agent can build the
+                                        // payment EMV payload instead of encoding an image URL.
+                                        value: b.bin,
                                         label: `${b.shortName} - ${b.name} (${b.code})`,
                                       }))}
                                     />
@@ -1458,15 +1460,12 @@ export function OwnerPrintSettingsPage() {
                     </div>
 
                     {templateConfig.showProvisionalTotal && (
-                      <>
-                        <div className="thermal-receipt-divider-dash" />
-                        <div className="thermal-receipt-grand-total">
-                          <span>
-                            {previewInvoiceType === 'PROVISIONAL' ? 'TỔNG TẠM TÍNH' : 'TỔNG CỘNG'}
-                          </span>
-                          <span className="thermal-receipt-grand-total-amount">163,000đ</span>
-                        </div>
-                      </>
+                      <div className="thermal-receipt-grand-total">
+                        <span>
+                          {previewInvoiceType === 'PROVISIONAL' ? 'TỔNG TẠM TÍNH' : 'TỔNG CỘNG'}
+                        </span>
+                        <span className="thermal-receipt-grand-total-amount">163,000đ</span>
+                      </div>
                     )}
 
                     {/* Star Separator */}
@@ -1701,6 +1700,23 @@ export function OwnerPrintSettingsPage() {
                       max={1200}
                       style={{ width: '100%' }}
                       size="large"
+                    />
+                  </Form.Item>
+                </Col>
+
+                <Col xs={24} md={12}>
+                  <Form.Item
+                    name="vietnameseMode"
+                    label={<span style={{ fontWeight: 600 }}>Chế độ tiếng Việt</span>}
+                    extra="Không dấu ổn định trên mọi máy; chỉ chọn UTF-8 khi máy in xác nhận hỗ trợ."
+                  >
+                    <Select
+                      size="large"
+                      options={[
+                        { value: 'UNACCENTED', label: 'Không dấu (khuyến nghị)' },
+                        { value: 'WPC1258', label: 'WPC1258 (có thể lỗi dấu)' },
+                        { value: 'UTF8', label: 'UTF-8 (chỉ máy in hỗ trợ)' },
+                      ]}
                     />
                   </Form.Item>
                 </Col>

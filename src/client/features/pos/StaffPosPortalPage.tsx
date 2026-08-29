@@ -127,11 +127,18 @@ import {
 } from '@domain/receipt/receipt-generator';
 import logoBlack from '@client/assets/logo-black.svg?url';
 import { PosCustomerSelector } from './PosCustomerSelector';
+import { getPosCustomerAccess } from './pos-customer-access';
 import { PosAppSplash } from './PosAppSplash';
 import { toast } from 'sonner';
 import type { CustomerSummary } from '@contracts/customer';
 import type { PosPromotionOption, PromotionPreviewResult } from '@contracts/promotion';
 import { PushNotificationControl } from '@client/features/pwa/PushNotificationControl';
+import {
+  invoicePrintIdentity,
+  PaymentSubmissionGuard,
+  printIdentityAfterCheckout,
+  provisionalPrintIdentity,
+} from '@client/lib/print-document-identity';
 
 const OwnerInvoicesPage = lazy(async () => {
   const module = await import('@client/features/owner/OwnerInvoicesPage');
@@ -231,7 +238,7 @@ const StaffPrinterSettingsPage = lazy(async () => {
 async function printReceipt(
   options: PosReceiptPrintOptions,
   documentIdentity?: {
-    type: 'invoice' | 'order' | 'provisional' | 'debt_payment';
+    type: 'invoice' | 'provisional' | 'debt_payment';
     id: string;
   },
   csrfToken?: string | null,
@@ -2859,6 +2866,18 @@ function MorePage({ auth }: { auth: AuthContextResponse }) {
     refetchOnMount: false,
   });
 
+  const versionQuery = useQuery({
+    queryKey: ['api-version'],
+    queryFn: () =>
+      apiRequest<{
+        version?: string;
+        environment?: string;
+        commit?: string;
+        builtAt?: string;
+      }>('/api/version'),
+    staleTime: 60_000,
+  });
+
   const permissions = context.data?.permissions ?? [];
   const isOwner = auth.actor?.kind === 'OWNER';
   const hasPermission = (key: string) => isOwner || permissions.includes(key);
@@ -3299,9 +3318,74 @@ function MorePage({ auth }: { auth: AuthContextResponse }) {
         </button>
       </Card>
 
-      <Typography.Text type="secondary" className="staff-version">
-        Pro POS · Cổng nhân viên bán hàng
-      </Typography.Text>
+      <div style={{ textAlign: 'center', marginTop: 24, paddingBottom: 32 }}>
+        <Typography.Text
+          type="secondary"
+          style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#475569' }}
+        >
+          Pro POS · Cổng nhân viên bán hàng
+        </Typography.Text>
+        {versionQuery.data ? (
+          <div
+            style={{
+              marginTop: 6,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: 4,
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                flexWrap: 'wrap',
+                justifyContent: 'center',
+              }}
+            >
+              <Tag
+                color={versionQuery.data.environment === 'production' ? 'green' : 'orange'}
+                style={{
+                  margin: 0,
+                  borderRadius: 6,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                }}
+              >
+                {versionQuery.data.environment || 'production'}
+              </Tag>
+              <Tag
+                color="blue"
+                style={{ margin: 0, borderRadius: 6, fontSize: 11, fontFamily: 'monospace' }}
+              >
+                v{versionQuery.data.version || '1.3.0'}
+              </Tag>
+              {versionQuery.data.commit &&
+              versionQuery.data.commit !== 'unknown' &&
+              versionQuery.data.commit !== 'set-by-release-workflow' ? (
+                <Tag style={{ margin: 0, borderRadius: 6, fontSize: 11, fontFamily: 'monospace' }}>
+                  #{versionQuery.data.commit.slice(0, 7)}
+                </Tag>
+              ) : null}
+            </div>
+            {versionQuery.data.builtAt &&
+            versionQuery.data.builtAt !== 'set-by-release-workflow' ? (
+              <Typography.Text type="secondary" style={{ fontSize: 11, color: '#94a3b8' }}>
+                Build: {new Date(versionQuery.data.builtAt).toLocaleString('vi-VN')}
+              </Typography.Text>
+            ) : null}
+          </div>
+        ) : (
+          <Typography.Text
+            type="secondary"
+            style={{ fontSize: 11, color: '#94a3b8', marginTop: 4, display: 'block' }}
+          >
+            Phiên bản v1.3.0
+          </Typography.Text>
+        )}
+      </div>
     </div>
   );
 }
@@ -5786,7 +5870,10 @@ function OrderEditor({
   const canCancelOrder =
     hasStaffPermission('order.cancel_unpaid') || hasStaffPermission('order.manage');
   const canTransferTable = hasStaffPermission('table.transfer');
-  const canAttachCustomer = hasStaffPermission('order.add_customer');
+  const { canAttachCustomer, canCreateCustomer } = getPosCustomerAccess(
+    staffPermissions,
+    isOwnerActor,
+  );
   const canApplyPromotion = hasStaffPermission('promotion.apply');
 
   useEffect(() => {
@@ -5991,10 +6078,7 @@ function OrderEditor({
           bankAccountName: staffContext.data?.bankAccountName ?? null,
         },
       },
-      {
-        type: 'order',
-        id: quote.data.order.id,
-      },
+      provisionalPrintIdentity(quote.data.order.id),
     );
     if (result.success) messageApi.success('Đã gửi lệnh in phiếu tạm tính!');
     else messageApi.error(result.message ?? 'Không thể in phiếu tạm tính.');
@@ -9414,7 +9498,7 @@ function OrderEditor({
                     <PosCustomerSelector
                       customerId={customerId}
                       csrfToken={csrf}
-                      allowCreate={false}
+                      allowCreate={canCreateCustomer}
                       onSelect={saveCustomerInfo}
                     />
                   </div>
@@ -10784,7 +10868,7 @@ function OrderEditor({
         <PosCustomerSelector
           customerId={customerId}
           csrfToken={csrf}
-          allowCreate={false}
+          allowCreate={canCreateCustomer}
           reopenPickerOnDeselect={isMobile}
           onSelect={async (customer) => {
             await saveCustomerInfo(customer);
@@ -11120,10 +11204,10 @@ function InvoicePage() {
           onClick={async () => {
             setPrinting(true);
             try {
-              const result = await printReceipt(invoicePrintOptions, {
-                type: 'invoice',
-                id: data.invoice.id,
-              });
+              const result = await printReceipt(
+                invoicePrintOptions,
+                invoicePrintIdentity(data.invoice.id),
+              );
               if (result.success) messageApi.success('Đã gửi lệnh in hóa đơn!');
               else messageApi.error(result.message ?? 'Không thể in hóa đơn.');
             } finally {
@@ -11254,6 +11338,7 @@ function PaymentPage({
   const [submitting, setSubmitting] = useState(false);
   const [paymentSuccessData, setPaymentSuccessData] = useState<{
     orderId: string;
+    invoiceId: string;
     orderType: 'DINE_IN' | 'TAKEAWAY';
     invoiceCode: string;
     tableName: string;
@@ -11273,6 +11358,7 @@ function PaymentPage({
   });
   const checkoutPreparationStartedRef = useRef(false);
   const completionInFlightRef = useRef(false);
+  const paymentSubmissionGuardRef = useRef(new PaymentSubmissionGuard());
   const csrf = auth.csrfToken!;
 
   const quote = useQuery(
@@ -11344,38 +11430,56 @@ function PaymentPage({
     }
   }, [orderId, paymentSnapshotId, queryClient, quote.data, quoteReady]);
 
+  const completePaidOrder = useCallback(
+    (completedOrder: { id: string; orderType: 'DINE_IN' | 'TAKEAWAY' }) => {
+      if (completionInFlightRef.current) return;
+      completionInFlightRef.current = true;
+      clearPaymentPageActive(completedOrder.id);
+      queryClient.removeQueries({ queryKey: ['pos-order-quote', completedOrder.id] });
+      queryClient.removeQueries({ queryKey: ['pos-payment-snapshot', completedOrder.id] });
+      void queryClient.invalidateQueries({ queryKey: ['pos-overview'], refetchType: 'none' });
+      setPaymentSuccessData(null);
+      completionInFlightRef.current = false;
+      if (completedOrder.orderType === 'TAKEAWAY') {
+        navigate('/pos/areas?tab=takeaway', {
+          replace: true,
+          state: { selectedArea: '__TAKEAWAY__' },
+        });
+      } else {
+        navigate('/pos/areas', { replace: true });
+      }
+    },
+    [navigate, queryClient],
+  );
+
   const handleCelebrationComplete = useCallback(() => {
     if (completionInFlightRef.current) return;
     if (!paymentSuccessData) return;
-    const completedOrder = {
+    completePaidOrder({
       id: paymentSuccessData.orderId,
       orderType: paymentSuccessData.orderType,
-    };
-    completionInFlightRef.current = true;
-    clearPaymentPageActive(completedOrder.id);
-    queryClient.removeQueries({ queryKey: ['pos-order-quote', completedOrder.id] });
-    queryClient.removeQueries({ queryKey: ['pos-payment-snapshot', completedOrder.id] });
-    void queryClient.invalidateQueries({ queryKey: ['pos-overview'], refetchType: 'none' });
-    setPaymentSuccessData(null);
-    completionInFlightRef.current = false;
-    if (completedOrder.orderType === 'TAKEAWAY') {
-      navigate('/pos/areas?tab=takeaway', {
-        replace: true,
-        state: { selectedArea: '__TAKEAWAY__' },
-      });
-    } else {
-      navigate('/pos/areas', { replace: true });
-    }
-  }, [navigate, paymentSuccessData, queryClient]);
+    });
+  }, [completePaidOrder, paymentSuccessData]);
 
-  const handlePrintAndComplete = useCallback(() => {
+  const handlePrintAfterPayment = useCallback(() => {
     if (!paymentSuccessData) return;
     const { receiptOptions } = paymentSuccessData;
-    void printReceipt(receiptOptions, {
-      type: 'order',
-      id: paymentSuccessData.orderId,
-    })
+    setPaymentSuccessData((current) =>
+      current ? { ...current, printStatus: 'PRINTING', printError: null } : current,
+    );
+    void printReceipt(receiptOptions, invoicePrintIdentity(paymentSuccessData.invoiceId))
       .then((printResult) => {
+        setPaymentSuccessData((current) =>
+          current
+            ? {
+                ...current,
+                printStatus: printResult.success ? 'PRINTED' : 'FAILED',
+                printError: printResult.success
+                  ? null
+                  : (printResult.message ?? 'Không thể in hóa đơn.'),
+              }
+            : current,
+        );
         if (!printResult.success) {
           messageApi.warning(
             `Thanh toán thành công nhưng chưa in được hóa đơn: ${printResult.message ?? 'Không rõ lỗi'}`,
@@ -11383,10 +11487,12 @@ function PaymentPage({
         }
       })
       .catch((error: unknown) => {
+        setPaymentSuccessData((current) =>
+          current ? { ...current, printStatus: 'FAILED', printError: errorText(error) } : current,
+        );
         messageApi.warning(`Thanh toán thành công nhưng chưa in được hóa đơn: ${errorText(error)}`);
       });
-    handleCelebrationComplete();
-  }, [handleCelebrationComplete, messageApi, paymentSuccessData]);
+  }, [messageApi, paymentSuccessData]);
 
   const [celebrationCountdown, setCelebrationCountdown] = useState(5);
 
@@ -11712,7 +11818,9 @@ function PaymentPage({
       messageApi.warning('Cửa hàng chưa có tài khoản ngân hàng nhận chuyển khoản.');
       return;
     }
+    if (!paymentSubmissionGuardRef.current.tryStart()) return;
     setSubmitting(true);
+    let paymentCompleted = false;
     try {
       const result = await jsonRequest<{
         invoiceId: string;
@@ -11755,6 +11863,8 @@ function PaymentPage({
       const changedTables = new Map(
         (result.tableSummaries ?? []).map((table) => [table.id, table]),
       );
+      paymentCompleted = true;
+      const paymentPrintIdentity = printIdentityAfterCheckout(result, andPrint);
       if (changedTables.size > 0) {
         queryClient.setQueryData<PosTable[]>(['pos-tables'], (cached) => {
           if (!cached) return cached;
@@ -11798,8 +11908,9 @@ function PaymentPage({
         },
       };
       playPosSound('PAYMENT_SUCCESS', { dedupeKey: `payment:${resolvedCode}` });
-      setPaymentSuccessData({
+      const successData = {
         orderId: quote.data.order.id,
+        invoiceId: result.invoiceId,
         orderType: quote.data.order.orderType,
         invoiceCode: resolvedCode,
         tableName:
@@ -11811,12 +11922,10 @@ function PaymentPage({
         printError: null,
         receiptOptions,
         shownAt: Date.now(),
-      });
-      if (andPrint) {
-        void printReceipt(receiptOptions, {
-          type: 'order',
-          id: quote.data.order.id,
-        })
+      } satisfies NonNullable<typeof paymentSuccessData>;
+      if (!isDesktopOrTablet) setPaymentSuccessData(successData);
+      if (paymentPrintIdentity) {
+        void printReceipt(receiptOptions, paymentPrintIdentity)
           .then((printResult) => {
             setPaymentSuccessData((current) =>
               current?.orderId === completedOrderId
@@ -11850,6 +11959,13 @@ function PaymentPage({
             );
           });
       }
+      if (isDesktopOrTablet) {
+        messageApi.success('Thanh toán thành công.');
+        completePaidOrder({
+          id: completedOrderId,
+          orderType: quote.data.order.orderType,
+        });
+      }
     } catch (error) {
       if (
         error instanceof ApiError &&
@@ -11868,6 +11984,9 @@ function PaymentPage({
         messageApi.error(errorText(error));
       }
     } finally {
+      // Keep the guard locked after a successful checkout. Printing/reprinting is a
+      // separate action and must never re-enter checkout for the same order.
+      paymentSubmissionGuardRef.current.finish(paymentCompleted);
       setSubmitting(false);
     }
   };
@@ -12643,10 +12762,11 @@ function PaymentPage({
                 type="primary"
                 size="large"
                 icon={<PrinterOutlined />}
+                loading={paymentSuccessData.printStatus === 'PRINTING'}
                 className="pos-payment-celebration__btn pos-payment-celebration__btn--print"
-                onClick={() => void handlePrintAndComplete()}
+                onClick={() => void handlePrintAfterPayment()}
               >
-                In & Hoàn tất
+                In
               </Button>
             </div>
             <div className="pos-payment-celebration__countdown">

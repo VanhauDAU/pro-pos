@@ -1,124 +1,129 @@
-# PRO POS Print Agent 🖨️
+# PRO POS Print Agent
 
-Ứng dụng in ấn độc lập dành cho **Pro POS**. Print Agent chạy ngầm trên máy tính quầy thu ngân (Mac / Windows), kết nối Outbound WebSocket với máy chủ Pro POS và in trực tiếp đến máy in nhiệt LAN (Cổng TCP 9100).
+Ứng dụng desktop chạy tại quầy thu ngân, nhận lệnh in từ PRO POS qua kết nối outbound WebSocket và gửi trực tiếp tới máy in nhiệt ESC/POS trong mạng LAN qua TCP 9100. Không cần cài Node.js, QZ Tray hoặc mở cổng Internet trên máy tính quầy.
 
----
+## Cài đặt trên Windows 10/11
 
-## 🚀 Tính Năng Chính
+### 1. Chuẩn bị
 
-- **Không cần QZ Tray**: Không cài đặt phần mềm bên thứ 3 phức tạp, không cần chứng chỉ số (Certificate), không hiện popup "Allow".
-- **In tự động hoàn toàn**: Điện thoại / iPad / Web POS bấm In → Máy in tại quầy tự động in ngay lập tức (<0.5 giây).
-- **An toàn mạng**: Print Agent chủ động tạo kết nối Outbound tới máy chủ, không mở cổng công khai (không NAT, không cấu hình Router phức tạp).
-- **Hàng đợi chống nghẽn (FIFO)**: Đảm bảo in tuần tự từng hóa đơn, không bị chồng đè byte khi nhiều nhân viên bấm in cùng lúc.
-- **Ghép nối 1 lần bằng mã 6 số**: Cấu hình được lưu vĩnh viễn trên máy tính quầy.
+- Máy tính Windows 10/11 64-bit có kết nối Internet.
+- Máy tính và máy in nhiệt nằm cùng mạng LAN.
+- Máy in dùng giao thức ESC/POS qua TCP, thường ở cổng `9100`.
+- Nên đặt IP tĩnh hoặc DHCP reservation cho máy in để địa chỉ không đổi sau khi khởi động router.
 
----
+### 2. Tải bản phát hành
 
-## 🛠️ HƯỚNG DẪN CÀI ĐẶT & CHẠY TRÊN MÁY TÍNH MỚI (Windows / Mac)
+Mở trang [PRO POS Print Agent Releases](https://github.com/VanhauDAU/pro-pos/releases), chọn bản `print-agent-v0.2.0` hoặc mới hơn và tải một trong hai file:
 
-### Bước 1: Chuẩn bị
+- `PRO.POS.Print.Agent.Setup.0.2.0.exe`: bản cài đặt, phù hợp cho sử dụng hằng ngày.
+- `PRO.POS.Print.Agent-0.2.0-x64-Portable.exe`: bản chạy trực tiếp, phù hợp để kiểm tra nhanh.
 
-1. Cài đặt **Node.js LTS** (miễn phí tại [nodejs.org](https://nodejs.org)) nếu máy chưa có.
-2. Chép thư mục `apps/print-agent` (hoặc toàn bộ dự án) sang máy tính quầy.
+Tải thêm `SHA256SUMS.txt` nếu cần xác minh file. Trong PowerShell:
 
-### Bước 2: Cài đặt và Khởi động
-
-Mở **Terminal** (trên Mac) hoặc **Command Prompt / PowerShell** (trên Windows):
-
-```bash
-# 1. Đi vào thư mục print-agent trên máy mới
-cd apps/print-agent
-
-# 2. Cài đặt thư viện (rất nhẹ, chỉ mất 5 giây)
-npm install
-
-# 3. Khởi động Print Agent
-npx tsx src/index.ts --server https://pro-pos-production.vanhau-laravel.workers.dev --ip 192.168.1.73
+```powershell
+(Get-FileHash '.\PRO.POS.Print.Agent.Setup.0.2.0.exe' -Algorithm SHA256).Hash.ToLower()
 ```
 
-> **Lưu ý:** Thay `192.168.1.73` bằng địa chỉ IP của máy in nhiệt tại quán của bạn.
+Giá trị phải trùng với dòng tương ứng trong `SHA256SUMS.txt`. Bản hiện tại chưa ký code-signing; Windows SmartScreen có thể hiện cảnh báo. Chỉ chọn **More info → Run anyway** khi file được tải từ trang GitHub chính thức ở trên và checksum khớp.
 
----
+### 3. Cài và cấu hình máy in
 
-### Bước 3: Ghép nối với Cửa hàng (Chỉ làm 1 lần duy nhất)
+1. Chạy file Setup, hoàn tất trình cài đặt rồi mở **PRO POS Print Agent** từ Desktop hoặc Start Menu.
+2. Ở màn hình đầu tiên, chọn **Cài đặt kết nối**.
+3. Giữ nguyên Server URL production; nhập IP máy in, port `9100` và chọn khổ giấy K58/K80.
+4. Chọn **Lưu & khởi động lại**.
 
-1. Khi khởi chạy lần đầu, màn hình sẽ hiển thị mã ghép nối gồm **6 chữ số**:
-   ```text
-   ========================================
-      PRO POS PRINT AGENT - GHÉP NỐI THIẾT BỊ
-   ========================================
-   ----------------------------------------
-     MÃ GHÉP NỐI:   748 - 291
-   ----------------------------------------
-   ```
-2. Trên điện thoại hoặc máy tính, mở **Pro POS**:
-   - Vào: **Cài đặt** → **Máy in** → Bấm **"Thêm Print Agent"**.
-   - Nhập mã 6 chữ số (ví dụ: `748291`) và nhấn **Xác nhận ghép nối**.
-3. Print Agent lập tức chuyển sang trạng thái:
-   ```text
-   ========================================
-       PRO POS PRINT AGENT (v0.1.0)
-   ========================================
-   ● Trạng thái : ĐANG HOẠT ĐỘNG (ONLINE)
-   Cửa hàng     : Pro POS Billiards Club
-   Máy in LAN   : 192.168.1.73:9100 (K80)
-   Máy chủ      : https://pro-pos-production.vanhau-laravel.workers.dev
-   ----------------------------------------
-   Tự động in tất cả yêu cầu in từ Điện thoại / iPad / Web POS.
-   Không mở popup, không cần xác nhận trên máy tính.
-   ========================================
-   ```
-4. Cấu hình được lưu tự động tại `~/.propos-print-agent/config.json`. Các lần bật máy sau sẽ **tự động ONLINE** mà không cần ghép nối lại.
+Giá trị IP mặc định là `192.168.1.73`; cần thay bằng địa chỉ thực tế nếu máy in của cửa hàng dùng IP khác.
 
----
+### 4. Ghép nối với cửa hàng
 
-## ⚡ HƯỚNG DẪN TỰ ĐỘNG CHẠY KHI MỞ MÁY TÍNH (Autostart)
+1. Chọn **Bắt đầu ghép nối**. Print Agent hiển thị mã 6 số và thời gian còn hiệu lực.
+2. Mở PRO POS → **Cài đặt máy in → Print Agent**.
+3. Nhập mã 6 số đang hiển thị trên máy tính quầy.
+4. Khi dashboard báo **Đã kết nối**, chọn **In thử**.
+5. Khi máy in nhận phiếu test, trạng thái chuyển thành **Sẵn sàng**.
 
-### Dành cho Windows (Startup):
+Thông tin ghép nối được mã hóa bằng cơ chế bảo vệ credential của hệ điều hành. UI không hiển thị hoặc gửi `agentSecret` cho renderer.
 
-1. Tạo 1 file tên là `ChayMayIn.bat` trong thư mục `print-agent` với nội dung:
-   ```bat
-   @echo off
-   cd /d "%~dp0"
-   npx tsx src/index.ts
-   ```
-2. Nhấn tổ hợp phím `Windows + R`, gõ `shell:startup` rồi nhấn **Enter** để mở thư mục Startup của Windows.
-3. Tạo lối tắt (**Shortcut**) của file `ChayMayIn.bat` và dán vào thư mục Startup này.
+### 5. Chạy nền và tự khởi động
 
-> **Kết quả:** Mỗi khi bật máy tính thu ngân, Print Agent sẽ tự động chạy ngầm.
+- Đóng cửa sổ chỉ ẩn Print Agent xuống khay hệ thống; ứng dụng vẫn nhận lệnh in.
+- Nhấp icon máy in trong system tray để mở lại.
+- Bật **Khởi động cùng Windows** trên dashboard nếu muốn Print Agent tự chạy ẩn sau khi đăng nhập.
+- Chọn **Thoát** trong menu tray khi cần dừng hoàn toàn.
 
-### Dành cho macOS (PM2):
+## Nâng cấp
 
-```bash
-# 1. Cài đặt PM2 toàn cục
-npm install -g pm2
+1. Tải Setup của bản mới từ trang Releases.
+2. Chọn **Thoát** trong menu tray của phiên bản đang chạy.
+3. Chạy Setup mới. Không cần gỡ bản cũ trước.
+4. Mở Print Agent và xác nhận cửa hàng, IP máy in, trạng thái autostart vẫn được giữ.
+5. Chạy **In thử** sau nâng cấp.
 
-# 2. Khởi chạy Print Agent ngầm
-pm2 start "npx tsx src/index.ts" --name "propos-print-agent"
+## Xử lý sự cố
 
-# 3. Lưu cấu hình tự chạy cùng hệ điều hành
-pm2 save
-pm2 startup
-```
+### Không thể kết nối máy in
 
----
+- Kiểm tra nguồn, giấy và dây mạng của máy in.
+- In trang self-test của máy in để xác nhận IP hiện tại.
+- Từ máy tính quầy, kiểm tra cổng: `Test-NetConnection <IP-máy-in> -Port 9100`.
+- Mở **Cài đặt nâng cao**, sửa IP/port rồi chạy **In thử**.
 
-## 📖 DANH SÁCH THAM SỐ DÒNG LỆNH (CLI Options)
+### Print Agent mất kết nối máy chủ
 
-| Tham số          | Mô tả                                     | Ví dụ                                       |
-| :--------------- | :---------------------------------------- | :------------------------------------------ |
-| `--ip <IP>`      | Đặt địa chỉ IP của máy in LAN             | `npx tsx src/index.ts --ip 192.168.1.200`   |
-| `--port <PORT>`  | Cổng kết nối máy in (mặc định: 9100)      | `npx tsx src/index.ts --port 9100`          |
-| `--server <URL>` | Địa chỉ máy chủ Pro POS                   | `npx tsx src/index.ts --server https://...` |
-| `--test`         | In thử 1 hóa đơn mẫu ngay khi khởi động   | `npx tsx src/index.ts --test`               |
-| `--reset`        | Xóa thông tin ghép nối cũ để ghép nối lại | `npx tsx src/index.ts --reset`              |
+- Kiểm tra Internet và firewall/proxy của Windows.
+- Chọn **Kết nối lại**; runtime cũng tự reconnect khi mạng phục hồi.
+- Mở **Cài đặt nâng cao → Mở thư mục nhật ký** để thu thập diagnostics.
 
----
+### Ghép nối lại hoặc chuyển cửa hàng
 
-## 🧪 CHẠY KIỂM THỬ TỰ ĐỘNG (Tests)
+Mở **Cài đặt nâng cao → Ghép nối lại**, xác nhận thao tác, rồi nhập mã mới trên PRO POS. Tùy chọn này giữ nguyên IP/port máy in. **Xóa cấu hình** sẽ xóa cả liên kết cửa hàng lẫn cài đặt máy in và luôn yêu cầu xác nhận.
+
+## Phát triển và kiểm thử
+
+Yêu cầu Node.js 24 và pnpm 11:
 
 ```bash
-# Tại thư mục gốc của repo
-pnpm test          # Chạy toàn bộ unit tests
-pnpm typecheck     # Kiểm tra kiểu dữ liệu TypeScript
+pnpm install --frozen-lockfile
+pnpm --filter @propos/print-agent typecheck
+pnpm exec vitest run tests/unit/print-agent.test.ts tests/unit/print-agent-runtime.test.ts tests/unit/print-agent-credential-store.test.ts tests/unit/print-agent-autostart.test.ts tests/unit/print-agent-presentation.test.ts
+pnpm --filter @propos/print-agent build:desktop
+pnpm --filter @propos/print-agent dev:desktop
 ```
+
+### Đóng gói cho macOS (.dmg / .zip)
+
+Build trực tiếp trên máy macOS:
+
+```bash
+# Build cả Apple Silicon (arm64) và Intel (x64)
+pnpm --filter @propos/print-agent dist:mac
+
+# Hoặc chỉ build cho Apple Silicon (M1/M2/M3/M4)
+pnpm --filter @propos/print-agent dist:mac:arm64
+
+# Hoặc chỉ build cho máy Mac dùng chip Intel
+pnpm --filter @propos/print-agent dist:mac:x64
+```
+
+File `.dmg` và `.zip` xuất ra tại thư mục `apps/print-agent/release/`.
+
+#### Cài đặt và mở file .dmg trên macOS:
+
+1. Nhấp đúp vào file `.dmg` và kéo biểu tượng ứng dụng vào thư mục **Applications**.
+2. Do app chưa ký Apple Developer ID, mở Terminal và chạy lệnh gỡ quarantine nếu macOS cảnh báo không mở được:
+   ```bash
+   xattr -cr "/Applications/PRO POS Print Agent.app"
+   ```
+   (hoặc vào **System Settings** → **Privacy & Security** → bấm **Open Anyway**).
+3. Mở ứng dụng và cho phép quyền truy cập mạng cục bộ (Local Network) khi được hỏi.
+
+### Đóng gói cho Windows (.exe)
+
+Build installer Windows trên Windows runner hoặc máy Windows:
+
+```bash
+pnpm --filter @propos/print-agent dist:win
+```
+
+Workflow `.github/workflows/print-agent-release.yml` build NSIS, portable executable, checksum và chỉ publish GitHub Release khi tag `print-agent-v<package-version>` khớp chính xác.

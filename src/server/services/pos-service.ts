@@ -1986,6 +1986,12 @@ export class PosService {
     };
   }
 
+  async getPrintContext(storeId: string) {
+    const context = await this.repository.getPrintContext(storeId);
+    if (!context) throw new AppError('STORE_NOT_FOUND', 'Không tìm thấy cửa hàng.', 404);
+    return context;
+  }
+
   async productPricingSnapshot(
     storeId: string,
     productId: string,

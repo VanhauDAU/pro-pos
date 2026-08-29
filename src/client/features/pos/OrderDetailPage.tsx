@@ -65,6 +65,10 @@ import {
 } from '@client/lib/pos-receipt-printer';
 import { usePosPollingInterval, useRealtime } from '@client/realtime/RealtimeProvider';
 import { toast } from 'sonner';
+import {
+  invoicePrintIdentity,
+  provisionalPrintIdentity,
+} from '@client/lib/print-document-identity';
 
 const ReceiptPreviewModal = lazy(async () => {
   const module = await import('./ReceiptPreviewModal');
@@ -679,10 +683,9 @@ export function OrderDetailPage({
           bankAccountName: staffContext.data?.bankAccountName ?? null,
         },
       },
-      {
-        type: receiptType === 'PAYMENT' ? 'invoice' : 'order',
-        id: data.order.id,
-      },
+      receiptType === 'PAYMENT'
+        ? invoicePrintIdentity(data.invoice?.id ?? '')
+        : provisionalPrintIdentity(data.order.id),
       authQuery.data?.csrfToken,
     );
     if (result.success) {

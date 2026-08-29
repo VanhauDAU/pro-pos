@@ -74,12 +74,12 @@ describe('Remote Print & Print Agent Lifecycle (Integration Test)', () => {
 
   describe('Print Job Lifecycle & Multi-Device Safety', () => {
     let jobId: string;
-    const idempotencyKey = `print:order:${crypto.randomUUID()}`;
+    const idempotencyKey = `print:provisional:${crypto.randomUUID()}`;
 
     it('creates a print job in QUEUED status for a valid store order', async () => {
       const job = await printJobService.createPrintJob({
         storeId,
-        documentType: 'order',
+        documentType: 'provisional',
         documentId: orderId,
         printerRole: 'receipt',
         idempotencyKey,
@@ -92,7 +92,7 @@ describe('Remote Print & Print Agent Lifecycle (Integration Test)', () => {
 
       expect(job.id).toBeDefined();
       expect(job.status).toBe('QUEUED');
-      expect(job.documentType).toBe('order');
+      expect(job.documentType).toBe('provisional');
       expect(job.documentId).toBe(orderId);
       jobId = job.id;
     });
@@ -100,7 +100,7 @@ describe('Remote Print & Print Agent Lifecycle (Integration Test)', () => {
     it('returns the existing job when re-submitting with identical idempotencyKey', async () => {
       const duplicateJob = await printJobService.createPrintJob({
         storeId,
-        documentType: 'order',
+        documentType: 'provisional',
         documentId: orderId,
         printerRole: 'receipt',
         idempotencyKey,
@@ -145,7 +145,7 @@ describe('Remote Print & Print Agent Lifecycle (Integration Test)', () => {
       const failIdemp = `print:fail:${crypto.randomUUID()}`;
       const job = await printJobService.createPrintJob({
         storeId,
-        documentType: 'order',
+        documentType: 'provisional',
         documentId: orderId,
         printerRole: 'receipt',
         idempotencyKey: failIdemp,
@@ -169,7 +169,7 @@ describe('Remote Print & Print Agent Lifecycle (Integration Test)', () => {
       const uncertainIdemp = `print:uncertain:${crypto.randomUUID()}`;
       const job = await printJobService.createPrintJob({
         storeId,
-        documentType: 'order',
+        documentType: 'provisional',
         documentId: orderId,
         printerRole: 'receipt',
         idempotencyKey: uncertainIdemp,

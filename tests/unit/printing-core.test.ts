@@ -149,9 +149,8 @@ describe('printing core', () => {
       },
     );
     expect(textReceipt.length).toBeGreaterThan(50);
-    // Initializes with ESC @
-    expect(textReceipt[0]).toBe(0x1b);
-    expect(textReceipt[1]).toBe(0x40);
+    // Initializes with ESC @ and explicitly selects the readable Font A.
+    expect(Array.from(textReceipt.slice(0, 5))).toEqual([0x1b, 0x40, 0x1b, 0x4d, 0x00]);
   });
 
   it('validates system and LAN configs without hard-coding one printer profile', () => {

@@ -1,0 +1,32 @@
+name: Print Agent Windows Release
+
+on:
+  push:
+    tags: ['print-agent-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @propos/print-agent typecheck
+      - run: pnpm exec vitest run tests/unit/print-agent.test.ts tests/unit/print-agent-runtime.test.ts
+      - run: pnpm --filter @propos/print-agent dist:win
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: apps/print-agent/release/*

@@ -6,7 +6,7 @@ directories:
 files:
   - dist/desktop/**
   - package.json
-artifactBuildStarted: ../../scripts/ensure-print-agent-macos-signature.cjs
+artifactBuildStarted: ./scripts/ensure-print-agent-macos-signature.cjs
 win:
   icon: build/icon.ico
   target:

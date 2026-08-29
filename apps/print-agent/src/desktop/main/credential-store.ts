@@ -25,6 +25,6 @@ export class CredentialStore {
       throw new Error('Windows credential protection không khả dụng; không thể lưu secret pairing.');
     }
     mkdirSync(dirname(this.filePath), { recursive: true });
-    writeFileSync(this.filePath, this.protector.encryptString(secret).toString('base64'), 'utf8');
+    writeFileSync(this.filePath, Buffer.from(this.protector.encryptString(secret)).toString('base64'), 'utf8');
   }
 }

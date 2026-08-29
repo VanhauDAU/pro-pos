@@ -27,6 +27,7 @@ export class AgentRealtimeClient implements RealtimeConnection {
   private reconnectAttempt = 0;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private pollFallbackTimer: NodeJS.Timeout | null = null;
+  private reconnectTimer: NodeJS.Timeout | null = null;
   private isRecovering = false;
   private readonly jobQueue = new JobQueue();
   private readonly processor: JobProcessor;
@@ -46,14 +47,10 @@ export class AgentRealtimeClient implements RealtimeConnection {
   connect(): void {
     if (this.isDestroyed || !this.config.agentId || !this.config.agentSecret) return;
 
-    this.startPollingFallback();
-
     const baseWsUrl = this.config.serverUrl
       .replace('https://', 'wss://')
       .replace('http://', 'ws://');
-    const wsUrl = `${baseWsUrl}/api/v1/pos/realtime/stream?agentId=${encodeURIComponent(
-      this.config.agentId,
-    )}&agentSecret=${encodeURIComponent(this.config.agentSecret)}`;
+    const wsUrl = `${baseWsUrl}/api/v1/pos/realtime/stream?agentId=${encodeURIComponent(this.config.agentId)}`;
 
     console.log(`[Realtime] Đang kết nối tới máy chủ (${this.config.serverUrl})...`);
 
@@ -69,6 +66,7 @@ export class AgentRealtimeClient implements RealtimeConnection {
         console.log('\x1b[32m● [Realtime] Đã kết nối trực tuyến với máy chủ Pro POS!\x1b[0m');
         this.reconnectAttempt = 0;
         this.startHeartbeat();
+        this.stopPollingFallback();
         this.events.onConnected?.();
         void this.recoverPendingJobs();
       });
@@ -90,6 +88,7 @@ export class AgentRealtimeClient implements RealtimeConnection {
             `[Realtime] Mất kết nối (code: ${code}${reasonStr ? `, lý do: ${reasonStr}` : ''}). Đang thử kết nối lại...`,
           );
           this.events.onDisconnected?.(reasonStr || `WebSocket closed (${code})`);
+          this.startPollingFallback();
           this.scheduleReconnect();
         }
       });
@@ -214,9 +213,12 @@ export class AgentRealtimeClient implements RealtimeConnection {
   }
 
   private scheduleReconnect(): void {
+    if (this.reconnectTimer) return;
     this.reconnectAttempt++;
-    const delay = Math.min(1000 * Math.pow(1.5, this.reconnectAttempt), 10000);
-    setTimeout(() => {
+    const baseDelay = Math.min(1000 * Math.pow(1.5, this.reconnectAttempt), 10000);
+    const delay = Math.round(baseDelay * (0.8 + Math.random() * 0.4));
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
       if (!this.isDestroyed) {
         this.connect();
       }
@@ -227,6 +229,8 @@ export class AgentRealtimeClient implements RealtimeConnection {
     this.isDestroyed = true;
     this.stopHeartbeat();
     this.stopPollingFallback();
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
     if (this.ws) {
       this.ws.close();
       this.ws = null;

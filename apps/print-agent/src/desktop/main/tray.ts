@@ -34,7 +34,12 @@ export function createAgentTray(
         { label: 'In thử', click: () => void runtime.testPrinter() },
         { label: 'Kết nối lại', click: () => void runtime.reconnect() },
         {
-          label: 'Khởi động cùng Windows',
+          label:
+            process.platform === 'darwin'
+              ? 'Khởi động cùng macOS'
+              : process.platform === 'win32'
+                ? 'Khởi động cùng Windows'
+                : 'Khởi động cùng hệ thống',
           type: 'checkbox',
           checked: autostart.isEnabled(),
           click: (item) => autostart.setEnabled(item.checked),

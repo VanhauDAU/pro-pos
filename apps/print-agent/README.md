@@ -91,10 +91,39 @@ pnpm --filter @propos/print-agent build:desktop
 pnpm --filter @propos/print-agent dev:desktop
 ```
 
-Build installer Windows trên Windows runner:
+### Đóng gói cho macOS (.dmg / .zip)
+
+Build trực tiếp trên máy macOS:
+
+```bash
+# Build cả Apple Silicon (arm64) và Intel (x64)
+pnpm --filter @propos/print-agent dist:mac
+
+# Hoặc chỉ build cho Apple Silicon (M1/M2/M3/M4)
+pnpm --filter @propos/print-agent dist:mac:arm64
+
+# Hoặc chỉ build cho máy Mac dùng chip Intel
+pnpm --filter @propos/print-agent dist:mac:x64
+```
+
+File `.dmg` và `.zip` xuất ra tại thư mục `apps/print-agent/release/`.
+
+#### Cài đặt và mở file .dmg trên macOS:
+1. Nhấp đúp vào file `.dmg` và kéo biểu tượng ứng dụng vào thư mục **Applications**.
+2. Do app chưa ký Apple Developer ID, mở Terminal và chạy lệnh gỡ quarantine nếu macOS cảnh báo không mở được:
+   ```bash
+   xattr -cr "/Applications/PRO POS Print Agent.app"
+   ```
+   (hoặc vào **System Settings** → **Privacy & Security** → bấm **Open Anyway**).
+3. Mở ứng dụng và cho phép quyền truy cập mạng cục bộ (Local Network) khi được hỏi.
+
+### Đóng gói cho Windows (.exe)
+
+Build installer Windows trên Windows runner hoặc máy Windows:
 
 ```bash
 pnpm --filter @propos/print-agent dist:win
 ```
 
 Workflow `.github/workflows/print-agent-release.yml` build NSIS, portable executable, checksum và chỉ publish GitHub Release khi tag `print-agent-v<package-version>` khớp chính xác.
+

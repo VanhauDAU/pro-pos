@@ -44,19 +44,34 @@ const SPECIAL_BYTES = new Map<number, number>([
 // These byte positions are reassigned by Windows-1258 and therefore cannot be
 // emitted as their ISO-8859-1 code point values.
 const REASSIGNED_LATIN1_BYTES = new Set([
-  0xc3, 0xcc, 0xd0, 0xd2, 0xd5, 0xdd, 0xde, 0xe3, 0xec, 0xf0, 0xf2, 0xf5, 0xfd, 0xfe,
+  0xc3,
+  0xcc,
+  0xd0,
+  0xd2,
+  0xd5,
+  0xdd,
+  0xde,
+  0xe3,
+  0xec,
+  0xf0,
+  0xf2,
+  0xf5,
+  0xfd,
+  0xfe,
 ]);
 
-const VIETNAMESE_TONE_MARKS = new Set(['\u0300', '\u0301', '\u0303', '\u0309', '\u0323']);
+const VIETNAMESE_TONE_MARKS = new Set([
+  '\u0300',
+  '\u0301',
+  '\u0303',
+  '\u0309',
+  '\u0323',
+]);
 
 function canEncodeDirectly(codePoint: number): boolean {
   if (SPECIAL_BYTES.has(codePoint)) return true;
   if (codePoint >= 0 && codePoint <= 0x7f) return true;
-  return (
-    codePoint >= 0xa0 &&
-    codePoint <= 0xff &&
-    !REASSIGNED_LATIN1_BYTES.has(codePoint)
-  );
+  return codePoint >= 0xa0 && codePoint <= 0xff && !REASSIGNED_LATIN1_BYTES.has(codePoint);
 }
 
 /**
@@ -91,11 +106,7 @@ function encodeCodePoint(codePoint: number): number {
   if (special !== undefined) return special;
 
   if (codePoint >= 0 && codePoint <= 0x7f) return codePoint;
-  if (
-    codePoint >= 0xa0 &&
-    codePoint <= 0xff &&
-    !REASSIGNED_LATIN1_BYTES.has(codePoint)
-  ) {
+  if (codePoint >= 0xa0 && codePoint <= 0xff && !REASSIGNED_LATIN1_BYTES.has(codePoint)) {
     return codePoint;
   }
 

@@ -144,7 +144,7 @@ export class AgentRuntime extends EventEmitter {
       this.connectRealtime();
     } catch (error) {
       if (pairingAbortController.signal.aborted) {
-        this.setStatus('UNPAIRED');
+        if (this.pairingAbortController === pairingAbortController) this.setStatus('UNPAIRED');
         return;
       }
       this.setStatus('UNPAIRED', error instanceof Error ? error.message : String(error));
@@ -175,7 +175,7 @@ export class AgentRuntime extends EventEmitter {
 
   async testPrinter(): Promise<PrinterTestResult> {
     const config = this.config;
-    const host = config?.printerIp?.trim() || '192.168.1.73';
+    const host = config?.printerIp?.trim() || '';
     const port = config?.printerPort || 9100;
     if (!host) {
       this.setPrinterStatus('INVALID_CONFIG', 'Địa chỉ IP máy in không hợp lệ.');

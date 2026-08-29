@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CredentialStore } from '../../apps/print-agent/src/desktop/main/credential-store';
@@ -16,5 +16,8 @@ describe('CredentialStore', () => {
     store.save('agent-secret');
     expect(readFileSync(join(dir, 'credentials.bin'), 'utf8')).not.toContain('agent-secret');
     expect(store.load()).toBe('agent-secret');
+    store.clear();
+    expect(existsSync(join(dir, 'credentials.bin'))).toBe(false);
+    expect(store.load()).toBeUndefined();
   });
 });

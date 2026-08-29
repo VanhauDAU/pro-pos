@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 export interface SecretProtector {
@@ -26,5 +26,13 @@ export class CredentialStore {
     }
     mkdirSync(dirname(this.filePath), { recursive: true });
     writeFileSync(this.filePath, Buffer.from(this.protector.encryptString(secret)).toString('base64'), 'utf8');
+  }
+
+  clear(): void {
+    try {
+      unlinkSync(this.filePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
   }
 }

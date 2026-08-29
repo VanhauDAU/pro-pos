@@ -1,10 +1,19 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { safeStorage } from 'electron';
 import type { PrintAgentConfig } from '../../config';
 import { CredentialStore } from './credential-store';
 
-const DEFAULT_CONFIG: PrintAgentConfig = { serverUrl: 'http://localhost:5173', paperSize: 'K80', printableDots: 576, autoCut: true, openCashDrawer: false };
+const DEFAULT_CONFIG: PrintAgentConfig = {
+  serverUrl:
+    process.env.PROPOS_SERVER_URL || 'https://pro-pos-production.vanhau-laravel.workers.dev',
+  printerIp: '192.168.1.73',
+  printerPort: 9100,
+  paperSize: 'K80',
+  printableDots: 576,
+  autoCut: true,
+  openCashDrawer: false,
+};
 
 /** Stores routing/settings in userData and the permanent agent secret in Windows DPAPI. */
 export class DesktopConfigStore {
@@ -34,5 +43,26 @@ export class DesktopConfigStore {
 
   isPaired(config: PrintAgentConfig): boolean {
     return Boolean(config.agentId && config.agentSecret && config.storeId);
+  }
+
+  clearPairing(): void {
+    const {
+      agentId: _agentId,
+      agentSecret: _agentSecret,
+      storeId: _storeId,
+      storeName: _storeName,
+      ...settings
+    } = this.loadConfig();
+    this.credentials.clear();
+    this.saveConfig(settings);
+  }
+
+  reset(): void {
+    this.credentials.clear();
+    try {
+      unlinkSync(this.configPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
   }
 }

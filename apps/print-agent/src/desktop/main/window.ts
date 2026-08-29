@@ -3,10 +3,11 @@ import { join } from 'node:path';
 
 export function createAgentWindow(startHidden = false): BrowserWindow {
   const window = new BrowserWindow({
-    width: 520,
-    height: 620,
-    minWidth: 420,
-    minHeight: 500,
+    width: 540,
+    height: 700,
+    minWidth: 480,
+    minHeight: 600,
+    backgroundColor: '#f3f5f8',
     show: false,
     title: 'PRO POS Print Agent',
     webPreferences: {

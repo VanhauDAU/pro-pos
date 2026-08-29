@@ -20,8 +20,10 @@ if (!app.requestSingleInstanceLock()) {
 
   void app.whenReady().then(async () => {
     app.setAppUserModelId('com.propos.print-agent');
+    app.setAppLogsPath();
+    const configStore = new DesktopConfigStore(app.getPath('userData'));
     const runtime = new AgentRuntime(undefined, {
-      configManager: new DesktopConfigStore(app.getPath('userData')),
+      configManager: configStore,
     });
     await runtime.start();
     const autostart = new AutostartController(app);
@@ -32,11 +34,8 @@ if (!app.requestSingleInstanceLock()) {
         mainWindow?.hide();
       }
     });
-    registerAgentIpc(runtime, () => mainWindow);
+    registerAgentIpc(runtime, () => mainWindow, autostart, configStore);
     createAgentTray(runtime, () => mainWindow, autostart);
-    runtime.on('stateChanged', (state) => {
-      if (state.status === 'ONLINE' && !autostart.isEnabled()) autostart.setEnabled(true);
-    });
 
     app.on('before-quit', (event) => {
       if (!isQuitting) {

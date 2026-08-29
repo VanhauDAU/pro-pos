@@ -7,15 +7,30 @@ export function createAgentTray(
   getWindow: () => BrowserWindow | null,
   autostart: AutostartController,
 ): Tray {
-  const tray = new Tray(nativeImage.createEmpty());
-  tray.setToolTip('PRO POS Print Agent');
-  const refreshMenu = () => {
+  const trayIcon = nativeImage
+    .createFromDataURL(
+      `data:image/svg+xml;base64,${Buffer.from(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#2563eb"/><path d="M9 8h14v6h2a3 3 0 0 1 3 3v7h-5v4H9v-4H4v-7a3 3 0 0 1 3-3h2V8Zm3 3v5h8v-5h-8Zm0 10v4h8v-4h-8Zm12-4a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Z" fill="white"/></svg>',
+      ).toString('base64')}`,
+    )
+    .resize({ width: 16, height: 16 });
+  const tray = new Tray(trayIcon);
+  const statusLabel = () => {
     const state = runtime.getState();
+    if (state.status === 'ONLINE' && state.printer === 'READY') return 'Máy in sẵn sàng';
+    if (state.status === 'ONLINE') return 'Print Agent đang hoạt động';
+    if (state.status === 'CONNECTING') return 'Print Agent đang kết nối';
+    if (state.status === 'UNPAIRED' || state.status === 'PAIRING')
+      return 'Print Agent chưa ghép nối';
+    return 'Print Agent đang mất kết nối';
+  };
+  const refreshMenu = () => {
+    tray.setToolTip(`PRO POS Print Agent · ${statusLabel()}`);
     tray.setContextMenu(
       Menu.buildFromTemplate([
-        { label: `Trạng thái: ${state.status}`, enabled: false },
+        { label: statusLabel(), enabled: false },
         { type: 'separator' },
-        { label: 'Mở', click: () => getWindow()?.show() },
+        { label: 'Mở Print Agent', click: () => getWindow()?.show() },
         { label: 'In thử', click: () => void runtime.testPrinter() },
         { label: 'Kết nối lại', click: () => void runtime.reconnect() },
         {

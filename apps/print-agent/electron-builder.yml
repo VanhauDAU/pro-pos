@@ -1,6 +1,5 @@
 appId: com.propos.print-agent
 productName: PRO POS Print Agent
-artifactName: ${productName}-${version}-${arch}.${ext}
 directories:
   output: release
 files:

@@ -186,8 +186,8 @@ describe('AgentRuntime', () => {
     await runtime.start();
     await runtime.reconnect();
 
-    expect(realtimeConnections[0].destroy).toHaveBeenCalledOnce();
-    expect(realtimeConnections[1].connect).toHaveBeenCalledOnce();
+    expect(realtimeConnections[0]!.destroy).toHaveBeenCalledOnce();
+    expect(realtimeConnections[1]!.connect).toHaveBeenCalledOnce();
     expect(createTransport).not.toHaveBeenCalled();
   });
 

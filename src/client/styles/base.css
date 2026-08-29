@@ -18800,7 +18800,8 @@ body {
   border-radius: 8px;
   margin: 0 auto;
   padding: 18px 16px;
-  font-family: 'Roboto Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  font-family: 'Courier New', Courier, monospace;
+  font-synthesis: none;
   font-variant-numeric: tabular-nums;
   color: #0f172a;
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.06);
@@ -18811,17 +18812,17 @@ body {
   width: 100%;
   max-width: 310px;
   padding: 14px 15px;
-  font-size: 11px;
-  line-height: 1.3;
+  font-size: 12px;
+  line-height: 1.25;
 }
 
 .thermal-receipt-preview--k58 {
   width: 100%;
   max-width: 228px;
   padding: 10px 11px;
-  font-size: 9.5px;
+  font-size: 10.5px;
   line-height: 1.25;
-  letter-spacing: -0.2px;
+  letter-spacing: 0;
 }
 
 .thermal-receipt-preview--k58 .thermal-receipt-header-horizontal {
@@ -19068,6 +19069,19 @@ body {
   color: #475569;
   padding-left: 4px;
   line-height: 1.3;
+}
+
+/* Owner item-size setting must flow through every row instead of being overridden by defaults. */
+.thermal-receipt-items .thermal-receipt-table-header,
+.thermal-receipt-items .thermal-receipt-item-row,
+.thermal-receipt-items .thermal-receipt-item-main,
+.thermal-receipt-items .thermal-receipt-time-segment,
+.thermal-receipt-items .thermal-receipt-time-row {
+  font-size: inherit;
+}
+
+.thermal-receipt-items .thermal-receipt-item-sub {
+  font-size: 0.9em;
 }
 
 .thermal-receipt-time-meta {
@@ -19390,11 +19404,15 @@ body {
 }
 .pos-receipt-preview-stage--k58 .pos-receipt-preview-paper {
   width: 58mm;
+  padding: 2.75mm;
 }
 .pos-receipt-preview-paper .thermal-receipt-preview {
   width: 100% !important;
   max-width: 100% !important;
   margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
   box-shadow: none !important;
 }
 @media (max-width: 600px) {

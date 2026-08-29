@@ -121,7 +121,45 @@ export class PrintJobService {
       );
     }
 
+    const existing = await this.repository.getJobByIdempotencyKey(
+      input.storeId,
+      input.idempotencyKey,
+    );
+    if (existing) return existing;
+
     await this.verifyDocumentBelongsToStore(input.storeId, input.documentType, input.documentId);
+
+    const printPolicy = await this.env.DB.prepare(
+      `SELECT max_receipt_reprint_count AS maxReceiptReprintCount,
+              allow_provisional_print AS allowProvisionalPrint
+       FROM store_print_settings WHERE store_id = ? LIMIT 1`,
+    )
+      .bind(input.storeId)
+      .first<{ maxReceiptReprintCount: number; allowProvisionalPrint: number | boolean }>();
+
+    if (input.documentType === 'provisional' && printPolicy && !printPolicy.allowProvisionalPrint) {
+      throw new AppError(
+        'PROVISIONAL_PRINT_DISABLED',
+        'Chủ cửa hàng đã tắt chức năng in hóa đơn tạm tính.',
+        403,
+      );
+    }
+
+    const maxReceiptPrints = Number(printPolicy?.maxReceiptReprintCount ?? 0);
+    if (input.documentType === 'invoice' && maxReceiptPrints > 0) {
+      const currentPrints = await this.repository.countEffectiveDocumentPrints(
+        input.storeId,
+        input.documentType,
+        input.documentId,
+      );
+      if (currentPrints >= maxReceiptPrints) {
+        throw new AppError(
+          'RECEIPT_PRINT_LIMIT_REACHED',
+          `Hóa đơn đã đạt giới hạn ${maxReceiptPrints} lần in do chủ cửa hàng thiết lập.`,
+          409,
+        );
+      }
+    }
 
     const now = Date.now();
     const jobId = crypto.randomUUID();

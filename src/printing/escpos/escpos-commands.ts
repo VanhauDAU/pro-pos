@@ -2,6 +2,8 @@ export const ESC_POS = {
   initialize: Uint8Array.of(0x1b, 0x40),
   // Standard readable receipt face (usually 12x24 dots on a 203dpi printer).
   selectFontA: Uint8Array.of(0x1b, 0x4d, 0x00),
+  // Compact receipt face (usually 9x17 dots) used by the Owner "Small" item size.
+  selectFontB: Uint8Array.of(0x1b, 0x4d, 0x01),
   alignCenter: Uint8Array.of(0x1b, 0x61, 0x01),
   alignLeft: Uint8Array.of(0x1b, 0x61, 0x00),
   alignRight: Uint8Array.of(0x1b, 0x61, 0x02),

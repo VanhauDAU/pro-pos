@@ -168,6 +168,7 @@ export interface OrderItemRow {
   productType: 'QUANTITY' | 'WEIGHT' | 'TIME';
   productName: string;
   variantName: string | null;
+  priceVariantCount?: number;
   unitName: string | null;
   unitPriceVnd: number;
   quantityMilli: number;
@@ -860,6 +861,10 @@ export class PosRepository {
           id, product_id AS productId, variant_id AS variantId,
           product_type AS productType,
           product_name_snapshot AS productName, variant_name_snapshot AS variantName,
+          (SELECT COUNT(*) FROM product_variants pv
+           WHERE pv.store_id = takeaway_order_items.store_id
+             AND pv.product_id = takeaway_order_items.product_id
+             AND pv.status = 'ACTIVE') AS priceVariantCount,
           unit_name_snapshot AS unitName, unit_price_snapshot AS unitPriceVnd,
           quantity_milli AS quantityMilli, discount_type AS discountType,
           discount_input_value AS discountInputValue,
@@ -1013,6 +1018,25 @@ export class PosRepository {
       )
       .bind(storeId)
       .all<SaleCatalogRow>();
+  }
+
+  async listActiveVariantCounts(storeId: string, productIds: string[]) {
+    const chunks = uniqueChunks(productIds, 80);
+    const pages = await Promise.all(
+      chunks.map((ids) => {
+        const marks = ids.map(() => '?').join(',');
+        return this.db
+          .prepare(
+            `SELECT product_id AS productId, COUNT(*) AS priceVariantCount
+             FROM product_variants
+             WHERE store_id = ? AND status = 'ACTIVE' AND product_id IN (${marks})
+             GROUP BY product_id`,
+          )
+          .bind(storeId, ...ids)
+          .all<{ productId: string; priceVariantCount: number }>();
+      }),
+    );
+    return pages.flatMap((page) => page.results);
   }
 
   getStaffContext(storeId: string, actorId: string) {
@@ -1195,6 +1219,10 @@ export class PosRepository {
           id, product_id AS productId, variant_id AS variantId,
           product_type AS productType,
           product_name_snapshot AS productName, variant_name_snapshot AS variantName,
+          (SELECT COUNT(*) FROM product_variants pv
+           WHERE pv.store_id = order_items.store_id
+             AND pv.product_id = order_items.product_id
+             AND pv.status = 'ACTIVE') AS priceVariantCount,
           unit_name_snapshot AS unitName, unit_price_snapshot AS unitPriceVnd,
           quantity_milli AS quantityMilli, discount_type AS discountType,
           discount_input_value AS discountInputValue,
@@ -2677,6 +2705,10 @@ export class PosRepository {
                     discount_input_value AS discountInputValue,
                     discount_amount AS discountAmount,
                     gross_line_total AS grossLineTotal, line_total AS lineTotal,
+                    (SELECT COUNT(*) FROM product_variants pv
+                     WHERE pv.store_id = takeaway_invoice_lines.store_id
+                       AND pv.product_id = json_extract(takeaway_invoice_lines.snapshot_json, '$.productId')
+                       AND pv.status = 'ACTIVE') AS priceVariantCount,
                     snapshot_json AS snapshotJson
                  FROM takeaway_invoice_lines
                  WHERE store_id = ? AND invoice_id = ? ORDER BY rowid`
@@ -2686,6 +2718,10 @@ export class PosRepository {
                     discount_input_value AS discountInputValue,
                     discount_amount AS discountAmount,
                     gross_line_total AS grossLineTotal, line_total AS lineTotal,
+                    (SELECT COUNT(*) FROM product_variants pv
+                     WHERE pv.store_id = invoice_lines.store_id
+                       AND pv.product_id = json_extract(invoice_lines.snapshot_json, '$.productId')
+                       AND pv.status = 'ACTIVE') AS priceVariantCount,
                     snapshot_json AS snapshotJson
                  FROM invoice_lines
                  WHERE store_id = ? AND invoice_id = ? ORDER BY rowid`,
@@ -2930,6 +2966,9 @@ export class PosRepository {
             oi.product_type AS productType,
             oi.product_name_snapshot AS productNameSnapshot,
             oi.variant_name_snapshot AS variantNameSnapshot,
+            (SELECT COUNT(*) FROM product_variants pv
+             WHERE pv.store_id = oi.store_id AND pv.product_id = oi.product_id
+               AND pv.status = 'ACTIVE') AS priceVariantCount,
             oi.unit_name_snapshot AS unitNameSnapshot,
             oi.unit_price_snapshot AS unitPriceSnapshot,
             oi.quantity_milli AS quantityMilli,
@@ -2962,6 +3001,7 @@ export class PosRepository {
           productType: 'QUANTITY' | 'WEIGHT' | 'TIME';
           productNameSnapshot: string;
           variantNameSnapshot: string | null;
+          priceVariantCount: number;
           unitNameSnapshot: string | null;
           unitPriceSnapshot: number;
           quantityMilli: number;
@@ -2992,6 +3032,9 @@ export class PosRepository {
           oi.product_type AS productType,
           oi.product_name_snapshot AS productNameSnapshot,
           oi.variant_name_snapshot AS variantNameSnapshot,
+          (SELECT COUNT(*) FROM product_variants pv
+           WHERE pv.store_id = oi.store_id AND pv.product_id = oi.product_id
+             AND pv.status = 'ACTIVE') AS priceVariantCount,
           oi.unit_name_snapshot AS unitNameSnapshot,
           oi.unit_price_snapshot AS unitPriceSnapshot,
           oi.quantity_milli AS quantityMilli,
@@ -3024,6 +3067,7 @@ export class PosRepository {
         productType: 'QUANTITY' | 'WEIGHT' | 'TIME';
         productNameSnapshot: string;
         variantNameSnapshot: string | null;
+        priceVariantCount: number;
         unitNameSnapshot: string | null;
         unitPriceSnapshot: number;
         quantityMilli: number;

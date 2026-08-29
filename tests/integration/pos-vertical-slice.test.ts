@@ -1308,7 +1308,7 @@ describe('online POS vertical slice', () => {
     expect(tables.every((table) => table.status !== 'DISABLED')).toBe(true);
   });
 
-  it('groups active variants under one product in the staff sale catalog', async () => {
+  it('carries the active price-variant count from quote through order and invoice details', async () => {
     const catalog = new CatalogService(env);
     const multiVariant = await catalog.createProduct(storeId, {
       name: 'Nước nhiều size',
@@ -1323,6 +1323,54 @@ describe('online POS vertical slice', () => {
     const matches = products.filter((product) => product.productId === multiVariant.id);
     expect(matches).toHaveLength(1);
     expect(matches[0]!.variants).toHaveLength(2);
+    const largeVariant = matches[0]!.variants.find((variant) => variant.name === 'Lớn')!;
+
+    const pos = new PosService(env);
+    const order = await pos.createTakeaway({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-price-variant-count-order',
+      idempotencyKey: 'price-variant-count-order-001',
+      note: null,
+    });
+    await pos.addItem({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-price-variant-count-add',
+      idempotencyKey: 'price-variant-count-add-001',
+      orderId: order.orderId,
+      productId: multiVariant.id,
+      variantId: largeVariant.id,
+      quantityMilli: 1_000,
+      expectedOrderVersion: 1,
+      discount: null,
+    });
+
+    const quote = await pos.quote(storeId, order.orderId);
+    expect(quote.items[0]).toMatchObject({
+      variantName: 'Lớn',
+      priceVariantCount: 2,
+    });
+    expect((await pos.getOrderDetail(storeId, order.orderId)).items[0]).toMatchObject({
+      variantNameSnapshot: 'Lớn',
+      priceVariantCount: 2,
+    });
+
+    const checkout = await pos.checkout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-price-variant-count-checkout',
+      idempotencyKey: 'price-variant-count-checkout-001',
+      orderId: order.orderId,
+      expectedOrderVersion: quote.order.version,
+      method: 'CASH',
+      cashReceivedVnd: quote.totalVnd,
+    });
+    const invoice = await pos.getInvoice(storeId, checkout.invoiceId);
+    expect(invoice.lines[0]).toMatchObject({ priceVariantCount: 2 });
+    expect(JSON.parse(String(invoice.invoice!.snapshotJson))).toMatchObject({
+      items: [{ variantName: 'Lớn', priceVariantCount: 2 }],
+    });
   });
 
   it('prices weight items with integer milli-units on add, edit, and invoice', async () => {

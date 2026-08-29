@@ -818,8 +818,8 @@ export function OwnerPrintTemplateEditPage() {
                     <div className="thermal-receipt-item-row">
                       <div className="thermal-receipt-item-main">
                         <span style={{ flex: 1, fontWeight: 600 }}>
-                          {showItemIndex ? '1. ' : ''}Trà sữa Ô long (size L)
-                          {showItemPriceName ? ' (Giá chuẩn)' : ''}
+                          {showItemIndex ? '1. ' : ''}Trà sữa Ô long
+                          {showItemPriceName ? ' (Size L)' : ''}
                         </span>
                         <span
                           style={{

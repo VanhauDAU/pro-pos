@@ -2845,6 +2845,19 @@ export class PosService {
     const bankAccounts: BankAccountDto[] = bankAccountRows.results.map((account) =>
       Object.assign({}, account, { isDefault: account.isDefault === 1 }),
     );
+    const giftProductIds = promotions.applied.flatMap((promotion) =>
+      promotion.giftItems.map((gift) => gift.productId),
+    );
+    const knownVariantCounts = new Map(
+      processedItems.map((item) => [item.productId, item.priceVariantCount ?? 0]),
+    );
+    const missingGiftProductIds = giftProductIds.filter(
+      (productId) => !knownVariantCounts.has(productId),
+    );
+    if (missingGiftProductIds.length > 0) {
+      const rows = await this.repository.listActiveVariantCounts(storeId, missingGiftProductIds);
+      for (const row of rows) knownVariantCounts.set(row.productId, row.priceVariantCount);
+    }
     const promotionGiftItems = promotions.applied.flatMap((promotion) =>
       promotion.giftItems.map((gift) => ({
         id: `promotion-gift:${promotion.id}:${gift.productId}:${gift.variantId}`,
@@ -2853,6 +2866,7 @@ export class PosService {
         productType: 'QUANTITY' as const,
         productName: gift.productName,
         variantName: gift.variantName,
+        priceVariantCount: knownVariantCounts.get(gift.productId) ?? 0,
         unitName: gift.unitName,
         unitPriceVnd: gift.unitPriceVnd,
         quantityMilli: gift.quantityMilli,
@@ -4213,6 +4227,7 @@ export class PosService {
           productType: item.productType,
           productNameSnapshot: item.productNameSnapshot,
           variantNameSnapshot: item.variantNameSnapshot,
+          priceVariantCount: item.priceVariantCount,
           unitNameSnapshot: item.unitNameSnapshot,
           unitPriceSnapshot: item.unitPriceSnapshot,
           quantityMilli: qty,

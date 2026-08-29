@@ -114,7 +114,9 @@ export function buildOwnerPrintPreviewSample(
       },
       {
         id: 'preview-drink',
-        name: 'Trà sữa ô long (size L)',
+        name: 'Trà sữa ô long',
+        priceName: 'Size L',
+        priceVariantCount: 2,
         quantity: 1,
         unitPrice: 65_000,
         totalPrice: 55_000,
@@ -126,6 +128,8 @@ export function buildOwnerPrintPreviewSample(
       {
         id: 'preview-food',
         name: 'Trà đào',
+        priceName: 'Giá chuẩn',
+        priceVariantCount: 1,
         quantity: 2,
         unitPrice: 15_000,
         totalPrice: 30_000,

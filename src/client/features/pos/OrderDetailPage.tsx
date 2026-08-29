@@ -616,6 +616,8 @@ export function OrderDetailPage({
         ...data.items.map((it) => ({
           id: it.id,
           name: it.productNameSnapshot,
+          priceName: it.variantNameSnapshot,
+          priceVariantCount: it.priceVariantCount,
           quantity: it.quantityMilli / 1000,
           unitPrice: it.unitPriceSnapshot,
           totalPrice: it.netLineTotalVnd,

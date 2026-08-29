@@ -8,6 +8,7 @@ import {
 import { createReceiptDocument } from '@domain/receipt/receipt-document';
 import {
   type PosReceiptPrintData,
+  formatReceiptLineName,
   formatDateOnly,
   formatSegmentDurationLabel,
   formatTimeOnly,
@@ -288,6 +289,12 @@ export function buildEscPosTextReceipt(
   const profile = document.profile;
   const widthChars = isK58 ? 32 : profile.charsPerLineFontA || 48;
   const divider = '-'.repeat(widthChars);
+  const itemWidthChars =
+    template.itemFontSize === 'SMALL'
+      ? isK58
+        ? Math.max(widthChars, Math.floor((widthChars * 4) / 3))
+        : profile.charsPerLineFontB || 64
+      : widthChars;
 
   const vietnameseMode = options.vietnameseMode ?? 'UNACCENTED';
   const isUnaccented = vietnameseMode === 'UNACCENTED';
@@ -305,6 +312,18 @@ export function buildEscPosTextReceipt(
 
   const writeLine = (text = '') => {
     parts.push(encodeText(text + '\n'));
+  };
+
+  const beginItemTextSize = () => {
+    if (template.itemFontSize === 'SMALL') {
+      parts.push(ESC_POS.selectFontB);
+    } else {
+      parts.push(ESC_POS.selectFontA);
+      if (template.itemFontSize === 'LARGE') parts.push(ESC_POS.doubleHeightOn);
+    }
+  };
+  const endItemTextSize = () => {
+    parts.push(ESC_POS.resetSize, ESC_POS.selectFontA);
   };
 
   // 1. Initialize Printer
@@ -447,25 +466,30 @@ export function buildEscPosTextReceipt(
   const timeTotal = timeLines.reduce((sum, line) => sum + line.totalPrice, 0);
   const goodsTotal = productLines.reduce((sum, line) => sum + line.totalPrice, 0);
 
+  if (timeLines.length > 0 || productLines.length > 0) beginItemTextSize();
+
   // 5. Section: Hourly Services (Thông tin giờ)
   if (timeLines.length > 0) {
     parts.push(ESC_POS.boldOn);
     if (isK58) {
-      writeLine(padRow(sanitize('Thong tin gio'), sanitize('T.Tien'), widthChars));
+      writeLine(padRow(sanitize('Thong tin gio'), sanitize('T.Tien'), itemWidthChars));
     } else if (template.showHourlyUnitPrice) {
-      // 21 + 1 + 12 + 1 + 13 = 48
-      const colName = padEndVisual(sanitize('Thong tin gio'), 21);
-      const colPrice = padStartVisual(sanitize('D.Gia'), 12);
-      const colTotal = padStartVisual(sanitize('Thanh tien'), 13);
+      const priceWidth = Math.max(12, Math.round(itemWidthChars * 0.25));
+      const totalWidth = Math.max(13, Math.round(itemWidthChars * 0.27));
+      const nameWidth = itemWidthChars - priceWidth - totalWidth - 2;
+      const colName = padEndVisual(sanitize('Thong tin gio'), nameWidth);
+      const colPrice = padStartVisual(sanitize('D.Gia'), priceWidth);
+      const colTotal = padStartVisual(sanitize('T.Tien'), totalWidth);
       writeLine(`${colName} ${colPrice} ${colTotal}`);
     } else {
-      // 33 + 1 + 14 = 48
-      const colName = padEndVisual(sanitize('Thong tin gio'), 33);
-      const colTotal = padStartVisual(sanitize('Thanh tien'), 14);
+      const totalWidth = Math.max(14, Math.round(itemWidthChars * 0.29));
+      const nameWidth = itemWidthChars - totalWidth - 1;
+      const colName = padEndVisual(sanitize('Thong tin gio'), nameWidth);
+      const colTotal = padStartVisual(sanitize('T.Tien'), totalWidth);
       writeLine(`${colName} ${colTotal}`);
     }
     parts.push(ESC_POS.boldOff);
-    writeLine(divider);
+    writeLine('-'.repeat(itemWidthChars));
 
     for (const line of timeLines) {
       // Table transfers
@@ -474,7 +498,7 @@ export function buildEscPosTextReceipt(
         line.tableSegments.length > 1 &&
         (!line.timeSegments || line.timeSegments.length === 0)
       ) {
-        writeLine(padRow(sanitize('Chuyen ban'), formatVnd(line.totalPrice), widthChars));
+        writeLine(padRow(sanitize('Chuyen ban'), formatVnd(line.totalPrice), itemWidthChars));
         if (template.showHourlyDetail) {
           for (const tSeg of line.tableSegments) {
             const startClock = formatClock(tSeg.startedAtMs);
@@ -508,20 +532,25 @@ export function buildEscPosTextReceipt(
           const segTotalStr = formatVnd(seg.amount);
 
           if (isK58) {
-            writeLine(padRow(timeRange, segTotalStr, widthChars));
+            writeLine(padRow(timeRange, segTotalStr, itemWidthChars));
             writeLine(`  ${dateOnly}  ${durLabel}`);
             if (template.showHourlyUnitPrice) {
               writeLine(`  D.Gia: ${unitPriceStr}`);
             }
           } else if (template.showHourlyUnitPrice) {
-            const colName = padEndVisual(timeRange, 21);
-            const colPrice = padStartVisual(unitPriceStr, 12);
-            const colTotal = padStartVisual(segTotalStr, 13);
+            const priceWidth = Math.max(12, Math.round(itemWidthChars * 0.25));
+            const totalWidth = Math.max(13, Math.round(itemWidthChars * 0.27));
+            const nameWidth = itemWidthChars - priceWidth - totalWidth - 2;
+            const colName = padEndVisual(timeRange, nameWidth);
+            const colPrice = padStartVisual(unitPriceStr, priceWidth);
+            const colTotal = padStartVisual(segTotalStr, totalWidth);
             writeLine(`${colName} ${colPrice} ${colTotal}`);
             writeLine(`  ${dateOnly}  ${durLabel}`);
           } else {
-            const colName = padEndVisual(timeRange, 33);
-            const colTotal = padStartVisual(segTotalStr, 14);
+            const totalWidth = Math.max(14, Math.round(itemWidthChars * 0.29));
+            const nameWidth = itemWidthChars - totalWidth - 1;
+            const colName = padEndVisual(timeRange, nameWidth);
+            const colTotal = padStartVisual(segTotalStr, totalWidth);
             writeLine(`${colName} ${colTotal}`);
             writeLine(`  ${dateOnly}  ${durLabel}`);
           }
@@ -534,18 +563,23 @@ export function buildEscPosTextReceipt(
         const totalStr = formatVnd(line.totalPrice);
 
         if (isK58) {
-          writeLine(padRow(lineSummary, totalStr, widthChars));
+          writeLine(padRow(lineSummary, totalStr, itemWidthChars));
           if (template.showHourlyUnitPrice) {
             writeLine(`  D.Gia: ${unitPriceStr}`);
           }
         } else if (template.showHourlyUnitPrice) {
-          const colName = padEndVisual(lineSummary, 21);
-          const colPrice = padStartVisual(unitPriceStr, 12);
-          const colTotal = padStartVisual(totalStr, 13);
+          const priceWidth = Math.max(12, Math.round(itemWidthChars * 0.25));
+          const totalWidth = Math.max(13, Math.round(itemWidthChars * 0.27));
+          const nameWidth = itemWidthChars - priceWidth - totalWidth - 2;
+          const colName = padEndVisual(lineSummary, nameWidth);
+          const colPrice = padStartVisual(unitPriceStr, priceWidth);
+          const colTotal = padStartVisual(totalStr, totalWidth);
           writeLine(`${colName} ${colPrice} ${colTotal}`);
         } else {
-          const colName = padEndVisual(lineSummary, 33);
-          const colTotal = padStartVisual(totalStr, 14);
+          const totalWidth = Math.max(14, Math.round(itemWidthChars * 0.29));
+          const nameWidth = itemWidthChars - totalWidth - 1;
+          const colName = padEndVisual(lineSummary, nameWidth);
+          const colTotal = padStartVisual(totalStr, totalWidth);
           writeLine(`${colName} ${colTotal}`);
         }
 
@@ -558,52 +592,68 @@ export function buildEscPosTextReceipt(
         }
       }
     }
-    writeLine(divider);
+    writeLine('-'.repeat(itemWidthChars));
   }
 
   // 6. Section: Products / Goods (Mặt hàng)
   if (productLines.length > 0) {
     const isSeparateCol =
       !isK58 && template.showItemUnitPrice && template.itemUnitPricePlacement === 'SEPARATE_COLUMN';
+    const productContentWidth = template.showItemTableBorder
+      ? Math.max(1, itemWidthChars - 2)
+      : itemWidthChars;
+    const productBorder = `+${'-'.repeat(productContentWidth)}+`;
+    const writeProductLine = (text = '') => {
+      writeLine(
+        template.showItemTableBorder ? `|${padEndVisual(text, productContentWidth)}|` : text,
+      );
+    };
+    const writeProductWrapped = (text: string) => {
+      for (const wrappedLine of wrapTextToWidth(text, productContentWidth)) {
+        writeProductLine(wrappedLine);
+      }
+    };
 
     // Layout configuration
-    let nameWidth = 27;
-    let qtyWidth = 5;
-    let priceWidth = 10;
-    let totalWidth = 12;
+    let nameWidth: number;
+    let qtyWidth: number;
+    let priceWidth: number;
+    let totalWidth: number;
+
+    if (template.showItemTableBorder) writeLine(productBorder);
 
     parts.push(ESC_POS.boldOn);
     if (isK58) {
-      nameWidth = 16;
-      qtyWidth = 3;
-      totalWidth = 11;
+      qtyWidth = Math.max(3, Math.round(productContentWidth * 0.095));
+      totalWidth = Math.max(11, Math.round(productContentWidth * 0.34));
+      priceWidth = 0;
+      nameWidth = productContentWidth - qtyWidth - totalWidth - 2;
       const colName = padEndVisual(sanitize('Mat hang'), nameWidth);
       const colQty = padStartVisual(sanitize('SL'), qtyWidth);
       const colTotal = padStartVisual(sanitize('T.Tien'), totalWidth);
-      writeLine(`${colName} ${colQty} ${colTotal}`);
+      writeProductLine(`${colName} ${colQty} ${colTotal}`);
     } else if (isSeparateCol) {
-      // 18 + 1 + 5 + 1 + 10 + 1 + 12 = 48
-      nameWidth = 18;
-      qtyWidth = 5;
-      priceWidth = 10;
-      totalWidth = 12;
+      qtyWidth = Math.max(5, Math.round(productContentWidth * 0.105));
+      priceWidth = Math.max(10, Math.round(productContentWidth * 0.21));
+      totalWidth = Math.max(12, Math.round(productContentWidth * 0.25));
+      nameWidth = productContentWidth - qtyWidth - priceWidth - totalWidth - 3;
       const colName = padEndVisual(sanitize('Mat hang'), nameWidth);
       const colQty = padStartVisual(sanitize('SL/TL'), qtyWidth);
       const colPrice = padStartVisual(sanitize('D.Gia'), priceWidth);
-      const colTotal = padStartVisual(sanitize('Thanh tien'), totalWidth);
-      writeLine(`${colName} ${colQty} ${colPrice} ${colTotal}`);
+      const colTotal = padStartVisual(sanitize('T.tien'), totalWidth);
+      writeProductLine(`${colName} ${colQty} ${colPrice} ${colTotal}`);
     } else {
-      // 27 + 1 + 5 + 1 + 14 = 48
-      nameWidth = 27;
-      qtyWidth = 5;
-      totalWidth = 14;
+      qtyWidth = Math.max(5, Math.round(productContentWidth * 0.105));
+      totalWidth = Math.max(14, Math.round(productContentWidth * 0.29));
+      priceWidth = 0;
+      nameWidth = productContentWidth - qtyWidth - totalWidth - 2;
       const colName = padEndVisual(sanitize('Mat hang'), nameWidth);
       const colQty = padStartVisual(sanitize('SL/TL'), qtyWidth);
-      const colTotal = padStartVisual(sanitize('Thanh tien'), totalWidth);
-      writeLine(`${colName} ${colQty} ${colTotal}`);
+      const colTotal = padStartVisual(sanitize('T.tien'), totalWidth);
+      writeProductLine(`${colName} ${colQty} ${colTotal}`);
     }
     parts.push(ESC_POS.boldOff);
-    writeLine(divider);
+    writeLine(template.showItemTableBorder ? productBorder : '-'.repeat(itemWidthChars));
 
     let itemIdx = 1;
     for (const line of productLines) {
@@ -613,7 +663,7 @@ export function buildEscPosTextReceipt(
       itemIdx++;
 
       const fullName = sanitize(
-        `${prefix}${line.name}${template.showItemPriceName ? ' (Gia chuan)' : ''}`,
+        `${prefix}${formatReceiptLineName(line, template.showItemPriceName)}`,
       );
       const qtyStr = String(line.quantity);
       const priceStr = formatVnd(line.unitPrice);
@@ -626,14 +676,14 @@ export function buildEscPosTextReceipt(
         const colName = padEndVisual(nameLines[0]!, nameWidth);
         const colQty = padStartVisual(qtyStr, qtyWidth);
         const colTotal = padStartVisual(totalStr, totalWidth);
-        writeLine(`${colName} ${colQty} ${colTotal}`);
+        writeProductLine(`${colName} ${colQty} ${colTotal}`);
 
         // Remaining lines of name
         for (let i = 1; i < nameLines.length; i++) {
-          writeLine(nameLines[i]!);
+          writeProductLine(nameLines[i]!);
         }
         if (template.showItemUnitPrice) {
-          writeLine(`  D.Gia: ${priceStr}`);
+          writeProductLine(`  D.Gia: ${priceStr}`);
         }
       } else if (isSeparateCol) {
         // Line 1: First part of name + Qty + Price + Total
@@ -641,52 +691,54 @@ export function buildEscPosTextReceipt(
         const colQty = padStartVisual(qtyStr, qtyWidth);
         const colPrice = padStartVisual(priceStr, priceWidth);
         const colTotal = padStartVisual(totalStr, totalWidth);
-        writeLine(`${colName} ${colQty} ${colPrice} ${colTotal}`);
+        writeProductLine(`${colName} ${colQty} ${colPrice} ${colTotal}`);
 
         // Remaining lines of name
         for (let i = 1; i < nameLines.length; i++) {
-          writeLine(nameLines[i]!);
+          writeProductLine(nameLines[i]!);
         }
       } else {
         // Line 1: First part of name + Qty + Total
         const colName = padEndVisual(nameLines[0]!, nameWidth);
         const colQty = padStartVisual(qtyStr, qtyWidth);
         const colTotal = padStartVisual(totalStr, totalWidth);
-        writeLine(`${colName} ${colQty} ${colTotal}`);
+        writeProductLine(`${colName} ${colQty} ${colTotal}`);
 
         // Remaining lines of name
         for (let i = 1; i < nameLines.length; i++) {
-          writeLine(nameLines[i]!);
+          writeProductLine(nameLines[i]!);
         }
         if (template.showItemUnitPrice) {
-          writeLine(`  Don gia: ${priceStr}`);
+          writeProductLine(`  Don gia: ${priceStr}`);
         }
       }
 
       // Sublines: Note, Discounts
       if (template.showItemNote && line.note) {
-        writeLine(sanitize(`  * G/chu: ${line.note}`));
+        writeProductWrapped(sanitize(`  * G/chu: ${line.note}`));
       }
       if (template.showItemDiscounts && (line.discountAmount ?? 0) > 0) {
         if (line.adjustmentSource === 'PROMOTION_GIFT') {
-          writeLine(
+          writeProductWrapped(
             sanitize(`  * Qua tang KM: -${formatVnd(line.discountAmount ?? 0)}${currencyUnit}`),
           );
           if (line.promotionName) {
-            writeLine(sanitize(`  * Chuong trinh: ${line.promotionName}`));
+            writeProductWrapped(sanitize(`  * Chuong trinh: ${line.promotionName}`));
           }
         } else {
-          writeLine(
+          writeProductWrapped(
             sanitize(`  * Giam thu cong: -${formatVnd(line.discountAmount ?? 0)}${currencyUnit}`),
           );
           if (line.discountReason) {
-            writeLine(sanitize(`  * Ly do: ${line.discountReason}`));
+            writeProductWrapped(sanitize(`  * Ly do: ${line.discountReason}`));
           }
         }
       }
     }
-    writeLine(divider);
+    writeLine(template.showItemTableBorder ? productBorder : '-'.repeat(itemWidthChars));
   }
+
+  if (timeLines.length > 0 || productLines.length > 0) endItemTextSize();
 
   // 7. Summary & Totals
   if (timeLines.length > 0) {

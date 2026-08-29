@@ -449,6 +449,7 @@ interface OrderQuote {
     productType: 'QUANTITY' | 'WEIGHT';
     productName: string;
     variantName: string | null;
+    priceVariantCount: number;
     unitName: string | null;
     unitPriceVnd: number;
     quantityMilli: number;
@@ -883,6 +884,7 @@ interface InvoiceDetail {
     discountAmount: number;
     lineTotal: number;
     grossLineTotal: number;
+    priceVariantCount: number;
     snapshotJson: string;
   }>;
   payment: {

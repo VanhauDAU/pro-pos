@@ -1064,6 +1064,29 @@ export class PosRepository {
       }>();
   }
 
+  getPrintContext(storeId: string) {
+    return this.db
+      .prepare(
+        `SELECT s.id AS storeId, s.name AS storeName,
+                ss.phone AS storePhone, ss.address AS storeAddress,
+                ss.bank_name AS bankName, ss.bank_account_number AS bankAccountNumber,
+                ss.bank_account_name AS bankAccountName
+         FROM stores s
+         LEFT JOIN store_settings ss ON ss.store_id = s.id
+         WHERE s.id = ? LIMIT 1`,
+      )
+      .bind(storeId)
+      .first<{
+        storeId: string;
+        storeName: string;
+        storePhone: string | null;
+        storeAddress: string | null;
+        bankName: string | null;
+        bankAccountNumber: string | null;
+        bankAccountName: string | null;
+      }>();
+  }
+
   findStoreBankSettings(storeId: string) {
     return this.db
       .prepare(

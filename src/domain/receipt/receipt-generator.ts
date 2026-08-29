@@ -2,9 +2,9 @@ import {
   type PaperSize,
   type StorePrintSettings,
   getReceiptPrintProfile,
-  parsePrintTemplateConfigs,
   parsePrinterDeviceConfig,
 } from '@contracts/store';
+import { createReceiptDocument } from './receipt-document';
 
 export interface PosReceiptTimeSegment {
   name: string;
@@ -225,10 +225,9 @@ export function buildEscPosReceipt(
   autoCut: boolean;
   openCashDrawer: boolean;
 } {
-  const { data, printSettings, storeInfo } = options;
-  const templateConfigs = parsePrintTemplateConfigs(printSettings?.templateConfigJson);
-  const template =
-    data.receiptType === 'PROVISIONAL' ? templateConfigs.PROVISIONAL : templateConfigs.PAYMENT;
+  const document = createReceiptDocument(options);
+  const { data, template } = document;
+  const printSettings = options.printSettings;
 
   const printerConfig = parsePrinterDeviceConfig(printSettings?.printersJson);
   const paperSize: PaperSize = printSettings?.paperSize || printerConfig.paperSize || 'K80';
@@ -247,13 +246,12 @@ export function buildEscPosReceipt(
   let raw = escInit;
 
   // 1. Header (Store Name, Address, Phone)
-  const storeName = storeInfo?.storeName || 'PRO POS';
-  const storeAddress = printSettings?.customAddressEnabled
-    ? printSettings.customAddress
-    : storeInfo?.address;
-  const storePhone = storeInfo?.phone;
+  const storeName = document.store.name;
+  const storeAddress = document.store.address;
+  const storePhone = document.store.phone;
 
-  raw += escCenter + escBoldOn + storeName.toUpperCase() + '\n' + escBoldOff;
+  raw += escCenter;
+  if (storeName) raw += escBoldOn + storeName.toUpperCase() + '\n' + escBoldOff;
   if (storeAddress) raw += storeAddress + '\n';
   if (storePhone) raw += `SĐT: ${storePhone}\n`;
 
@@ -1058,5 +1056,46 @@ export function buildPrintDataFromInvoice(rawInvoiceData: any): PosReceiptPrintD
           .reduce((sum: number, a: any) => sum + (a.amountVnd ?? a.amount ?? 0), 0)
       : 0,
     lines,
+  };
+}
+
+export function buildPrintDataFromDebtPayment(rawPaymentData: unknown): PosReceiptPrintData {
+  if (!rawPaymentData || typeof rawPaymentData !== 'object') {
+    throw new Error('Dữ liệu phiếu thu công nợ không hợp lệ.');
+  }
+  const payment = rawPaymentData as {
+    id?: string;
+    referenceCode?: string | null;
+    amountVnd?: number;
+    paymentMethod?: 'CASH' | 'BANK_TRANSFER';
+    createdAt?: number;
+    customerName?: string | null;
+    customerPhone?: string | null;
+    customerAddress?: string | null;
+    debtBeforeVnd?: number;
+    debtAfterVnd?: number;
+  };
+  if (!payment.id || !payment.amountVnd || payment.amountVnd <= 0) {
+    throw new Error('Dữ liệu phiếu thu công nợ không đầy đủ.');
+  }
+  const referenceCode = payment.referenceCode || payment.id;
+  return {
+    receiptType: 'DEBT_PAYMENT',
+    orderCode: referenceCode,
+    invoiceCode: referenceCode,
+    orderType: 'TAKEAWAY',
+    customerName: payment.customerName ?? null,
+    guestPhone: payment.customerPhone ?? null,
+    guestAddress: payment.customerAddress ?? null,
+    issuedAtMs: payment.createdAt ?? Date.now(),
+    subtotal: payment.debtBeforeVnd ?? payment.amountVnd,
+    discountTotal: 0,
+    total: payment.amountVnd,
+    paymentMethod: payment.paymentMethod ?? null,
+    debtBeforeVnd: payment.debtBeforeVnd ?? payment.amountVnd,
+    debtPaymentVnd: payment.amountVnd,
+    debtAfterVnd: payment.debtAfterVnd ?? 0,
+    referenceCode,
+    lines: [],
   };
 }

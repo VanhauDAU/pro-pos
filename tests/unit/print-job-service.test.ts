@@ -14,9 +14,16 @@ function createMockDb() {
         bind(...args: any[]) {
           return {
             async first<T = any>(): Promise<T | null> {
-              if (sql.includes('invoices') || sql.includes('orders')) {
+              if (sql.includes('FROM invoices') || sql.includes('FROM takeaway_invoices')) {
                 const [storeId, docId] = args;
-                if (invoices.has(`${storeId}:${docId}`) || orders.has(`${storeId}:${docId}`)) {
+                if (invoices.has(`${storeId}:${docId}`)) {
+                  return { id: docId } as T;
+                }
+                return null;
+              }
+              if (sql.includes('FROM orders') || sql.includes('FROM takeaway_orders')) {
+                const [storeId, docId] = args;
+                if (orders.has(`${storeId}:${docId}`)) {
                   return { id: docId } as T;
                 }
                 return null;
@@ -205,6 +212,18 @@ describe('PrintJobService', () => {
     });
   });
 
+  it('does not accept an order id for an invoice print job', async () => {
+    await expect(
+      service.createPrintJob({
+        storeId: 'store-1',
+        documentType: 'invoice',
+        documentId: 'ord-100',
+        printerRole: 'receipt',
+        idempotencyKey: 'idemp-invoice-order-mismatch',
+      }),
+    ).rejects.toMatchObject({ code: 'INVOICE_NOT_FOUND', status: 404 });
+  });
+
   it('returns existing print job on duplicate idempotency key without duplicate creation', async () => {
     const job1 = await service.createPrintJob({
       storeId: 'store-1',
@@ -228,7 +247,7 @@ describe('PrintJobService', () => {
   it('handles atomic claim so that only one device wins and the other gets 409 conflict', async () => {
     const job = await service.createPrintJob({
       storeId: 'store-1',
-      documentType: 'order',
+      documentType: 'provisional',
       documentId: 'ord-100',
       printerRole: 'receipt',
       idempotencyKey: 'idemp-claim-race',
@@ -249,7 +268,7 @@ describe('PrintJobService', () => {
   it('progresses lifecycle: CLAIMED -> PRINTING -> COMPLETED', async () => {
     const job = await service.createPrintJob({
       storeId: 'store-1',
-      documentType: 'order',
+      documentType: 'provisional',
       documentId: 'ord-200',
       printerRole: 'receipt',
       idempotencyKey: 'idemp-flow',

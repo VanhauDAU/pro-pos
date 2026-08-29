@@ -132,6 +132,12 @@ import { toast } from 'sonner';
 import type { CustomerSummary } from '@contracts/customer';
 import type { PosPromotionOption, PromotionPreviewResult } from '@contracts/promotion';
 import { PushNotificationControl } from '@client/features/pwa/PushNotificationControl';
+import {
+  invoicePrintIdentity,
+  PaymentSubmissionGuard,
+  printIdentityAfterCheckout,
+  provisionalPrintIdentity,
+} from '@client/lib/print-document-identity';
 
 const OwnerInvoicesPage = lazy(async () => {
   const module = await import('@client/features/owner/OwnerInvoicesPage');
@@ -231,7 +237,7 @@ const StaffPrinterSettingsPage = lazy(async () => {
 async function printReceipt(
   options: PosReceiptPrintOptions,
   documentIdentity?: {
-    type: 'invoice' | 'order' | 'provisional' | 'debt_payment';
+    type: 'invoice' | 'provisional' | 'debt_payment';
     id: string;
   },
   csrfToken?: string | null,
@@ -6068,10 +6074,7 @@ function OrderEditor({
           bankAccountName: staffContext.data?.bankAccountName ?? null,
         },
       },
-      {
-        type: 'order',
-        id: quote.data.order.id,
-      },
+      provisionalPrintIdentity(quote.data.order.id),
     );
     if (result.success) messageApi.success('Đã gửi lệnh in phiếu tạm tính!');
     else messageApi.error(result.message ?? 'Không thể in phiếu tạm tính.');
@@ -11197,10 +11200,10 @@ function InvoicePage() {
           onClick={async () => {
             setPrinting(true);
             try {
-              const result = await printReceipt(invoicePrintOptions, {
-                type: 'invoice',
-                id: data.invoice.id,
-              });
+              const result = await printReceipt(
+                invoicePrintOptions,
+                invoicePrintIdentity(data.invoice.id),
+              );
               if (result.success) messageApi.success('Đã gửi lệnh in hóa đơn!');
               else messageApi.error(result.message ?? 'Không thể in hóa đơn.');
             } finally {
@@ -11331,6 +11334,7 @@ function PaymentPage({
   const [submitting, setSubmitting] = useState(false);
   const [paymentSuccessData, setPaymentSuccessData] = useState<{
     orderId: string;
+    invoiceId: string;
     orderType: 'DINE_IN' | 'TAKEAWAY';
     invoiceCode: string;
     tableName: string;
@@ -11350,6 +11354,7 @@ function PaymentPage({
   });
   const checkoutPreparationStartedRef = useRef(false);
   const completionInFlightRef = useRef(false);
+  const paymentSubmissionGuardRef = useRef(new PaymentSubmissionGuard());
   const csrf = auth.csrfToken!;
 
   const quote = useQuery(
@@ -11448,10 +11453,7 @@ function PaymentPage({
   const handlePrintAndComplete = useCallback(() => {
     if (!paymentSuccessData) return;
     const { receiptOptions } = paymentSuccessData;
-    void printReceipt(receiptOptions, {
-      type: 'order',
-      id: paymentSuccessData.orderId,
-    })
+    void printReceipt(receiptOptions, invoicePrintIdentity(paymentSuccessData.invoiceId))
       .then((printResult) => {
         if (!printResult.success) {
           messageApi.warning(
@@ -11789,7 +11791,9 @@ function PaymentPage({
       messageApi.warning('Cửa hàng chưa có tài khoản ngân hàng nhận chuyển khoản.');
       return;
     }
+    if (!paymentSubmissionGuardRef.current.tryStart()) return;
     setSubmitting(true);
+    let paymentCompleted = false;
     try {
       const result = await jsonRequest<{
         invoiceId: string;
@@ -11832,6 +11836,8 @@ function PaymentPage({
       const changedTables = new Map(
         (result.tableSummaries ?? []).map((table) => [table.id, table]),
       );
+      paymentCompleted = true;
+      const paymentPrintIdentity = printIdentityAfterCheckout(result, andPrint);
       if (changedTables.size > 0) {
         queryClient.setQueryData<PosTable[]>(['pos-tables'], (cached) => {
           if (!cached) return cached;
@@ -11877,6 +11883,7 @@ function PaymentPage({
       playPosSound('PAYMENT_SUCCESS', { dedupeKey: `payment:${resolvedCode}` });
       setPaymentSuccessData({
         orderId: quote.data.order.id,
+        invoiceId: result.invoiceId,
         orderType: quote.data.order.orderType,
         invoiceCode: resolvedCode,
         tableName:
@@ -11889,11 +11896,8 @@ function PaymentPage({
         receiptOptions,
         shownAt: Date.now(),
       });
-      if (andPrint) {
-        void printReceipt(receiptOptions, {
-          type: 'order',
-          id: quote.data.order.id,
-        })
+      if (paymentPrintIdentity) {
+        void printReceipt(receiptOptions, paymentPrintIdentity)
           .then((printResult) => {
             setPaymentSuccessData((current) =>
               current?.orderId === completedOrderId
@@ -11945,6 +11949,9 @@ function PaymentPage({
         messageApi.error(errorText(error));
       }
     } finally {
+      // Keep the guard locked after a successful checkout. Printing/reprinting is a
+      // separate action and must never re-enter checkout for the same order.
+      paymentSubmissionGuardRef.current.finish(paymentCompleted);
       setSubmitting(false);
     }
   };

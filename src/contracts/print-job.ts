@@ -3,7 +3,7 @@ import { z } from 'zod';
 export type PrintJobStatus =
   'QUEUED' | 'CLAIMED' | 'PRINTING' | 'COMPLETED' | 'FAILED' | 'UNCERTAIN' | 'CANCELLED';
 
-export type PrintJobDocumentType = 'invoice' | 'order' | 'provisional' | 'debt_payment';
+export type PrintJobDocumentType = 'invoice' | 'provisional' | 'debt_payment';
 
 export type PrintJobRole = 'receipt' | 'temporary_bill' | 'kitchen' | 'bar';
 
@@ -30,8 +30,8 @@ export interface PrintJob {
 }
 
 export const createPrintJobSchema = z.object({
-  documentType: z.enum(['invoice', 'order', 'provisional', 'debt_payment'], {
-    error: 'Loại tài liệu in không hợp lệ (hỗ trợ invoice, order, provisional, debt_payment)',
+  documentType: z.enum(['invoice', 'provisional', 'debt_payment'], {
+    error: 'Loại tài liệu in không hợp lệ (hỗ trợ invoice, provisional, debt_payment)',
   }),
   documentId: z.string().min(1, 'Mã tài liệu không được để trống'),
   printerRole: z.string().min(1).default('receipt'),

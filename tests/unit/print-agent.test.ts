@@ -11,8 +11,82 @@ import {
 import type { AgentApiClient } from '../../apps/print-agent/src/api-client';
 import type { PrintJob } from '../../src/contracts/print-job';
 import { PrinterError } from '../../src/printing/printer-errors';
+import { AgentPrintCache } from '../../apps/print-agent/src/core/print-cache';
 
 describe('Pro POS Print Agent Unit Tests', () => {
+  it('single-flights bootstrap refresh and fences invalidation that arrives mid-refresh', async () => {
+    let releaseFirst!: (value: unknown) => void;
+    const first = new Promise((resolve) => {
+      releaseFirst = resolve;
+    });
+    const get = vi
+      .fn()
+      .mockImplementationOnce(() => first)
+      .mockResolvedValueOnce({
+        context: { storeName: 'Store v2' },
+        printSettings: { storeId: 'STORE-1', updatedAt: 2 },
+        configVersion: 2,
+      });
+    const cache = new AgentPrintCache({ get } as never);
+
+    const a = cache.resolve();
+    const b = cache.resolve();
+    cache.invalidate(2);
+    releaseFirst({
+      context: { storeName: 'Store v1' },
+      printSettings: { storeId: 'STORE-1', updatedAt: 1 },
+      configVersion: 1,
+    });
+
+    await expect(a).resolves.toMatchObject({ configVersion: 2 });
+    await expect(b).resolves.toMatchObject({ configVersion: 2 });
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses stale bootstrap only inside the configured maximum stale age', async () => {
+    let now = 0;
+    const get = vi
+      .fn()
+      .mockResolvedValueOnce({
+        context: { storeName: 'Cached Store' },
+        printSettings: { storeId: 'STORE-1', updatedAt: 1 },
+        configVersion: 1,
+      })
+      .mockRejectedValue(new Error('bootstrap offline'));
+    const cache = new AgentPrintCache({ get } as never, {
+      ttlMs: 60_000,
+      maxStaleMs: 300_000,
+      now: () => now,
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await cache.resolve();
+    now = 61_000;
+    await expect(cache.resolve()).resolves.toMatchObject({ configVersion: 1 });
+    now = 300_001;
+    await expect(cache.resolve()).rejects.toMatchObject({ name: 'PrintBootstrapStaleError' });
+    warn.mockRestore();
+  });
+
+  it('caches raster work by media, paper size and config version', async () => {
+    const cache = new AgentPrintCache({} as never);
+    const loader = vi.fn(async () => new Uint8Array([1, 2, 3]));
+    const key = {
+      kind: 'logo' as const,
+      mediaId: 'MEDIA-1',
+      paperSize: 'K80',
+      configVersion: 1,
+      width: 200,
+      height: 100,
+    };
+
+    await cache.getRaster(key, loader);
+    await cache.getRaster(key, loader);
+    await cache.getRaster({ ...key, configVersion: 2 }, loader);
+
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
   it('uses reliable text encoding when a printer reports the problematic WPC1258 mode', () => {
     expect(resolveAgentVietnameseMode('WPC1258')).toBe('UNACCENTED');
     expect(resolveAgentVietnameseMode('UNACCENTED')).toBe('UNACCENTED');
@@ -75,6 +149,25 @@ describe('Pro POS Print Agent Unit Tests', () => {
   it('continues printing text when an optional logo cannot be loaded', async () => {
     const post = vi.fn(async () => ({}));
     const get = vi.fn(async (path: string) => {
+      if (path === '/api/v1/pos/print-bootstrap') {
+        return {
+          context: null,
+          configVersion: 1,
+          printSettings: {
+            storeId: 'STORE-1',
+            logoMediaId: 'LOGO-1',
+            paperSize: 'K80',
+            printersJson: JSON.stringify({
+              networkIp: '192.168.1.10',
+              networkPort: 9100,
+              paperSize: 'K80',
+              vietnameseMode: 'UNACCENTED',
+            }),
+            paymentCopyCount: 1,
+            provisionalCopyCount: 1,
+          },
+        };
+      }
       if (path === '/api/v1/pos/context') return null;
       if (path === '/api/v1/pos/print-settings') {
         return {
@@ -134,6 +227,19 @@ describe('Pro POS Print Agent Unit Tests', () => {
   it('marks a job UNCERTAIN rather than retrying when socket failure follows a write attempt', async () => {
     const post = vi.fn(async () => ({}));
     const get = vi.fn(async (path: string) => {
+      if (path === '/api/v1/pos/print-bootstrap') {
+        return {
+          context: { storeName: 'ĐẠI BILLIARDS' },
+          configVersion: 1,
+          printSettings: {
+            storeId: 'STORE-1',
+            paperSize: 'K80',
+            printersJson: JSON.stringify({ networkIp: '192.168.1.10', networkPort: 9100 }),
+            paymentCopyCount: 1,
+            provisionalCopyCount: 1,
+          },
+        };
+      }
       if (path === '/api/v1/pos/context') return { storeName: 'ĐẠI BILLIARDS' };
       if (path === '/api/v1/pos/print-settings') {
         return {

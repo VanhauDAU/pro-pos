@@ -13,6 +13,8 @@ import { createReceiptDocument } from '@domain/receipt/receipt-document';
 import type { PrintJob } from '@contracts/print-job';
 import { parsePrinterDeviceConfig, type StorePrintSettings } from '@contracts/store';
 import { PrinterError, type PrinterFailureStage } from '@printing/printer-errors';
+import type { PrintStoreContext } from '@contracts/print-bootstrap';
+import { AgentPrintCache } from './core/print-cache';
 
 type PrintDocumentApi = Pick<AgentApiClient, 'get'>;
 
@@ -102,35 +104,18 @@ export async function loadPrintDataForJob(
   }
 }
 
-interface PrintStoreContext {
-  storeName?: string | null;
-  storeAddress?: string | null;
-  storePhone?: string | null;
-  bankName?: string | null;
-  bankAccountNumber?: string | null;
-  bankAccountName?: string | null;
-  store?: {
-    name?: string | null;
-    address?: string | null;
-    phone?: string | null;
-    bankName?: string | null;
-    bankAccountNumber?: string | null;
-    bankAccountName?: string | null;
-  };
-}
-
 interface AgentPrintTransport {
   send(data: Uint8Array, options: { host: string; port?: number }): Promise<void>;
 }
 
 export class JobProcessor {
   private readonly inFlight = new Set<string>();
-  private readonly rasterCache = new Map<string, Uint8Array>();
 
   constructor(
     private readonly config: PrintAgentConfig,
     private readonly apiClient: AgentApiClient,
     private readonly transport: AgentPrintTransport = new AgentTcpTransport(),
+    private readonly printCache: AgentPrintCache = new AgentPrintCache(apiClient),
   ) {}
 
   private async loadOptionalRaster(
@@ -138,23 +123,28 @@ export class JobProcessor {
     maximumWidthDots: number,
     maximumHeightDots: number,
     label: string,
+    paperSize: string,
+    configVersion: number,
   ): Promise<Uint8Array | null> {
     if (!mediaId) return null;
-    const cacheKey = `media:${mediaId}:${maximumWidthDots}x${maximumHeightDots}`;
-    const cached = this.rasterCache.get(cacheKey);
-    if (cached) return cached;
     try {
-      const media = await this.apiClient.getBytes(`/api/v1/pos/print-media/${mediaId}`);
-      if (media.contentType && !media.contentType.includes('png')) {
-        throw new Error(`định dạng ${media.contentType} chưa được hỗ trợ; hãy tải PNG`);
-      }
-      const raster = pngBytesToEscPosRaster(media.bytes, maximumWidthDots, maximumHeightDots);
-      if (this.rasterCache.size >= 32) {
-        const oldestKey = this.rasterCache.keys().next().value as string | undefined;
-        if (oldestKey) this.rasterCache.delete(oldestKey);
-      }
-      this.rasterCache.set(cacheKey, raster);
-      return raster;
+      return await this.printCache.getRaster(
+        {
+          kind: label === 'logo' ? 'logo' : 'bottom',
+          mediaId,
+          paperSize,
+          configVersion,
+          width: maximumWidthDots,
+          height: maximumHeightDots,
+        },
+        async () => {
+          const media = await this.apiClient.getBytes(`/api/v1/pos/print-media/${mediaId}`);
+          if (media.contentType && !media.contentType.includes('png')) {
+            throw new Error(`định dạng ${media.contentType} chưa được hỗ trợ; hãy tải PNG`);
+          }
+          return pngBytesToEscPosRaster(media.bytes, maximumWidthDots, maximumHeightDots);
+        },
+      );
     } catch (error) {
       console.warn(`[PrintAgent] Bỏ qua ${label} optional ${mediaId}: ${errorMessage(error)}`);
       return null;
@@ -164,23 +154,23 @@ export class JobProcessor {
   private async loadOptionalVietQrRaster(
     url: string | null,
     maximumWidthDots: number,
+    paperSize: string,
+    configVersion: number,
   ): Promise<Uint8Array | null> {
     if (!url) return null;
-    const cacheKey = `vietqr:${url}`;
-    const cached = this.rasterCache.get(cacheKey);
-    if (cached) return cached;
     try {
-      const raster = pngBytesToEscPosRaster(
-        await this.apiClient.getPublicPng(url),
-        maximumWidthDots,
-        500,
+      return await this.printCache.getRaster(
+        {
+          kind: 'vietqr',
+          mediaId: url,
+          paperSize,
+          configVersion,
+          width: maximumWidthDots,
+          height: 500,
+        },
+        async () =>
+          pngBytesToEscPosRaster(await this.apiClient.getPublicPng(url), maximumWidthDots, 500),
       );
-      if (this.rasterCache.size >= 32) {
-        const oldestKey = this.rasterCache.keys().next().value as string | undefined;
-        if (oldestKey) this.rasterCache.delete(oldestKey);
-      }
-      this.rasterCache.set(cacheKey, raster);
-      return raster;
     } catch (error) {
       console.warn(`[PrintAgent] Bỏ qua VietQR optional: ${errorMessage(error)}`);
       return null;
@@ -221,23 +211,17 @@ export class JobProcessor {
       }
 
       let context: PrintStoreContext | null;
-      try {
-        context = await this.apiClient.get<PrintStoreContext>('/api/v1/pos/context');
-      } catch (error) {
-        throw new PrintJobProcessingError(
-          'STORE_CONTEXT_FETCH_FAILED',
-          `Không thể nạp thông tin cửa hàng: ${errorMessage(error)}`,
-          { cause: error },
-        );
-      }
-
       let printSettings: StorePrintSettings;
+      let configVersion: number;
       try {
-        printSettings = await this.apiClient.get<StorePrintSettings>('/api/v1/pos/print-settings');
+        const bootstrap = await this.printCache.resolve();
+        context = bootstrap.context;
+        printSettings = bootstrap.printSettings;
+        configVersion = bootstrap.configVersion;
       } catch (error) {
         throw new PrintJobProcessingError(
-          'PRINT_SETTINGS_FETCH_FAILED',
-          `Không thể nạp cấu hình in Owner: ${errorMessage(error)}`,
+          'PRINT_BOOTSTRAP_FETCH_FAILED',
+          `Không thể nạp bootstrap in: ${errorMessage(error)}`,
           { cause: error },
         );
       }
@@ -303,6 +287,8 @@ export class JobProcessor {
               ),
               horizontalLogo ? (receiptDocument.isK58 ? 72 : 96) : 180,
               'logo',
+              paperSize,
+              configVersion,
             )
           : null,
         printSettings.bottomImageType === 'UPLOAD' && receiptDocument.media.bottomImageUrl
@@ -311,10 +297,17 @@ export class JobProcessor {
               maximumDots,
               500,
               'bottom image',
+              paperSize,
+              configVersion,
             )
           : receiptDocument.media.vietQrPayload
             ? null
-            : this.loadOptionalVietQrRaster(receiptDocument.media.bottomImageUrl, maximumDots),
+            : this.loadOptionalVietQrRaster(
+                receiptDocument.media.bottomImageUrl,
+                maximumDots,
+                paperSize,
+                configVersion,
+              ),
       ]);
 
       let escposBytes: Uint8Array;

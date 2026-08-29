@@ -2,12 +2,39 @@ import { AppError } from '@server/lib/app-error';
 import { StoreRepository } from '@server/repositories/store-repository';
 import { AuditRepository, type AuditContext } from '@server/repositories/audit-repository';
 import type { BankAccountDto, BankAccountInput, StorePrintSettings } from '@contracts/store';
+import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
+import type { PrintConfigChange } from '@server/repositories/store-repository';
 
 export class StoreService {
   private readonly repository: StoreRepository;
+  private readonly dispatcher: RealtimeDispatcher;
 
   constructor(private readonly env: CloudflareBindings) {
     this.repository = new StoreRepository(env.DB);
+    this.dispatcher = new RealtimeDispatcher(env);
+  }
+
+  private configChange(
+    storeId: string,
+    now: number,
+    auditContext?: AuditContext,
+  ): PrintConfigChange {
+    return {
+      id: crypto.randomUUID(),
+      storeId,
+      actorUserId: auditContext?.actorUserId ?? null,
+      deviceId: auditContext?.deviceId ?? null,
+      requestId: auditContext?.requestId ?? crypto.randomUUID(),
+      occurredAt: now,
+    };
+  }
+
+  private dispatchPrintConfig(storeId: string) {
+    void this.dispatcher.dispatchStore(storeId).catch(() => undefined);
+  }
+
+  async getPrintConfigVersion(storeId: string): Promise<number> {
+    return Number((await this.repository.getPrintConfigVersion(storeId))?.version ?? 0);
   }
 
   private bankAccountDto(
@@ -71,6 +98,7 @@ export class StoreService {
         values: input.values,
         isDefault: active.length === 0 || input.values.isDefault,
         now,
+        configChange: this.configChange(input.storeId, now, input.auditContext),
       });
     } catch (error) {
       this.mapBankAccountMutationError(error);
@@ -86,6 +114,7 @@ export class StoreService {
       after,
       now,
     });
+    this.dispatchPrintConfig(input.storeId);
     return { bankAccount: after!, bankAccounts: await this.listBankAccounts(input.storeId) };
   }
 
@@ -115,6 +144,7 @@ export class StoreService {
         isDefault: input.values.isDefault,
         mirrorLegacy: input.values.isDefault || beforeRow.isDefault === 1,
         now,
+        configChange: this.configChange(input.storeId, now, input.auditContext),
       });
     } catch (error) {
       this.mapBankAccountMutationError(error);
@@ -133,6 +163,7 @@ export class StoreService {
       after,
       now,
     });
+    this.dispatchPrintConfig(input.storeId);
     return { bankAccount: after!, bankAccounts: await this.listBankAccounts(input.storeId) };
   }
 
@@ -161,6 +192,7 @@ export class StoreService {
       storeId: input.storeId,
       wasDefault: beforeRow.isDefault === 1,
       now,
+      configChange: this.configChange(input.storeId, now, input.auditContext),
     });
     const before = this.bankAccountDto(beforeRow);
     const after = this.bankAccountDto(
@@ -176,6 +208,7 @@ export class StoreService {
       after,
       now,
     });
+    this.dispatchPrintConfig(input.storeId);
     return { bankAccounts: await this.listBankAccounts(input.storeId) };
   }
 
@@ -212,6 +245,7 @@ export class StoreService {
     await this.repository.updateSettings({
       ...input,
       now,
+      configChange: this.configChange(input.storeId, now, input.auditContext),
     });
     if (input.locationVerificationEnabled !== undefined) {
       await this.repository.updateLocationSettings({
@@ -237,6 +271,7 @@ export class StoreService {
         now,
       });
     }
+    this.dispatchPrintConfig(input.storeId);
     return { storeId: input.storeId, updated: true };
   }
 
@@ -364,6 +399,7 @@ export class StoreService {
       printersJson: input.printersJson ?? null,
       templateConfigJson: input.templateConfigJson ?? null,
       now,
+      configChange: this.configChange(input.storeId, now, input.auditContext),
     });
     if (input.auditContext) {
       const after = await this.getPrintSettings(input.storeId);
@@ -378,6 +414,7 @@ export class StoreService {
         now,
       });
     }
+    this.dispatchPrintConfig(input.storeId);
     return { storeId: input.storeId, updated: true };
   }
 }

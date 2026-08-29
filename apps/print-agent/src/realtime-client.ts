@@ -4,6 +4,7 @@ import type { PrintAgentConfig } from './config';
 import { JobQueue } from './job-queue';
 import { JobProcessor } from './job-processor';
 import type { PrintJob } from '@contracts/print-job';
+import { AgentPrintCache } from './core/print-cache';
 import {
   REALTIME_SCHEMA_VERSION,
   REALTIME_SUBPROTOCOL,
@@ -47,8 +48,9 @@ export class AgentRealtimeClient implements RealtimeConnection {
     private readonly config: PrintAgentConfig,
     private readonly apiClient: AgentApiClient,
     private readonly events: AgentRealtimeEvents = {},
+    private readonly printCache: AgentPrintCache = new AgentPrintCache(apiClient),
   ) {
-    this.processor = new JobProcessor(config, apiClient);
+    this.processor = new JobProcessor(config, apiClient, undefined, printCache);
   }
 
   connect(): void {
@@ -135,7 +137,7 @@ export class AgentRealtimeClient implements RealtimeConnection {
     this.events.onPhase?.('SUBSCRIBED');
     this.events.onPhase?.('SYNCING');
     if (frame.sync?.mode === 'REPLAY') await this.receiveEvents(frame.sync.events);
-    const synced = await this.recoverPendingJobs();
+    const [, synced] = await Promise.all([this.printCache.prewarm(), this.recoverPendingJobs()]);
     if (!synced || this.isDestroyed) return;
     this.isReady = true;
     this.startHeartbeat();
@@ -147,6 +149,10 @@ export class AgentRealtimeClient implements RealtimeConnection {
   private async receiveEvents(events: RealtimeEventV1[]): Promise<void> {
     let needsPendingScan = false;
     for (const event of events) {
+      if (event.type === 'pos.print_config.updated') {
+        this.printCache.invalidate(event.data.configVersion ?? event.aggregate.version);
+        continue;
+      }
       if (event.type !== 'pos.print_job.created' || event.data.printJobStatus !== 'QUEUED')
         continue;
       if (event.data.targetDeviceId && event.data.targetDeviceId !== this.config.agentId) continue;

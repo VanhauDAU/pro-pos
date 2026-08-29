@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 
 import { REALTIME_SUBPROTOCOL } from '@contracts/realtime';
 import { updatePrinterDeviceSettingsSchema } from '@contracts/store';
+import type { PrintBootstrap } from '@contracts/print-bootstrap';
 import {
   addOrderItemSchema,
   cancelOrderSchema,
@@ -198,6 +199,25 @@ posRoutes.get(
   '/print-settings',
   requirePermission(...orderWorkspacePermissionKeys, 'order.proforma_print', 'invoice.print'),
   async (c) => success(c, await new StoreService(c.env).getPrintSettings(c.get('actor').storeId!)),
+);
+
+posRoutes.get(
+  '/print-bootstrap',
+  requirePermission(...orderWorkspacePermissionKeys, 'order.proforma_print', 'invoice.print'),
+  async (c) => {
+    const storeId = c.get('actor').storeId!;
+    const storeService = new StoreService(c.env);
+    const [context, printSettings, configVersion] = await Promise.all([
+      new PosService(c.env).getPrintContext(storeId),
+      storeService.getPrintSettings(storeId),
+      storeService.getPrintConfigVersion(storeId),
+    ]);
+    return success(c, {
+      context,
+      printSettings,
+      configVersion,
+    } satisfies PrintBootstrap);
+  },
 );
 
 /** Authenticated media read dedicated to Print Agent receipt assets. */

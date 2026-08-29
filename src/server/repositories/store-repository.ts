@@ -1,5 +1,14 @@
 import type { BankAccountInput } from '@contracts/store';
 
+export interface PrintConfigChange {
+  id: string;
+  storeId: string;
+  actorUserId?: string | null;
+  deviceId?: string | null;
+  requestId: string;
+  occurredAt: number;
+}
+
 export interface StoreBankAccountRow {
   id: string;
   bankBin: string;
@@ -15,6 +24,30 @@ export interface StoreBankAccountRow {
 
 export class StoreRepository {
   constructor(private readonly db: D1Database) {}
+
+  private printConfigChangeStatement(change: PrintConfigChange) {
+    return this.db
+      .prepare(
+        `INSERT INTO print_config_change_requests (
+           id, store_id, actor_user_id, device_id, request_id, occurred_at
+         ) VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        change.id,
+        change.storeId,
+        change.actorUserId ?? null,
+        change.deviceId ?? null,
+        change.requestId,
+        change.occurredAt,
+      );
+  }
+
+  getPrintConfigVersion(storeId: string) {
+    return this.db
+      .prepare(`SELECT version FROM store_print_config_versions WHERE store_id = ? LIMIT 1`)
+      .bind(storeId)
+      .first<{ version: number }>();
+  }
 
   getSettings(storeId: string) {
     return this.db
@@ -118,6 +151,7 @@ export class StoreRepository {
     values: BankAccountInput;
     isDefault: boolean;
     now: number;
+    configChange: PrintConfigChange;
   }) {
     const statements: D1PreparedStatement[] = [];
     if (input.isDefault) {
@@ -153,6 +187,7 @@ export class StoreRepository {
     );
     if (input.isDefault)
       statements.push(this.mirrorDefaultBankAccountStatement(input.storeId, input.now));
+    statements.push(this.printConfigChangeStatement(input.configChange));
     return this.db.batch(statements);
   }
 
@@ -163,6 +198,7 @@ export class StoreRepository {
     isDefault: boolean;
     mirrorLegacy: boolean;
     now: number;
+    configChange: PrintConfigChange;
   }) {
     const statements: D1PreparedStatement[] = [];
     if (input.isDefault) {
@@ -198,10 +234,17 @@ export class StoreRepository {
     if (input.mirrorLegacy) {
       statements.push(this.mirrorDefaultBankAccountStatement(input.storeId, input.now));
     }
+    statements.push(this.printConfigChangeStatement(input.configChange));
     return this.db.batch(statements);
   }
 
-  archiveBankAccount(input: { id: string; storeId: string; wasDefault: boolean; now: number }) {
+  archiveBankAccount(input: {
+    id: string;
+    storeId: string;
+    wasDefault: boolean;
+    now: number;
+    configChange: PrintConfigChange;
+  }) {
     const statements: D1PreparedStatement[] = [
       this.db
         .prepare(
@@ -214,6 +257,7 @@ export class StoreRepository {
     if (input.wasDefault) {
       statements.push(this.mirrorDefaultBankAccountStatement(input.storeId, input.now));
     }
+    statements.push(this.printConfigChangeStatement(input.configChange));
     return this.db.batch(statements);
   }
 
@@ -245,6 +289,7 @@ export class StoreRepository {
     wardCode: number | null;
     wardName: string | null;
     now: number;
+    configChange: PrintConfigChange;
   }) {
     return this.db.batch([
       this.db
@@ -277,6 +322,7 @@ export class StoreRepository {
           input.now,
           input.storeId,
         ),
+      this.printConfigChangeStatement(input.configChange),
     ]);
   }
 
@@ -388,8 +434,9 @@ export class StoreRepository {
     printersJson: string | null;
     templateConfigJson: string | null;
     now: number;
+    configChange: PrintConfigChange;
   }) {
-    return this.db
+    const upsert = this.db
       .prepare(
         `INSERT INTO store_print_settings (
           store_id, max_receipt_reprint_count, payment_copy_count,
@@ -457,7 +504,7 @@ export class StoreRepository {
         input.printersJson,
         input.templateConfigJson,
         input.now,
-      )
-      .run();
+      );
+    return this.db.batch([upsert, this.printConfigChangeStatement(input.configChange)]);
   }
 }

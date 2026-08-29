@@ -26,6 +26,12 @@ describe('ESC/POS WPC1258 encoding', () => {
     expect(payload[5]).toBe(0x48); // H
   });
 
+  it('preserves ESC/POS binary command parameter bytes', () => {
+    const drawerCommand = '\x1b\x70\x00\x19\xfa';
+    const payload = encodeEscPosWpc1258(`\x1b\x40Hóa đơn\n${drawerCommand}`);
+    expect(Array.from(payload.slice(-5))).toEqual([0x1b, 0x70, 0x00, 0x19, 0xfa]);
+  });
+
   it('never leaks unsupported Unicode as UTF-8 bytes', () => {
     const payload = encodeWpc1258('Cảm ơn quý khách 🎱');
     expect(payload[payload.length - 1]).toBe(0x3f);

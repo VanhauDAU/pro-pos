@@ -377,11 +377,11 @@ export class JobProcessor {
           (/connect|kết nối|ECONN|timeout/i.test(message)
             ? 'NETWORK_PRINTER_UNREACHABLE'
             : 'SOCKET_WRITE_ERROR');
-        throw new PrintJobProcessingError(
-          code,
-          message,
-          { cause: error, failureStage, retryable: failureStage === 'BEFORE_WRITE' },
-        );
+        throw new PrintJobProcessingError(code, message, {
+          cause: error,
+          failureStage,
+          retryable: failureStage === 'BEFORE_WRITE',
+        });
       }
 
       await this.apiClient.post(`/api/v1/pos/print-jobs/${job.id}/complete`, {});
@@ -400,8 +400,7 @@ export class JobProcessor {
       );
       if (claimed) {
         try {
-          const endpoint =
-            processingError.failureStage === 'DURING_WRITE' ? 'uncertain' : 'fail';
+          const endpoint = processingError.failureStage === 'DURING_WRITE' ? 'uncertain' : 'fail';
           await this.apiClient.post(`/api/v1/pos/print-jobs/${job.id}/${endpoint}`, {
             failureCode: processingError.code,
             failureMessage: processingError.message,

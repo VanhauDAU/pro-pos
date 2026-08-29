@@ -8,12 +8,17 @@ export interface SecretProtector {
 }
 
 export class CredentialStore {
-  constructor(private readonly filePath: string, private readonly protector: SecretProtector) {}
+  constructor(
+    private readonly filePath: string,
+    private readonly protector: SecretProtector,
+  ) {}
 
   load(): string | undefined {
     if (!existsSync(this.filePath)) return undefined;
     try {
-      return this.protector.decryptString(Buffer.from(readFileSync(this.filePath, 'utf8'), 'base64'));
+      return this.protector.decryptString(
+        Buffer.from(readFileSync(this.filePath, 'utf8'), 'base64'),
+      );
     } catch {
       return undefined;
     }
@@ -22,10 +27,16 @@ export class CredentialStore {
   save(secret: string | undefined): void {
     if (!secret) return;
     if (!this.protector.isEncryptionAvailable()) {
-      throw new Error('Windows credential protection không khả dụng; không thể lưu secret pairing.');
+      throw new Error(
+        'Windows credential protection không khả dụng; không thể lưu secret pairing.',
+      );
     }
     mkdirSync(dirname(this.filePath), { recursive: true });
-    writeFileSync(this.filePath, Buffer.from(this.protector.encryptString(secret)).toString('base64'), 'utf8');
+    writeFileSync(
+      this.filePath,
+      Buffer.from(this.protector.encryptString(secret)).toString('base64'),
+      'utf8',
+    );
   }
 
   clear(): void {

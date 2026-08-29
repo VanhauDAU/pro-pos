@@ -60,8 +60,12 @@ export interface AgentRuntimeDependencies {
 export class AgentRuntime extends EventEmitter {
   private readonly configManager: RuntimeConfigStore;
   private readonly createApiClient: (config: PrintAgentConfig) => AgentApiClient;
-  private readonly createRealtimeClient: NonNullable<AgentRuntimeDependencies['createRealtimeClient']>;
-  private readonly createPairingHandler: NonNullable<AgentRuntimeDependencies['createPairingHandler']>;
+  private readonly createRealtimeClient: NonNullable<
+    AgentRuntimeDependencies['createRealtimeClient']
+  >;
+  private readonly createPairingHandler: NonNullable<
+    AgentRuntimeDependencies['createPairingHandler']
+  >;
   private readonly createTransport: NonNullable<AgentRuntimeDependencies['createTransport']>;
   private config: PrintAgentConfig | null;
   private realtime: RealtimeConnection | null = null;
@@ -183,12 +187,31 @@ export class AgentRuntime extends EventEmitter {
     }
     const receipt = buildEscPosTextReceipt(
       {
-        receiptType: 'PAYMENT', orderCode: 'TEST-001', invoiceCode: 'TEST-001', orderType: 'DINE_IN',
-        total: 50000, subtotal: 50000, discountTotal: 0, issuedAtMs: Date.now(),
-        tableName: 'Bàn Test', cashierName: 'Print Agent Test',
-        lines: [{ id: '1', name: 'In thử Pro POS Print Agent', quantity: 1, unitPrice: 50000, totalPrice: 50000 }],
+        receiptType: 'PAYMENT',
+        orderCode: 'TEST-001',
+        invoiceCode: 'TEST-001',
+        orderType: 'DINE_IN',
+        total: 50000,
+        subtotal: 50000,
+        discountTotal: 0,
+        issuedAtMs: Date.now(),
+        tableName: 'Bàn Test',
+        cashierName: 'Print Agent Test',
+        lines: [
+          {
+            id: '1',
+            name: 'In thử Pro POS Print Agent',
+            quantity: 1,
+            unitPrice: 50000,
+            totalPrice: 50000,
+          },
+        ],
       },
-      { paperSize: config?.paperSize || 'K80', storeName: 'PRO POS PRINT AGENT TEST', autoCut: true },
+      {
+        paperSize: config?.paperSize || 'K80',
+        storeName: 'PRO POS PRINT AGENT TEST',
+        autoCut: true,
+      },
     );
     try {
       await this.createTransport().send(receipt, { host, port });

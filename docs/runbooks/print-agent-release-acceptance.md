@@ -13,14 +13,14 @@
 
 The following are release gates, not assertions satisfied by automated tests:
 
-| ID | Scenario | Expected result |
-| --- | --- | --- |
-| T01 | Clean Windows 10/11 install | Installer opens the first-run pairing wizard without Node or QZ Tray. |
-| T02–T04 | Pairing and test print | DPAPI credential persists; correct K58/K80 output and cut/drawer behaviour. |
-| T05–T11 | Printer/network fault and crash tests | No false `COMPLETED`; mid-write faults remain `UNCERTAIN`; no duplicate receipt. |
-| T12–T14 | Close window, second launch, Windows restart | Tray remains active, only one runtime, hidden autostart can accept a job. |
-| T15 | Upgrade over existing install | Pairing/configuration survive update. |
-| T16 | 8–12 hour burn-in | No linear memory/timer/socket/log growth across 30–50 jobs. |
+| ID      | Scenario                                     | Expected result                                                                  |
+| ------- | -------------------------------------------- | -------------------------------------------------------------------------------- |
+| T01     | Clean Windows 10/11 install                  | Installer opens the first-run pairing wizard without Node or QZ Tray.            |
+| T02–T04 | Pairing and test print                       | DPAPI credential persists; correct K58/K80 output and cut/drawer behaviour.      |
+| T05–T11 | Printer/network fault and crash tests        | No false `COMPLETED`; mid-write faults remain `UNCERTAIN`; no duplicate receipt. |
+| T12–T14 | Close window, second launch, Windows restart | Tray remains active, only one runtime, hidden autostart can accept a job.        |
+| T15     | Upgrade over existing install                | Pairing/configuration survive update.                                            |
+| T16     | 8–12 hour burn-in                            | No linear memory/timer/socket/log growth across 30–50 jobs.                      |
 
 ## Release decision
 

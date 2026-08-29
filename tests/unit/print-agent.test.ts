@@ -137,15 +137,18 @@ describe('Pro POS Print Agent Unit Tests', () => {
       if (path === '/api/v1/pos/context') return { storeName: 'ĐẠI BILLIARDS' };
       if (path === '/api/v1/pos/print-settings') {
         return {
-          storeId: 'STORE-1', paperSize: 'K80',
+          storeId: 'STORE-1',
+          paperSize: 'K80',
           printersJson: JSON.stringify({ networkIp: '192.168.1.10', networkPort: 9100 }),
-          paymentCopyCount: 1, provisionalCopyCount: 1,
+          paymentCopyCount: 1,
+          provisionalCopyCount: 1,
         };
       }
       if (path === '/api/v1/pos/invoices/INV_2') {
         return {
           invoice: { id: 'INV_2', displayCode: 'HD-2', totalVnd: 100000, issuedAt: 1720000000000 },
-          lines: [], payment: { method: 'CASH' },
+          lines: [],
+          payment: { method: 'CASH' },
         };
       }
       throw new Error(`Unexpected GET ${path}`);
@@ -164,10 +167,15 @@ describe('Pro POS Print Agent Unit Tests', () => {
     );
 
     await expect(
-      processor.processJob({ id: 'JOB-UNCERTAIN', documentType: 'invoice', documentId: 'INV_2' } as PrintJob),
+      processor.processJob({
+        id: 'JOB-UNCERTAIN',
+        documentType: 'invoice',
+        documentId: 'INV_2',
+      } as PrintJob),
     ).resolves.toBe(false);
     expect(post).toHaveBeenLastCalledWith('/api/v1/pos/print-jobs/JOB-UNCERTAIN/uncertain', {
-      failureCode: 'SOCKET_WRITE_ERROR', failureMessage: 'socket closed',
+      failureCode: 'SOCKET_WRITE_ERROR',
+      failureMessage: 'socket closed',
     });
   });
 

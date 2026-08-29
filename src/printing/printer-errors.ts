@@ -29,7 +29,11 @@ export class PrinterError extends Error {
   readonly code: PrinterErrorCode;
   readonly failureStage: PrinterFailureStage;
 
-  constructor(code: PrinterErrorCode, message = DEFAULT_MESSAGES[code], options?: PrinterErrorOptions) {
+  constructor(
+    code: PrinterErrorCode,
+    message = DEFAULT_MESSAGES[code],
+    options?: PrinterErrorOptions,
+  ) {
     super(message, options);
     this.name = 'PrinterError';
     this.code = code;
@@ -38,7 +42,10 @@ export class PrinterError extends Error {
 }
 
 export class PrinterConnectionError extends PrinterError {
-  constructor(message = DEFAULT_MESSAGES.NETWORK_PRINTER_UNREACHABLE, options?: PrinterErrorOptions) {
+  constructor(
+    message = DEFAULT_MESSAGES.NETWORK_PRINTER_UNREACHABLE,
+    options?: PrinterErrorOptions,
+  ) {
     super('NETWORK_PRINTER_UNREACHABLE', message, options);
     this.name = 'PrinterConnectionError';
   }

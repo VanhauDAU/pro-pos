@@ -1,11 +1,5 @@
 export type AgentStatus =
-  | 'UNPAIRED'
-  | 'PAIRING'
-  | 'CONNECTING'
-  | 'ONLINE'
-  | 'DEGRADED'
-  | 'OFFLINE'
-  | 'STOPPED';
+  'UNPAIRED' | 'PAIRING' | 'CONNECTING' | 'ONLINE' | 'DEGRADED' | 'OFFLINE' | 'STOPPED';
 
 export type PrinterStatus = 'UNKNOWN' | 'READY' | 'UNREACHABLE' | 'INVALID_CONFIG';
 

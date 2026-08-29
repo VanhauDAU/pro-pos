@@ -109,6 +109,7 @@ pnpm --filter @propos/print-agent dist:mac:x64
 File `.dmg` và `.zip` xuất ra tại thư mục `apps/print-agent/release/`.
 
 #### Cài đặt và mở file .dmg trên macOS:
+
 1. Nhấp đúp vào file `.dmg` và kéo biểu tượng ứng dụng vào thư mục **Applications**.
 2. Do app chưa ký Apple Developer ID, mở Terminal và chạy lệnh gỡ quarantine nếu macOS cảnh báo không mở được:
    ```bash
@@ -126,4 +127,3 @@ pnpm --filter @propos/print-agent dist:win
 ```
 
 Workflow `.github/workflows/print-agent-release.yml` build NSIS, portable executable, checksum và chỉ publish GitHub Release khi tag `print-agent-v<package-version>` khớp chính xác.
-

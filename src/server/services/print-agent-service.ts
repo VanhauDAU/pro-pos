@@ -39,7 +39,8 @@ export class PrintAgentService {
     const range = 900_000;
     const limit = Math.floor(0x1_0000_0000 / range) * range;
     const value = new Uint32Array(1);
-    do crypto.getRandomValues(value); while (value[0]! >= limit);
+    do crypto.getRandomValues(value);
+    while (value[0]! >= limit);
     const pairingCode = String(100_000 + (value[0]! % range));
     const expiresAt = Date.now() + PAIRING_TTL_MS;
 

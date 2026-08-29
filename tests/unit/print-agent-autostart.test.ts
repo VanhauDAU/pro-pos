@@ -10,7 +10,10 @@ describe('AutostartController', () => {
     const controller = new AutostartController(app);
     expect(controller.isEnabled()).toBe(false);
     controller.setEnabled(true);
-    expect(app.setLoginItemSettings).toHaveBeenCalledWith({ openAtLogin: true, args: ['--hidden'] });
+    expect(app.setLoginItemSettings).toHaveBeenCalledWith({
+      openAtLogin: true,
+      args: ['--hidden'],
+    });
     controller.setEnabled(false);
     expect(app.setLoginItemSettings).toHaveBeenLastCalledWith({ openAtLogin: false, args: [] });
   });

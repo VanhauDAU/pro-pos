@@ -22,8 +22,15 @@ async function main() {
     }
   }
 
-  if (initialServerUrl && config.serverUrl && initialServerUrl !== config.serverUrl && configManager.isPaired(config)) {
-    console.log(`\x1b[33m[Config] Phát hiện máy chủ thay đổi: ${initialServerUrl} ➔ ${config.serverUrl}\x1b[0m`);
+  if (
+    initialServerUrl &&
+    config.serverUrl &&
+    initialServerUrl !== config.serverUrl &&
+    configManager.isPaired(config)
+  ) {
+    console.log(
+      `\x1b[33m[Config] Phát hiện máy chủ thay đổi: ${initialServerUrl} ➔ ${config.serverUrl}\x1b[0m`,
+    );
     console.log('Xóa khóa ghép nối cũ để ghép nối với máy chủ mới...\n');
     config.agentId = undefined;
     config.agentSecret = undefined;
@@ -34,13 +41,17 @@ async function main() {
 
   const runtime = new AgentRuntime(config);
   runtime.on('stateChanged', (state) => {
-    if (state.status === 'ONLINE') console.log('\x1b[32m● Trạng thái: ĐANG HOẠT ĐỘNG (ONLINE)\x1b[0m');
+    if (state.status === 'ONLINE')
+      console.log('\x1b[32m● Trạng thái: ĐANG HOẠT ĐỘNG (ONLINE)\x1b[0m');
     if (state.status === 'OFFLINE' || state.status === 'DEGRADED') {
       console.warn(`[Runtime] ${state.status}: ${state.lastError || 'đang khôi phục kết nối'}`);
     }
   });
   runtime.on('pairingChanged', (pairing) => {
-    if (pairing.code) console.log(`[Runtime] Mã ghép nối đã sẵn sàng (hết hạn: ${new Date(pairing.expiresAt!).toLocaleTimeString()}).`);
+    if (pairing.code)
+      console.log(
+        `[Runtime] Mã ghép nối đã sẵn sàng (hết hạn: ${new Date(pairing.expiresAt!).toLocaleTimeString()}).`,
+      );
   });
 
   await runtime.start();
@@ -50,8 +61,12 @@ async function main() {
   console.log('\n========================================');
   console.log('    PRO POS PRINT AGENT (v0.1.0)');
   console.log('========================================');
-  console.log(`Cửa hàng     : ${currentConfig?.storeName || currentConfig?.storeId || 'Đang ghép nối'}`);
-  console.log(`Máy in LAN   : \x1b[1m${currentConfig?.printerIp || '192.168.1.73'}:${currentConfig?.printerPort || 9100}\x1b[0m (${currentConfig?.paperSize || 'K80'})`);
+  console.log(
+    `Cửa hàng     : ${currentConfig?.storeName || currentConfig?.storeId || 'Đang ghép nối'}`,
+  );
+  console.log(
+    `Máy in LAN   : \x1b[1m${currentConfig?.printerIp || '192.168.1.73'}:${currentConfig?.printerPort || 9100}\x1b[0m (${currentConfig?.paperSize || 'K80'})`,
+  );
   console.log(`Máy chủ      : ${currentConfig?.serverUrl || config.serverUrl}`);
   console.log('Tự động in tất cả yêu cầu in từ Điện thoại / iPad / Web POS.\n');
 

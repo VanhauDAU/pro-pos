@@ -1,7 +1,7 @@
 import { BrowserWindow } from 'electron';
 import { join } from 'node:path';
 
-export function createAgentWindow(): BrowserWindow {
+export function createAgentWindow(startHidden = false): BrowserWindow {
   const window = new BrowserWindow({
     width: 520,
     height: 620,
@@ -18,7 +18,7 @@ export function createAgentWindow(): BrowserWindow {
   });
   window.setMenuBarVisibility(false);
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  window.once('ready-to-show', () => window.show());
+  if (!startHidden) window.once('ready-to-show', () => window.show());
   void window.loadFile(join(__dirname, '../renderer/index.html'));
   return window;
 }

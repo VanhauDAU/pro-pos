@@ -4,9 +4,11 @@ import { registerAgentIpc } from './ipc';
 import { createAgentTray } from './tray';
 import { createAgentWindow } from './window';
 import { DesktopConfigStore } from './config-store';
+import { AutostartController } from './autostart';
 
 let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
+const startHidden = process.argv.includes('--hidden');
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -22,7 +24,8 @@ if (!app.requestSingleInstanceLock()) {
       configManager: new DesktopConfigStore(app.getPath('userData')),
     });
     await runtime.start();
-    mainWindow = createAgentWindow();
+    const autostart = new AutostartController(app);
+    mainWindow = createAgentWindow(startHidden);
     mainWindow.on('close', (event) => {
       if (!isQuitting) {
         event.preventDefault();
@@ -30,7 +33,10 @@ if (!app.requestSingleInstanceLock()) {
       }
     });
     registerAgentIpc(runtime, () => mainWindow);
-    createAgentTray(runtime, () => mainWindow);
+    createAgentTray(runtime, () => mainWindow, autostart);
+    runtime.on('stateChanged', (state) => {
+      if (state.status === 'ONLINE' && !autostart.isEnabled()) autostart.setEnabled(true);
+    });
 
     app.on('before-quit', (event) => {
       if (!isQuitting) {

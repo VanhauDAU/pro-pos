@@ -64,6 +64,10 @@ import { MediaService } from '@server/services/media-service';
 const posRoutes = new Hono<AppEnv>();
 posRoutes.use('*', requireActorOrPrintAgent());
 
+function storeService(c: Parameters<typeof success>[0]): StoreService {
+  return new StoreService(c.env, (promise) => c.executionCtx.waitUntil(promise));
+}
+
 function producesRealtimeEvent(path: string) {
   return (
     path.includes('/api/v1/pos/orders/') ||
@@ -198,7 +202,7 @@ posRoutes.get(
 posRoutes.get(
   '/print-settings',
   requirePermission(...orderWorkspacePermissionKeys, 'order.proforma_print', 'invoice.print'),
-  async (c) => success(c, await new StoreService(c.env).getPrintSettings(c.get('actor').storeId!)),
+  async (c) => success(c, await storeService(c).getPrintSettings(c.get('actor').storeId!)),
 );
 
 posRoutes.get(
@@ -206,11 +210,11 @@ posRoutes.get(
   requirePermission(...orderWorkspacePermissionKeys, 'order.proforma_print', 'invoice.print'),
   async (c) => {
     const storeId = c.get('actor').storeId!;
-    const storeService = new StoreService(c.env);
+    const printStoreService = storeService(c);
     const [context, printSettings, configVersion] = await Promise.all([
       new PosService(c.env).getPrintContext(storeId),
-      storeService.getPrintSettings(storeId),
-      storeService.getPrintConfigVersion(storeId),
+      printStoreService.getPrintSettings(storeId),
+      printStoreService.getPrintConfigVersion(storeId),
     ]);
     return success(c, {
       context,
@@ -561,7 +565,7 @@ posRoutes.put(
     const printer = await parseJson(c.req.raw, updatePrinterDeviceSettingsSchema);
     const actor = c.get('actor');
     const storeId = actor.storeId!;
-    const service = new StoreService(c.env);
+    const service = storeService(c);
     const current = await service.getPrintSettings(storeId);
 
     await service.updatePrintSettings({

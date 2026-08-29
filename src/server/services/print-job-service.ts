@@ -1,4 +1,9 @@
-import type { CreatePrintJobInput, PrintJob, PrintJobQuery } from '@contracts/print-job';
+import type {
+  CreatePrintJobInput,
+  PendingPrintJobPage,
+  PrintJob,
+  PrintJobQuery,
+} from '@contracts/print-job';
 import type { PrintJobClaimResponse } from '@contracts/print-job';
 import { AppError } from '@server/lib/app-error';
 import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
@@ -39,9 +44,20 @@ export class PrintJobService {
   private readonly repository: PrintJobRepository;
   private readonly dispatcher: RealtimeDispatcher;
 
-  constructor(private readonly env: CloudflareBindings) {
+  constructor(
+    private readonly env: CloudflareBindings,
+    private readonly defer?: (promise: Promise<unknown>) => void,
+  ) {
     this.repository = new PrintJobRepository(env.DB);
     this.dispatcher = new RealtimeDispatcher(env);
+  }
+
+  private dispatchStore(storeId: string): void {
+    this.defer?.(this.dispatcher.dispatchStore(storeId).catch(() => undefined));
+  }
+
+  private deferNotification(task: () => Promise<unknown>): void {
+    if (this.defer) this.defer(task().catch(() => undefined));
   }
 
   private async verifyDocumentBelongsToStore(
@@ -194,7 +210,7 @@ export class PrintJobService {
         requestId: input.auditContext?.requestId ?? null,
         now,
       });
-      void this.dispatcher.dispatchStore(input.storeId).catch(() => undefined);
+      this.dispatchStore(input.storeId);
     }
 
     return job;
@@ -243,7 +259,7 @@ export class PrintJobService {
         requestId: auditContext?.requestId ?? null,
         now,
       });
-      void this.dispatcher.dispatchStore(storeId).catch(() => undefined);
+      this.dispatchStore(storeId);
     }
 
     return { ...job, claimToken: transition.claimToken ?? null };
@@ -290,7 +306,7 @@ export class PrintJobService {
         requestId: auditContext?.requestId ?? null,
         now,
       });
-      void this.dispatcher.dispatchStore(storeId).catch(() => undefined);
+      this.dispatchStore(storeId);
     }
 
     return job;
@@ -337,13 +353,13 @@ export class PrintJobService {
         requestId: auditContext?.requestId ?? null,
         now,
       });
-      void this.dispatcher.dispatchStore(storeId).catch(() => undefined);
+      this.dispatchStore(storeId);
     }
 
     if (transition.changed) {
       const docName = formatPrintDocumentName(job.documentType, job.printerRole);
-      void new PushNotificationService(this.env)
-        .sendStoreNotification({
+      this.deferNotification(() =>
+        new PushNotificationService(this.env).sendStoreNotification({
           storeId,
           kind: 'PRINT_COMPLETED',
           soundType: 'NOTIFICATION_CHIME',
@@ -352,8 +368,8 @@ export class PrintJobService {
           url: '/pos',
           tag: `print_job_${job.id}`,
           timestamp: now,
-        })
-        .catch(() => undefined);
+        }),
+      );
     }
 
     return job;
@@ -404,14 +420,14 @@ export class PrintJobService {
         requestId: auditContext?.requestId ?? null,
         now,
       });
-      void this.dispatcher.dispatchStore(storeId).catch(() => undefined);
+      this.dispatchStore(storeId);
     }
 
     if (transition.changed) {
       const docName = formatPrintDocumentName(job.documentType, job.printerRole);
       const reasonText = failureMessage || 'Lỗi máy in hoặc không thể kết nối';
-      void new PushNotificationService(this.env)
-        .sendStoreNotification({
+      this.deferNotification(() =>
+        new PushNotificationService(this.env).sendStoreNotification({
           storeId,
           kind: 'PRINT_FAILED',
           soundType: 'NOTIFICATION_CHIME',
@@ -420,8 +436,8 @@ export class PrintJobService {
           url: '/pos',
           tag: `print_job_${job.id}`,
           timestamp: now,
-        })
-        .catch(() => undefined);
+        }),
+      );
     }
 
     return job;
@@ -472,13 +488,13 @@ export class PrintJobService {
         requestId: auditContext?.requestId ?? null,
         now,
       });
-      void this.dispatcher.dispatchStore(storeId).catch(() => undefined);
+      this.dispatchStore(storeId);
     }
 
     if (transition.changed) {
       const docName = formatPrintDocumentName(job.documentType, job.printerRole);
-      void new PushNotificationService(this.env)
-        .sendStoreNotification({
+      this.deferNotification(() =>
+        new PushNotificationService(this.env).sendStoreNotification({
           storeId,
           kind: 'PRINT_UNCERTAIN',
           soundType: 'NOTIFICATION_CHIME',
@@ -487,8 +503,8 @@ export class PrintJobService {
           url: '/pos',
           tag: `print_job_${job.id}`,
           timestamp: now,
-        })
-        .catch(() => undefined);
+        }),
+      );
     }
 
     return job;
@@ -506,11 +522,46 @@ export class PrintJobService {
     return this.repository.listJobs(storeId, query.status, query.limit);
   }
 
-  async reconcileStalePrinting(storeId: string, now = Date.now()): Promise<PrintJob[]> {
+  async listPendingJobsForAgent(input: {
+    storeId: string;
+    agentId: string;
+    limit: number;
+    cursor?: string | undefined;
+  }): Promise<PendingPrintJobPage> {
+    let decodedCursor: { createdAt: number; id: string } | undefined;
+    if (input.cursor) {
+      const separator = input.cursor.indexOf(':');
+      const createdAt = Number(input.cursor.slice(0, separator));
+      const id = input.cursor.slice(separator + 1);
+      if (separator < 1 || !Number.isSafeInteger(createdAt) || createdAt < 0 || !id) {
+        throw new AppError('PRINT_JOB_CURSOR_INVALID', 'Cursor print job không hợp lệ.', 422);
+      }
+      decodedCursor = { createdAt, id };
+    }
+    const jobs = await this.repository.listPendingJobsForAgent(
+      input.storeId,
+      input.agentId,
+      Date.now(),
+      input.limit,
+      decodedCursor,
+    );
+    const last = jobs.at(-1);
+    return {
+      jobs,
+      nextCursor: jobs.length === input.limit && last ? `${last.createdAt}:${last.id}` : null,
+    };
+  }
+
+  async reconcileStalePrinting(
+    storeId: string,
+    now = Date.now(),
+    claimedByDeviceId?: string | null,
+  ): Promise<PrintJob[]> {
     const jobs = await this.repository.markStalePrintingUncertain(
       storeId,
       now - PRINTING_WATCHDOG_MS,
       now,
+      claimedByDeviceId,
     );
     for (const job of jobs) {
       await this.repository.recordRealtimeEvent({
@@ -524,7 +575,7 @@ export class PrintJobService {
         now,
       });
     }
-    if (jobs.length > 0) void this.dispatcher.dispatchStore(storeId).catch(() => undefined);
+    if (jobs.length > 0) this.dispatchStore(storeId);
     return jobs;
   }
 }

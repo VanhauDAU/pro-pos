@@ -51,10 +51,6 @@ export function requireActorOrPrintAgent(): MiddlewareHandler<AppEnv> {
     if (agentId && agentSecret) {
       const agentService = new PrintAgentService(c.env);
       const agent = await agentService.verifyAgent(agentId, agentSecret);
-      const store = await new AuthorizationRepository(c.env.DB).getStoreStatus(agent.store_id);
-      if (!store || store.status !== 'ACTIVE') {
-        throw new AppError('STORE_LOCKED', 'Cửa hàng đang bị khóa.', 403);
-      }
       c.set('actor', {
         id: agent.id,
         kind: 'EMPLOYEE',

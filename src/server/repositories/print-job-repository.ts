@@ -176,13 +176,24 @@ export class PrintJobRepository {
              claim_token = ?,
              claim_protocol_version = ?
          WHERE id = ? AND store_id = ?
+           AND (target_device_id IS NULL OR target_device_id = ?)
            AND (
              status = 'QUEUED'
              OR (status = 'CLAIMED' AND claim_lease_expires_at <= ?)
            )
          RETURNING *`,
       )
-      .bind(deviceId, now, now + leaseMs, claimToken, protocolVersion, jobId, storeId, now)
+      .bind(
+        deviceId,
+        now,
+        now + leaseMs,
+        claimToken,
+        protocolVersion,
+        jobId,
+        storeId,
+        deviceId,
+        now,
+      )
       .first<PrintJobRow>();
     if (row) return { job: mapPrintJob(row), changed: true, claimToken: row.claim_token };
     const existing = await this.getJobRow(storeId, jobId);
@@ -297,6 +308,7 @@ export class PrintJobRepository {
              failure_message = ?,
              failed_at = ?
          WHERE id = ? AND store_id = ? AND status IN ('CLAIMED', 'PRINTING')
+           AND (status = 'PRINTING' OR claim_lease_expires_at > ?)
            AND (? IS NULL OR claimed_by_device_id = ?)
            AND (
              (claim_protocol_version < 2 AND claim_token IS NULL)
@@ -310,6 +322,7 @@ export class PrintJobRepository {
         now,
         jobId,
         storeId,
+        now,
         deviceId,
         deviceId,
         claimToken,
@@ -378,10 +391,38 @@ export class PrintJobRepository {
     return result.results.map(mapPrintJob);
   }
 
+  async listPendingJobsForAgent(
+    storeId: string,
+    agentId: string,
+    now: number,
+    limit: number,
+    cursor?: { createdAt: number; id: string } | undefined,
+  ): Promise<PrintJob[]> {
+    const cursorCreatedAt = cursor?.createdAt ?? -1;
+    const cursorId = cursor?.id ?? '';
+    const result = await this.db
+      .prepare(
+        `${SELECT_PRINT_JOB}
+         WHERE store_id = ?
+           AND (target_device_id IS NULL OR target_device_id = ?)
+           AND (
+             status = 'QUEUED'
+             OR (status = 'CLAIMED' AND claim_lease_expires_at <= ?)
+           )
+           AND (created_at > ? OR (created_at = ? AND id > ?))
+         ORDER BY created_at ASC, id ASC
+         LIMIT ?`,
+      )
+      .bind(storeId, agentId, now, cursorCreatedAt, cursorCreatedAt, cursorId, limit)
+      .all<PrintJobRow>();
+    return result.results.map(mapPrintJob);
+  }
+
   async markStalePrintingUncertain(
     storeId: string,
     printingBefore: number,
     now: number,
+    claimedByDeviceId?: string | null,
   ): Promise<PrintJob[]> {
     const result = await this.db
       .prepare(
@@ -391,9 +432,10 @@ export class PrintJobRepository {
              failure_message = 'Print Agent không xác nhận kết quả sau khi bắt đầu in.',
              failed_at = ?
          WHERE store_id = ? AND status = 'PRINTING' AND printing_at <= ?
+           AND (? IS NULL OR claimed_by_device_id = ?)
          RETURNING *`,
       )
-      .bind(now, storeId, printingBefore)
+      .bind(now, storeId, printingBefore, claimedByDeviceId ?? null, claimedByDeviceId ?? null)
       .all<PrintJobRow>();
     return result.results.map(mapPrintJob);
   }

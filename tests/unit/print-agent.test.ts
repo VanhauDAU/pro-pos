@@ -285,6 +285,65 @@ describe('Pro POS Print Agent Unit Tests', () => {
     });
   });
 
+  it('retries TCP exactly once only when no byte was written', async () => {
+    const post = vi.fn(async (path: string) =>
+      path.endsWith('/claim') ? { claimToken: null } : {},
+    );
+    const get = vi.fn(async (path: string) => {
+      if (path === '/api/v1/pos/print-bootstrap') {
+        return {
+          context: { storeName: 'RETRY STORE' },
+          configVersion: 1,
+          printSettings: {
+            storeId: 'STORE-1',
+            updatedAt: 1,
+            paperSize: 'K80',
+            printersJson: JSON.stringify({ networkIp: '192.168.1.10', networkPort: 9100 }),
+            paymentCopyCount: 1,
+            provisionalCopyCount: 1,
+          },
+        };
+      }
+      if (path === '/api/v1/pos/invoices/INV-TCP-RETRY') {
+        return {
+          invoice: {
+            id: 'INV-TCP-RETRY',
+            displayCode: 'HD-TCP-RETRY',
+            totalVnd: 10000,
+            issuedAt: 1720000000000,
+          },
+          lines: [],
+          payment: { method: 'CASH' },
+        };
+      }
+      throw new Error(`Unexpected GET ${path}`);
+    });
+    const send = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new PrinterError('CONNECTION_TIMEOUT', 'connect timeout', {
+          failureStage: 'BEFORE_WRITE',
+        }),
+      )
+      .mockResolvedValueOnce(undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const processor = new JobProcessor(
+      { serverUrl: 'https://pos.example', agentId: 'AGENT-1' },
+      { get, getBytes: vi.fn(), post } as unknown as AgentApiClient,
+      { send },
+    );
+
+    await expect(
+      processor.processJob({
+        id: 'JOB-TCP-RETRY',
+        documentType: 'invoice',
+        documentId: 'INV-TCP-RETRY',
+      } as PrintJob),
+    ).resolves.toBe(true);
+    expect(send).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+
   it('renders all data before start and starts immediately before the TCP write', async () => {
     const order: string[] = [];
     const claimToken = '11111111-1111-4111-8111-111111111111';

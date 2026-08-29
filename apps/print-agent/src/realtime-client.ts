@@ -1,9 +1,9 @@
 import WebSocket from 'ws';
-import { AgentApiClient } from './api-client';
+import { AgentApiClient, AgentApiError } from './api-client';
 import type { PrintAgentConfig } from './config';
 import { JobQueue } from './job-queue';
 import { JobProcessor } from './job-processor';
-import type { PrintJob } from '@contracts/print-job';
+import type { PendingPrintJobPage, PrintJob } from '@contracts/print-job';
 import { AgentPrintCache } from './core/print-cache';
 import {
   REALTIME_SCHEMA_VERSION,
@@ -33,10 +33,15 @@ export class AgentRealtimeClient implements RealtimeConnection {
   private isDestroyed = false;
   private reconnectAttempt = 0;
   private heartbeatTimer: NodeJS.Timeout | null = null;
+  private lastSeenTimer: NodeJS.Timeout | null = null;
   private pollFallbackTimer: NodeJS.Timeout | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
-  private isRecovering = false;
+  private recoveryPromise: Promise<boolean> | null = null;
+  private heartbeatPromise: Promise<unknown> | null = null;
   private isReady = false;
+  private handshakeAcknowledged = false;
+  private offlinePollAttempt = 0;
+  private supportsPendingFeed = true;
   private readonly jobQueue = new JobQueue();
   private readonly processor: JobProcessor;
   private readonly processingJobs = new Set<string>();
@@ -90,14 +95,16 @@ export class AgentRealtimeClient implements RealtimeConnection {
 
       this.ws.on('close', (code, reason) => {
         this.stopHeartbeat();
+        this.stopPollingFallback();
         this.isReady = false;
+        this.handshakeAcknowledged = false;
         if (!this.isDestroyed) {
           const reasonStr = reason ? reason.toString() : '';
           console.warn(
             `[Realtime] Mất kết nối (code: ${code}${reasonStr ? `, lý do: ${reasonStr}` : ''}). Đang thử kết nối lại...`,
           );
           this.events.onDisconnected?.(reasonStr || `WebSocket closed (${code})`);
-          this.startPollingFallback();
+          this.startPollingFallback(true);
           this.scheduleReconnect();
         }
       });
@@ -108,6 +115,7 @@ export class AgentRealtimeClient implements RealtimeConnection {
       });
     } catch (err: any) {
       console.error('[Realtime] Lỗi khởi tạo WebSocket:', err?.message || err);
+      this.startPollingFallback(true);
       this.scheduleReconnect();
     }
   }
@@ -133,13 +141,23 @@ export class AgentRealtimeClient implements RealtimeConnection {
       return;
     }
     console.log('[PRINT-AGENT] Subscription acknowledged; syncing pending print jobs.');
+    this.handshakeAcknowledged = true;
     this.events.onPhase?.('REGISTERED');
     this.events.onPhase?.('SUBSCRIBED');
     this.events.onPhase?.('SYNCING');
     if (frame.sync?.mode === 'REPLAY') await this.receiveEvents(frame.sync.events);
     const [, synced] = await Promise.all([this.printCache.prewarm(), this.recoverPendingJobs()]);
-    if (!synced || this.isDestroyed) return;
+    if (!synced || this.isDestroyed) {
+      this.startPollingFallback();
+      return;
+    }
+    this.markReady();
+  }
+
+  private markReady(): void {
+    if (this.isReady || this.isDestroyed || !this.handshakeAcknowledged) return;
     this.isReady = true;
+    this.offlinePollAttempt = 0;
     this.startHeartbeat();
     this.startPollingFallback();
     console.log('[PRINT-AGENT] Sync complete; print delivery is ready.');
@@ -173,23 +191,61 @@ export class AgentRealtimeClient implements RealtimeConnection {
   }
 
   async recoverPendingJobs(): Promise<boolean> {
-    if (this.isRecovering || this.isDestroyed) return false;
-    this.isRecovering = true;
+    if (this.isDestroyed) return false;
+    if (this.recoveryPromise) return this.recoveryPromise;
+    this.recoveryPromise = this.performPendingRecovery().finally(() => {
+      this.recoveryPromise = null;
+    });
+    return this.recoveryPromise;
+  }
+
+  private async performPendingRecovery(): Promise<boolean> {
     try {
-      const jobs = await this.apiClient.get<PrintJob[]>(
-        '/api/v1/pos/print-jobs?status=QUEUED&limit=20',
-      );
-      console.log(`[PRINT-AGENT] Sync pending jobs found=${Array.isArray(jobs) ? jobs.length : 0}`);
-      if (Array.isArray(jobs) && jobs.length > 0) {
-        const printerKey = this.config.printerIp || 'default';
+      const jobs: PrintJob[] = [];
+      if (this.supportsPendingFeed) {
+        let cursor: string | null = null;
+        do {
+          const query = cursor
+            ? `/api/v1/pos/print-jobs/pending?limit=50&cursor=${encodeURIComponent(cursor)}`
+            : '/api/v1/pos/print-jobs/pending?limit=50';
+          let page: PendingPrintJobPage;
+          try {
+            page = await this.apiClient.get<PendingPrintJobPage>(query);
+          } catch (error) {
+            const isMissing =
+              (error instanceof AgentApiError && error.status === 404) ||
+              (error instanceof Error && /failed \(404\)/.test(error.message));
+            if (!isMissing) throw error;
+            this.supportsPendingFeed = false;
+            break;
+          }
+          if (!page || !Array.isArray(page.jobs))
+            throw new Error('Pending print feed không hợp lệ.');
+          jobs.push(...page.jobs);
+          cursor = page.nextCursor;
+        } while (cursor && jobs.length < 1_000);
+      }
+      if (!this.supportsPendingFeed) {
+        const legacyJobs = await this.apiClient.get<PrintJob[]>(
+          '/api/v1/pos/print-jobs?status=QUEUED&limit=20',
+        );
+        jobs.push(
+          ...legacyJobs.filter(
+            (job) => !job.targetDeviceId || job.targetDeviceId === this.config.agentId,
+          ),
+        );
+      }
+      console.log(`[PRINT-AGENT] Sync pending jobs found=${jobs.length}`);
+      if (jobs.length > 0) {
         for (const job of jobs) {
-          this.enqueueJob(job, printerKey);
+          this.enqueueJob(job);
         }
       }
       return true;
-    } catch (err: any) {
-      this.events.onDegraded?.(err?.message || String(err));
-      if (err?.message?.includes('401') || err?.message?.includes('UNAUTHORIZED')) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.events.onDegraded?.(message);
+      if (message.includes('401') || message.includes('UNAUTHORIZED')) {
         console.error(
           '\n\x1b[31m✘ [PrintAgent] Xác thực thất bại với máy chủ (401 Unauthorized).\x1b[0m',
         );
@@ -198,8 +254,6 @@ export class AgentRealtimeClient implements RealtimeConnection {
         );
       }
       return false;
-    } finally {
-      this.isRecovering = false;
     }
   }
 
@@ -241,6 +295,23 @@ export class AgentRealtimeClient implements RealtimeConnection {
         this.ws.send(JSON.stringify({ type: 'ping' }));
       }
     }, 20000);
+    void this.touchLastSeen();
+    this.lastSeenTimer = setInterval(() => void this.touchLastSeen(), 45_000);
+  }
+
+  private touchLastSeen(): Promise<unknown> {
+    if (this.heartbeatPromise) return this.heartbeatPromise;
+    this.heartbeatPromise = this.apiClient
+      .post('/api/v1/print-agent/heartbeat', {})
+      .catch((error) => {
+        this.events.onDegraded?.(
+          `HEARTBEAT_FAILED: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      })
+      .finally(() => {
+        this.heartbeatPromise = null;
+      });
+    return this.heartbeatPromise;
   }
 
   private stopHeartbeat(): void {
@@ -248,21 +319,44 @@ export class AgentRealtimeClient implements RealtimeConnection {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
+    if (this.lastSeenTimer) {
+      clearInterval(this.lastSeenTimer);
+      this.lastSeenTimer = null;
+    }
   }
 
-  private startPollingFallback(): void {
+  private startPollingFallback(immediate = false): void {
     if (this.pollFallbackTimer) return;
-    // Realtime is primary. This is a low-frequency safety net for missed events.
-    this.pollFallbackTimer = setInterval(() => {
-      if (!this.isDestroyed) {
-        void this.recoverPendingJobs();
+    this.schedulePendingScan(immediate ? 0 : this.nextPollDelay());
+  }
+
+  private nextPollDelay(): number {
+    if (this.isReady) return 30_000;
+    const base = Math.min(2_000 * 2 ** this.offlinePollAttempt, 30_000);
+    return Math.round(base * (0.8 + Math.random() * 0.4));
+  }
+
+  private schedulePendingScan(delayMs: number): void {
+    this.pollFallbackTimer = setTimeout(async () => {
+      this.pollFallbackTimer = null;
+      if (this.isDestroyed) return;
+      const synced = await this.recoverPendingJobs();
+      if (!this.isReady) {
+        if (synced && this.ws?.readyState === WebSocket.OPEN && this.handshakeAcknowledged) {
+          this.markReady();
+          return;
+        }
+        this.offlinePollAttempt = Math.min(this.offlinePollAttempt + 1, 4);
+      } else {
+        this.offlinePollAttempt = 0;
       }
-    }, 30_000);
+      this.schedulePendingScan(this.nextPollDelay());
+    }, delayMs);
   }
 
   private stopPollingFallback(): void {
     if (this.pollFallbackTimer) {
-      clearInterval(this.pollFallbackTimer);
+      clearTimeout(this.pollFallbackTimer);
       this.pollFallbackTimer = null;
     }
   }

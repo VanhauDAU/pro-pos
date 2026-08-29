@@ -9,7 +9,10 @@ export class StoreService {
   private readonly repository: StoreRepository;
   private readonly dispatcher: RealtimeDispatcher;
 
-  constructor(private readonly env: CloudflareBindings) {
+  constructor(
+    private readonly env: CloudflareBindings,
+    private readonly defer?: (promise: Promise<unknown>) => void,
+  ) {
     this.repository = new StoreRepository(env.DB);
     this.dispatcher = new RealtimeDispatcher(env);
   }
@@ -30,7 +33,7 @@ export class StoreService {
   }
 
   private dispatchPrintConfig(storeId: string) {
-    void this.dispatcher.dispatchStore(storeId).catch(() => undefined);
+    this.defer?.(this.dispatcher.dispatchStore(storeId).catch(() => undefined));
   }
 
   async getPrintConfigVersion(storeId: string): Promise<number> {

@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { success } from '@server/lib/response';
 import { parseJson } from '@server/lib/validation';
-import { requireActor } from '@server/middleware/authorization';
+import { requireActor, requireActorOrPrintAgent } from '@server/middleware/authorization';
 import { PrintAgentService } from '@server/services/print-agent-service';
 import type { AppEnv } from '@server/types';
 
@@ -32,6 +32,12 @@ publicPrintAgentRoutes.get('/pair/status', async (c) => {
   const service = new PrintAgentService(c.env);
   const status = await service.getPairingStatus(sessionId);
   return success(c, status);
+});
+
+publicPrintAgentRoutes.post('/heartbeat', requireActorOrPrintAgent(), async (c) => {
+  const agentId = c.req.header('X-Agent-Id');
+  if (agentId) await new PrintAgentService(c.env).heartbeat(agentId);
+  return success(c, { ok: true });
 });
 
 /**

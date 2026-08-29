@@ -410,22 +410,37 @@ export class JobProcessor {
           { cause: error },
         );
       }
-      try {
-        await this.transport.send(escposBytes, { host: printerIp, port: printerPort });
-      } catch (error) {
-        const message = errorMessage(error);
-        const printerError = error instanceof PrinterError ? error : null;
-        const failureStage = printerError?.failureStage ?? 'BEFORE_WRITE';
-        const code =
-          printerError?.code ??
-          (/connect|kết nối|ECONN|timeout/i.test(message)
-            ? 'NETWORK_PRINTER_UNREACHABLE'
-            : 'SOCKET_WRITE_ERROR');
-        throw new PrintJobProcessingError(code, message, {
-          cause: error,
-          failureStage,
-          retryable: failureStage === 'BEFORE_WRITE',
-        });
+      for (let tcpAttempt = 1; tcpAttempt <= 2; tcpAttempt += 1) {
+        try {
+          await this.transport.send(escposBytes, { host: printerIp, port: printerPort });
+          break;
+        } catch (error) {
+          const message = errorMessage(error);
+          const printerError = error instanceof PrinterError ? error : null;
+          const failureStage = printerError?.failureStage ?? 'BEFORE_WRITE';
+          if (failureStage === 'BEFORE_WRITE' && tcpAttempt === 1) {
+            console.warn(
+              JSON.stringify({
+                level: 'warn',
+                message: 'retrying TCP print before first byte',
+                jobId: job.id,
+                printerIp,
+                printerPort,
+              }),
+            );
+            continue;
+          }
+          const code =
+            printerError?.code ??
+            (/connect|kết nối|ECONN|timeout/i.test(message)
+              ? 'NETWORK_PRINTER_UNREACHABLE'
+              : 'SOCKET_WRITE_ERROR');
+          throw new PrintJobProcessingError(code, message, {
+            cause: error,
+            failureStage,
+            retryable: failureStage === 'BEFORE_WRITE',
+          });
+        }
       }
 
       await this.apiClient.post(

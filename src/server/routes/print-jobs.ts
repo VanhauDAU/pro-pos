@@ -4,6 +4,7 @@ import {
   claimPrintJobSchema,
   createPrintJobSchema,
   failPrintJobSchema,
+  pendingPrintJobQuerySchema,
   printJobQuerySchema,
   transitionPrintJobSchema,
 } from '@contracts/print-job';
@@ -12,9 +13,14 @@ import { success } from '@server/lib/response';
 import { parseJson } from '@server/lib/validation';
 import { requireActorOrPrintAgent, requirePermission } from '@server/middleware/authorization';
 import { PrintJobService } from '@server/services/print-job-service';
+import { AppError } from '@server/lib/app-error';
 import type { AppEnv } from '@server/types';
 
 export const printJobRoutes = new Hono<AppEnv>();
+
+function printJobService(c: Parameters<typeof success>[0]): PrintJobService {
+  return new PrintJobService(c.env, (promise) => c.executionCtx.waitUntil(promise));
+}
 
 printJobRoutes.use('*', requireActorOrPrintAgent());
 
@@ -29,7 +35,7 @@ printJobRoutes.post(
     const body = await parseJson(c.req.raw, createPrintJobSchema);
     const actor = c.get('actor');
     const device = c.get('device');
-    const service = new PrintJobService(c.env);
+    const service = printJobService(c);
 
     const job = await service.createPrintJob({
       ...body,
@@ -56,9 +62,38 @@ printJobRoutes.get(
   async (c) => {
     const query = printJobQuerySchema.parse(c.req.query());
     const actor = c.get('actor');
-    const service = new PrintJobService(c.env);
+    const service = printJobService(c);
     const jobs = await service.listJobs(actor.storeId!, query);
     return success(c, jobs);
+  },
+);
+
+/** Agent-only FIFO recovery feed, including safely reclaimable expired leases. */
+printJobRoutes.get(
+  '/pending',
+  requirePermission(...orderWorkspacePermissionKeys, 'order.proforma_print', 'invoice.print'),
+  async (c) => {
+    const agentId = c.req.header('X-Agent-Id');
+    if (!agentId) {
+      throw new AppError(
+        'PRINT_AGENT_REQUIRED',
+        'Pending print feed chỉ dành cho Print Agent.',
+        403,
+      );
+    }
+    const query = pendingPrintJobQuerySchema.parse(c.req.query());
+    const storeId = c.get('actor').storeId!;
+    const service = printJobService(c);
+    await service.reconcileStalePrinting(storeId, Date.now(), agentId);
+    return success(
+      c,
+      await service.listPendingJobsForAgent({
+        storeId,
+        agentId,
+        limit: query.limit,
+        cursor: query.cursor,
+      }),
+    );
   },
 );
 
@@ -71,7 +106,7 @@ printJobRoutes.get(
   requirePermission(...orderWorkspacePermissionKeys, 'order.proforma_print', 'invoice.print'),
   async (c) => {
     const actor = c.get('actor');
-    const service = new PrintJobService(c.env);
+    const service = printJobService(c);
     const job = await service.getJob(actor.storeId!, c.req.param('id'));
     return success(c, job);
   },
@@ -101,7 +136,7 @@ printJobRoutes.post(
       : claimedByDeviceId?.trim() || device?.id || actor.id || 'desktop-bridge';
     const protocolVersion = isPrintAgent && c.req.header('X-Print-Agent-Protocol') === '2' ? 2 : 1;
 
-    const service = new PrintJobService(c.env);
+    const service = printJobService(c);
     const job = await service.claimPrintJob(
       actor.storeId!,
       c.req.param('id'),
@@ -135,7 +170,7 @@ printJobRoutes.post(
     }
     const actor = c.get('actor');
     const device = c.get('device');
-    const service = new PrintJobService(c.env);
+    const service = printJobService(c);
 
     const job = await service.startPrintJob(
       actor.storeId!,
@@ -169,7 +204,7 @@ printJobRoutes.post(
     }
     const actor = c.get('actor');
     const device = c.get('device');
-    const service = new PrintJobService(c.env);
+    const service = printJobService(c);
 
     const job = await service.completePrintJob(
       actor.storeId!,
@@ -198,7 +233,7 @@ printJobRoutes.post(
     const body = await parseJson(c.req.raw, failPrintJobSchema);
     const actor = c.get('actor');
     const device = c.get('device');
-    const service = new PrintJobService(c.env);
+    const service = printJobService(c);
 
     const job = await service.failPrintJob(
       actor.storeId!,
@@ -239,7 +274,7 @@ printJobRoutes.post(
     }
     const actor = c.get('actor');
     const device = c.get('device');
-    const service = new PrintJobService(c.env);
+    const service = printJobService(c);
 
     const job = await service.uncertainPrintJob(
       actor.storeId!,

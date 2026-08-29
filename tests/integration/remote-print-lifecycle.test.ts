@@ -10,6 +10,7 @@ describe('Remote Print & Print Agent Lifecycle (Integration Test)', () => {
   let storeId: string;
   let ownerUserId: string;
   let orderId: string;
+  let pairedAgentId: string;
   let printJobService: PrintJobService;
   let printAgentService: PrintAgentService;
 
@@ -57,6 +58,7 @@ describe('Remote Print & Print Agent Lifecycle (Integration Test)', () => {
         'Mac Quầy Thu Ngân',
       );
       expect(confirmed.agentId).toBeDefined();
+      pairedAgentId = confirmed.agentId;
       expect(confirmed.deviceName).toBe('Mac Quầy Thu Ngân');
 
       // Step 3: Agent polls status and receives credentials
@@ -69,6 +71,31 @@ describe('Remote Print & Print Agent Lifecycle (Integration Test)', () => {
       const agent = await printAgentService.verifyAgent(status.agentId!, status.agentSecret!);
       expect(agent.id).toBe(confirmed.agentId);
       expect(agent.store_id).toBe(storeId);
+    });
+
+    it('updates last_seen only through the throttled heartbeat path', async () => {
+      const before = await env.DB.prepare(
+        `SELECT last_seen_at AS lastSeenAt FROM print_agents WHERE id = ?`,
+      )
+        .bind(pairedAgentId)
+        .first<{ lastSeenAt: number | null }>();
+      expect(before?.lastSeenAt).toBeNull();
+
+      await printAgentService.heartbeat(pairedAgentId);
+      const first = await env.DB.prepare(
+        `SELECT last_seen_at AS lastSeenAt FROM print_agents WHERE id = ?`,
+      )
+        .bind(pairedAgentId)
+        .first<{ lastSeenAt: number | null }>();
+      await printAgentService.heartbeat(pairedAgentId);
+      const second = await env.DB.prepare(
+        `SELECT last_seen_at AS lastSeenAt FROM print_agents WHERE id = ?`,
+      )
+        .bind(pairedAgentId)
+        .first<{ lastSeenAt: number | null }>();
+
+      expect(first?.lastSeenAt).toBeTypeOf('number');
+      expect(second?.lastSeenAt).toBe(first?.lastSeenAt);
     });
   });
 
@@ -224,6 +251,52 @@ describe('Remote Print & Print Agent Lifecycle (Integration Test)', () => {
   });
 
   describe('Error handling & Recovery', () => {
+    it('returns only FIFO jobs eligible for the requesting Agent', async () => {
+      const first = await printJobService.createPrintJob({
+        storeId,
+        documentType: 'provisional',
+        documentId: orderId,
+        printerRole: 'receipt',
+        targetDeviceId: null,
+        idempotencyKey: `print:pending:first:${crypto.randomUUID()}`,
+      });
+      const other = await printJobService.createPrintJob({
+        storeId,
+        documentType: 'provisional',
+        documentId: orderId,
+        printerRole: 'receipt',
+        targetDeviceId: 'agent-other',
+        idempotencyKey: `print:pending:other:${crypto.randomUUID()}`,
+      });
+      const targeted = await printJobService.createPrintJob({
+        storeId,
+        documentType: 'provisional',
+        documentId: orderId,
+        printerRole: 'receipt',
+        targetDeviceId: 'agent-pending',
+        idempotencyKey: `print:pending:target:${crypto.randomUUID()}`,
+      });
+      await env.DB.prepare(`UPDATE print_jobs SET created_at = ? WHERE id = ?`)
+        .bind(1, first.id)
+        .run();
+      await env.DB.prepare(`UPDATE print_jobs SET created_at = ? WHERE id = ?`)
+        .bind(2, other.id)
+        .run();
+      await env.DB.prepare(`UPDATE print_jobs SET created_at = ? WHERE id = ?`)
+        .bind(3, targeted.id)
+        .run();
+
+      const page = await printJobService.listPendingJobsForAgent({
+        storeId,
+        agentId: 'agent-pending',
+        limit: 100,
+      });
+      const relevant = page.jobs.filter((job) =>
+        [first.id, other.id, targeted.id].includes(job.id),
+      );
+      expect(relevant.map((job) => job.id)).toEqual([first.id, targeted.id]);
+    });
+
     it('handles print failure transition', async () => {
       const failIdemp = `print:fail:${crypto.randomUUID()}`;
       const job = await printJobService.createPrintJob({

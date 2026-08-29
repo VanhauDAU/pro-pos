@@ -3,6 +3,7 @@ import { AgentRuntime } from '../../apps/print-agent/src/core/agent-runtime';
 import type { PrintAgentConfig } from '../../apps/print-agent/src/config';
 import { AgentRealtimeClient } from '../../apps/print-agent/src/realtime-client';
 import { PrinterError } from '../../src/printing/printer-errors';
+import { AgentApiClient, AgentApiError } from '../../apps/print-agent/src/api-client';
 
 const pairedConfig: PrintAgentConfig = {
   serverUrl: 'https://pos.example',
@@ -255,6 +256,9 @@ describe('AgentRuntime', () => {
       targetDeviceId: null,
     };
     const get = vi.fn(async (path: string) => {
+      if (path === '/api/v1/pos/print-jobs/pending?limit=50') {
+        throw new Error('API GET pending failed (404): legacy server');
+      }
       expect(path).toBe('/api/v1/pos/print-jobs?status=QUEUED&limit=20');
       return [job];
     });
@@ -287,15 +291,21 @@ describe('AgentRuntime', () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(get).toHaveBeenCalledOnce();
-    expect(get.mock.calls[0]?.[0]).not.toMatch(/\/print-jobs\/JOB-LEGACY$/);
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(get.mock.calls.map(([path]) => path)).not.toContain('/api/v1/pos/print-jobs/JOB-LEGACY');
     expect(processJob).toHaveBeenCalledOnce();
   });
 
   it('does not report connected until the server ready frame and immediate pending sync succeed', async () => {
     const onConnected = vi.fn();
-    const get = vi.fn(async () => []);
-    const client = new AgentRealtimeClient(pairedConfig, { get } as never, { onConnected });
+    const post = vi.fn(async () => ({}));
+    const get = vi.fn(async (path: string) => {
+      if (path === '/api/v1/pos/print-jobs/pending?limit=50') {
+        return { jobs: [], nextCursor: null };
+      }
+      throw new Error(`Unexpected GET ${path}`);
+    });
+    const client = new AgentRealtimeClient(pairedConfig, { get, post } as never, { onConnected });
 
     (client as any).handleMessage({
       type: 'ready',
@@ -307,8 +317,96 @@ describe('AgentRuntime', () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(get).toHaveBeenCalledWith('/api/v1/pos/print-jobs?status=QUEUED&limit=20');
+    expect(get).toHaveBeenCalledWith('/api/v1/pos/print-jobs/pending?limit=50');
     expect(onConnected).toHaveBeenCalledOnce();
     client.destroy();
+  });
+
+  it('single-flights overlapping pending scans', async () => {
+    let release!: (value: unknown) => void;
+    const pending = new Promise((resolve) => {
+      release = resolve;
+    });
+    const get = vi.fn(() => pending);
+    const client = new AgentRealtimeClient(pairedConfig, { get } as never);
+
+    const first = client.recoverPendingJobs();
+    const second = client.recoverPendingJobs();
+    release({ jobs: [], nextCursor: null });
+
+    await expect(first).resolves.toBe(true);
+    await expect(second).resolves.toBe(true);
+    expect(get).toHaveBeenCalledOnce();
+    client.destroy();
+  });
+
+  it('scans immediately on disconnect mode and backs offline polling from 2s to 30s', async () => {
+    vi.useFakeTimers();
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const get = vi.fn(async () => ({ jobs: [], nextCursor: null }));
+    const client = new AgentRealtimeClient(pairedConfig, { get } as never);
+
+    expect((client as any).nextPollDelay()).toBe(2_000);
+    (client as any).offlinePollAttempt = 4;
+    expect((client as any).nextPollDelay()).toBe(30_000);
+    (client as any).offlinePollAttempt = 0;
+    (client as any).startPollingFallback(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(get).toHaveBeenCalledOnce();
+
+    client.destroy();
+    random.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it('retries transient HTTP failures and honors Retry-After', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('busy', { status: 503, headers: { 'Retry-After': '1' } }))
+      .mockResolvedValueOnce(Response.json({ data: { ok: true } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const sleep = vi.fn(async () => undefined);
+    const client = new AgentApiClient(pairedConfig, { sleep, random: () => 0.5 });
+
+    await expect(client.get('/retry')).resolves.toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(1_000);
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+    vi.unstubAllGlobals();
+  });
+
+  it('does not retry authorization, not-found or conflict responses', async () => {
+    for (const status of [401, 403, 404, 409]) {
+      const fetchMock = vi.fn(async () => new Response('no', { status }));
+      vi.stubGlobal('fetch', fetchMock);
+      const client = new AgentApiClient(pairedConfig, {
+        sleep: vi.fn(async () => undefined),
+      });
+      await expect(client.post('/transition', {})).rejects.toMatchObject({
+        status,
+        retryable: false,
+      } satisfies Partial<AgentApiError>);
+      expect(fetchMock).toHaveBeenCalledOnce();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('retries a lost transition response with the same request body', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError('socket reset'))
+      .mockResolvedValueOnce(Response.json({ data: { status: 'COMPLETED' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new AgentApiClient(pairedConfig, {
+      sleep: vi.fn(async () => undefined),
+      random: () => 0.5,
+    });
+    const body = { claimToken: '11111111-1111-4111-8111-111111111111' };
+
+    await expect(client.post('/complete', body)).resolves.toMatchObject({ status: 'COMPLETED' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]?.[1]?.body).toBe(JSON.stringify(body));
+    expect(fetchMock.mock.calls[1]?.[1]?.body).toBe(JSON.stringify(body));
+    vi.unstubAllGlobals();
   });
 });

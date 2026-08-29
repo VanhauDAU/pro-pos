@@ -265,6 +265,8 @@ export function getReceiptPrintProfile(
 }
 
 export interface PrinterDeviceConfig {
+  configurationName: string;
+  isDefault: boolean;
   connectionType: 'SYSTEM' | 'NETWORK_TCP';
   printerName?: string | undefined;
   networkIp?: string | undefined;
@@ -276,9 +278,11 @@ export interface PrinterDeviceConfig {
 }
 
 export const defaultPrinterDeviceConfig: PrinterDeviceConfig = {
+  configurationName: 'Máy in quầy',
+  isDefault: true,
   connectionType: 'SYSTEM',
   printerName: '',
-  networkIp: '192.168.1.150',
+  networkIp: '192.168.1.73',
   networkPort: 9100,
   paperSize: 'K80',
   printableDots: undefined,
@@ -301,6 +305,8 @@ export function parsePrinterDeviceConfig(jsonStr?: string | null): PrinterDevice
 
 export const updatePrinterDeviceSettingsSchema = z
   .object({
+    configurationName: z.string().trim().min(1).max(120).default('Máy in quầy'),
+    isDefault: z.boolean().default(true),
     connectionType: z.enum(['SYSTEM', 'NETWORK_TCP']),
     printerName: z.string().trim().max(255).optional(),
     networkIp: z.string().trim().max(255).optional(),
@@ -323,6 +329,19 @@ export const updatePrinterDeviceSettingsSchema = z
         code: 'custom',
         path: ['networkIp'],
         message: 'Vui lòng nhập địa chỉ IP máy in.',
+      });
+    } else if (
+      value.connectionType === 'NETWORK_TCP' &&
+      !value
+        .networkIp!.split('.')
+        .every((part, _index, parts) =>
+          parts.length === 4 ? /^\d{1,3}$/.test(part) && Number(part) <= 255 : false,
+        )
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['networkIp'],
+        message: 'Địa chỉ IP máy in không hợp lệ.',
       });
     }
   });

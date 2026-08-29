@@ -5508,6 +5508,22 @@ body,
     margin: 0 auto !important;
     padding: 2mm 0 !important;
     background: #ffffff !important;
+    overflow: hidden !important;
+  }
+
+  #thermal-receipt-print-root .thermal-receipt-inner,
+  #thermal-receipt-print-root .thermal-receipt-inner * {
+    min-width: 0 !important;
+  }
+
+  #thermal-receipt-print-root .thermal-receipt-store-name,
+  #thermal-receipt-print-root .thermal-receipt-store-address,
+  #thermal-receipt-print-root .thermal-receipt-store-phone,
+  #thermal-receipt-print-root .thermal-receipt-value,
+  #thermal-receipt-print-root .thermal-receipt-item-sub,
+  #thermal-receipt-print-root .thermal-receipt-footer-text {
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   .staff-invoice-page {

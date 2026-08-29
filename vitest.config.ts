@@ -13,6 +13,7 @@ export default defineConfig({
       '@client': new URL('./src/client', import.meta.url).pathname,
       '@contracts': new URL('./src/contracts', import.meta.url).pathname,
       '@domain': new URL('./src/domain', import.meta.url).pathname,
+      '@printing': new URL('./src/printing', import.meta.url).pathname,
       '@server': new URL('./src/server', import.meta.url).pathname,
     },
   },

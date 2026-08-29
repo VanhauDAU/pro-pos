@@ -5,6 +5,15 @@ const qzMocks = vi.hoisted(() => ({
   print: vi.fn(async (_config: unknown, _data: Array<Record<string, unknown>>) => undefined),
   connect: vi.fn(async () => undefined),
   isActive: vi.fn(() => true),
+  find: vi.fn(async () => ['Thermal Printer']),
+  renderCopies: vi.fn(
+    async (requests: Array<{ html: string; profile: { defaultPrintableDots: number } }>) =>
+      requests.map(({ profile }) => ({
+        width: profile.defaultPrintableDots,
+        height: 1,
+        data: new Uint8ClampedArray(profile.defaultPrintableDots * 4).fill(255),
+      })),
+  ),
 }));
 
 vi.mock('qz-tray', () => ({
@@ -12,9 +21,10 @@ vi.mock('qz-tray', () => ({
     api: { getVersion: vi.fn(async () => '2.2.6') },
     configs: { create: qzMocks.create },
     print: qzMocks.print,
-    printers: { find: vi.fn(async () => []) },
+    printers: { find: qzMocks.find },
     security: {
       setCertificatePromise: vi.fn(),
+      setSignatureAlgorithm: vi.fn(),
       setSignaturePromise: vi.fn(),
     },
     websocket: {
@@ -25,12 +35,17 @@ vi.mock('qz-tray', () => ({
   },
 }));
 
+vi.mock('../../src/printing/receipt/receipt-renderer', () => ({
+  browserReceiptRenderer: { renderCopies: qzMocks.renderCopies },
+}));
+
 import { printEscPosReceipt } from '../../src/client/lib/qz-tray-service';
 import {
   buildPrintDataFromQuote,
   formatSegmentDurationLabel,
   generateThermalReceiptHtml,
   printReceipt,
+  reconcileReceiptTimeSegmentAmounts,
 } from '../../src/client/lib/pos-receipt-printer';
 import {
   buildEscPosReceipt,
@@ -40,13 +55,14 @@ import {
 import { defaultPrintTemplateConfig } from '../../src/contracts/store';
 import type { StorePrintSettings } from '../../src/contracts/store';
 import { buildOwnerPrintPreviewSample } from '../../src/client/features/owner/print-preview-sample';
+import { clearPrinterDiscoveryCache } from '../../src/printing/qz/qz-printer-discovery';
+import { resetQzClientForTests } from '../../src/printing/qz/qz-client';
 
 const baseOptions = {
   paperSize: 'K80' as const,
   paperWidthMm: 80,
   autoCut: true,
   openCashDrawer: false,
-  escPosData: ['REAL-ORDER-1', 'REAL-ORDER-2'],
   htmlData: ['<html>REAL-ORDER-1</html>', '<html>REAL-ORDER-2</html>'],
 };
 
@@ -54,9 +70,12 @@ describe('QZ receipt dispatch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     qzMocks.isActive.mockReturnValue(true);
+    qzMocks.find.mockResolvedValue(['Thermal Printer']);
+    clearPrinterDiscoveryCache();
+    resetQzClientForTests();
   });
 
-  it('uses pixel HTML with all real copies for a system printer', async () => {
+  it('sends every system-printer receipt as one raw base64 ESC/POS job', async () => {
     const result = await printEscPosReceipt({
       ...baseOptions,
       connectionType: 'SYSTEM',
@@ -66,14 +85,15 @@ describe('QZ receipt dispatch', () => {
     expect(result.success).toBe(true);
     expect(qzMocks.print).toHaveBeenCalledOnce();
     const [, data] = qzMocks.print.mock.calls[0]!;
-    expect(data).toHaveLength(2);
+    expect(data).toHaveLength(1);
     const firstJob = data[0]!;
-    expect(firstJob).toMatchObject({ type: 'pixel', format: 'html' });
-    expect(firstJob.data).toContain('REAL-ORDER-1');
+    expect(firstJob).toMatchObject({ type: 'raw', format: 'command', flavor: 'base64' });
+    expect(atob(String(firstJob.data))).not.toContain('%!PS-Adobe');
+    expect(atob(String(firstJob.data))).not.toContain('%PDF');
   });
 
   it('automatically connects QZ Tray before dispatching a configured payment receipt', async () => {
-    qzMocks.isActive.mockReturnValueOnce(false).mockReturnValueOnce(false).mockReturnValue(true);
+    qzMocks.isActive.mockReturnValueOnce(false).mockReturnValue(true);
     const result = await printReceipt({
       data: {
         receiptType: 'PAYMENT',
@@ -112,6 +132,84 @@ describe('QZ receipt dispatch', () => {
     expect(result.success).toBe(true);
     expect(qzMocks.connect).toHaveBeenCalledOnce();
     expect(qzMocks.print).toHaveBeenCalledOnce();
+  });
+
+  it('prints exactly the same configured receipt markup shown by the cashier preview', async () => {
+    const options = {
+      data: {
+        receiptType: 'PAYMENT' as const,
+        orderCode: 'HD-PARITY-001',
+        invoiceCode: 'HD-PARITY-001',
+        orderType: 'DINE_IN' as const,
+        tableName: 'Bàn VIP 01',
+        areaName: 'Khu vực 1',
+        cashierName: 'Văn Hậu',
+        customerName: 'Nguyễn Nhật Quang Minh',
+        guestPhone: '0900000000',
+        issuedAtMs: Date.now(),
+        subtotal: 37_000,
+        discountTotal: 0,
+        total: 37_000,
+        paymentMethod: 'BANK_TRANSFER' as const,
+        lines: [
+          {
+            id: 'cola',
+            name: 'Coca Cola 330ml',
+            quantity: 1,
+            unitPrice: 15_000,
+            totalPrice: 15_000,
+          },
+          {
+            id: 'tiger',
+            name: 'Bia Tiger',
+            quantity: 1,
+            unitPrice: 22_000,
+            totalPrice: 22_000,
+          },
+        ],
+      },
+      printSettings: {
+        storeId: 'store-parity',
+        updatedAt: Date.now(),
+        maxReceiptReprintCount: 0,
+        paymentCopyCount: 1,
+        allowProvisionalPrint: true,
+        provisionalCopyCount: 1,
+        logoHorizontalLayout: false,
+        bottomImageDescription: 'QR thanh toán',
+        bottomImageType: 'VIETQR' as const,
+        bottomBankName: 'MB',
+        bottomBankAccountNumber: '0000000000',
+        bottomBankAccountName: 'NGUYEN VAN A',
+        customAddressEnabled: false,
+        footerLine1Bold: false,
+        footerLine2Bold: true,
+        printWifiEnabled: false,
+        paperSize: 'K80' as const,
+        printersJson: JSON.stringify({
+          connectionType: 'NETWORK_TCP',
+          networkIp: '192.168.1.73',
+          networkPort: 9100,
+          paperSize: 'K80',
+          autoCut: true,
+          openCashDrawer: false,
+        }),
+      },
+    };
+    const previewMarkup = generateThermalReceiptHtml(options);
+
+    const result = await printReceipt(options);
+
+    expect(result.success).toBe(true);
+    const requests = qzMocks.renderCopies.mock.calls[0]![0];
+    expect(requests[0]!.html).toBe(previewMarkup);
+    expect(requests[0]!.html).toContain('Bàn VIP 01');
+    expect(requests[0]!.html).toContain('Nguyễn Nhật Quang Minh');
+    expect(requests[0]!.html).toContain('Mặt hàng');
+    expect(requests[0]!.html).toContain('SL/TL');
+    expect(requests[0]!.html).toContain('Thành tiền');
+    expect(requests[0]!.html).toContain('thermal-receipt-items--medium');
+    expect(requests[0]!.html).toContain('img.vietqr.io');
   });
 
   it('renders the real receipt safely with copy and totals metadata', () => {
@@ -204,13 +302,117 @@ describe('QZ receipt dispatch', () => {
         startedAtMs,
         endedAtMs: startedAtMs + 90_000,
         elapsedSeconds: 75,
-        amount: 833,
+        amount: 1_000,
       }),
     ]);
     expect(formatSegmentDurationLabel(data.lines[0]!.timeSegments![0]!)).toBe('=1 phút');
     expect(
       formatSegmentDurationLabel({ name: 'Giá thường', type: 'BASE', elapsedSeconds: 27 }),
     ).toBe('=27 giây');
+  });
+
+  it('renders full hourly details without a redundant numbered service row', () => {
+    const html = generateThermalReceiptHtml({
+      data: {
+        receiptType: 'PAYMENT',
+        orderCode: 'HD-TIME-COLUMNS',
+        orderType: 'DINE_IN',
+        tableName: 'Bàn 01',
+        issuedAtMs: Date.now(),
+        subtotal: 120_000,
+        discountTotal: 0,
+        total: 120_000,
+        lines: [
+          {
+            id: 'time',
+            name: 'Tiền giờ',
+            quantity: 1,
+            unitPrice: 120_000,
+            totalPrice: 120_000,
+            isTime: true,
+            timeSegments: [
+              {
+                name: 'Giá thường',
+                type: 'BASE',
+                startedAtMs: Date.UTC(2026, 7, 29, 6, 56),
+                endedAtMs: Date.UTC(2026, 7, 29, 7, 56),
+                elapsedSeconds: 3_600,
+                priceVnd: 120_000,
+                amount: 120_000,
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(html).toContain('thermal-receipt-items--time');
+    expect(html).toContain('thermal-receipt-items--with-unit-price');
+    expect(html).not.toContain('thermal-receipt-item-main--standalone');
+    expect(html).not.toContain('1. Tiền giờ');
+    expect(html).toContain('thermal-receipt-time-row');
+    expect(html).toContain('thermal-receipt-col-name');
+    expect(html).toContain('thermal-receipt-col-unit-price');
+    expect(html).toContain('thermal-receipt-col-total');
+    expect(html).toContain('Đ.Giá');
+    expect(html).toContain('Thành tiền');
+  });
+
+  it('reconciles time segment display amounts to the finalized rounded time total', () => {
+    const reconciled = reconcileReceiptTimeSegmentAmounts(
+      [
+        {
+          name: 'Giá thường',
+          startedAtMs: 1,
+          endedAtMs: 2,
+          elapsedSeconds: 3600,
+          priceVnd: 120_000,
+          amount: 120_133,
+        },
+      ],
+      120_000,
+    );
+    expect(reconciled?.[0]?.amount).toBe(120_000);
+
+    const multiple = reconcileReceiptTimeSegmentAmounts(
+      [
+        {
+          name: 'Giờ đầu',
+          startedAtMs: 1,
+          endedAtMs: 2,
+          elapsedSeconds: 1800,
+          priceVnd: 60_000,
+          amount: 60_000,
+        },
+        {
+          name: 'Giá thường',
+          startedAtMs: 2,
+          endedAtMs: 3,
+          elapsedSeconds: 1801,
+          priceVnd: 120_000,
+          amount: 60_133,
+        },
+      ],
+      120_000,
+    );
+    expect(multiple?.map((segment) => segment.amount)).toEqual([60_000, 60_000]);
+  });
+
+  it('shows the customer section when enabled, falling back to Khách lẻ', () => {
+    const html = generateThermalReceiptHtml({
+      data: {
+        receiptType: 'PAYMENT',
+        orderCode: 'HD-CUSTOMER-FALLBACK',
+        orderType: 'TAKEAWAY',
+        issuedAtMs: Date.now(),
+        subtotal: 0,
+        discountTotal: 0,
+        total: 0,
+        lines: [],
+      },
+    });
+    expect(html).toContain('Khách hàng');
+    expect(html).toContain('Khách lẻ');
   });
 
   it('marks provisional receipts unpaid in HTML and ESC/POS, but not payment receipts', () => {
@@ -280,7 +482,7 @@ describe('QZ receipt dispatch', () => {
     expect(payment).toContain('amount=100000');
   });
 
-  it('uses actual ESC/POS receipt data for a TCP printer', async () => {
+  it('sends browser-rasterized receipts as raw ESC/POS to a TCP printer', async () => {
     const result = await printEscPosReceipt({
       ...baseOptions,
       connectionType: 'NETWORK_TCP',
@@ -290,12 +492,52 @@ describe('QZ receipt dispatch', () => {
 
     expect(result.success).toBe(true);
     const [, data] = qzMocks.print.mock.calls[0]!;
-    expect(data).toHaveLength(2);
+    expect(data).toHaveLength(1);
     expect(data[0]).toMatchObject({
       type: 'raw',
       format: 'command',
-      data: 'REAL-ORDER-1',
+      flavor: 'base64',
     });
+    const bytes = Uint8Array.from(atob(String(data[0]!.data)), (value) => value.charCodeAt(0));
+    expect(Array.from(bytes.slice(0, 2))).toEqual([0x1b, 0x40]);
+    expect(Array.from(bytes.slice(-4))).toEqual([0x1d, 0x56, 0x41, 0x00]);
+  });
+
+  it('uses the official QZ socket target for LAN raw printing', async () => {
+    const result = await printEscPosReceipt({
+      ...baseOptions,
+      connectionType: 'NETWORK_TCP',
+      networkIp: '192.168.1.73',
+      networkPort: 9100,
+    });
+
+    expect(result.success).toBe(true);
+    expect(qzMocks.create).toHaveBeenCalledWith(
+      { host: '192.168.1.73', port: 9100 },
+      expect.objectContaining({ copies: 1, encoding: null }),
+    );
+  });
+
+  it('keeps fallback K80 text table rows within 48 columns', () => {
+    const escPos = buildEscPosReceipt({
+      data: buildOwnerPrintPreviewSample('PAYMENT', Date.now()),
+    }).escPosData;
+
+    const printableText = Array.from(escPos, (character) =>
+      character !== '\n' && character.charCodeAt(0) < 32 ? '' : character,
+    ).join('');
+    const tableLines = printableText
+      .split('\n')
+      .filter(
+        (line) =>
+          line.includes('Thông tin giờ') ||
+          line.includes('Đ.Giá') ||
+          line.includes('Mặt hàng') ||
+          /\d{2}:\d{2} - \d{2}:\d{2}/.test(line),
+      );
+
+    expect(tableLines.length).toBeGreaterThan(0);
+    expect(Math.max(...tableLines.map((line) => line.length))).toBeLessThanOrEqual(48);
   });
 
   it('renders partial payment and remaining debt on payment receipts', () => {
@@ -482,7 +724,7 @@ describe('QZ receipt dispatch', () => {
       total: 213_000,
     });
     for (const output of [html, escPos]) {
-      expect(output).toContain('Billiard');
+      expect(output).not.toContain('1. Billiard');
       expect(output).toContain('=Giờ đầu');
       expect(output).toContain('=1 giờ');
       expect(output).toContain('Đồng giá trà đào');

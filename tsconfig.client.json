@@ -22,8 +22,9 @@
     "paths": {
       "@client/*": ["./src/client/*"],
       "@contracts/*": ["./src/contracts/*"],
-      "@domain/*": ["./src/domain/*"]
+      "@domain/*": ["./src/domain/*"],
+      "@printing/*": ["./src/printing/*"]
     }
   },
-  "include": ["src/client", "src/contracts", "src/domain"]
+  "include": ["src/client", "src/contracts", "src/domain", "src/printing"]
 }

@@ -55,6 +55,7 @@ export default defineConfig({
       '@client': fileURLToPath(new URL('./src/client', import.meta.url)),
       '@contracts': fileURLToPath(new URL('./src/contracts', import.meta.url)),
       '@domain': fileURLToPath(new URL('./src/domain', import.meta.url)),
+      '@printing': fileURLToPath(new URL('./src/printing', import.meta.url)),
       '@server': fileURLToPath(new URL('./src/server', import.meta.url)),
     },
   },

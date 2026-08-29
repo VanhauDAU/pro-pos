@@ -6,6 +6,7 @@
     "lib": ["ES2023", "DOM", "WebWorker"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
@@ -21,7 +22,8 @@
       "@client/*": ["./src/client/*"],
       "@server/*": ["./src/server/*"],
       "@contracts/*": ["./src/contracts/*"],
-      "@domain/*": ["./src/domain/*"]
+      "@domain/*": ["./src/domain/*"],
+      "@printing/*": ["./src/printing/*"]
     }
   },
   "include": [
@@ -29,6 +31,7 @@
     "src/server",
     "src/contracts",
     "src/domain",
+    "src/printing",
     "src/client/features/guest/guest-assistant.ts",
     "src/client/features/pos/payment-return-state.ts",
     "src/client/features/pos/payment-navigation.ts",
@@ -40,6 +43,7 @@
     "src/client/features/owner/print-preview-sample.ts",
     "src/client/lib/qz-tray-service.ts",
     "src/client/lib/pos-receipt-printer.ts",
+    "src/client/lib/print-bridge-service.ts",
     "src/client/lib/onboarding-audio.ts",
     "src/client/lib/sound.ts",
     "src/client/lib/api.ts",

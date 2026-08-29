@@ -34,13 +34,16 @@ export function mapRealtimeEvent(row: RealtimeEventRow): RealtimeEventV1 {
   const data = parseJson<RealtimeEventV1['data']>(row.dataJson, {
     reason: 'ITEM_UPDATED',
   });
+  const aggregateType: 'ORDER' | 'PRINT_JOB' = row.eventType.startsWith('pos.print_job')
+    ? 'PRINT_JOB'
+    : 'ORDER';
   return {
     schemaVersion: row.schemaVersion,
     eventId: row.eventId,
     sequence: row.sequence,
     type: row.eventType,
     storeId: row.storeId,
-    aggregate: { type: 'ORDER', id: row.aggregateId, version: row.aggregateVersion },
+    aggregate: { type: aggregateType, id: row.aggregateId, version: row.aggregateVersion },
     occurredAtMs: row.occurredAtMs,
     actor: row.actorKind && row.actorUserId ? { kind: row.actorKind, id: row.actorUserId } : null,
     deviceId: row.deviceId,

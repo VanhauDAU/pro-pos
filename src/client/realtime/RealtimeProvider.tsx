@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 
 import { apiRequest } from '@client/lib/api';
+import { startPrintBridgeLeaderElection } from '@client/lib/print-bridge-service';
 import {
   pollingIntervalForRealtime,
   PosRealtimeClient,
@@ -48,6 +49,7 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
       setStatus('DISABLED');
       return undefined;
     }
+    void startPrintBridgeLeaderElection();
     const tabId = crypto.randomUUID();
     const channelName = `propos:realtime:${storeId}`;
     const leaseKey = `${channelName}:lease`;

@@ -48,7 +48,14 @@ export class JobProcessor {
 
       let printData: PosReceiptPrintData | null = null;
       let printSettings: StorePrintSettings | null = null;
-      let storeInfo: { name: string; address?: string; phone?: string } = {
+      let storeInfo: {
+        name: string;
+        address?: string;
+        phone?: string;
+        bankName?: string | null;
+        bankAccountNumber?: string | null;
+        bankAccountName?: string | null;
+      } = {
         name: this.config.storeName || 'PRO POS',
       };
 
@@ -58,11 +65,16 @@ export class JobProcessor {
           this.apiClient.get<StorePrintSettings>('/api/v1/pos/print-settings').catch(() => null),
         ]);
 
-        if (contextRes?.store) {
+        if (contextRes) {
           storeInfo = {
-            name: contextRes.store.name || storeInfo.name,
-            address: contextRes.store.address || undefined,
-            phone: contextRes.store.phone || undefined,
+            name: contextRes.storeName || contextRes.store?.name || storeInfo.name,
+            address: contextRes.storeAddress || contextRes.store?.address || undefined,
+            phone: contextRes.storePhone || contextRes.store?.phone || undefined,
+            bankName: contextRes.bankName ?? contextRes.store?.bankName ?? null,
+            bankAccountNumber:
+              contextRes.bankAccountNumber ?? contextRes.store?.bankAccountNumber ?? null,
+            bankAccountName:
+              contextRes.bankAccountName ?? contextRes.store?.bankAccountName ?? null,
           };
         }
         if (settingsRes) {
@@ -70,11 +82,19 @@ export class JobProcessor {
         }
 
         if (job.documentType === 'invoice') {
-          const invoice = await this.apiClient.get<any>(`/api/v1/pos/invoices/${job.documentId}`);
-          printData = buildPrintDataFromInvoice(invoice);
+          try {
+            const invoice = await this.apiClient.get<any>(`/api/v1/pos/invoices/${job.documentId}`);
+            printData = buildPrintDataFromInvoice(invoice);
+          } catch {
+            // Fallback: if documentId was order ID, fetch quote and format as PAYMENT
+            const orderDoc = await this.apiClient.get<any>(
+              `/api/v1/pos/orders/${job.documentId}/quote`,
+            );
+            printData = buildPrintDataFromQuote(orderDoc, 'PAYMENT');
+          }
         } else {
           const quote = await this.apiClient.get<any>(`/api/v1/pos/orders/${job.documentId}/quote`);
-          printData = buildPrintDataFromQuote(quote);
+          printData = buildPrintDataFromQuote(quote, 'PROVISIONAL');
         }
       } catch (err: any) {
         console.error(`[PrintAgent] Lỗi khi nạp dữ liệu hóa đơn:`, err);
@@ -109,14 +129,43 @@ export class JobProcessor {
         }
       }
 
-      const escposBytes = buildEscPosTextReceipt(printData, {
-        paperSize,
-        autoCut,
-        openCashDrawer: openCashDrawer && printData.receiptType === 'PAYMENT',
-        storeName: storeInfo.name,
-        storeAddress: storeInfo.address,
-        storePhone: storeInfo.phone,
-      });
+      const copyCount = Math.max(
+        1,
+        printData.receiptType === 'PROVISIONAL'
+          ? (printSettings?.provisionalCopyCount ?? 1)
+          : (printSettings?.paymentCopyCount ?? 1),
+      );
+
+      const copyByteArrays: Uint8Array[] = [];
+      for (let cIdx = 1; cIdx <= copyCount; cIdx++) {
+        const singleCopyBytes = buildEscPosTextReceipt(printData, {
+          paperSize,
+          autoCut,
+          openCashDrawer: openCashDrawer && printData.receiptType === 'PAYMENT' && cIdx === 1,
+          storeName: storeInfo.name,
+          storeAddress: storeInfo.address,
+          storePhone: storeInfo.phone,
+          printSettings,
+          storeInfo: {
+            storeName: storeInfo.name,
+            address: storeInfo.address,
+            phone: storeInfo.phone,
+            bankName: storeInfo.bankName ?? null,
+            bankAccountNumber: storeInfo.bankAccountNumber ?? null,
+            bankAccountName: storeInfo.bankAccountName ?? null,
+          },
+          copy: { index: cIdx, total: copyCount },
+        });
+        copyByteArrays.push(singleCopyBytes);
+      }
+
+      const totalLen = copyByteArrays.reduce((sum, b) => sum + b.length, 0);
+      const escposBytes = new Uint8Array(totalLen);
+      let offset = 0;
+      for (const b of copyByteArrays) {
+        escposBytes.set(b, offset);
+        offset += b.length;
+      }
 
       // 4. Send to LAN Printer via TCP 9100
       let printerIp = this.config.printerIp || '192.168.1.73';

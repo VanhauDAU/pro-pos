@@ -1,16 +1,163 @@
-import { ESC_POS } from './escpos-commands';
-import type { PosReceiptPrintData } from '@domain/receipt/receipt-generator';
+import { ESC_POS, buildEscPosQrCode } from './escpos-commands';
+import {
+  type PaperSize,
+  type StorePrintSettings,
+  getReceiptPrintProfile,
+  parsePrintTemplateConfigs,
+  parsePrinterDeviceConfig,
+} from '@contracts/store';
+import {
+  type PosReceiptPrintData,
+  formatDateOnly,
+  formatSegmentDurationLabel,
+  formatTimeOnly,
+  reconcileReceiptTimeSegmentAmounts,
+} from '@domain/receipt/receipt-generator';
 
 export interface EscPosTextBuilderOptions {
-  paperSize?: 'K80' | 'K58' | undefined;
+  paperSize?: PaperSize | undefined;
   autoCut?: boolean | undefined;
   openCashDrawer?: boolean | undefined;
   storeName?: string | undefined;
   storeAddress?: string | undefined;
   storePhone?: string | undefined;
+  printSettings?: StorePrintSettings | null | undefined;
+  storeInfo?:
+    | {
+        storeName?: string | null | undefined;
+        phone?: string | null | undefined;
+        address?: string | null | undefined;
+        bankName?: string | null | undefined;
+        bankAccountNumber?: string | null | undefined;
+        bankAccountName?: string | null | undefined;
+      }
+    | null
+    | undefined;
+  copy?: { index: number; total: number } | undefined;
+  vietnameseMode?: 'UNACCENTED' | 'UTF8' | 'TCVN3' | undefined;
+  bottomRasterBytes?: Uint8Array | null | undefined;
+  logoRasterBytes?: Uint8Array | null | undefined;
+  bottomQrContent?: string | null | undefined;
 }
 
-function formatMoney(amount: number): string {
+/**
+ * Removes Vietnamese diacritics/accents and normalizes typography symbols
+ * to ensure 100% compatibility with thermal printers running in standard PC437 mode.
+ */
+export function removeVietnameseDiacritics(str: string): string {
+  if (!str) return '';
+  return str
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .replace(/₫/g, 'd')
+    .replace(/·/g, '-')
+    .replace(/[•●]/g, '*')
+    .replace(/[–—]/g, '-')
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/…/g, '...');
+}
+
+/**
+ * Calculates visual display width for characters (CJK/Fullwidth = 2, Latin/ASCII/Vietnamese = 1).
+ */
+export function visualWidth(str: string): number {
+  if (!str) return 0;
+  const normalized = str.normalize('NFC');
+  let width = 0;
+  for (const char of normalized) {
+    const code = char.codePointAt(0) ?? 0;
+    if (
+      (code >= 0x1100 && code <= 0x115f) ||
+      (code >= 0x2e80 && code <= 0xa4cf) ||
+      (code >= 0xac00 && code <= 0xd7a3) ||
+      (code >= 0xf900 && code <= 0xfaff) ||
+      (code >= 0xfe10 && code <= 0xfe19) ||
+      (code >= 0xfe30 && code <= 0xfe6f) ||
+      (code >= 0xff00 && code <= 0xff60) ||
+      (code >= 0xffe0 && code <= 0xffe6)
+    ) {
+      width += 2;
+    } else {
+      width += 1;
+    }
+  }
+  return width;
+}
+
+export function padEndVisual(str: string, targetWidth: number): string {
+  const currentWidth = visualWidth(str);
+  if (currentWidth >= targetWidth) return str;
+  return str + ' '.repeat(targetWidth - currentWidth);
+}
+
+export function padStartVisual(str: string, targetWidth: number): string {
+  const currentWidth = visualWidth(str);
+  if (currentWidth >= targetWidth) return str;
+  return ' '.repeat(targetWidth - currentWidth) + str;
+}
+
+export function padRow(left: string, right: string, totalWidth: number): string {
+  const leftWidth = visualWidth(left);
+  const rightWidth = visualWidth(right);
+  const space = totalWidth - leftWidth - rightWidth;
+  if (space <= 0) {
+    return `${left}\n${padStartVisual(right, totalWidth)}`;
+  }
+  return `${left}${' '.repeat(space)}${right}`;
+}
+
+/**
+ * Wraps text into multiple lines such that each line's visual width <= maxWidth.
+ */
+export function wrapTextToWidth(text: string, maxWidth: number): string[] {
+  if (!text || maxWidth <= 0) return [''];
+  const words = text.split(' ');
+  const lines: string[] = [];
+  let currentLine = '';
+
+  for (const word of words) {
+    if (!word) continue;
+    if (!currentLine) {
+      if (visualWidth(word) <= maxWidth) {
+        currentLine = word;
+      } else {
+        // Break very long single word into character chunks
+        let remaining = word;
+        while (visualWidth(remaining) > maxWidth) {
+          let cutIdx = 0;
+          let w = 0;
+          for (let i = 0; i < remaining.length; i++) {
+            const charW = visualWidth(remaining[i]!);
+            if (w + charW > maxWidth) break;
+            w += charW;
+            cutIdx = i + 1;
+          }
+          if (cutIdx === 0) cutIdx = 1;
+          lines.push(remaining.slice(0, cutIdx));
+          remaining = remaining.slice(cutIdx);
+        }
+        currentLine = remaining;
+      }
+    } else {
+      const testLine = `${currentLine} ${word}`;
+      if (visualWidth(testLine) <= maxWidth) {
+        currentLine = testLine;
+      } else {
+        lines.push(currentLine);
+        currentLine = word;
+      }
+    }
+  }
+  if (currentLine) {
+    lines.push(currentLine);
+  }
+  return lines.length > 0 ? lines : [''];
+}
+
+function formatVnd(amount: number): string {
   return new Intl.NumberFormat('vi-VN').format(amount);
 }
 
@@ -21,24 +168,54 @@ function formatClock(ms: number): string {
   return `${hh}:${mm}`;
 }
 
-function formatDateTime(ms: number): string {
+function formatDateTime(ms: number, withSeconds = false): string {
   const d = new Date(ms);
   const dd = String(d.getDate()).padStart(2, '0');
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const yyyy = d.getFullYear();
   const HH = String(d.getHours()).padStart(2, '0');
   const MM = String(d.getMinutes()).padStart(2, '0');
-  return `${dd}/${mm}/${yyyy} ${HH}:${MM}`;
+  const SS = String(d.getSeconds()).padStart(2, '0');
+  return `${dd}/${mm}/${yyyy} ${HH}:${MM}${withSeconds ? `:${SS}` : ''}`;
 }
 
+function formatDuration(sec: number): string {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (h > 0) return `${h}h${m > 0 ? `${m}p` : ''}`;
+  return `${m}p`;
+}
+
+/**
+ * Builds an authentic ESC/POS thermal receipt payload adhering 100% to Owner/POS template settings,
+ * formatting Vietnamese cleanly without character corruption, aligning currency/columns exactly,
+ * and wrapping long product names neatly without pushing numeric columns onto subsequent lines.
+ */
 export function buildEscPosTextReceipt(
   data: PosReceiptPrintData,
   options: EscPosTextBuilderOptions = {},
 ): Uint8Array {
-  const isK58 = options.paperSize === 'K58';
-  const widthChars = isK58 ? 32 : 48;
-  const divider = '='.repeat(widthChars) + '\n';
-  const thinDivider = '-'.repeat(widthChars) + '\n';
+  const printSettings = options.printSettings;
+  const templateConfigs = parsePrintTemplateConfigs(printSettings?.templateConfigJson);
+  const template =
+    data.receiptType === 'PROVISIONAL' ? templateConfigs.PROVISIONAL : templateConfigs.PAYMENT;
+
+  const printerConfig = parsePrinterDeviceConfig(printSettings?.printersJson);
+  const paperSize: PaperSize =
+    options.paperSize || printSettings?.paperSize || printerConfig.paperSize || 'K80';
+  const isK58 = paperSize === 'K58';
+  const profile = getReceiptPrintProfile(paperSize, printerConfig.printableDots);
+  const widthChars = isK58 ? 32 : profile.charsPerLineFontA || 48;
+  const divider = '-'.repeat(widthChars);
+  const doubleDivider = '='.repeat(widthChars);
+
+  const isUnaccented = options.vietnameseMode !== 'UTF8';
+  const currencyUnit = isUnaccented ? 'd' : 'đ';
+
+  const sanitize = (text: string | null | undefined): string => {
+    if (!text) return '';
+    return isUnaccented ? removeVietnameseDiacritics(text) : text;
+  };
 
   const parts: Uint8Array[] = [];
   const encoder = new TextEncoder();
@@ -47,131 +224,660 @@ export function buildEscPosTextReceipt(
     parts.push(encoder.encode(text + '\n'));
   };
 
-  const padRow = (left: string, right: string) => {
-    const space = widthChars - left.length - right.length;
-    if (space <= 0) return `${left} ${right}\n`;
-    return `${left}${' '.repeat(space)}${right}\n`;
-  };
-
-  // 1. Initialize
+  // 1. Initialize Printer
   parts.push(ESC_POS.initialize);
 
-  // 2. Header (Center)
-  parts.push(ESC_POS.alignCenter);
-  // Double height & double width for store name
-  parts.push(Uint8Array.of(0x1b, 0x21, 0x30));
-  writeLine(options.storeName || 'PRO POS');
-  // Normal font
-  parts.push(Uint8Array.of(0x1b, 0x21, 0x00));
+  // Logo if raster bytes provided
+  if (options.logoRasterBytes && template.showLogo) {
+    parts.push(ESC_POS.alignCenter);
+    parts.push(options.logoRasterBytes);
+    writeLine();
+  }
 
-  if (options.storeAddress) writeLine(options.storeAddress);
-  if (options.storePhone) writeLine(`Hotline: ${options.storePhone}`);
-  writeLine();
-
-  // Receipt Title
-  parts.push(Uint8Array.of(0x1b, 0x21, 0x20)); // Bold + Double height
-  const title =
-    data.receiptType === 'PROVISIONAL'
-      ? 'PHIẾU TẠM TÍNH'
-      : data.receiptType === 'DEBT_PAYMENT'
-        ? 'PHIẾU THU NỢ'
-        : 'HÓA ĐƠN THANH TOÁN';
-  writeLine(title);
-  parts.push(Uint8Array.of(0x1b, 0x21, 0x00)); // Reset
-  writeLine();
-
-  // 3. Info metadata (Left aligned)
-  parts.push(ESC_POS.alignLeft);
-  writeLine(
-    padRow(
-      `HĐ: ${data.orderCode || data.invoiceCode || ''}`,
-      formatDateTime(data.issuedAtMs || Date.now()),
-    ),
+  // 2. Header: Store Name, Address, Phone
+  const storeName = sanitize(
+    options.storeName ||
+      options.storeInfo?.storeName ||
+      (options.storeInfo as any)?.name ||
+      (printSettings as any)?.storeName ||
+      '',
   );
-  if (data.tableName) writeLine(`Bàn / Khu vực: ${data.tableName}`);
-  if (data.customerName) writeLine(`Khách hàng: ${data.customerName}`);
-  if (data.cashierName) writeLine(`Thu ngân: ${data.cashierName}`);
+  const storeAddress = sanitize(
+    printSettings?.customAddressEnabled && printSettings?.customAddress
+      ? printSettings.customAddress
+      : options.storeAddress ||
+          options.storeInfo?.address ||
+          (options.storeInfo as any)?.storeAddress,
+  );
+  const storePhone = sanitize(
+    options.storePhone || options.storeInfo?.phone || (options.storeInfo as any)?.storePhone,
+  );
+
+  parts.push(ESC_POS.alignCenter);
+  if (storeName) {
+    // Store Name: Bold & Double Size
+    parts.push(ESC_POS.doubleSizeOn);
+    parts.push(ESC_POS.boldOn);
+    writeLine(storeName.toUpperCase());
+    parts.push(ESC_POS.resetSize);
+    parts.push(ESC_POS.boldOff);
+  }
+
+  if (storeAddress) writeLine(storeAddress);
+  if (storePhone) writeLine(`SDT: ${storePhone}`);
+  writeLine();
+
+  // 3. Receipt Title & Copy
+  const rawTitle =
+    data.receiptType === 'PROVISIONAL'
+      ? 'HOA DON TAM TINH'
+      : data.receiptType === 'DEBT_PAYMENT'
+        ? 'PHIEU THU CONG NO'
+        : 'HOA DON THANH TOAN';
+  const title = sanitize(
+    data.receiptType === 'PROVISIONAL'
+      ? 'HÓA ĐƠN TẠM TÍNH'
+      : data.receiptType === 'DEBT_PAYMENT'
+        ? 'PHIẾU THU CÔNG NỢ'
+        : 'HÓA ĐƠN THANH TOÁN',
+  );
+
+  parts.push(ESC_POS.doubleHeightOn);
+  parts.push(ESC_POS.boldOn);
+  writeLine(title || rawTitle);
+  parts.push(ESC_POS.resetSize);
+  parts.push(ESC_POS.boldOff);
+
+  if (data.receiptType === 'PROVISIONAL') {
+    parts.push(ESC_POS.boldOn);
+    writeLine(sanitize('*** CHƯA THANH TOÁN ***'));
+    parts.push(ESC_POS.boldOff);
+  }
+
+  const copyIndex = options.copy?.index ?? 1;
+  const copyTotal =
+    options.copy?.total ??
+    (data.receiptType === 'PROVISIONAL'
+      ? (printSettings?.provisionalCopyCount ?? 1)
+      : (printSettings?.paymentCopyCount ?? 1));
+  writeLine(sanitize(`Liên ${copyIndex}/${copyTotal}`));
+
+  // Invoice Code & Issued Time (Aligned left-right)
+  const rawCode = data.invoiceCode || data.orderCode || '—';
+  const codeStr = sanitize(`Số: ${rawCode}`);
+  const dateStr = formatDateTime(data.issuedAtMs || Date.now());
+
+  parts.push(ESC_POS.alignLeft);
+  if (isK58 && visualWidth(codeStr) + visualWidth(dateStr) + 1 > widthChars) {
+    writeLine(codeStr);
+    writeLine(dateStr);
+  } else {
+    writeLine(padRow(codeStr, dateStr, widthChars));
+  }
   writeLine(divider);
 
-  // 4. Line Items Table Header
-  if (isK58) {
-    writeLine(padRow('Món / Đơn giá x SL', 'Thành tiền'));
-  } else {
-    writeLine(padRow('Tên món', 'SL   Đơn giá   T.Tiền'));
+  // 4. Metadata Section
+  if (template.showTableAreaName && (data.tableName || data.areaName)) {
+    const tableArea = sanitize([data.tableName, data.areaName].filter(Boolean).join(' · '));
+    writeLine(padRow(sanitize('Khu vuc / Ban:'), tableArea, widthChars));
   }
-  writeLine(thinDivider);
+  if (template.showCashierName && data.cashierName) {
+    writeLine(padRow(sanitize('Thu ngan:'), sanitize(data.cashierName), widthChars));
+  }
+  if (template.showCheckInTime && data.checkInTimeMs) {
+    writeLine(padRow(sanitize('Gio vao:'), formatDateTime(data.checkInTimeMs), widthChars));
+  }
 
-  // Line items
-  if (data.lines && data.lines.length > 0) {
-    for (const line of data.lines) {
-      if (line.isTime) {
-        // Time item
-        const timeStr = line.timeStartedAtMs
-          ? `${formatClock(line.timeStartedAtMs)} - ${line.timeEndedAtMs ? formatClock(line.timeEndedAtMs) : 'Hiện tại'}`
-          : '';
-        const totalStr = formatMoney(line.totalPrice);
-        writeLine(padRow(`${line.name} ${timeStr ? '(' + timeStr + ')' : ''}`, totalStr));
+  const hasCustomerInfo =
+    template.showCustomerName ||
+    (template.showCustomerPhone && data.guestPhone) ||
+    (template.showCustomerAddress && data.guestAddress) ||
+    (template.showOrderNote && data.note);
+
+  if (hasCustomerInfo) {
+    writeLine(divider);
+    if (template.showCustomerName) {
+      const customerDisplayName = sanitize(data.customerName?.trim() || 'Khách lẻ');
+      writeLine(padRow(sanitize('Khach hang:'), customerDisplayName, widthChars));
+    }
+    if (template.showCustomerPhone && data.guestPhone) {
+      writeLine(padRow(sanitize('Dien thoai:'), sanitize(data.guestPhone), widthChars));
+    }
+    if (template.showCustomerAddress && data.guestAddress) {
+      writeLine(padRow(sanitize('Dia chi:'), sanitize(data.guestAddress), widthChars));
+    }
+    if (template.showOrderNote && data.note) {
+      writeLine(sanitize(`* Ghi chu: ${data.note}`));
+    }
+  }
+  writeLine(divider);
+
+  // Filter time lines vs product lines
+  const timeLines = (data.lines || []).filter((l) => l.isTime);
+  const productLines = (data.lines || []).filter((l) => !l.isTime);
+  const timeTotal = timeLines.reduce((sum, line) => sum + line.totalPrice, 0);
+  const goodsTotal = productLines.reduce((sum, line) => sum + line.totalPrice, 0);
+
+  // 5. Section: Hourly Services (Thông tin giờ)
+  if (timeLines.length > 0) {
+    if (isK58) {
+      writeLine(padRow(sanitize('Thong tin gio'), sanitize('T.Tien'), widthChars));
+    } else if (template.showHourlyUnitPrice) {
+      // 21 + 1 + 12 + 1 + 13 = 48
+      const colName = padEndVisual(sanitize('Thong tin gio'), 21);
+      const colPrice = padStartVisual(sanitize('D.Gia'), 12);
+      const colTotal = padStartVisual(sanitize('Thanh tien'), 13);
+      writeLine(`${colName} ${colPrice} ${colTotal}`);
+    } else {
+      // 33 + 1 + 14 = 48
+      const colName = padEndVisual(sanitize('Thong tin gio'), 33);
+      const colTotal = padStartVisual(sanitize('Thanh tien'), 14);
+      writeLine(`${colName} ${colTotal}`);
+    }
+    writeLine(divider);
+
+    for (const line of timeLines) {
+      // Table transfers
+      if (
+        line.tableSegments &&
+        line.tableSegments.length > 1 &&
+        (!line.timeSegments || line.timeSegments.length === 0)
+      ) {
+        writeLine(padRow(sanitize('Chuyen ban'), formatVnd(line.totalPrice), widthChars));
+        if (template.showHourlyDetail) {
+          for (const tSeg of line.tableSegments) {
+            const startClock = formatClock(tSeg.startedAtMs);
+            const endClock = tSeg.endedAtMs ? formatClock(tSeg.endedAtMs) : 'Hien tai';
+            const dur = formatDuration(tSeg.elapsedSeconds);
+            const pricePart = tSeg.hourlyPrice ? ` @ ${formatVnd(tSeg.hourlyPrice)}/h` : '';
+            const tSegText = `  * ${sanitize(tSeg.tableName)}: ${startClock}-${endClock} (${dur})${pricePart} = ${formatVnd(tSeg.amount)}`;
+            writeLine(tSegText);
+          }
+          writeLine(
+            sanitize(`  = Tong thoi gian: ${formatDuration(line.timeElapsedSeconds || 0)}`),
+          );
+        }
+      } else if (
+        template.showHourlyDetail &&
+        template.hourlyDetailMode === 'FULL_TIMELOG' &&
+        line.timeSegments &&
+        line.timeSegments.length > 0
+      ) {
+        const displaySegments =
+          reconcileReceiptTimeSegmentAmounts(line.timeSegments, line.totalPrice) ?? [];
+        for (const seg of displaySegments) {
+          const startStr = formatTimeOnly(seg.startedAtMs, template.showHourlyTimeWithSeconds);
+          const endStr = seg.endedAtMs
+            ? formatTimeOnly(seg.endedAtMs, template.showHourlyTimeWithSeconds)
+            : 'Hien tai';
+          const timeRange = `${startStr} - ${endStr}`;
+          const dateOnly = formatDateOnly(seg.startedAtMs);
+          const durLabel = sanitize(formatSegmentDurationLabel(seg));
+          const unitPriceStr = `${formatVnd(seg.priceVnd)}${template.showHourlyUnitDuration ? '/1h' : ''}`;
+          const segTotalStr = formatVnd(seg.amount);
+
+          if (isK58) {
+            writeLine(padRow(timeRange, segTotalStr, widthChars));
+            writeLine(`  ${dateOnly}`);
+            writeLine(`  ${durLabel}`);
+            if (template.showHourlyUnitPrice) {
+              writeLine(`  D.Gia: ${unitPriceStr}`);
+            }
+          } else if (template.showHourlyUnitPrice) {
+            const colName = padEndVisual(timeRange, 21);
+            const colPrice = padStartVisual(unitPriceStr, 12);
+            const colTotal = padStartVisual(segTotalStr, 13);
+            writeLine(`${colName} ${colPrice} ${colTotal}`);
+            writeLine(`  ${dateOnly}`);
+            writeLine(`  ${durLabel}`);
+          } else {
+            const colName = padEndVisual(timeRange, 33);
+            const colTotal = padStartVisual(segTotalStr, 14);
+            writeLine(`${colName} ${colTotal}`);
+            writeLine(`  ${dateOnly}`);
+            writeLine(`  ${durLabel}`);
+          }
+        }
       } else {
-        const priceStr = formatMoney(line.unitPrice);
-        const totalStr = formatMoney(line.totalPrice);
+        const lineSummary = line.timeElapsedSeconds
+          ? sanitize(`Tong thoi gian (${formatDuration(line.timeElapsedSeconds)})`)
+          : sanitize('Tong thoi gian');
+        const unitPriceStr = `${formatVnd(line.unitPrice)}${template.showHourlyUnitDuration ? '/1h' : ''}`;
+        const totalStr = formatVnd(line.totalPrice);
+
         if (isK58) {
-          writeLine(line.name);
-          writeLine(padRow(`  ${priceStr} x ${line.quantity}`, totalStr));
+          writeLine(padRow(lineSummary, totalStr, widthChars));
+          if (template.showHourlyUnitPrice) {
+            writeLine(`  D.Gia: ${unitPriceStr}`);
+          }
+        } else if (template.showHourlyUnitPrice) {
+          const colName = padEndVisual(lineSummary, 21);
+          const colPrice = padStartVisual(unitPriceStr, 12);
+          const colTotal = padStartVisual(totalStr, 13);
+          writeLine(`${colName} ${colPrice} ${colTotal}`);
         } else {
-          const namePart =
-            line.name.length > 20 ? line.name.slice(0, 19) + '…' : line.name.padEnd(20);
-          const qtyPart = String(line.quantity).padStart(4);
-          const pricePart = priceStr.padStart(10);
-          const amountPart = totalStr.padStart(11);
-          writeLine(`${namePart} ${qtyPart} ${pricePart} ${amountPart}`);
+          const colName = padEndVisual(lineSummary, 33);
+          const colTotal = padStartVisual(totalStr, 14);
+          writeLine(`${colName} ${colTotal}`);
+        }
+
+        if (template.showHourlyDetail && line.timeStartedAtMs) {
+          const startStr = formatDateTime(line.timeStartedAtMs, template.showHourlyTimeWithSeconds);
+          const endStr = line.timeEndedAtMs
+            ? formatDateTime(line.timeEndedAtMs, template.showHourlyTimeWithSeconds)
+            : 'Hien tai';
+          writeLine(`  ${startStr} - ${endStr}`);
         }
       }
     }
-    writeLine(thinDivider);
+    writeLine(divider);
   }
 
-  // 5. Summary totals
-  if (data.subtotal && data.subtotal !== data.total) {
-    writeLine(padRow('Tạm tính:', `${formatMoney(data.subtotal)} đ`));
-  }
-  if (data.discountTotal) {
-    writeLine(padRow('Giảm giá:', `-${formatMoney(data.discountTotal)} đ`));
+  // 6. Section: Products / Goods (Mặt hàng)
+  if (productLines.length > 0) {
+    const isSeparateCol =
+      !isK58 && template.showItemUnitPrice && template.itemUnitPricePlacement === 'SEPARATE_COLUMN';
+
+    // Layout configuration
+    let nameWidth = 27;
+    let qtyWidth = 5;
+    let priceWidth = 10;
+    let totalWidth = 12;
+
+    if (isK58) {
+      nameWidth = 16;
+      qtyWidth = 3;
+      totalWidth = 11;
+      const colName = padEndVisual(sanitize('Mat hang'), nameWidth);
+      const colQty = padStartVisual(sanitize('SL'), qtyWidth);
+      const colTotal = padStartVisual(sanitize('T.Tien'), totalWidth);
+      writeLine(`${colName} ${colQty} ${colTotal}`);
+    } else if (isSeparateCol) {
+      // 18 + 1 + 5 + 1 + 10 + 1 + 12 = 48
+      nameWidth = 18;
+      qtyWidth = 5;
+      priceWidth = 10;
+      totalWidth = 12;
+      const colName = padEndVisual(sanitize('Mat hang'), nameWidth);
+      const colQty = padStartVisual(sanitize('SL/TL'), qtyWidth);
+      const colPrice = padStartVisual(sanitize('D.Gia'), priceWidth);
+      const colTotal = padStartVisual(sanitize('Thanh tien'), totalWidth);
+      writeLine(`${colName} ${colQty} ${colPrice} ${colTotal}`);
+    } else {
+      // 27 + 1 + 5 + 1 + 14 = 48
+      nameWidth = 27;
+      qtyWidth = 5;
+      totalWidth = 14;
+      const colName = padEndVisual(sanitize('Mat hang'), nameWidth);
+      const colQty = padStartVisual(sanitize('SL/TL'), qtyWidth);
+      const colTotal = padStartVisual(sanitize('Thanh tien'), totalWidth);
+      writeLine(`${colName} ${colQty} ${colTotal}`);
+    }
+    writeLine(divider);
+
+    let itemIdx = 1;
+    for (const line of productLines) {
+      if (template.hideZeroPriceItems && line.totalPrice === 0) continue;
+
+      const prefix = template.showItemIndex ? `${itemIdx}. ` : '';
+      itemIdx++;
+
+      const fullName = sanitize(`${prefix}${line.name}`);
+      const priceNameSuffix = template.showItemPriceName ? sanitize(' (Gia chuan)') : '';
+      const qtyStr = String(line.quantity);
+      const priceStr = formatVnd(line.unitPrice);
+      const totalStr = formatVnd(line.totalPrice);
+
+      const nameLines = wrapTextToWidth(fullName, nameWidth);
+
+      if (isK58) {
+        // Line 1: First part of name + Qty + Total
+        const colName = padEndVisual(nameLines[0]!, nameWidth);
+        const colQty = padStartVisual(qtyStr, qtyWidth);
+        const colTotal = padStartVisual(totalStr, totalWidth);
+        writeLine(`${colName} ${colQty} ${colTotal}`);
+
+        // Remaining lines of name
+        for (let i = 1; i < nameLines.length; i++) {
+          writeLine(nameLines[i]!);
+        }
+        if (priceNameSuffix) {
+          writeLine(priceNameSuffix);
+        }
+
+        if (template.showItemUnitPrice) {
+          writeLine(`  D.Gia: ${priceStr}`);
+        }
+      } else if (isSeparateCol) {
+        // Line 1: First part of name + Qty + Price + Total
+        const colName = padEndVisual(nameLines[0]!, nameWidth);
+        const colQty = padStartVisual(qtyStr, qtyWidth);
+        const colPrice = padStartVisual(priceStr, priceWidth);
+        const colTotal = padStartVisual(totalStr, totalWidth);
+        writeLine(`${colName} ${colQty} ${colPrice} ${colTotal}`);
+
+        // Remaining lines of name
+        for (let i = 1; i < nameLines.length; i++) {
+          writeLine(nameLines[i]!);
+        }
+        if (priceNameSuffix) {
+          writeLine(priceNameSuffix);
+        }
+      } else {
+        // Line 1: First part of name + Qty + Total
+        const colName = padEndVisual(nameLines[0]!, nameWidth);
+        const colQty = padStartVisual(qtyStr, qtyWidth);
+        const colTotal = padStartVisual(totalStr, totalWidth);
+        writeLine(`${colName} ${colQty} ${colTotal}`);
+
+        // Remaining lines of name
+        for (let i = 1; i < nameLines.length; i++) {
+          writeLine(nameLines[i]!);
+        }
+        if (priceNameSuffix) {
+          writeLine(priceNameSuffix);
+        }
+
+        if (template.showItemUnitPrice) {
+          writeLine(`  Don gia: ${priceStr}`);
+        }
+      }
+
+      // Sublines: Note, Discounts
+      if (template.showItemNote && line.note) {
+        writeLine(sanitize(`  * G/chu: ${line.note}`));
+      }
+      if (template.showItemDiscounts && (line.discountAmount ?? 0) > 0) {
+        if (line.adjustmentSource === 'PROMOTION_GIFT') {
+          writeLine(
+            sanitize(`  * Qua tang KM: -${formatVnd(line.discountAmount ?? 0)}${currencyUnit}`),
+          );
+          if (line.promotionName) {
+            writeLine(sanitize(`  * Chuong trinh: ${line.promotionName}`));
+          }
+        } else {
+          writeLine(
+            sanitize(`  * Giam thu cong: -${formatVnd(line.discountAmount ?? 0)}${currencyUnit}`),
+          );
+          if (line.discountReason) {
+            writeLine(sanitize(`  * Ly do: ${line.discountReason}`));
+          }
+        }
+      }
+    }
+    writeLine(divider);
   }
 
-  // Grand Total (Bold + Double Height)
-  writeLine(divider);
-  parts.push(Uint8Array.of(0x1b, 0x21, 0x20)); // Bold & Double height
-  writeLine(padRow('TỔNG TIỀN:', `${formatMoney(data.total)} đ`));
-  parts.push(Uint8Array.of(0x1b, 0x21, 0x00));
-  writeLine(divider);
-
-  // Payment details
-  if (data.receiptType === 'PAYMENT') {
-    const methodLabel =
-      data.paymentMethod === 'CASH'
-        ? 'Tiền mặt'
-        : data.paymentMethod === 'BANK_TRANSFER'
-          ? 'Chuyển khoản'
-          : data.paymentMethod || 'Tiền mặt';
-    writeLine(padRow('Hình thức TT:', methodLabel));
-    if (data.cashReceived) writeLine(padRow('Khách đưa:', `${formatMoney(data.cashReceived)} đ`));
-    if (data.cashChange) writeLine(padRow('Tiền thừa:', `${formatMoney(data.cashChange)} đ`));
+  // 7. Summary & Totals
+  if (timeLines.length > 0) {
+    writeLine(padRow(sanitize('Tiền giờ:'), `${formatVnd(timeTotal)} ${currencyUnit}`, widthChars));
+  }
+  if (productLines.length > 0) {
+    writeLine(
+      padRow(
+        sanitize(`Tiền hàng (${productLines.length}):`),
+        `${formatVnd(goodsTotal)} ${currencyUnit}`,
+        widthChars,
+      ),
+    );
+  }
+  if (
+    template.combineGoodsAndServiceTotal &&
+    timeLines.length > 0 &&
+    productLines.length > 0 &&
+    (data.receiptType !== 'PAYMENT' || (data.discountTotal ?? 0) > 0)
+  ) {
+    writeLine(
+      padRow(
+        sanitize('Tổng tiền hàng & dịch vụ:'),
+        `${formatVnd(timeTotal + goodsTotal)} ${currencyUnit}`,
+        widthChars,
+      ),
+    );
   }
 
-  // 6. Footer
-  writeLine();
+  const promotionDiscount = data.promotionDiscount ?? 0;
+  if (template.showProvisionalTotal && promotionDiscount > 0) {
+    writeLine(
+      padRow(
+        sanitize('Tổng tạm tính:'),
+        `${formatVnd(timeTotal + goodsTotal)} ${currencyUnit}`,
+        widthChars,
+      ),
+    );
+  }
+
+  if (template.showPromotionsList && promotionDiscount > 0) {
+    const promotionLines =
+      data.promotions && data.promotions.length > 0
+        ? data.promotions
+        : data.promotion
+          ? [data.promotion]
+          : [{ name: 'Khuyen mai', type: '', value: null, discountAmountVnd: promotionDiscount }];
+
+    for (const promotion of promotionLines) {
+      if (promotion.type === 'FLAT_PRICE' && (promotion.flatPriceItems?.length ?? 0) > 0) {
+        writeLine(
+          sanitize(
+            `KM: ${promotion.name} (Dong gia ${formatVnd(promotion.value ?? 0)}${currencyUnit})`,
+          ),
+        );
+        for (const item of promotion.flatPriceItems ?? []) {
+          const variant = item.variantName ? ` - ${item.variantName}` : '';
+          writeLine(
+            sanitize(`  - ${item.productName}${variant} - SL: ${item.quantityMilli / 1000}`),
+          );
+        }
+        writeLine(
+          padRow(
+            sanitize('  Giam khuyen mai:'),
+            `-${formatVnd(promotion.discountAmountVnd)} ${currencyUnit}`,
+            widthChars,
+          ),
+        );
+        continue;
+      }
+      writeLine(
+        padRow(
+          sanitize(`KM: ${promotion.name}:`),
+          `-${formatVnd(promotion.discountAmountVnd)} ${currencyUnit}`,
+          widthChars,
+        ),
+      );
+    }
+  }
+
+  // Grand Total (Highlighted)
+  const grandLabel = sanitize(
+    data.receiptType === 'PROVISIONAL'
+      ? 'TONG TAM TINH:'
+      : data.receiptType === 'DEBT_PAYMENT'
+        ? 'SO TIEN THU:'
+        : 'TONG CONG:',
+  );
+  const grandAmount = `${formatVnd(data.total)} ${currencyUnit}`;
+
+  writeLine(doubleDivider);
+  parts.push(ESC_POS.doubleHeightOn);
+  parts.push(ESC_POS.boldOn);
+  writeLine(padRow(grandLabel, grandAmount, widthChars));
+  parts.push(ESC_POS.resetSize);
+  parts.push(ESC_POS.boldOff);
+  writeLine(doubleDivider);
+
+  // 8. Payment Details & Allocations
+  if (data.receiptType === 'PAYMENT' && template.showPaymentMethod) {
+    const allocations = data.paymentAllocations ?? [];
+    const needsAllocationBreakdown =
+      allocations.length > 1 || allocations.some((allocation) => allocation.method === 'DEBT');
+
+    if (needsAllocationBreakdown) {
+      for (const allocation of allocations) {
+        const label = sanitize(
+          allocation.method === 'CASH'
+            ? 'Tien mat da thu:'
+            : allocation.method === 'DEBT'
+              ? 'Ghi cong no:'
+              : 'Chuyen khoan da thu:',
+        );
+        writeLine(padRow(label, `${formatVnd(allocation.amountVnd)} ${currencyUnit}`, widthChars));
+      }
+    } else if (allocations.length === 0 && (data.debtAmountVnd ?? 0) > 0) {
+      if ((data.paidAmountVnd ?? 0) > 0) {
+        writeLine(
+          padRow(
+            sanitize('Da thu:'),
+            `${formatVnd(data.paidAmountVnd!)} ${currencyUnit}`,
+            widthChars,
+          ),
+        );
+      }
+      writeLine(
+        padRow(
+          sanitize('Ghi cong no:'),
+          `${formatVnd(data.debtAmountVnd!)} ${currencyUnit}`,
+          widthChars,
+        ),
+      );
+    } else if (data.paymentMethod) {
+      const methodStr = sanitize(
+        data.paymentMethod === 'CASH' ? 'Tien mat' : 'Chuyen khoan (VietQR)',
+      );
+      writeLine(padRow(sanitize('Hinh thuc thanh toan:'), methodStr, widthChars));
+
+      if (data.paymentMethod === 'CASH' && template.showCashDetails) {
+        if (data.cashReceived !== null && data.cashReceived !== undefined) {
+          writeLine(
+            padRow(
+              sanitize('Tien khach dua:'),
+              `${formatVnd(data.cashReceived)} ${currencyUnit}`,
+              widthChars,
+            ),
+          );
+        }
+        if (data.cashChange !== null && data.cashChange !== undefined) {
+          writeLine(
+            padRow(
+              sanitize('Tien thua:'),
+              `${formatVnd(data.cashChange)} ${currencyUnit}`,
+              widthChars,
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  if (data.receiptType === 'DEBT_PAYMENT') {
+    writeLine(
+      padRow(
+        sanitize('Du no truoc:'),
+        `${formatVnd(data.debtBeforeVnd ?? 0)} ${currencyUnit}`,
+        widthChars,
+      ),
+    );
+    writeLine(
+      padRow(
+        sanitize('So tien vua thu:'),
+        `${formatVnd(data.debtPaymentVnd ?? data.total)} ${currencyUnit}`,
+        widthChars,
+      ),
+    );
+    writeLine(
+      padRow(
+        sanitize('Du no con lai:'),
+        `${formatVnd(data.debtAfterVnd ?? 0)} ${currencyUnit}`,
+        widthChars,
+      ),
+    );
+    if (data.referenceCode) {
+      writeLine(padRow(sanitize('Ma tham chieu:'), sanitize(data.referenceCode), widthChars));
+    }
+    if (template.showPaymentMethod) {
+      const methodStr = sanitize(data.paymentMethod === 'CASH' ? 'Tien mat' : 'Chuyen khoan');
+      writeLine(padRow(sanitize('Phuong thuc:'), methodStr, widthChars));
+    }
+  }
+
+  // 9. Star Divider
   parts.push(ESC_POS.alignCenter);
-  writeLine('Cảm ơn Quý khách & Hẹn gặp lại!');
-  writeLine('Pro POS - Hân hạnh phục vụ');
+  writeLine();
+  writeLine('----------------*----------------');
+
+  // 10. Bottom Image / VietQR
+  if (options.bottomRasterBytes && template.showBottomImage) {
+    parts.push(ESC_POS.alignCenter);
+    parts.push(options.bottomRasterBytes);
+    writeLine();
+    if (printSettings?.bottomImageDescription) {
+      writeLine(sanitize(printSettings.bottomImageDescription));
+    }
+  } else if (options.bottomQrContent && template.showBottomImage) {
+    parts.push(buildEscPosQrCode(options.bottomQrContent, isK58 ? 5 : 6));
+    writeLine();
+    if (printSettings?.bottomImageDescription) {
+      writeLine(sanitize(printSettings.bottomImageDescription));
+    }
+  } else if (
+    template.showBottomImage &&
+    printSettings?.bottomImageType === 'VIETQR' &&
+    data.receiptType === 'PAYMENT'
+  ) {
+    const bank = (printSettings?.bottomBankName || options.storeInfo?.bankName || '').trim();
+    const account = (
+      printSettings?.bottomBankAccountNumber ||
+      options.storeInfo?.bankAccountNumber ||
+      ''
+    ).trim();
+    const accountName = (
+      printSettings?.bottomBankAccountName ||
+      options.storeInfo?.bankAccountName ||
+      ''
+    ).trim();
+
+    if (bank && account) {
+      const vietQrUrl = `https://img.vietqr.io/image/${encodeURIComponent(bank)}-${encodeURIComponent(account)}-qr_only.png?amount=${data.total}&addInfo=${encodeURIComponent(rawCode)}&accountName=${encodeURIComponent(accountName)}`;
+      parts.push(buildEscPosQrCode(vietQrUrl, isK58 ? 5 : 6));
+      writeLine();
+      if (printSettings?.bottomImageDescription) {
+        writeLine(sanitize(printSettings.bottomImageDescription));
+      }
+    }
+  }
+
+  // 11. Wi-Fi Info
+  if (printSettings?.printWifiEnabled && (printSettings.wifiName || printSettings.wifiPassword)) {
+    const wifiText = sanitize(
+      `Wi-Fi: ${printSettings.wifiName || 'Cua hang'}${printSettings.wifiPassword ? ` - Pass: ${printSettings.wifiPassword}` : ''}`,
+    );
+    writeLine(wifiText);
+  }
+
+  // 12. Footer Lines
+  if (printSettings?.footerLine1) {
+    if (printSettings.footerLine1Bold) parts.push(ESC_POS.boldOn);
+    writeLine(sanitize(printSettings.footerLine1));
+    if (printSettings.footerLine1Bold) parts.push(ESC_POS.boldOff);
+  }
+  if (printSettings?.footerLine2) {
+    if (printSettings.footerLine2Bold) parts.push(ESC_POS.boldOn);
+    writeLine(sanitize(printSettings.footerLine2));
+    if (printSettings.footerLine2Bold) parts.push(ESC_POS.boldOff);
+  }
+  if (!printSettings?.footerLine1 && !printSettings?.footerLine2) {
+    writeLine(sanitize('Cảm ơn quý khách và hẹn gặp lại'));
+    writeLine(sanitize('Pro POS - Hân hạnh phục vụ'));
+  }
+
   writeLine();
   writeLine();
   writeLine();
 
-  // 7. Cut & Open Drawer
-  if (options.openCashDrawer) {
+  // 13. Open Cash Drawer & Auto Cut
+  if (options.openCashDrawer || (printerConfig.openCashDrawer && data.receiptType === 'PAYMENT')) {
     parts.push(ESC_POS.openCashDrawer);
   }
-  if (options.autoCut !== false) {
+  if (options.autoCut !== false && printerConfig.autoCut !== false) {
     parts.push(ESC_POS.cut);
   }
 

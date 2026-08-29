@@ -2859,6 +2859,18 @@ function MorePage({ auth }: { auth: AuthContextResponse }) {
     refetchOnMount: false,
   });
 
+  const versionQuery = useQuery({
+    queryKey: ['api-version'],
+    queryFn: () =>
+      apiRequest<{
+        version?: string;
+        environment?: string;
+        commit?: string;
+        builtAt?: string;
+      }>('/api/version'),
+    staleTime: 60_000,
+  });
+
   const permissions = context.data?.permissions ?? [];
   const isOwner = auth.actor?.kind === 'OWNER';
   const hasPermission = (key: string) => isOwner || permissions.includes(key);
@@ -3299,9 +3311,74 @@ function MorePage({ auth }: { auth: AuthContextResponse }) {
         </button>
       </Card>
 
-      <Typography.Text type="secondary" className="staff-version">
-        Pro POS · Cổng nhân viên bán hàng
-      </Typography.Text>
+      <div style={{ textAlign: 'center', marginTop: 24, paddingBottom: 32 }}>
+        <Typography.Text
+          type="secondary"
+          style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#475569' }}
+        >
+          Pro POS · Cổng nhân viên bán hàng
+        </Typography.Text>
+        {versionQuery.data ? (
+          <div
+            style={{
+              marginTop: 6,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: 4,
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                flexWrap: 'wrap',
+                justifyContent: 'center',
+              }}
+            >
+              <Tag
+                color={versionQuery.data.environment === 'production' ? 'green' : 'orange'}
+                style={{
+                  margin: 0,
+                  borderRadius: 6,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                }}
+              >
+                {versionQuery.data.environment || 'production'}
+              </Tag>
+              <Tag
+                color="blue"
+                style={{ margin: 0, borderRadius: 6, fontSize: 11, fontFamily: 'monospace' }}
+              >
+                v{versionQuery.data.version || '1.3.0'}
+              </Tag>
+              {versionQuery.data.commit &&
+              versionQuery.data.commit !== 'unknown' &&
+              versionQuery.data.commit !== 'set-by-release-workflow' ? (
+                <Tag style={{ margin: 0, borderRadius: 6, fontSize: 11, fontFamily: 'monospace' }}>
+                  #{versionQuery.data.commit.slice(0, 7)}
+                </Tag>
+              ) : null}
+            </div>
+            {versionQuery.data.builtAt &&
+            versionQuery.data.builtAt !== 'set-by-release-workflow' ? (
+              <Typography.Text type="secondary" style={{ fontSize: 11, color: '#94a3b8' }}>
+                Build: {new Date(versionQuery.data.builtAt).toLocaleString('vi-VN')}
+              </Typography.Text>
+            ) : null}
+          </div>
+        ) : (
+          <Typography.Text
+            type="secondary"
+            style={{ fontSize: 11, color: '#94a3b8', marginTop: 4, display: 'block' }}
+          >
+            Phiên bản v1.3.0
+          </Typography.Text>
+        )}
+      </div>
     </div>
   );
 }

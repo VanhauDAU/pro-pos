@@ -8,6 +8,7 @@ import { buildEscPosTextReceipt } from '@printing/escpos/escpos-text-builder';
 async function main() {
   const configManager = new ConfigManager();
   let config = configManager.loadConfig();
+  const initialServerUrl = config.serverUrl;
 
   // Parse CLI args
   const args = process.argv.slice(2);
@@ -23,9 +24,28 @@ async function main() {
       config.agentId = undefined;
       config.agentSecret = undefined;
       config.storeId = undefined;
+      config.storeName = undefined;
       configManager.saveConfig(config);
       console.log('Đã reset cấu hình Print Agent.');
     }
+  }
+
+  // If serverUrl changed from saved config, invalidate previous pairing since credentials belong to different server
+  if (
+    initialServerUrl &&
+    config.serverUrl &&
+    initialServerUrl !== config.serverUrl &&
+    configManager.isPaired(config)
+  ) {
+    console.log(
+      `\x1b[33m[Config] Phát hiện máy chủ thay đổi: ${initialServerUrl} ➔ ${config.serverUrl}\x1b[0m`,
+    );
+    console.log('Xóa khóa ghép nối cũ để ghép nối với máy chủ mới...\n');
+    config.agentId = undefined;
+    config.agentSecret = undefined;
+    config.storeId = undefined;
+    config.storeName = undefined;
+    configManager.saveConfig(config);
   }
 
   // 1. Check if device is paired

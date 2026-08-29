@@ -61,15 +61,19 @@ export class AgentRealtimeClient {
         }
       });
 
-      this.ws.on('close', (_code, _reason) => {
+      this.ws.on('close', (code, reason) => {
         this.stopHeartbeat();
         if (!this.isDestroyed) {
+          const reasonStr = reason ? reason.toString() : '';
+          console.warn(
+            `[Realtime] Mất kết nối (code: ${code}${reasonStr ? `, lý do: ${reasonStr}` : ''}). Đang thử kết nối lại...`,
+          );
           this.scheduleReconnect();
         }
       });
 
-      this.ws.on('error', (_err) => {
-        // Handled via reconnect & polling fallback
+      this.ws.on('error', (err) => {
+        console.error('[Realtime] Lỗi kết nối WebSocket:', err.message);
       });
     } catch (err: any) {
       console.error('[Realtime] Lỗi khởi tạo WebSocket:', err?.message || err);
@@ -112,8 +116,15 @@ export class AgentRealtimeClient {
           });
         }
       }
-    } catch {
-      // ignore
+    } catch (err: any) {
+      if (err?.message?.includes('401') || err?.message?.includes('UNAUTHORIZED')) {
+        console.error(
+          '\n\x1b[31m✘ [PrintAgent] Xác thực thất bại với máy chủ (401 Unauthorized).\x1b[0m',
+        );
+        console.error(
+          'Thông tin ghép nối trên máy này không khớp với máy chủ. Hãy chạy lại với cờ \x1b[1m--reset\x1b[0m để ghép nối lại mã mới:\n👉 pnpm dev -- --reset\n',
+        );
+      }
     } finally {
       this.isRecovering = false;
     }

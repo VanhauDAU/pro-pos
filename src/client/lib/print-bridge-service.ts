@@ -7,6 +7,7 @@ export interface PrintAgentInfo {
   printer_role: string;
   printer_config_json?: string | null;
   last_seen_at?: number | null;
+  is_online?: boolean;
   created_at: number;
 }
 

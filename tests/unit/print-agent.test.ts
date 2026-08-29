@@ -11,8 +11,82 @@ import {
 import type { AgentApiClient } from '../../apps/print-agent/src/api-client';
 import type { PrintJob } from '../../src/contracts/print-job';
 import { PrinterError } from '../../src/printing/printer-errors';
+import { AgentPrintCache } from '../../apps/print-agent/src/core/print-cache';
 
 describe('Pro POS Print Agent Unit Tests', () => {
+  it('single-flights bootstrap refresh and fences invalidation that arrives mid-refresh', async () => {
+    let releaseFirst!: (value: unknown) => void;
+    const first = new Promise((resolve) => {
+      releaseFirst = resolve;
+    });
+    const get = vi
+      .fn()
+      .mockImplementationOnce(() => first)
+      .mockResolvedValueOnce({
+        context: { storeName: 'Store v2' },
+        printSettings: { storeId: 'STORE-1', updatedAt: 2 },
+        configVersion: 2,
+      });
+    const cache = new AgentPrintCache({ get } as never);
+
+    const a = cache.resolve();
+    const b = cache.resolve();
+    cache.invalidate(2);
+    releaseFirst({
+      context: { storeName: 'Store v1' },
+      printSettings: { storeId: 'STORE-1', updatedAt: 1 },
+      configVersion: 1,
+    });
+
+    await expect(a).resolves.toMatchObject({ configVersion: 2 });
+    await expect(b).resolves.toMatchObject({ configVersion: 2 });
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses stale bootstrap only inside the configured maximum stale age', async () => {
+    let now = 0;
+    const get = vi
+      .fn()
+      .mockResolvedValueOnce({
+        context: { storeName: 'Cached Store' },
+        printSettings: { storeId: 'STORE-1', updatedAt: 1 },
+        configVersion: 1,
+      })
+      .mockRejectedValue(new Error('bootstrap offline'));
+    const cache = new AgentPrintCache({ get } as never, {
+      ttlMs: 60_000,
+      maxStaleMs: 300_000,
+      now: () => now,
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await cache.resolve();
+    now = 61_000;
+    await expect(cache.resolve()).resolves.toMatchObject({ configVersion: 1 });
+    now = 300_001;
+    await expect(cache.resolve()).rejects.toMatchObject({ name: 'PrintBootstrapStaleError' });
+    warn.mockRestore();
+  });
+
+  it('caches raster work by media, paper size and config version', async () => {
+    const cache = new AgentPrintCache({} as never);
+    const loader = vi.fn(async () => new Uint8Array([1, 2, 3]));
+    const key = {
+      kind: 'logo' as const,
+      mediaId: 'MEDIA-1',
+      paperSize: 'K80',
+      configVersion: 1,
+      width: 200,
+      height: 100,
+    };
+
+    await cache.getRaster(key, loader);
+    await cache.getRaster(key, loader);
+    await cache.getRaster({ ...key, configVersion: 2 }, loader);
+
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
   it('uses reliable text encoding when a printer reports the problematic WPC1258 mode', () => {
     expect(resolveAgentVietnameseMode('WPC1258')).toBe('UNACCENTED');
     expect(resolveAgentVietnameseMode('UNACCENTED')).toBe('UNACCENTED');
@@ -75,6 +149,25 @@ describe('Pro POS Print Agent Unit Tests', () => {
   it('continues printing text when an optional logo cannot be loaded', async () => {
     const post = vi.fn(async () => ({}));
     const get = vi.fn(async (path: string) => {
+      if (path === '/api/v1/pos/print-bootstrap') {
+        return {
+          context: null,
+          configVersion: 1,
+          printSettings: {
+            storeId: 'STORE-1',
+            logoMediaId: 'LOGO-1',
+            paperSize: 'K80',
+            printersJson: JSON.stringify({
+              networkIp: '192.168.1.10',
+              networkPort: 9100,
+              paperSize: 'K80',
+              vietnameseMode: 'UNACCENTED',
+            }),
+            paymentCopyCount: 1,
+            provisionalCopyCount: 1,
+          },
+        };
+      }
       if (path === '/api/v1/pos/context') return null;
       if (path === '/api/v1/pos/print-settings') {
         return {
@@ -134,6 +227,19 @@ describe('Pro POS Print Agent Unit Tests', () => {
   it('marks a job UNCERTAIN rather than retrying when socket failure follows a write attempt', async () => {
     const post = vi.fn(async () => ({}));
     const get = vi.fn(async (path: string) => {
+      if (path === '/api/v1/pos/print-bootstrap') {
+        return {
+          context: { storeName: 'ĐẠI BILLIARDS' },
+          configVersion: 1,
+          printSettings: {
+            storeId: 'STORE-1',
+            paperSize: 'K80',
+            printersJson: JSON.stringify({ networkIp: '192.168.1.10', networkPort: 9100 }),
+            paymentCopyCount: 1,
+            provisionalCopyCount: 1,
+          },
+        };
+      }
       if (path === '/api/v1/pos/context') return { storeName: 'ĐẠI BILLIARDS' };
       if (path === '/api/v1/pos/print-settings') {
         return {
@@ -177,6 +283,135 @@ describe('Pro POS Print Agent Unit Tests', () => {
       failureCode: 'SOCKET_WRITE_ERROR',
       failureMessage: 'socket closed',
     });
+  });
+
+  it('retries TCP exactly once only when no byte was written', async () => {
+    const post = vi.fn(async (path: string) =>
+      path.endsWith('/claim') ? { claimToken: null } : {},
+    );
+    const get = vi.fn(async (path: string) => {
+      if (path === '/api/v1/pos/print-bootstrap') {
+        return {
+          context: { storeName: 'RETRY STORE' },
+          configVersion: 1,
+          printSettings: {
+            storeId: 'STORE-1',
+            updatedAt: 1,
+            paperSize: 'K80',
+            printersJson: JSON.stringify({ networkIp: '192.168.1.10', networkPort: 9100 }),
+            paymentCopyCount: 1,
+            provisionalCopyCount: 1,
+          },
+        };
+      }
+      if (path === '/api/v1/pos/invoices/INV-TCP-RETRY') {
+        return {
+          invoice: {
+            id: 'INV-TCP-RETRY',
+            displayCode: 'HD-TCP-RETRY',
+            totalVnd: 10000,
+            issuedAt: 1720000000000,
+          },
+          lines: [],
+          payment: { method: 'CASH' },
+        };
+      }
+      throw new Error(`Unexpected GET ${path}`);
+    });
+    const send = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new PrinterError('CONNECTION_TIMEOUT', 'connect timeout', {
+          failureStage: 'BEFORE_WRITE',
+        }),
+      )
+      .mockResolvedValueOnce(undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const processor = new JobProcessor(
+      { serverUrl: 'https://pos.example', agentId: 'AGENT-1' },
+      { get, getBytes: vi.fn(), post } as unknown as AgentApiClient,
+      { send },
+    );
+
+    await expect(
+      processor.processJob({
+        id: 'JOB-TCP-RETRY',
+        documentType: 'invoice',
+        documentId: 'INV-TCP-RETRY',
+      } as PrintJob),
+    ).resolves.toBe(true);
+    expect(send).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+
+  it('renders all data before start and starts immediately before the TCP write', async () => {
+    const order: string[] = [];
+    const claimToken = '11111111-1111-4111-8111-111111111111';
+    const get = vi.fn(async (path: string) => {
+      if (path === '/api/v1/pos/print-bootstrap') {
+        order.push('bootstrap');
+        return {
+          context: { storeName: 'FAST STORE' },
+          configVersion: 1,
+          printSettings: {
+            storeId: 'STORE-1',
+            updatedAt: 1,
+            paperSize: 'K80',
+            printersJson: JSON.stringify({ networkIp: '192.168.1.10', networkPort: 9100 }),
+            paymentCopyCount: 1,
+            provisionalCopyCount: 1,
+          },
+        };
+      }
+      if (path === '/api/v1/pos/invoices/INV-ORDER') {
+        order.push('document');
+        return {
+          invoice: {
+            id: 'INV-ORDER',
+            displayCode: 'HD-ORDER',
+            totalVnd: 10000,
+            issuedAt: 1720000000000,
+          },
+          lines: [],
+          payment: { method: 'CASH' },
+        };
+      }
+      throw new Error(`Unexpected GET ${path}`);
+    });
+    const post = vi.fn(async (path: string) => {
+      if (path.endsWith('/claim')) order.push('claim');
+      if (path.endsWith('/start')) order.push('start');
+      if (path.endsWith('/complete')) order.push('complete');
+      return path.endsWith('/claim') ? { claimToken } : {};
+    });
+    const send = vi.fn(async () => {
+      order.push('tcp');
+    });
+    const processor = new JobProcessor(
+      { serverUrl: 'https://pos.example', agentId: 'AGENT-1' },
+      { get, getBytes: vi.fn(), post } as unknown as AgentApiClient,
+      { send },
+    );
+
+    await expect(
+      processor.processJob({
+        id: 'JOB-ORDER',
+        documentType: 'invoice',
+        documentId: 'INV-ORDER',
+      } as PrintJob),
+    ).resolves.toBe(true);
+
+    expect(order.indexOf('claim')).toBeLessThan(order.indexOf('bootstrap'));
+    expect(order.indexOf('claim')).toBeLessThan(order.indexOf('document'));
+    expect(order.indexOf('bootstrap')).toBeLessThan(order.indexOf('start'));
+    expect(order.indexOf('document')).toBeLessThan(order.indexOf('start'));
+    expect(order).toEqual(
+      expect.arrayContaining(['claim', 'bootstrap', 'document', 'start', 'tcp', 'complete']),
+    );
+    expect(order.indexOf('start')).toBeLessThan(order.indexOf('tcp'));
+    expect(order.indexOf('tcp')).toBeLessThan(order.indexOf('complete'));
+    expect(post).toHaveBeenCalledWith('/api/v1/pos/print-jobs/JOB-ORDER/start', { claimToken });
+    expect(post).toHaveBeenCalledWith('/api/v1/pos/print-jobs/JOB-ORDER/complete', { claimToken });
   });
 
   it('detects desktop vs mobile platforms accurately', () => {

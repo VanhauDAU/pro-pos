@@ -154,6 +154,7 @@ describe('StoreRealtimeRoom', () => {
           'X-Propos-Realtime-Session': 'session-1',
           'X-Propos-Realtime-Connection': 'connection-1',
           'X-Propos-Realtime-Reauth-At': String(Date.now() + 60_000),
+          'X-Propos-Realtime-Device': 'print-agent-online',
         },
       }),
     );
@@ -168,6 +169,7 @@ describe('StoreRealtimeRoom', () => {
       });
     const ready = JSON.parse(await nextMessage()) as { type: string };
     expect(ready.type).toBe('ready');
+    await expect(room.listConnectedDeviceIds(storeId)).resolves.toContain('print-agent-online');
 
     const event: RealtimeEventV1 = {
       schemaVersion: 1,

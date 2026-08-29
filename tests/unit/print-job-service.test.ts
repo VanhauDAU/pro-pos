@@ -11,6 +11,7 @@ function createMockDb(
   const orders = new Set<string>(['store-1:ord-100', 'store-1:ord-200']);
 
   return {
+    printJobsForTest: printJobs,
     prepare(sql: string) {
       return {
         bind(...args: any[]) {
@@ -93,26 +94,47 @@ function createMockDb(
                   attempt_count: 0,
                   failure_code: null,
                   failure_message: null,
+                  claim_lease_expires_at: null,
+                  claim_generation: 0,
+                  claim_token: null,
+                  claim_protocol_version: 1,
                 };
                 printJobs.set(id, job);
                 idempotencyMap.set(key, job);
                 return job as T;
               }
               if (sql.includes('UPDATE print_jobs') && sql.includes("status = 'QUEUED'")) {
-                const [deviceId, now, jobId, storeId] = args;
+                const [deviceId, now, leaseExpiresAt, claimToken, protocolVersion, jobId, storeId] =
+                  args;
                 const job = printJobs.get(jobId);
-                if (job && job.store_id === storeId && job.status === 'QUEUED') {
+                if (
+                  job &&
+                  job.store_id === storeId &&
+                  (job.status === 'QUEUED' ||
+                    (job.status === 'CLAIMED' && job.claim_lease_expires_at <= now))
+                ) {
                   job.status = 'CLAIMED';
                   job.claimed_by_device_id = deviceId;
                   job.claimed_at = now;
+                  job.claim_lease_expires_at = leaseExpiresAt;
+                  job.claim_generation += 1;
+                  job.claim_token = claimToken;
+                  job.claim_protocol_version = protocolVersion;
                   return job as T;
                 }
                 return null;
               }
               if (sql.includes('UPDATE print_jobs') && sql.includes("status = 'CLAIMED'")) {
-                const [now, jobId, storeId] = args;
+                const [now, jobId, storeId, leaseNow, deviceId, _deviceIdAgain, claimToken] = args;
                 const job = printJobs.get(jobId);
-                if (job && job.store_id === storeId && job.status === 'CLAIMED') {
+                if (
+                  job &&
+                  job.store_id === storeId &&
+                  job.status === 'CLAIMED' &&
+                  job.claim_lease_expires_at > leaseNow &&
+                  (!deviceId || job.claimed_by_device_id === deviceId) &&
+                  (job.claim_protocol_version < 2 || job.claim_token === claimToken)
+                ) {
                   job.status = 'PRINTING';
                   job.printing_at = now;
                   job.attempt_count += 1;
@@ -334,6 +356,64 @@ describe('PrintJobService', () => {
       code: 'PRINT_JOB_CONFLICT',
       status: 409,
     });
+  });
+
+  it('returns the same fenced lease for a retry and rejects stale tokens after reclaim', async () => {
+    const job = await service.createPrintJob({
+      storeId: 'store-1',
+      documentType: 'provisional',
+      documentId: 'ord-100',
+      printerRole: 'receipt',
+      idempotencyKey: 'idemp-fenced-claim',
+    });
+    const deviceA = {
+      actorUserId: 'agent-a',
+      actorKind: 'EMPLOYEE' as const,
+      deviceId: 'agent-a',
+    };
+    const first = await service.claimPrintJob('store-1', job.id, 'agent-a', deviceA, 2);
+    const retry = await service.claimPrintJob('store-1', job.id, 'agent-a', deviceA, 2);
+    expect(retry.claimToken).toBe(first.claimToken);
+    expect(retry.claimGeneration).toBe(first.claimGeneration);
+
+    db.printJobsForTest.get(job.id).claim_lease_expires_at = Date.now() - 1;
+    const deviceB = {
+      actorUserId: 'agent-b',
+      actorKind: 'EMPLOYEE' as const,
+      deviceId: 'agent-b',
+    };
+    const reclaimed = await service.claimPrintJob('store-1', job.id, 'agent-b', deviceB, 2);
+    expect(reclaimed.claimGeneration).toBe(first.claimGeneration + 1);
+    expect(reclaimed.claimToken).not.toBe(first.claimToken);
+
+    await expect(
+      service.startPrintJob('store-1', job.id, deviceA, first.claimToken),
+    ).rejects.toMatchObject({ code: 'PRINT_JOB_CONFLICT', status: 409 });
+    const printing = await service.startPrintJob('store-1', job.id, deviceB, reclaimed.claimToken);
+    expect(printing.status).toBe('PRINTING');
+    await expect(
+      service.startPrintJob('store-1', job.id, deviceB, reclaimed.claimToken),
+    ).resolves.toMatchObject({ status: 'PRINTING' });
+  });
+
+  it('makes completion idempotent for the same agent and claim token', async () => {
+    const job = await service.createPrintJob({
+      storeId: 'store-1',
+      documentType: 'invoice',
+      documentId: 'inv-200',
+      printerRole: 'receipt',
+      idempotencyKey: 'idemp-complete-retry',
+    });
+    const audit = {
+      actorUserId: 'agent-a',
+      actorKind: 'EMPLOYEE' as const,
+      deviceId: 'agent-a',
+    };
+    const claim = await service.claimPrintJob('store-1', job.id, 'agent-a', audit, 2);
+    await service.startPrintJob('store-1', job.id, audit, claim.claimToken);
+    const completed = await service.completePrintJob('store-1', job.id, audit, claim.claimToken);
+    const retry = await service.completePrintJob('store-1', job.id, audit, claim.claimToken);
+    expect(retry).toEqual(completed);
   });
 
   it('progresses lifecycle: CLAIMED -> PRINTING -> COMPLETED', async () => {

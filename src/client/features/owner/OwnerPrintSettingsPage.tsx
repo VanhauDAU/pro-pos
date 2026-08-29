@@ -59,10 +59,8 @@ import { browserPrintFallback, dispatchRemotePrintJob } from '@client/lib/pos-re
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 import { ReceiptPreviewPaper } from '@client/features/pos/ReceiptPreviewModal';
 import { ThermalHourlySegmentsPreview } from '@client/components/ThermalHourlySegmentsPreview';
-import {
-  OWNER_PRINT_PREVIEW_TOTAL_VND,
-  buildOwnerPrintPreviewSample,
-} from './print-preview-sample';
+import { buildOwnerPrintPreviewSample } from './print-preview-sample';
+import { buildFixedVietQrImageUrl } from '@domain/receipt/receipt-document';
 
 function errorMessage(error: unknown, fallback: string) {
   if (error instanceof ApiError) return error.message;
@@ -568,11 +566,11 @@ export function OwnerPrintSettingsPage() {
   const previewVietQrUrl = useMemo(() => {
     if (bottomImageType === 'VIETQR') {
       if (bottomBankName && bottomBankAccountNumber) {
-        return `https://img.vietqr.io/image/${encodeURIComponent(bottomBankName.trim())}-${encodeURIComponent(
-          bottomBankAccountNumber.trim(),
-        )}-qr_only.png?amount=${OWNER_PRINT_PREVIEW_TOTAL_VND}&addInfo=Thanh+toan+bill&accountName=${encodeURIComponent(
-          bottomBankAccountName?.trim() || '',
-        )}`;
+        return buildFixedVietQrImageUrl({
+          bankIdentifier: bottomBankName,
+          accountNumber: bottomBankAccountNumber,
+          accountName: bottomBankAccountName,
+        });
       }
     } else if (bottomImageType === 'UPLOAD' && bottomImagePreviewUrl) {
       return bottomImagePreviewUrl;
@@ -1624,7 +1622,12 @@ export function OwnerPrintSettingsPage() {
                 {
                   title: 'Trạng thái',
                   key: 'status',
-                  render: () => <Tag color="green">Sẵn sàng</Tag>,
+                  render: (_: unknown, record: PrintAgentInfo) =>
+                    record.is_online ? (
+                      <Tag color="green">Đang online</Tag>
+                    ) : (
+                      <Tag>Đang offline</Tag>
+                    ),
                 },
                 {
                   title: 'Vai trò',

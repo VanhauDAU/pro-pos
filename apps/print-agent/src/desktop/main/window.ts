@@ -1,7 +1,10 @@
-import { BrowserWindow } from 'electron';
+import { app, BrowserWindow, nativeImage } from 'electron';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 export function createAgentWindow(startHidden = false): BrowserWindow {
+  const iconPath = join(__dirname, '../renderer/icon.png');
+  const hasIcon = existsSync(iconPath);
   const window = new BrowserWindow({
     width: 540,
     height: 700,
@@ -10,6 +13,7 @@ export function createAgentWindow(startHidden = false): BrowserWindow {
     backgroundColor: '#f3f5f8',
     show: false,
     title: 'PRO POS Print Agent',
+    ...(hasIcon ? { icon: iconPath } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/preload.cjs'),
       nodeIntegration: false,
@@ -17,6 +21,18 @@ export function createAgentWindow(startHidden = false): BrowserWindow {
       sandbox: true,
     },
   });
+
+  if (process.platform === 'darwin' && app.dock && existsSync(iconPath)) {
+    try {
+      const dockIcon = nativeImage.createFromPath(iconPath);
+      if (!dockIcon.isEmpty()) {
+        app.dock.setIcon(dockIcon);
+      }
+    } catch {
+      // ignore dock icon failure in unsupported environments
+    }
+  }
+
   window.setMenuBarVisibility(false);
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   if (!startHidden) window.once('ready-to-show', () => window.show());

@@ -5,6 +5,7 @@ import {
 } from '@server/repositories/print-agent-repository';
 
 const PAIRING_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const LAST_SEEN_INTERVAL_MS = 45_000;
 
 export class PrintAgentService {
   private readonly repository: PrintAgentRepository;
@@ -110,12 +111,27 @@ export class PrintAgentService {
     if (!agent) {
       throw new AppError('UNAUTHORIZED', 'Print Agent không tồn tại.', 401);
     }
+    if (agent.store_status !== 'ACTIVE') {
+      throw new AppError('STORE_LOCKED', 'Cửa hàng đang bị khóa.', 403);
+    }
     const hash = await this.hashSecret(agentSecret);
-    if (hash !== agent.agent_secret_hash) {
+    const encoder = new TextEncoder();
+    const providedHash = encoder.encode(hash);
+    const storedHash = encoder.encode(agent.agent_secret_hash);
+    const subtle = crypto.subtle as SubtleCrypto & {
+      timingSafeEqual(a: ArrayBufferView, b: ArrayBufferView): boolean;
+    };
+    if (
+      providedHash.byteLength !== storedHash.byteLength ||
+      !subtle.timingSafeEqual(providedHash, storedHash)
+    ) {
       throw new AppError('UNAUTHORIZED', 'Khóa bảo mật Print Agent không hợp lệ.', 401);
     }
-    await this.repository.updateLastSeen(agentId);
     return agent;
+  }
+
+  async heartbeat(agentId: string): Promise<void> {
+    await this.repository.touchLastSeen(agentId, Date.now(), LAST_SEEN_INTERVAL_MS);
   }
 
   async listStoreAgents(storeId: string): Promise<PrintAgentRecord[]> {

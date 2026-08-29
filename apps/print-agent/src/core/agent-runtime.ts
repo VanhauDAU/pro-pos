@@ -18,6 +18,7 @@ import type {
   PrinterTestResult,
 } from './agent-state';
 import { mapPrinterErrorDiagnostics } from './printer-diagnostics';
+import { AgentPrintCache } from './print-cache';
 
 export type { AgentRuntimeEvent, AgentRuntimeState, PrinterTestResult } from './agent-state';
 
@@ -45,6 +46,7 @@ export interface AgentRuntimeDependencies {
     config: PrintAgentConfig,
     apiClient: AgentApiClient,
     events: AgentRealtimeEvents,
+    printCache: AgentPrintCache,
   ) => RealtimeConnection;
   createPairingHandler?: (
     configManager: RuntimeConfigStore,
@@ -69,6 +71,7 @@ export class AgentRuntime extends EventEmitter {
   >;
   private readonly createTransport: NonNullable<AgentRuntimeDependencies['createTransport']>;
   private config: PrintAgentConfig | null;
+  private printCache: AgentPrintCache | null = null;
   private realtime: RealtimeConnection | null = null;
   private pairingAbortController: AbortController | null = null;
   private readonly state: AgentRuntimeState = {
@@ -127,6 +130,7 @@ export class AgentRuntime extends EventEmitter {
     this.pairingAbortController = null;
     this.realtime?.destroy();
     this.realtime = null;
+    this.printCache?.clear();
     this.updatePairing({ code: null, expiresAt: null });
     this.setStatus('STOPPED');
   }
@@ -258,7 +262,9 @@ export class AgentRuntime extends EventEmitter {
       onJobCompleted: (jobId, sentAt) => this.emit('jobCompleted', { jobId, sentAt }),
       onJobFailed: (jobId, code, retryable) => this.emit('jobFailed', { jobId, code, retryable }),
     };
-    this.realtime = this.createRealtimeClient(config, this.createApiClient(config), events);
+    const apiClient = this.createApiClient(config);
+    this.printCache ??= new AgentPrintCache(apiClient);
+    this.realtime = this.createRealtimeClient(config, apiClient, events, this.printCache);
     this.realtime.connect();
   }
 

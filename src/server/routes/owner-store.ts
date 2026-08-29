@@ -14,14 +14,18 @@ import type { AppEnv } from '@server/types';
 const ownerStoreRoutes = new Hono<AppEnv>();
 ownerStoreRoutes.use('*', requireActor('OWNER'));
 
+function storeService(c: Parameters<typeof success>[0]): StoreService {
+  return new StoreService(c.env, (promise) => c.executionCtx.waitUntil(promise));
+}
+
 ownerStoreRoutes.get('/settings', requirePermission('store.manage'), async (c) =>
-  success(c, await new StoreService(c.env).getSettings(c.get('actor').storeId!)),
+  success(c, await storeService(c).getSettings(c.get('actor').storeId!)),
 );
 
 ownerStoreRoutes.put('/settings', requirePermission('store.manage'), async (c) => {
   const body = await parseJson(c.req.raw, updateStoreSettingsSchema);
   const storeId = c.get('actor').storeId!;
-  const result = await new StoreService(c.env).updateSettings({
+  const result = await storeService(c).updateSettings({
     storeId,
     name: body.name,
     phone: body.phone ?? null,
@@ -52,7 +56,7 @@ ownerStoreRoutes.post('/bank-accounts', requirePermission('store.manage'), async
   const values = await parseJson(c.req.raw, bankAccountInputSchema);
   return success(
     c,
-    await new StoreService(c.env).createBankAccount({
+    await storeService(c).createBankAccount({
       storeId: c.get('actor').storeId!,
       values,
       auditContext: {
@@ -73,7 +77,7 @@ ownerStoreRoutes.patch(
     const values = await parseJson(c.req.raw, bankAccountInputSchema);
     return success(
       c,
-      await new StoreService(c.env).updateBankAccount({
+      await storeService(c).updateBankAccount({
         storeId: c.get('actor').storeId!,
         bankAccountId: c.req.param('bankAccountId'),
         values,
@@ -94,7 +98,7 @@ ownerStoreRoutes.delete(
   async (c) =>
     success(
       c,
-      await new StoreService(c.env).archiveBankAccount({
+      await storeService(c).archiveBankAccount({
         storeId: c.get('actor').storeId!,
         bankAccountId: c.req.param('bankAccountId'),
         auditContext: {
@@ -108,13 +112,13 @@ ownerStoreRoutes.delete(
 );
 
 ownerStoreRoutes.get('/print-settings', requirePermission('store.manage'), async (c) =>
-  success(c, await new StoreService(c.env).getPrintSettings(c.get('actor').storeId!)),
+  success(c, await storeService(c).getPrintSettings(c.get('actor').storeId!)),
 );
 
 ownerStoreRoutes.put('/print-settings', requirePermission('store.manage'), async (c) => {
   const body = await parseJson(c.req.raw, updatePrintSettingsSchema);
   const storeId = c.get('actor').storeId!;
-  const result = await new StoreService(c.env).updatePrintSettings({
+  const result = await storeService(c).updatePrintSettings({
     storeId,
     maxReceiptReprintCount: body.maxReceiptReprintCount,
     paymentCopyCount: body.paymentCopyCount,
@@ -151,7 +155,7 @@ ownerStoreRoutes.put('/print-settings', requirePermission('store.manage'), async
 });
 
 ownerStoreRoutes.get('/audit-logs', requirePermission('audit.view'), async (c) => {
-  return success(c, await new StoreService(c.env).listAuditLogs(c.get('actor').storeId!));
+  return success(c, await storeService(c).listAuditLogs(c.get('actor').storeId!));
 });
 
 export { ownerStoreRoutes };

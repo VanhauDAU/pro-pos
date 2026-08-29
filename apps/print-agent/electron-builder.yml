@@ -2,11 +2,13 @@ appId: com.propos.print-agent
 productName: PRO POS Print Agent
 directories:
   output: release
+  buildResources: build
 files:
   - dist/desktop/**
   - package.json
-artifactBuildStarted: ../../scripts/ensure-print-agent-macos-signature.cjs
+artifactBuildStarted: ./scripts/ensure-print-agent-macos-signature.cjs
 win:
+  icon: build/icon.ico
   target:
     - target: nsis
       arch: [x64]
@@ -23,6 +25,7 @@ nsis:
 portable:
   artifactName: ${productName}-${version}-${arch}-Portable.${ext}
 mac:
+  icon: build/icon.icns
   target:
     - target: dmg
       arch: [arm64, x64]

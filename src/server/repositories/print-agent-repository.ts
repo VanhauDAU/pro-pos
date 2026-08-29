@@ -8,6 +8,7 @@ export interface PrintAgentRecord {
   last_seen_at: number | null;
   created_at: number;
   updated_at: number;
+  store_status?: 'ACTIVE' | 'LOCKED';
 }
 
 export interface PrintAgentPairingRecord {
@@ -104,7 +105,12 @@ export class PrintAgentRepository {
 
   async findAgentById(id: string): Promise<PrintAgentRecord | null> {
     const row = await this.db
-      .prepare(`SELECT * FROM print_agents WHERE id = ?`)
+      .prepare(
+        `SELECT agent.*, store.status AS store_status
+         FROM print_agents agent
+         JOIN stores store ON store.id = agent.store_id
+         WHERE agent.id = ?`,
+      )
       .bind(id)
       .first<PrintAgentRecord>();
     return row ?? null;
@@ -118,11 +124,13 @@ export class PrintAgentRepository {
     return rows.results ?? [];
   }
 
-  async updateLastSeen(agentId: string): Promise<void> {
-    const now = Date.now();
+  async touchLastSeen(agentId: string, now: number, minimumIntervalMs: number): Promise<void> {
     await this.db
-      .prepare(`UPDATE print_agents SET last_seen_at = ?, updated_at = ? WHERE id = ?`)
-      .bind(now, now, agentId)
+      .prepare(
+        `UPDATE print_agents SET last_seen_at = ?, updated_at = ?
+         WHERE id = ? AND (last_seen_at IS NULL OR last_seen_at <= ?)`,
+      )
+      .bind(now, now, agentId, now - minimumIntervalMs)
       .run();
   }
 

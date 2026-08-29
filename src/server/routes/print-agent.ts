@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { success } from '@server/lib/response';
 import { parseJson } from '@server/lib/validation';
-import { requireActor } from '@server/middleware/authorization';
+import { requireActor, requireActorOrPrintAgent } from '@server/middleware/authorization';
 import { PrintAgentService } from '@server/services/print-agent-service';
 import type { AppEnv } from '@server/types';
 
@@ -34,6 +34,13 @@ publicPrintAgentRoutes.get('/pair/status', async (c) => {
   return success(c, status);
 });
 
+/** Compatibility endpoint for Agents released before last-seen moved to WebSocket connect. */
+publicPrintAgentRoutes.post('/heartbeat', requireActorOrPrintAgent(), async (c) => {
+  const agentId = c.req.header('X-Agent-Id');
+  if (agentId) await new PrintAgentService(c.env).heartbeat(agentId);
+  return success(c, { ok: true });
+});
+
 /**
  * Authenticated POS routes for managing Print Agents
  */
@@ -53,7 +60,12 @@ posPrintAgentRoutes.get('/list', async (c) => {
   const actor = c.get('actor');
   const service = new PrintAgentService(c.env);
   const agents = await service.listStoreAgents(actor.storeId!);
-  return success(c, agents);
+  const room = c.env.STORE_REALTIME.getByName(actor.storeId!);
+  const onlineIds = new Set(await room.listConnectedDeviceIds(actor.storeId!));
+  return success(
+    c,
+    agents.map((agent) => ({ ...agent, is_online: onlineIds.has(agent.id) })),
+  );
 });
 
 posPrintAgentRoutes.delete('/:id', async (c) => {

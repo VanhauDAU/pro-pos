@@ -44,7 +44,7 @@ describe('Remote Print & QZ Security Lifecycle (Integration Test)', () => {
       expect(cert).toContain('BEGIN CERTIFICATE');
 
       const challenge = 'test-challenge-12345';
-      const signature = await signQzPayload(challenge);
+      const signature = await signQzPayload(challenge, (env as any).QZ_PRIVATE_KEY);
       expect(typeof signature).toBe('string');
       expect(signature.length).toBeGreaterThan(64);
     });

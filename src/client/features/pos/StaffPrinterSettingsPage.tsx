@@ -3,6 +3,7 @@ import {
   LeftOutlined,
   PrinterOutlined,
   ReloadOutlined,
+  SafetyCertificateOutlined,
   SaveOutlined,
   WifiOutlined,
 } from '@ant-design/icons';
@@ -36,6 +37,7 @@ import {
 } from '@contracts/store';
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 import {
+  isDesktopPlatform,
   isPrintBridgeEnabled,
   isPrintBridgeLeader,
   setPrintBridgeEnabled,
@@ -44,6 +46,7 @@ import {
 } from '@client/lib/print-bridge-service';
 import { getClientDeviceName } from '@client/lib/qz-tray-service';
 import { printerAction, printerService } from '@printing/printer-service';
+import { QzTrustedSetupModal } from '@client/components/QzTrustedSetupModal';
 
 interface StaffPrinterSettingsPageProps {
   csrfToken: string | null | undefined;
@@ -81,6 +84,7 @@ export function StaffPrinterSettingsPage({
   const [checkingConnection, setCheckingConnection] = useState(false);
   const [bridgeEnabled, setBridgeEnabled] = useState(isPrintBridgeEnabled());
   const [isLeader, setIsLeader] = useState(isPrintBridgeLeader());
+  const [trustedModalOpen, setTrustedModalOpen] = useState(false);
 
   useEffect(() => {
     void startPrintBridgeLeaderElection();
@@ -108,7 +112,7 @@ export function StaffPrinterSettingsPage({
 
   useEffect(() => {
     let mounted = true;
-    void printerService.checkConnection().then(async (status) => {
+    void printerService.checkConnection(isDesktopPlatform()).then(async (status) => {
       if (!mounted) return;
       if (!status.connected) {
         setQzStatus({
@@ -319,6 +323,12 @@ export function StaffPrinterSettingsPage({
             <Space wrap>
               <Button onClick={() => void connectQz()} loading={qzStatus.loading}>
                 {qzStatus.connected ? 'Kết nối lại' : 'Kết nối QZ Tray'}
+              </Button>
+              <Button
+                icon={<SafetyCertificateOutlined />}
+                onClick={() => setTrustedModalOpen(true)}
+              >
+                Bỏ qua hộp thoại Allow
               </Button>
               {!qzStatus.connected ? (
                 <Button href="https://qz.io/download/" target="_blank" rel="noreferrer">
@@ -598,6 +608,8 @@ export function StaffPrinterSettingsPage({
           <Empty description="Chưa có máy in đã cài. Hãy mở QZ Tray hoặc nhập địa chỉ IP của máy in Wi‑Fi/LAN." />
         )}
       </Modal>
+
+      <QzTrustedSetupModal open={trustedModalOpen} onClose={() => setTrustedModalOpen(false)} />
     </div>
   );
 }

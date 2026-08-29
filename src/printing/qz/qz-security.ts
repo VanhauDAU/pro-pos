@@ -134,7 +134,7 @@ export function configureQzSecurity() {
 
       if (import.meta.env.DEV) {
         console.log('[QZ] sign status=200');
-        console.log('[QZ] signature received');
+        console.log('[QZ] signature verified');
       }
       resolve(result.signature);
     } catch (error: any) {

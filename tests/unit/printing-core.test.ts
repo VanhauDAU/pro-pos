@@ -135,6 +135,26 @@ describe('printing core', () => {
     expect(qzMocks.connect).toHaveBeenCalledOnce();
   });
 
+  it('does not attempt reconnect when socket is already active', async () => {
+    qzMocks.isActive.mockReturnValue(true);
+    await ensureQzConnected();
+    expect(qzMocks.connect).not.toHaveBeenCalled();
+  });
+
+  it('returns Chưa kết nối QZ Tray when inactive and connect=false without throwing', async () => {
+    qzMocks.isActive.mockReturnValue(false);
+    const status = await new PrinterService().checkConnection(false);
+    expect(status).toEqual({ connected: false, error: 'Chưa kết nối QZ Tray.' });
+    expect(qzMocks.connect).not.toHaveBeenCalled();
+  });
+
+  it('auto connects when checkConnection(true) is called while inactive', async () => {
+    qzMocks.isActive.mockReturnValue(false);
+    const status = await new PrinterService().checkConnection(true);
+    expect(status).toEqual({ connected: true, version: '2.2.6' });
+    expect(qzMocks.connect).toHaveBeenCalledOnce();
+  });
+
   it('fails fast when QZ is not running without spending time rasterizing', async () => {
     qzMocks.isActive.mockReturnValue(false);
     qzMocks.connect.mockRejectedValueOnce(new Error('WebSocket unavailable'));

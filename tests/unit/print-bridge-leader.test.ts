@@ -80,4 +80,14 @@ describe('Print Bridge Client & Leader Election', () => {
 
     unsubscribe();
   });
+
+  it('handles mobile user agent by defaulting bridge to disabled', () => {
+    vi.stubGlobal('navigator', {
+      userAgent:
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148',
+    });
+
+    expect(isDesktopPlatform()).toBe(false);
+    expect(isPrintBridgeEnabled()).toBe(false);
+  });
 });

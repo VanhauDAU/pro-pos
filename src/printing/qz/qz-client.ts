@@ -25,11 +25,26 @@ function timeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
 
 export async function ensureQzConnected(): Promise<void> {
   configureQzSecurity();
-  if (qz.websocket.isActive()) return;
+  if (qz.websocket.isActive()) {
+    if (import.meta.env.DEV) {
+      console.log('[QZ] websocket connected');
+    }
+    return;
+  }
   if (connectPromise) return connectPromise;
 
   connectPromise = timeout(qz.websocket.connect({ retries: 1, delay: 0.5 }), CONNECT_TIMEOUT_MS)
+    .then(() => {
+      if (import.meta.env.DEV) {
+        console.log('[QZ] websocket connected');
+      }
+    })
     .catch((error) => {
+      if (import.meta.env.DEV) {
+        console.warn(
+          '[QZ] trusted setup required: ensure QZ Tray is running and certificate is whitelisted',
+        );
+      }
       throw new PrinterConnectionError(undefined, { cause: error });
     })
     .finally(() => {
@@ -58,7 +73,7 @@ export async function disconnectQz(): Promise<void> {
 export async function checkQzConnection(connect = false): Promise<PrinterConnectionStatus> {
   try {
     if (!qz.websocket.isActive()) {
-      if (!connect) return { connected: false, error: 'QZ Tray chưa chạy.' };
+      if (!connect) return { connected: false, error: 'Chưa kết nối QZ Tray.' };
       await ensureQzConnected();
     }
     return { connected: true, version: await qz.api.getVersion() };

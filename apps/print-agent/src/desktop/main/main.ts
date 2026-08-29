@@ -3,6 +3,7 @@ import { AgentRuntime } from '../../core/agent-runtime';
 import { registerAgentIpc } from './ipc';
 import { createAgentTray } from './tray';
 import { createAgentWindow } from './window';
+import { DesktopConfigStore } from './config-store';
 
 let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
@@ -17,7 +18,9 @@ if (!app.requestSingleInstanceLock()) {
 
   void app.whenReady().then(async () => {
     app.setAppUserModelId('com.propos.print-agent');
-    const runtime = new AgentRuntime();
+    const runtime = new AgentRuntime(undefined, {
+      configManager: new DesktopConfigStore(app.getPath('userData')),
+    });
     await runtime.start();
     mainWindow = createAgentWindow();
     mainWindow.on('close', (event) => {

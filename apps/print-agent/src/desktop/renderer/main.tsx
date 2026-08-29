@@ -24,9 +24,14 @@ function App() {
     <section><b>Cloud</b><span>{state.status === 'ONLINE' ? 'Đã kết nối' : 'Đang kết nối hoặc chờ ghép nối'}</span></section>
     <section><b>Máy in</b><span>{state.printer}</span></section>
     {state.pairing.code && <section><b>Mã ghép nối</b><span className="code">{state.pairing.code}</span></section>}
+    {state.status === 'UNPAIRED' && <p>Ghép nối Print Agent với POS bằng mã 6 số; bạn không cần nhập mật khẩu.</p>}
     {state.lastError && <p className="error">{state.lastError}</p>}
     {message && <p className="message">{message}</p>}
-    <div className="actions"><button onClick={() => void testPrinter()}>In thử</button><button onClick={() => void window.proposPrintAgent.reconnect()}>Kết nối lại</button></div>
+    <div className="actions">
+      {state.status === 'UNPAIRED' && <button onClick={() => void window.proposPrintAgent.startPairing()}>Bắt đầu ghép nối</button>}
+      {state.status === 'PAIRING' && <button onClick={() => void window.proposPrintAgent.cancelPairing()}>Hủy ghép nối</button>}
+      <button onClick={() => void testPrinter()}>In thử</button><button onClick={() => void window.proposPrintAgent.reconnect()}>Kết nối lại</button>
+    </div>
   </main>;
 }
 

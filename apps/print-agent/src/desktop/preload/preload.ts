@@ -5,6 +5,8 @@ const api: ProPosPrintAgentApi = {
   getState: () => ipcRenderer.invoke('agent:get-state'),
   testPrinter: () => ipcRenderer.invoke('agent:test-printer'),
   reconnect: () => ipcRenderer.invoke('agent:reconnect'),
+  startPairing: () => ipcRenderer.invoke('agent:start-pairing'),
+  cancelPairing: () => ipcRenderer.invoke('agent:cancel-pairing'),
   showWindow: () => ipcRenderer.invoke('agent:show-window'),
   onStateChanged: (listener) => {
     const callback = (_event: Electron.IpcRendererEvent, state: Parameters<typeof listener>[0]) => listener(state);

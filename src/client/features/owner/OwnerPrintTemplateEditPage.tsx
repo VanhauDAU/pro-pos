@@ -223,7 +223,10 @@ export function OwnerPrintTemplateEditPage() {
         headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' },
       });
       setTemplateConfigs(updatedMap);
-      await queryClient.invalidateQueries({ queryKey: PRINT_SETTINGS_QUERY });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: PRINT_SETTINGS_QUERY }),
+        queryClient.invalidateQueries({ queryKey: ['pos-print-settings'] }),
+      ]);
       setIsDirty(false);
       messageApi.success(
         `Đã lưu cấu hình ${previewInvoiceType === 'PROVISIONAL' ? 'hóa đơn tạm tính' : 'hóa đơn thanh toán'}.`,

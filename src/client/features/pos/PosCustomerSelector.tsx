@@ -23,7 +23,7 @@ import { useState } from 'react';
 import type { CustomerDetail, CustomerInput, CustomerSummary } from '@contracts/customer';
 import type { StorePrintSettings } from '@contracts/store';
 import { apiRequest, jsonRequest } from '@client/lib/api';
-import { printReceipt } from '@client/lib/pos-receipt-printer';
+import { smartPrintReceipt } from '@client/lib/pos-receipt-printer';
 
 const LOCATION_API = 'https://provinces.open-api.vn/api/v2';
 interface LocationItem {
@@ -87,7 +87,7 @@ export function PosCustomerSelector({
   const printSettings = useQuery({
     queryKey: ['pos-print-settings'],
     queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
-    staleTime: Infinity,
+    staleTime: 30_000,
   });
   const posContext = useQuery({
     queryKey: ['pos-context'],
@@ -183,34 +183,41 @@ export function PosCustomerSelector({
       ]);
       let printFailedMessage: string | null = null;
       if (printDebtReceipt) {
-        const printResult = await printReceipt({
-          data: {
-            receiptType: 'DEBT_PAYMENT',
-            orderCode: referenceCode,
-            invoiceCode: referenceCode,
-            orderType: 'TAKEAWAY',
-            cashierName: null,
-            customerName: c.name,
-            guestPhone: c.phone,
-            guestAddress: [c.addressLine, c.wardName, c.provinceName].filter(Boolean).join(', '),
-            issuedAtMs: Date.now(),
-            subtotal: debtBefore,
-            discountTotal: 0,
-            total: debtPaymentAmount,
-            paymentMethod: debtPaymentMethod,
-            debtBeforeVnd: debtBefore,
-            debtPaymentVnd: debtPaymentAmount,
-            debtAfterVnd: updated.debtBalanceVnd,
-            referenceCode,
-            lines: [],
+        const printResult = await smartPrintReceipt(
+          {
+            data: {
+              receiptType: 'DEBT_PAYMENT',
+              orderCode: referenceCode,
+              invoiceCode: referenceCode,
+              orderType: 'TAKEAWAY',
+              cashierName: null,
+              customerName: c.name,
+              guestPhone: c.phone,
+              guestAddress: [c.addressLine, c.wardName, c.provinceName].filter(Boolean).join(', '),
+              issuedAtMs: Date.now(),
+              subtotal: debtBefore,
+              discountTotal: 0,
+              total: debtPaymentAmount,
+              paymentMethod: debtPaymentMethod,
+              debtBeforeVnd: debtBefore,
+              debtPaymentVnd: debtPaymentAmount,
+              debtAfterVnd: updated.debtBalanceVnd,
+              referenceCode,
+              lines: [],
+            },
+            printSettings: printSettings.data,
+            storeInfo: {
+              storeName: posContext.data?.storeName ?? 'PRO POS',
+              phone: posContext.data?.storePhone ?? null,
+              address: posContext.data?.storeAddress ?? null,
+            },
           },
-          printSettings: printSettings.data,
-          storeInfo: {
-            storeName: posContext.data?.storeName ?? 'PRO POS',
-            phone: posContext.data?.storePhone ?? null,
-            address: posContext.data?.storeAddress ?? null,
+          {
+            type: 'debt_payment',
+            id: referenceCode,
           },
-        });
+          csrfToken,
+        );
         if (!printResult.success)
           printFailedMessage = printResult.message ?? 'Không thể in phiếu thu.';
       }

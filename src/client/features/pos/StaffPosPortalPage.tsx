@@ -228,9 +228,16 @@ const StaffPrinterSettingsPage = lazy(async () => {
   return { default: module.StaffPrinterSettingsPage };
 });
 
-async function printReceipt(options: PosReceiptPrintOptions) {
+async function printReceipt(
+  options: PosReceiptPrintOptions,
+  documentIdentity?: {
+    type: 'invoice' | 'order' | 'provisional' | 'debt_payment';
+    id: string;
+  },
+  csrfToken?: string | null,
+) {
   const printer = await import('@client/lib/pos-receipt-printer');
-  return printer.printReceipt(options);
+  return printer.smartPrintReceipt(options, documentIdentity, csrfToken);
 }
 
 function PosRouteLoadingFallback() {
@@ -277,9 +284,8 @@ import {
 
 const BRAND = '#0975f7';
 
-const PAYMENT_SUCCESS_VISIBLE_MS = 900;
-const PAYMENT_SUCCESS_PRINTING_VISIBLE_MS = 1_200;
-const PAYMENT_SUCCESS_FAILURE_VISIBLE_MS = 1_400;
+const PAYMENT_SUCCESS_AUTO_CLOSE_MS = 5_000;
+const ORDER_HOVER_PREFETCH_DELAY_MS = 80;
 const MOBILE_PULL_REFRESH_THRESHOLD_PX = 64;
 const MOBILE_PULL_REFRESH_MAX_PX = 96;
 const MOBILE_PULL_REFRESH_LOADING_PX = 52;
@@ -1688,6 +1694,24 @@ function AreasPage() {
     },
     [queryClient, realtimeStatus],
   );
+  const hoverPrefetchTimerRef = useRef<number | null>(null);
+  const cancelHoverPrefetch = useCallback(() => {
+    if (hoverPrefetchTimerRef.current !== null) {
+      window.clearTimeout(hoverPrefetchTimerRef.current);
+      hoverPrefetchTimerRef.current = null;
+    }
+  }, []);
+  const prefetchOrderOnHoverIntent = useCallback(
+    (activeOrderId: string) => {
+      cancelHoverPrefetch();
+      hoverPrefetchTimerRef.current = window.setTimeout(() => {
+        hoverPrefetchTimerRef.current = null;
+        prefetchOrder(activeOrderId);
+      }, ORDER_HOVER_PREFETCH_DELAY_MS);
+    },
+    [cancelHoverPrefetch, prefetchOrder],
+  );
+  useEffect(() => cancelHoverPrefetch, [cancelHoverPrefetch]);
 
   const activeTakeaways = useMemo(() => {
     return (posOrders.data ?? [])
@@ -1967,7 +1991,13 @@ function AreasPage() {
                       type="button"
                       key={takeawayOrder.id}
                       className="staff-table-card staff-table-card--occupied"
-                      onPointerDown={() => prefetchOrder(takeawayOrder.id)}
+                      onPointerEnter={() => prefetchOrderOnHoverIntent(takeawayOrder.id)}
+                      onPointerLeave={cancelHoverPrefetch}
+                      onPointerDown={() => {
+                        cancelHoverPrefetch();
+                        prefetchOrder(takeawayOrder.id);
+                      }}
+                      onFocus={() => prefetchOrder(takeawayOrder.id)}
                       onClick={() => navigate(`/pos/orders/${takeawayOrder.id}`)}
                     >
                       <div className="staff-table-card__header">
@@ -2008,7 +2038,17 @@ function AreasPage() {
                   ]
                     .filter(Boolean)
                     .join(' ')}
+                  onPointerEnter={() => {
+                    if (table.activeOrderId) prefetchOrderOnHoverIntent(table.activeOrderId);
+                  }}
+                  onPointerLeave={cancelHoverPrefetch}
                   onPointerDown={() => {
+                    if (table.activeOrderId) {
+                      cancelHoverPrefetch();
+                      prefetchOrder(table.activeOrderId);
+                    }
+                  }}
+                  onFocus={() => {
                     if (table.activeOrderId) prefetchOrder(table.activeOrderId);
                   }}
                   onClick={() => {
@@ -5687,6 +5727,7 @@ function OrderEditor({
         isFetchedAfterMount: quote.isFetchedAfterMount,
         isStale: quote.isStale,
         dataUpdatedAt: quote.dataUpdatedAt,
+        realtimeStatus,
       })
     ) {
       setVerifiedQuoteOrderId(orderId);
@@ -5701,6 +5742,7 @@ function OrderEditor({
     quote.isStale,
     quote.isSuccess,
     quote.dataUpdatedAt,
+    realtimeStatus,
   ]);
   const quoteReady = isNew || (Boolean(orderId) && verifiedQuoteOrderId === orderId);
   const callHistory = useQuery({
@@ -5716,8 +5758,8 @@ function OrderEditor({
   const printSettings = useQuery({
     queryKey: ['pos-print-settings'],
     queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
-    staleTime: Infinity,
-    refetchOnMount: false,
+    staleTime: 30_000,
+    refetchOnMount: true,
   });
   const staffContext = useQuery({
     queryKey: ['pos-context'],
@@ -5936,18 +5978,24 @@ function OrderEditor({
 
   const printProvisionalReceipt = async () => {
     if (!quote.data) return;
-    const result = await printReceipt({
-      data: buildPrintDataFromQuote(quote.data, 'PROVISIONAL'),
-      printSettings: printSettings.data,
-      storeInfo: {
-        storeName: staffContext.data?.storeName ?? null,
-        phone: staffContext.data?.storePhone ?? null,
-        address: staffContext.data?.storeAddress ?? null,
-        bankName: staffContext.data?.bankName ?? null,
-        bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
-        bankAccountName: staffContext.data?.bankAccountName ?? null,
+    const result = await printReceipt(
+      {
+        data: buildPrintDataFromQuote(quote.data, 'PROVISIONAL'),
+        printSettings: printSettings.data,
+        storeInfo: {
+          storeName: staffContext.data?.storeName ?? null,
+          phone: staffContext.data?.storePhone ?? null,
+          address: staffContext.data?.storeAddress ?? null,
+          bankName: staffContext.data?.bankName ?? null,
+          bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
+          bankAccountName: staffContext.data?.bankAccountName ?? null,
+        },
       },
-    });
+      {
+        type: 'order',
+        id: quote.data.order.id,
+      },
+    );
     if (result.success) messageApi.success('Đã gửi lệnh in phiếu tạm tính!');
     else messageApi.error(result.message ?? 'Không thể in phiếu tạm tính.');
   };
@@ -6498,14 +6546,8 @@ function OrderEditor({
       navigateToPayment(createdOrderId, true);
     } else {
       messageApi.success('Lưu đơn hàng thành công.');
-      if (orderType === 'TAKEAWAY') {
-        navigate('/pos/areas?tab=takeaway', {
-          replace: true,
-          state: { selectedArea: '__TAKEAWAY__' },
-        });
-      } else {
-        navigate('/pos/areas', { replace: true });
-      }
+      setMobileView('CART');
+      navigate(`/pos/orders/${createdOrderId}`, { replace: true });
     }
   };
 
@@ -6593,14 +6635,8 @@ function OrderEditor({
           ? `Đã lưu Đợt ${snapshot.callBatch.sequenceNo}.`
           : 'Lưu đơn hàng thành công.',
       );
-      if (snapshot.order.orderType === 'TAKEAWAY' || orderType === 'TAKEAWAY') {
-        navigate('/pos/areas?tab=takeaway', {
-          replace: true,
-          state: { selectedArea: '__TAKEAWAY__' },
-        });
-      } else {
-        navigate('/pos/areas', { replace: true });
-      }
+      setMobileView('CART');
+      navigate(`/pos/orders/${snapshot.order.id}`, { replace: true });
     }
   };
 
@@ -6704,14 +6740,7 @@ function OrderEditor({
         navigateToPayment(quote.data.order.id);
       } else {
         messageApi.success('Lưu đơn hàng thành công.');
-        if (orderType === 'TAKEAWAY' || quote.data.order.orderType === 'TAKEAWAY') {
-          navigate('/pos/areas?tab=takeaway', {
-            replace: true,
-            state: { selectedArea: '__TAKEAWAY__' },
-          });
-        } else {
-          navigate('/pos/areas', { replace: true });
-        }
+        setMobileView('CART');
       }
       return;
     }
@@ -6726,13 +6755,8 @@ function OrderEditor({
         messageApi.success('Lưu đơn hàng thành công.');
         if (openPaymentAfterSave) {
           navigateToPayment(quote.data.order.id);
-        } else if (orderType === 'TAKEAWAY' || quote.data.order.orderType === 'TAKEAWAY') {
-          navigate('/pos/areas?tab=takeaway', {
-            replace: true,
-            state: { selectedArea: '__TAKEAWAY__' },
-          });
         } else {
-          navigate('/pos/areas', { replace: true });
+          setMobileView('CART');
         }
         return;
       }
@@ -6759,13 +6783,8 @@ function OrderEditor({
       );
       if (openPaymentAfterSave) {
         navigateToPayment(snapshot.order.id);
-      } else if (snapshot.order.orderType === 'TAKEAWAY' || orderType === 'TAKEAWAY') {
-        navigate('/pos/areas?tab=takeaway', {
-          replace: true,
-          state: { selectedArea: '__TAKEAWAY__' },
-        });
       } else {
-        navigate('/pos/areas', { replace: true });
+        setMobileView('CART');
       }
     } catch (error) {
       if (error instanceof ApiError && error.code === 'ORDER_VERSION_CONFLICT') {
@@ -7754,25 +7773,59 @@ function OrderEditor({
   if (!quoteReady) {
     const failed = !quote.isFetching && (quote.isError || quote.isRefetchError);
     return (
-      <div className="staff-order-editor" style={{ padding: 40 }}>
+      <div className="staff-order-editor staff-order-editor--opening">
         {failed ? (
-          <Alert
-            type="error"
-            showIcon
-            title="Không thể xác minh dữ liệu đơn hàng"
-            description={errorText(quote.error)}
-            action={
-              <Space>
-                <Button onClick={() => navigate('/pos/areas')}>Về khu vực</Button>
-                <Button type="primary" onClick={() => void quote.refetch()}>
-                  Thử lại
-                </Button>
-              </Space>
-            }
-          />
+          <div className="staff-order-opening__error">
+            <Alert
+              type="error"
+              showIcon
+              title="Không thể xác minh dữ liệu đơn hàng"
+              description={errorText(quote.error)}
+              action={
+                <Space>
+                  <Button onClick={() => navigate('/pos/areas')}>Về khu vực</Button>
+                  <Button type="primary" onClick={() => void quote.refetch()}>
+                    Thử lại
+                  </Button>
+                </Space>
+              }
+            />
+          </div>
         ) : (
-          <div style={{ textAlign: 'center' }}>
-            <Spin size="large" description="Đang xác minh dữ liệu mới nhất của đơn..." />
+          <div className="staff-order-opening" aria-busy="true" aria-live="polite">
+            <header className="staff-order-opening__header">
+              <Button
+                type="text"
+                icon={<LeftOutlined />}
+                aria-label="Quay lại danh sách bàn"
+                onClick={() => navigate('/pos/areas')}
+              />
+              <div className="staff-order-opening__title">
+                <strong>
+                  {quote.data?.order.tableName ??
+                    quote.data?.order.displayCode ??
+                    'Đang mở đơn hàng'}
+                </strong>
+                <span>
+                  <Spin size="small" /> Đang đồng bộ dữ liệu mới nhất...
+                </span>
+              </div>
+              <Skeleton.Input active block size="large" />
+            </header>
+            <div className="staff-order-opening__body">
+              <section className="staff-order-opening__catalog" aria-hidden="true">
+                {Array.from({ length: 8 }, (_, index) => (
+                  <div className="staff-order-opening__product" key={index}>
+                    <Skeleton.Image active />
+                    <Skeleton active title={{ width: '72%' }} paragraph={{ rows: 1 }} />
+                  </div>
+                ))}
+              </section>
+              <aside className="staff-order-opening__cart" aria-hidden="true">
+                <Skeleton active title={{ width: '44%' }} paragraph={{ rows: 6 }} />
+                <Skeleton.Button active block size="large" />
+              </aside>
+            </div>
           </div>
         )}
       </div>
@@ -10517,10 +10570,6 @@ function OrderEditor({
             </strong>
             .
           </p>
-          <p style={{ margin: 0, color: '#475569' }}>
-            Một khoảng tính giờ mới sẽ bắt đầu từ thời điểm xác nhận tiếp tục. Khoảng thời gian chờ
-            thanh toán sẽ <strong>không được tính tiền</strong>.
-          </p>
         </div>
       </Modal>
       <Modal
@@ -10804,8 +10853,8 @@ function InvoicePage() {
   const printSettings = useQuery({
     queryKey: ['pos-print-settings'],
     queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
-    staleTime: Infinity,
-    refetchOnMount: false,
+    staleTime: 30_000,
+    refetchOnMount: true,
   });
   const staffContext = useQuery({
     queryKey: ['pos-context'],
@@ -11071,7 +11120,10 @@ function InvoicePage() {
           onClick={async () => {
             setPrinting(true);
             try {
-              const result = await printReceipt(invoicePrintOptions);
+              const result = await printReceipt(invoicePrintOptions, {
+                type: 'invoice',
+                id: data.invoice.id,
+              });
               if (result.success) messageApi.success('Đã gửi lệnh in hóa đơn!');
               else messageApi.error(result.message ?? 'Không thể in hóa đơn.');
             } finally {
@@ -11242,6 +11294,7 @@ function PaymentPage({
         isFetchedAfterMount: quote.isFetchedAfterMount,
         isStale: quote.isStale,
         dataUpdatedAt: quote.dataUpdatedAt,
+        realtimeStatus,
       })
     ) {
       setVerifiedQuoteOrderId(orderId);
@@ -11255,14 +11308,15 @@ function PaymentPage({
     quote.isStale,
     quote.isSuccess,
     quote.dataUpdatedAt,
+    realtimeStatus,
   ]);
   const quoteReady = verifiedQuoteOrderId === orderId;
 
   const printSettings = useQuery({
     queryKey: ['pos-print-settings'],
     queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
-    staleTime: Infinity,
-    refetchOnMount: false,
+    staleTime: 30_000,
+    refetchOnMount: true,
   });
 
   const staffContext = useQuery({
@@ -11314,18 +11368,50 @@ function PaymentPage({
     }
   }, [navigate, paymentSuccessData, queryClient]);
 
+  const handlePrintAndComplete = useCallback(() => {
+    if (!paymentSuccessData) return;
+    const { receiptOptions } = paymentSuccessData;
+    void printReceipt(receiptOptions, {
+      type: 'order',
+      id: paymentSuccessData.orderId,
+    })
+      .then((printResult) => {
+        if (!printResult.success) {
+          messageApi.warning(
+            `Thanh toán thành công nhưng chưa in được hóa đơn: ${printResult.message ?? 'Không rõ lỗi'}`,
+          );
+        }
+      })
+      .catch((error: unknown) => {
+        messageApi.warning(`Thanh toán thành công nhưng chưa in được hóa đơn: ${errorText(error)}`);
+      });
+    handleCelebrationComplete();
+  }, [handleCelebrationComplete, messageApi, paymentSuccessData]);
+
+  const [celebrationCountdown, setCelebrationCountdown] = useState(5);
+
   useEffect(() => {
-    if (!paymentSuccessData) return undefined;
-    const visibleMs =
-      paymentSuccessData.printStatus === 'FAILED'
-        ? PAYMENT_SUCCESS_FAILURE_VISIBLE_MS
-        : paymentSuccessData.printStatus === 'PRINTING'
-          ? PAYMENT_SUCCESS_PRINTING_VISIBLE_MS
-          : PAYMENT_SUCCESS_VISIBLE_MS;
-    const delayMs = Math.max(0, visibleMs - (Date.now() - paymentSuccessData.shownAt));
+    if (!paymentSuccessData) {
+      setCelebrationCountdown(5);
+      return undefined;
+    }
+    const updateCountdown = () => {
+      const elapsed = Date.now() - paymentSuccessData.shownAt;
+      const remainingSec = Math.max(0, Math.ceil((PAYMENT_SUCCESS_AUTO_CLOSE_MS - elapsed) / 1000));
+      setCelebrationCountdown(remainingSec);
+    };
+    updateCountdown();
+    const interval = window.setInterval(updateCountdown, 200);
+    const delayMs = Math.max(
+      0,
+      PAYMENT_SUCCESS_AUTO_CLOSE_MS - (Date.now() - paymentSuccessData.shownAt),
+    );
     const timer = window.setTimeout(() => void handleCelebrationComplete(), delayMs);
-    return () => window.clearTimeout(timer);
-  }, [handleCelebrationComplete, paymentSuccessData]);
+    return () => {
+      window.clearInterval(interval);
+      window.clearTimeout(timer);
+    };
+  }, [handleCelebrationComplete, paymentSuccessData?.orderId, paymentSuccessData?.shownAt]);
 
   const resumeFrozenCheckout = async (frozenQuote: OrderQuote, notify: boolean) => {
     const sendResume = (expectedOrderVersion: number) =>
@@ -11727,7 +11813,10 @@ function PaymentPage({
         shownAt: Date.now(),
       });
       if (andPrint) {
-        void printReceipt(receiptOptions)
+        void printReceipt(receiptOptions, {
+          type: 'order',
+          id: quote.data.order.id,
+        })
           .then((printResult) => {
             setPaymentSuccessData((current) =>
               current?.orderId === completedOrderId
@@ -11947,6 +12036,7 @@ function PaymentPage({
       </label>
       {bankApplied > 0 ? (
         <Select<string>
+          className="payment-bank-picker-select"
           value={selectedBankAccount?.id ?? null}
           placeholder="Chọn tài khoản nhận tiền"
           options={bankAccounts.map((account) => ({
@@ -11993,6 +12083,7 @@ function PaymentPage({
         <div className="payment-bank-picker-row">
           <span className="payment-bank-picker-label">Tài khoản nhận:</span>
           <Select<string>
+            className="payment-bank-picker-select"
             value={selectedBankAccount?.id ?? null}
             placeholder="Chọn tài khoản nhận tiền"
             options={bankAccounts.map((account) => ({
@@ -12009,10 +12100,12 @@ function PaymentPage({
         <div className="payment-vietqr-card payment-vietqr-card--hero">
           <div className="payment-vietqr-bank-header">
             <span className="payment-vietqr-bank-tag">
-              <BankOutlined style={{ color: '#0975f7', fontSize: 16 }} />{' '}
-              {selectedBankAccount.bankName || selectedBankAccount.bankCode || 'Ngân hàng'}
-              {selectedBankAccount.accountNumber ? ` · ${selectedBankAccount.accountNumber}` : ''}
-              {selectedBankAccount.accountName ? ` · ${selectedBankAccount.accountName}` : ''}
+              <BankOutlined style={{ color: '#0975f7', fontSize: 16 }} />
+              <span>
+                {selectedBankAccount.bankName || selectedBankAccount.bankCode || 'Ngân hàng'}
+                {selectedBankAccount.accountNumber ? ` · ${selectedBankAccount.accountNumber}` : ''}
+                {selectedBankAccount.accountName ? ` · ${selectedBankAccount.accountName}` : ''}
+              </span>
             </span>
             {selectedBankAccount.isDefault ? (
               <Tag color="blue" style={{ margin: 0 }}>
@@ -12391,10 +12484,9 @@ function PaymentPage({
                   size="large"
                   loading={submitting}
                   disabled={primaryActionDisabled}
-                  icon={<PrinterOutlined />}
-                  onClick={() => void handleConfirmPayment(true)}
+                  onClick={() => void handleConfirmPayment(false)}
                 >
-                  {selectedMethod === 'DEBT' && !isMultiMethod ? 'Ghi nợ & in' : 'Thanh toán & in'}:{' '}
+                  {selectedMethod === 'DEBT' && !isMultiMethod ? 'Ghi nợ' : 'Thanh toán'}:{' '}
                   {formatMoney(totalVnd)}
                 </Button>
               </footer>
@@ -12537,6 +12629,28 @@ function PaymentPage({
                         : 'Chưa in'}
                 </span>
               </div>
+            </div>
+
+            <div className="pos-payment-celebration__actions">
+              <Button
+                size="large"
+                className="pos-payment-celebration__btn pos-payment-celebration__btn--complete"
+                onClick={() => void handleCelebrationComplete()}
+              >
+                Hoàn tất
+              </Button>
+              <Button
+                type="primary"
+                size="large"
+                icon={<PrinterOutlined />}
+                className="pos-payment-celebration__btn pos-payment-celebration__btn--print"
+                onClick={() => void handlePrintAndComplete()}
+              >
+                In & Hoàn tất
+              </Button>
+            </div>
+            <div className="pos-payment-celebration__countdown">
+              Tự động đóng sau {celebrationCountdown}s
             </div>
           </div>
         </div>

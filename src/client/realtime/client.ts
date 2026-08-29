@@ -8,6 +8,7 @@ import {
   type RealtimeSyncResponse,
 } from '@contracts/realtime';
 import { apiRequest } from '@client/lib/api';
+import { processPrintJob, recoverPendingPrintJobs } from '@client/lib/print-bridge-service';
 
 export type RealtimeConnectionStatus = 'DISABLED' | 'CONNECTING' | 'CONNECTED' | 'RECONNECTING';
 
@@ -19,22 +20,27 @@ export function pollingIntervalForRealtime(
 }
 
 const BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 15_000, 30_000];
+const STABLE_CONNECTION_MS = 10_000;
 
 function logRealtime(
   level: 'info' | 'warn',
   event: string,
   details: Record<string, string | number | boolean | null>,
 ) {
+  if (!import.meta.env.DEV) return;
   console[level]('[POS realtime]', { event, ...details });
 }
 
 export class PosRealtimeClient {
   private socket: WebSocket | null = null;
-  private stopped = false;
+  private intentionalClose = true;
+  private connectionGeneration = 0;
+  private expectedCloseGeneration: number | null = null;
   private reconnectAttempt = 0;
   private reconnectTimer: number | null = null;
   private reauthTimer: number | null = null;
   private pingTimer: number | null = null;
+  private stableConnectionTimer: number | null = null;
   private invalidationTimer: number | null = null;
   private readonly pendingTopics = new Set<string>();
   private readonly pendingOrderIds = new Set<string>();
@@ -63,15 +69,21 @@ export class PosRealtimeClient {
   }
 
   start() {
-    this.stopped = false;
+    if (!this.intentionalClose) return;
+    this.intentionalClose = false;
     this.connect(false);
   }
 
   stop(status: RealtimeConnectionStatus = 'DISABLED') {
-    this.stopped = true;
+    this.intentionalClose = true;
+    this.expectedCloseGeneration = null;
+    this.connectionGeneration += 1;
     this.clearTimers();
-    this.socket?.close(1000, 'Realtime client stopped');
+    const socket = this.socket;
     this.socket = null;
+    if (socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) {
+      socket.close(1000, 'Realtime client stopped');
+    }
     this.onStatus(status);
   }
 
@@ -79,27 +91,61 @@ export class PosRealtimeClient {
     if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer);
     if (this.reauthTimer !== null) window.clearTimeout(this.reauthTimer);
     if (this.pingTimer !== null) window.clearInterval(this.pingTimer);
+    if (this.stableConnectionTimer !== null) window.clearTimeout(this.stableConnectionTimer);
     if (this.invalidationTimer !== null) window.clearTimeout(this.invalidationTimer);
     this.reconnectTimer = null;
     this.reauthTimer = null;
     this.pingTimer = null;
+    this.stableConnectionTimer = null;
     this.invalidationTimer = null;
   }
 
+  private clearConnectionTimers() {
+    if (this.reauthTimer !== null) window.clearTimeout(this.reauthTimer);
+    if (this.pingTimer !== null) window.clearInterval(this.pingTimer);
+    if (this.stableConnectionTimer !== null) window.clearTimeout(this.stableConnectionTimer);
+    this.reauthTimer = null;
+    this.pingTimer = null;
+    this.stableConnectionTimer = null;
+  }
+
+  private clearReconnectTimer() {
+    if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+  }
+
+  private isCurrentConnection(socket: WebSocket, generation: number) {
+    return this.socket === socket && this.connectionGeneration === generation;
+  }
+
   private connect(reconnecting: boolean) {
-    if (this.stopped) return;
-    this.clearTimers();
-    this.socket?.close();
+    if (this.intentionalClose) return;
+    if (
+      this.socket?.readyState === WebSocket.OPEN ||
+      this.socket?.readyState === WebSocket.CONNECTING
+    ) {
+      return;
+    }
+    this.clearReconnectTimer();
+    this.clearConnectionTimers();
     this.onStatus(reconnecting ? 'RECONNECTING' : 'CONNECTING');
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const url = new URL('/api/v1/pos/realtime/stream', window.location.origin);
     url.protocol = protocol;
     url.searchParams.set('clientVersion', 'web-v1');
     if (this.cursor !== null) url.searchParams.set('after', String(this.cursor));
+    if (import.meta.env.DEV) console.log('[realtime] connect', url.toString());
     const socket = new WebSocket(url, REALTIME_SUBPROTOCOL);
+    const generation = ++this.connectionGeneration;
     this.socket = socket;
 
+    socket.addEventListener('open', () => {
+      if (!this.isCurrentConnection(socket, generation) || this.intentionalClose) return;
+      if (import.meta.env.DEV) console.log('[realtime] open');
+    });
+
     socket.addEventListener('message', (message) => {
+      if (!this.isCurrentConnection(socket, generation) || this.intentionalClose) return;
       if (typeof message.data !== 'string') return;
       let frame: RealtimeServerFrame | { type: 'pong' };
       try {
@@ -115,9 +161,18 @@ export class PosRealtimeClient {
         this.serverTimeOffset = frame.serverNowMs - Date.now();
         this.onServerTime(this.serverTimeOffset);
         const reconnectIn = Math.max(1_000, frame.reauthAtMs - Date.now() - 5_000);
-        this.reauthTimer = window.setTimeout(() => this.connect(true), reconnectIn);
+        this.reauthTimer = window.setTimeout(() => {
+          if (!this.isCurrentConnection(socket, generation) || this.intentionalClose) return;
+          this.expectedCloseGeneration = generation;
+          socket.close(1000, 'Realtime reauthentication');
+        }, reconnectIn);
         this.pingTimer = window.setInterval(() => {
-          if (socket.readyState === WebSocket.OPEN) socket.send('{"type":"ping"}');
+          if (
+            this.isCurrentConnection(socket, generation) &&
+            socket.readyState === WebSocket.OPEN
+          ) {
+            socket.send('{"type":"ping"}');
+          }
         }, 25_000);
         void this.synchronize(frame.sync);
         return;
@@ -126,16 +181,34 @@ export class PosRealtimeClient {
     });
 
     socket.addEventListener('close', (event) => {
-      if (this.socket === socket) this.socket = null;
-      if (this.stopped) return;
+      if (import.meta.env.DEV) {
+        console.log('[realtime] close', {
+          code: event.code,
+          reason: event.reason,
+          wasClean: event.wasClean,
+        });
+      }
+      if (!this.isCurrentConnection(socket, generation)) return;
+      this.socket = null;
+      this.clearConnectionTimers();
+      if (this.intentionalClose) return;
+      if (this.expectedCloseGeneration === generation) {
+        this.expectedCloseGeneration = null;
+        this.connect(true);
+        return;
+      }
       logRealtime('warn', 'connection_closed', {
         code: event.code,
         clean: event.wasClean,
         reconnectAttempt: this.reconnectAttempt + 1,
       });
-      this.scheduleReconnect(event.code === 4401 ? 250 : undefined);
+      this.scheduleReconnect();
     });
-    socket.addEventListener('error', () => socket.close());
+    socket.addEventListener('error', (event) => {
+      if (import.meta.env.DEV) console.error('[realtime] error', event);
+      if (!this.isCurrentConnection(socket, generation) || this.intentionalClose) return;
+      socket.close();
+    });
   }
 
   private enqueueEvents(events: RealtimeEventV1[], socket: WebSocket) {
@@ -151,11 +224,10 @@ export class PosRealtimeClient {
     this.eventQueue = this.eventQueue.then(() => this.receiveEvents(events)).catch(() => undefined);
   }
 
-  private scheduleReconnect(delayOverride?: number) {
-    if (this.stopped || this.reconnectTimer !== null) return;
+  private scheduleReconnect() {
+    if (this.intentionalClose || this.reconnectTimer !== null) return;
     this.onStatus('RECONNECTING');
-    const base =
-      delayOverride ?? BACKOFF_MS[Math.min(this.reconnectAttempt, BACKOFF_MS.length - 1)]!;
+    const base = BACKOFF_MS[Math.min(this.reconnectAttempt, BACKOFF_MS.length - 1)]!;
     const delay = Math.round(base * (0.8 + Math.random() * 0.4));
     this.reconnectAttempt += 1;
     this.reconnectTimer = window.setTimeout(() => {
@@ -192,7 +264,7 @@ export class PosRealtimeClient {
   }
 
   private async synchronize(initialResponse?: RealtimeSyncResponse) {
-    if (this.syncing || this.stopped) return;
+    if (this.syncing || this.intentionalClose) return;
     this.syncing = true;
     try {
       const response =
@@ -218,8 +290,15 @@ export class PosRealtimeClient {
         await this.receiveReplay(response.events);
         this.setCursor(response.toSequence);
       }
-      this.reconnectAttempt = 0;
       this.onStatus('CONNECTED');
+      void recoverPendingPrintJobs();
+      if (this.stableConnectionTimer !== null) {
+        window.clearTimeout(this.stableConnectionTimer);
+      }
+      this.stableConnectionTimer = window.setTimeout(() => {
+        this.stableConnectionTimer = null;
+        this.reconnectAttempt = 0;
+      }, STABLE_CONNECTION_MS);
     } catch {
       this.socket?.close(1012, 'Realtime sync failed');
       return;
@@ -271,6 +350,24 @@ export class PosRealtimeClient {
     if (event.topics.includes(`pos.order:${event.aggregate.id}`)) {
       this.pendingOrderIds.add(event.aggregate.id);
     }
+    if (
+      event.type === 'pos.print_job.created' ||
+      event.type === 'pos.print_job.updated' ||
+      event.topics.includes('pos.print_jobs')
+    ) {
+      if (
+        event.data.printJobId &&
+        (event.data.printJobStatus === 'QUEUED' || event.data.reason === 'PRINT_JOB_CREATED')
+      ) {
+        void processPrintJob({
+          id: event.data.printJobId,
+          documentType: event.data.documentType || 'invoice',
+          documentId: event.data.documentId || event.aggregate.id,
+          targetDeviceId: event.data.targetDeviceId ?? null,
+          ...(event.data.printJobStatus ? { status: event.data.printJobStatus } : {}),
+        });
+      }
+    }
     this.scheduleInvalidationFlush();
   }
 
@@ -283,6 +380,14 @@ export class PosRealtimeClient {
       this.pendingTopics.clear();
       this.pendingOrderIds.clear();
       const invalidations: Array<Promise<unknown>> = [];
+      if (topics.has('pos.print_jobs')) {
+        invalidations.push(
+          this.queryClient.invalidateQueries({
+            queryKey: ['pos-print-jobs'],
+            refetchType: 'active',
+          }),
+        );
+      }
       if (topics.has('pos.tables') || topics.has('pos.orders')) {
         invalidations.push(
           this.queryClient.invalidateQueries({ queryKey: ['pos-overview'], refetchType: 'active' }),

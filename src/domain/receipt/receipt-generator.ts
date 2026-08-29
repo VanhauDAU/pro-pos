@@ -39,6 +39,32 @@ export function compactReceiptTimeSegments(
   return compacted;
 }
 
+/** Makes displayed segment amounts add up exactly to the finalized rounded time total. */
+export function reconcileReceiptTimeSegmentAmounts(
+  segments: PosReceiptTimeSegment[] | undefined,
+  roundedTotal: number,
+): PosReceiptTimeSegment[] | undefined {
+  if (!segments?.length) return segments;
+  const reconciled = segments.map((segment) => ({
+    ...segment,
+    amount: Math.max(0, Math.round(segment.amount)),
+  }));
+  const target = Math.max(0, Math.round(roundedTotal));
+  let difference = target - reconciled.reduce((sum, segment) => sum + segment.amount, 0);
+  if (difference >= 0) {
+    reconciled[reconciled.length - 1]!.amount += difference;
+    return reconciled;
+  }
+
+  for (let index = reconciled.length - 1; index >= 0 && difference < 0; index -= 1) {
+    const segment = reconciled[index]!;
+    const reduction = Math.min(segment.amount, -difference);
+    segment.amount -= reduction;
+    difference += reduction;
+  }
+  return reconciled;
+}
+
 export interface PosReceiptLineItem {
   id: string;
   name: string;
@@ -260,8 +286,8 @@ export function buildEscPosReceipt(
   if (template.showCheckInTime && data.checkInTimeMs) {
     raw += `Giờ vào      : ${formatDateTime(data.checkInTimeMs)}\n`;
   }
-  if (template.showCustomerName && data.customerName) {
-    raw += `Khách hàng   : ${data.customerName}\n`;
+  if (template.showCustomerName) {
+    raw += `Khách hàng   : ${data.customerName?.trim() || 'Khách lẻ'}\n`;
   }
   if (template.showCustomerPhone && data.guestPhone) {
     raw += `SĐT Khách    : ${data.guestPhone}\n`;
@@ -284,25 +310,21 @@ export function buildEscPosReceipt(
   if (timeLines.length > 0) {
     if (profile.layoutMode === 'MULTI_COLUMN') {
       raw += template.showHourlyUnitPrice
-        ? 'Thông tin giờ                            Đ.Giá     T.Tiền\n'
-        : 'Thông tin giờ                                      T.Tiền\n';
+        ? `${'Thông tin giờ'.padEnd(26)} ${'Đ.Giá'.padStart(9)} ${'T.Tiền'.padStart(11)}\n`
+        : `${'Thông tin giờ'.padEnd(35)} ${'T.Tiền'.padStart(12)}\n`;
       raw += divider + '\n';
     } else {
       raw += 'Thông tin giờ              T.Tiền\n';
       raw += divider + '\n';
     }
 
-    let timeIdx = 1;
     for (const line of timeLines) {
-      const itemPrefix = template.showItemIndex ? `${timeIdx}. ` : '';
-      timeIdx++;
-
       if (
         line.tableSegments &&
         line.tableSegments.length > 1 &&
         (!line.timeSegments || line.timeSegments.length === 0)
       ) {
-        raw += `${itemPrefix}Tiền giờ (Chuyển bàn)\n`;
+        raw += `Chuyển bàn\n`;
         if (template.showHourlyDetail) {
           for (const tSeg of line.tableSegments) {
             const segName = ` - ${tSeg.tableName}`;
@@ -321,8 +343,8 @@ export function buildEscPosReceipt(
         line.timeSegments &&
         line.timeSegments.length > 0
       ) {
-        raw += `${itemPrefix}${line.name}\n`;
-        for (const seg of line.timeSegments) {
+        for (const seg of reconcileReceiptTimeSegmentAmounts(line.timeSegments, line.totalPrice) ??
+          []) {
           const startStr = formatTimeOnly(seg.startedAtMs, template.showHourlyTimeWithSeconds);
           const endStr = seg.endedAtMs
             ? formatTimeOnly(seg.endedAtMs, template.showHourlyTimeWithSeconds)
@@ -335,25 +357,25 @@ export function buildEscPosReceipt(
 
           if (profile.layoutMode === 'MULTI_COLUMN') {
             if (template.showHourlyUnitPrice) {
-              const leftCol1 = timeRange.padEnd(28).slice(0, 28);
-              const priceCol1 = priceStr.padStart(10);
-              const totCol1 = totalStr.padStart(10);
+              const leftCol1 = timeRange.padEnd(26).slice(0, 26);
+              const priceCol1 = priceStr.padStart(9).slice(-9);
+              const totCol1 = totalStr.padStart(11).slice(-11);
               raw += `${leftCol1} ${priceCol1} ${totCol1}\n`;
 
-              const leftCol2 = dateStr.padEnd(28).slice(0, 28);
+              const leftCol2 = dateStr.padEnd(26).slice(0, 26);
               raw += `${leftCol2}\n`;
 
-              const leftCol3 = durLabel.padEnd(28).slice(0, 28);
-              const priceCol2 = ''.padStart(10);
-              const totCol2 = ''.padStart(10);
+              const leftCol3 = durLabel.padEnd(26).slice(0, 26);
+              const priceCol2 = ''.padStart(9);
+              const totCol2 = ''.padStart(11);
               raw += `${leftCol3} ${priceCol2} ${totCol2}\n`;
             } else {
-              const leftCol1 = timeRange.padEnd(36).slice(0, 36);
-              const totCol1 = totalStr.padStart(12);
+              const leftCol1 = timeRange.padEnd(35).slice(0, 35);
+              const totCol1 = totalStr.padStart(12).slice(-12);
               raw += `${leftCol1} ${totCol1}\n`;
 
               raw += `${dateStr}\n`;
-              const leftCol2 = durLabel.padEnd(36).slice(0, 36);
+              const leftCol2 = durLabel.padEnd(35).slice(0, 35);
               raw += `${leftCol2}\n`;
             }
             raw += '\n';
@@ -373,20 +395,21 @@ export function buildEscPosReceipt(
         continue;
       }
 
-      const durStr = line.timeElapsedSeconds ? ` (${formatDuration(line.timeElapsedSeconds)})` : '';
-      const lineName = `${itemPrefix}${line.name}${durStr}`;
+      const lineName = line.timeElapsedSeconds
+        ? `Tổng thời gian (${formatDuration(line.timeElapsedSeconds)})`
+        : 'Tổng thời gian';
       const totalStr = formatVnd(line.totalPrice);
       const priceStr = formatVnd(line.unitPrice) + (template.showHourlyUnitDuration ? '/1h' : '');
 
       if (profile.layoutMode === 'MULTI_COLUMN') {
         if (template.showHourlyUnitPrice) {
-          const nameCol = lineName.padEnd(28).slice(0, 28);
-          const priceCol = priceStr.padStart(10);
-          const totCol = totalStr.padStart(10);
+          const nameCol = lineName.padEnd(26).slice(0, 26);
+          const priceCol = priceStr.padStart(9).slice(-9);
+          const totCol = totalStr.padStart(11).slice(-11);
           raw += `${nameCol} ${priceCol} ${totCol}\n`;
         } else {
-          const nameCol = lineName.padEnd(36).slice(0, 36);
-          const totCol = totalStr.padStart(12);
+          const nameCol = lineName.padEnd(35).slice(0, 35);
+          const totCol = totalStr.padStart(12).slice(-12);
           raw += `${nameCol} ${totCol}\n`;
         }
       } else {
@@ -442,10 +465,10 @@ export function buildEscPosReceipt(
 
       if (profile.layoutMode === 'MULTI_COLUMN') {
         if (template.showItemUnitPrice && template.itemUnitPricePlacement === 'SEPARATE_COLUMN') {
-          const nameCol = lineName.padEnd(23).slice(0, 23);
-          const qtyCol = qtyStr.padStart(5);
-          const priceCol = priceStr.padStart(9);
-          const totCol = totalStr.padStart(10);
+          const nameCol = lineName.padEnd(22).slice(0, 22);
+          const qtyCol = qtyStr.padStart(4).slice(-4);
+          const priceCol = priceStr.padStart(9).slice(-9);
+          const totCol = totalStr.padStart(10).slice(-10);
           raw += `${nameCol} ${qtyCol} ${priceCol} ${totCol}\n`;
         } else {
           const nameCol = lineName.padEnd(28).slice(0, 28);
@@ -485,7 +508,7 @@ export function buildEscPosReceipt(
 
   // 5. Summary & Totals
   if (timeLines.length > 0) {
-    const label = `Tiền giờ (${timeLines.length}):`;
+    const label = `Tiền giờ:`;
     const value = `${formatVnd(timeTotal)}đ`;
     raw += `${label}${' '.repeat(Math.max(1, chars - label.length - value.length))}${value}\n`;
   }
@@ -740,19 +763,22 @@ export function buildPrintDataFromQuote(
       timeStartedAtMs: quote.time.startedAtMs,
       timeEndedAtMs: quote.time.endedAtMs ?? null,
       timeElapsedSeconds: quote.time.elapsedSeconds,
-      timeSegments: compactReceiptTimeSegments(
-        quote.time.segments?.map((s): PosReceiptTimeSegment => ({
-          name: s.name,
-          type: s.type,
-          startedAtMs: s.startedAtMs ?? quote.time!.startedAtMs,
-          endedAtMs: s.endedAtMs ?? quote.time!.endedAtMs ?? null,
-          elapsedSeconds: s.elapsedSeconds,
-          priceVnd:
-            s.priceVnd ??
-            quote.time!.pricingConfig?.basePriceVnd ??
-            quote.time!.amountAfterRoundingVnd,
-          amount: s.amountAfterRoundingVnd ?? s.amountBeforeRoundingVnd ?? 0,
-        })),
+      timeSegments: reconcileReceiptTimeSegmentAmounts(
+        compactReceiptTimeSegments(
+          quote.time.segments?.map((s): PosReceiptTimeSegment => ({
+            name: s.name,
+            type: s.type,
+            startedAtMs: s.startedAtMs ?? quote.time!.startedAtMs,
+            endedAtMs: s.endedAtMs ?? quote.time!.endedAtMs ?? null,
+            elapsedSeconds: s.elapsedSeconds,
+            priceVnd:
+              s.priceVnd ??
+              quote.time!.pricingConfig?.basePriceVnd ??
+              quote.time!.amountAfterRoundingVnd,
+            amount: s.amountAfterRoundingVnd ?? s.amountBeforeRoundingVnd ?? 0,
+          })),
+        ),
+        quote.time.amountAfterRoundingVnd,
       ),
       tableSegments: quote.time.tableSegments?.map((t) => ({
         tableName: t.tableName,
@@ -960,17 +986,20 @@ export function buildPrintDataFromInvoice(invoice: {
       timeStartedAtMs: snapshot.startedAtMs,
       timeEndedAtMs: snapshot.endedAtMs ?? null,
       timeElapsedSeconds: snapshot.elapsedSeconds,
-      timeSegments: compactReceiptTimeSegments(
-        (snapshot.segments ?? invoiceSnapshot.time?.segments)?.map((s: any) => ({
-          name: s.name,
-          type: s.type,
-          startedAtMs: s.startedAtMs,
-          endedAtMs: s.endedAtMs,
-          elapsedSeconds: s.elapsedSeconds,
-          priceVnd: s.priceVnd ?? line.unitPrice,
-          amount:
-            s.amountAfterRoundingVnd ?? s.amountBeforeRoundingVnd ?? s.amount ?? line.lineTotal,
-        })),
+      timeSegments: reconcileReceiptTimeSegmentAmounts(
+        compactReceiptTimeSegments(
+          (snapshot.segments ?? invoiceSnapshot.time?.segments)?.map((s: any) => ({
+            name: s.name,
+            type: s.type,
+            startedAtMs: s.startedAtMs,
+            endedAtMs: s.endedAtMs,
+            elapsedSeconds: s.elapsedSeconds,
+            priceVnd: s.priceVnd ?? line.unitPrice,
+            amount:
+              s.amountAfterRoundingVnd ?? s.amountBeforeRoundingVnd ?? s.amount ?? line.lineTotal,
+          })),
+        ),
+        line.lineTotal,
       ),
       tableSegments: snapshot.tableSegments?.map((t) => ({
         tableName: t.tableName,

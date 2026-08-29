@@ -42,15 +42,9 @@ import {
   parsePrintTemplateConfigs,
   parsePrinterDeviceConfig,
 } from '@contracts/store';
-import {
-  checkQzTrayStatus,
-  connectQzTray,
-  fetchQzPrinters,
-  getClientDeviceName,
-  printCalibrationTest,
-  printTestReceipt,
-} from '@client/lib/qz-tray-service';
+import { getClientDeviceName } from '@client/lib/qz-tray-service';
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
+import { printerAction, printerService } from '@printing/printer-service';
 import { ReceiptPreviewPaper } from '@client/features/pos/ReceiptPreviewModal';
 import { ThermalHourlySegmentsPreview } from '@client/components/ThermalHourlySegmentsPreview';
 import {
@@ -117,6 +111,7 @@ export function OwnerPrintSettingsPage() {
   const [qzStatus, setQzStatus] = useState<{
     connected: boolean;
     version?: string | undefined;
+    error?: string | undefined;
     loading: boolean;
   }>({
     connected: false,
@@ -400,7 +395,10 @@ export function OwnerPrintSettingsPage() {
         method: 'PUT',
         headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' },
       });
-      await queryClient.invalidateQueries({ queryKey: PRINT_SETTINGS_QUERY });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: PRINT_SETTINGS_QUERY }),
+        queryClient.invalidateQueries({ queryKey: ['pos-print-settings'] }),
+      ]);
       setIsDirty(false);
       messageApi.success('Đã lưu thiết lập in thành công.');
     } catch (error) {
@@ -423,15 +421,18 @@ export function OwnerPrintSettingsPage() {
   // Initial check for QZ Tray
   useEffect(() => {
     let isMounted = true;
-    checkQzTrayStatus().then((res) => {
+    printerService.checkConnection().then((res) => {
       if (!isMounted) return;
       if (res.connected) {
         setQzStatus({ connected: true, version: res.version, loading: false });
-        fetchQzPrinters()
+        printerService
+          .listPrinters()
           .then((printers) => {
             if (isMounted) setSystemPrinters(printers);
           })
           .catch(() => {});
+      } else {
+        setQzStatus({ connected: false, error: res.error, loading: false });
       }
     });
     return () => {
@@ -442,13 +443,15 @@ export function OwnerPrintSettingsPage() {
   // Connect to QZ Tray & discover printers
   const handleConnectQzTray = async () => {
     setQzStatus((prev) => ({ ...prev, loading: true }));
-    const res = await connectQzTray();
+    const res = qzStatus.connected
+      ? await printerService.reconnect()
+      : await printerService.checkConnection(true);
     if (res.connected) {
       setQzStatus({ connected: true, version: res.version, loading: false });
       messageApi.success(`Đã kết nối QZ Tray thành công (v${res.version || '2.2.x'})`);
       try {
         setFetchingPrinters(true);
-        const printers = await fetchQzPrinters();
+        const printers = await printerService.listPrinters();
         setSystemPrinters(printers);
       } catch (err: unknown) {
         console.warn('Could not fetch printers:', err);
@@ -456,7 +459,7 @@ export function OwnerPrintSettingsPage() {
         setFetchingPrinters(false);
       }
     } else {
-      setQzStatus({ connected: false, loading: false });
+      setQzStatus({ connected: false, error: res.error, loading: false });
       messageApi.warning(res.error || 'Chưa tìm thấy ứng dụng QZ Tray đang chạy trên máy này.');
     }
   };
@@ -464,7 +467,7 @@ export function OwnerPrintSettingsPage() {
   const handleFetchPrinters = async () => {
     try {
       setFetchingPrinters(true);
-      const printers = await fetchQzPrinters();
+      const printers = await printerService.listPrinters(true);
       setSystemPrinters(printers);
       messageApi.success(`Tìm thấy ${printers.length} máy in từ hệ thống.`);
     } catch (err: unknown) {
@@ -483,16 +486,27 @@ export function OwnerPrintSettingsPage() {
     }
     setCheckingConnection(true);
     try {
-      const res = await printTestReceipt({
-        connectionType: 'NETWORK_TCP',
-        networkIp: ip.trim(),
-        networkPort: port,
-        paperSize: printerForm.getFieldValue('paperSize') || 'K80',
-        autoCut: false,
-        openCashDrawer: false,
-        storeName: storeSettings.data?.name || 'PRO POS',
-      });
+      const res = await printerAction(() =>
+        printerService.testPrint(
+          {
+            connectionType: 'NETWORK_TCP',
+            networkIp: ip.trim(),
+            networkPort: port,
+            paperSize: printerForm.getFieldValue('paperSize') || 'K80',
+            autoCut: false,
+            openCashDrawer: false,
+          },
+          storeSettings.data?.name || 'PRO POS',
+        ),
+      );
       if (res.success) {
+        const status = await printerService.checkConnection();
+        setQzStatus({
+          connected: status.connected,
+          loading: false,
+          ...(status.version ? { version: status.version } : {}),
+          ...(!status.connected && status.error ? { error: status.error } : {}),
+        });
         messageApi.success(`Kết nối tới máy in ${ip}:${port} thành công!`);
       } else {
         messageApi.error(
@@ -508,18 +522,29 @@ export function OwnerPrintSettingsPage() {
     const values = printerForm.getFieldsValue();
     setTestingPrint(true);
     try {
-      const res = await printTestReceipt({
-        connectionType: values.connectionType || 'SYSTEM',
-        printerName: values.printerName,
-        networkIp: values.networkIp,
-        networkPort: values.networkPort,
-        paperSize: values.paperSize || 'K80',
-        printableDots: values.printableDots,
-        autoCut: Boolean(values.autoCut),
-        openCashDrawer: Boolean(values.openCashDrawer),
-        storeName: storeSettings.data?.name || 'PRO POS',
-      });
+      const res = await printerAction(() =>
+        printerService.testPrint(
+          {
+            connectionType: values.connectionType || 'SYSTEM',
+            printerName: values.printerName,
+            networkIp: values.networkIp,
+            networkPort: values.networkPort,
+            paperSize: values.paperSize || 'K80',
+            printableDots: values.printableDots,
+            autoCut: Boolean(values.autoCut),
+            openCashDrawer: Boolean(values.openCashDrawer),
+          },
+          storeSettings.data?.name || 'PRO POS',
+        ),
+      );
       if (res.success) {
+        const status = await printerService.checkConnection();
+        setQzStatus({
+          connected: status.connected,
+          loading: false,
+          ...(status.version ? { version: status.version } : {}),
+          ...(!status.connected && status.error ? { error: status.error } : {}),
+        });
         messageApi.success('Đã gửi lệnh in thử thành công tới máy in!');
       } else {
         messageApi.error(`In thử thất bại: ${res.message || 'Không thể in'}`);
@@ -533,18 +558,26 @@ export function OwnerPrintSettingsPage() {
     const values = printerForm.getFieldsValue();
     setTestingPrint(true);
     try {
-      const res = await printCalibrationTest({
-        connectionType: values.connectionType || 'SYSTEM',
-        printerName: values.printerName,
-        networkIp: values.networkIp,
-        networkPort: values.networkPort,
-        paperSize: values.paperSize || 'K80',
-        printableDots: values.printableDots,
-        autoCut: Boolean(values.autoCut),
-        openCashDrawer: false,
-        storeName: storeSettings.data?.name || 'PRO POS',
-      });
+      const res = await printerAction(() =>
+        printerService.calibrationPrint({
+          connectionType: values.connectionType || 'SYSTEM',
+          printerName: values.printerName,
+          networkIp: values.networkIp,
+          networkPort: values.networkPort,
+          paperSize: values.paperSize || 'K80',
+          printableDots: values.printableDots,
+          autoCut: Boolean(values.autoCut),
+          openCashDrawer: false,
+        }),
+      );
       if (res.success) {
+        const status = await printerService.checkConnection();
+        setQzStatus({
+          connected: status.connected,
+          loading: false,
+          ...(status.version ? { version: status.version } : {}),
+          ...(!status.connected && status.error ? { error: status.error } : {}),
+        });
         messageApi.success('Đã gửi bản in hiệu chuẩn (Calibration) tới máy in!');
       } else {
         messageApi.error(`In hiệu chuẩn thất bại: ${res.message || 'Không thể in'}`);
@@ -568,7 +601,10 @@ export function OwnerPrintSettingsPage() {
         method: 'PUT',
         headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' },
       });
-      await queryClient.invalidateQueries({ queryKey: PRINT_SETTINGS_QUERY });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: PRINT_SETTINGS_QUERY }),
+        queryClient.invalidateQueries({ queryKey: ['pos-print-settings'] }),
+      ]);
       messageApi.success('Đã lưu cấu hình máy in thành công.');
     } catch (err: unknown) {
       messageApi.error(errorMessage(err, 'Không thể lưu cấu hình máy in.'));
@@ -1614,7 +1650,8 @@ export function OwnerPrintSettingsPage() {
                       </span>
                     ) : (
                       <span className="qz-badge qz-badge--disconnected">
-                        <span className="qz-badge-dot">○</span> Chưa kết nối
+                        <span className="qz-badge-dot">○</span>{' '}
+                        {qzStatus.error ? 'QZ Tray chưa chạy' : 'Chưa kết nối'}
                       </span>
                     )}
                   </div>
@@ -1638,7 +1675,8 @@ export function OwnerPrintSettingsPage() {
                   ) : (
                     <div>
                       <p style={{ fontSize: 12.5, color: '#64748b', margin: '4px 0 12px' }}>
-                        Để in trực tiếp không cần hộp thoại, hãy cài QZ Tray trên máy này.
+                        {qzStatus.error ||
+                          'Để in trực tiếp không cần hộp thoại, hãy cài QZ Tray trên máy này.'}
                       </p>
                       <Space>
                         <Button
@@ -1673,6 +1711,24 @@ export function OwnerPrintSettingsPage() {
               onFinish={handleSavePrinterConfig}
             >
               <Row gutter={[24, 16]}>
+                <Col xs={24} md={16}>
+                  <Form.Item
+                    name="configurationName"
+                    label={<span style={{ fontWeight: 600 }}>Tên cấu hình</span>}
+                    rules={[{ required: true, message: 'Vui lòng nhập tên cấu hình' }]}
+                  >
+                    <Input placeholder="Máy in quầy" size="large" />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} md={8}>
+                  <Form.Item
+                    name="isDefault"
+                    valuePropName="checked"
+                    label={<span style={{ fontWeight: 600 }}>Máy in mặc định</span>}
+                  >
+                    <Switch checkedChildren="MẶC ĐỊNH" unCheckedChildren="KHÔNG" />
+                  </Form.Item>
+                </Col>
                 {/* Chế độ / Kiểu kết nối */}
                 <Col xs={24}>
                   <Form.Item
@@ -1729,7 +1785,7 @@ export function OwnerPrintSettingsPage() {
                         label={<span style={{ fontWeight: 600 }}>IP máy in</span>}
                         rules={[{ required: true, message: 'Vui lòng nhập IP máy in mạng' }]}
                       >
-                        <Input placeholder="192.168.1.150" size="large" />
+                        <Input placeholder="192.168.1.73" size="large" />
                       </Form.Item>
                     </Col>
                     <Col xs={24} md={6}>

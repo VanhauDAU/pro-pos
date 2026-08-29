@@ -95,6 +95,18 @@ export interface SaleVariantRow {
   unit_name: string | null;
 }
 
+const D1_MAX_BOUND_PARAMETERS = 100;
+const MAX_BATCHED_PRODUCT_IDS = D1_MAX_BOUND_PARAMETERS - 1;
+
+function uniqueChunks(values: string[], size: number) {
+  const unique = [...new Set(values)];
+  const chunks: string[][] = [];
+  for (let index = 0; index < unique.length; index += size) {
+    chunks.push(unique.slice(index, index + size));
+  }
+  return chunks;
+}
+
 export interface SaleCatalogRow {
   productId: string;
   productName: string;
@@ -658,10 +670,11 @@ export class PosRepository {
 
   async listProductPricingSnapshots(storeId: string, productIds: string[]) {
     if (productIds.length === 0) return { results: [] as ProductPricingSnapshotRow[] };
-    const marks = productIds.map(() => '?').join(',');
-    return this.db
-      .prepare(
-        `SELECT
+    const statements = uniqueChunks(productIds, MAX_BATCHED_PRODUCT_IDS).map((chunk) => {
+      const marks = chunk.map(() => '?').join(',');
+      return this.db
+        .prepare(
+          `SELECT
           p.id AS product_id, tpc.id AS config_id, tpc.version AS pricing_version,
           tpc.base_price, tpc.base_duration_seconds, tpc.calculation_mode,
           tpc.rounding_unit, tpc.first_period_enabled,
@@ -676,9 +689,14 @@ export class PosRepository {
           ON window.time_price_config_id = tpc.id AND window.store_id = tpc.store_id
         WHERE p.store_id = ? AND p.id IN (${marks})
         ORDER BY p.id, window.name COLLATE NOCASE`,
-      )
-      .bind(storeId, ...productIds)
-      .all<ProductPricingSnapshotRow>();
+        )
+        .bind(storeId, ...chunk);
+    });
+    const batches =
+      statements.length === 1
+        ? [await statements[0]!.all<ProductPricingSnapshotRow>()]
+        : await this.db.batch<ProductPricingSnapshotRow>(statements);
+    return { results: batches.flatMap((batch) => batch.results) };
   }
 
   async listSpecialWindows(storeId: string, configId: string) {
@@ -1325,6 +1343,39 @@ export class PosRepository {
       )
       .bind(storeId, productId, targetVariantId, targetVariantId)
       .first<SaleVariantRow>();
+  }
+
+  async findSaleVariants(storeId: string, productIds: string[]) {
+    if (productIds.length === 0) return { results: [] as SaleVariantRow[] };
+    const statements = uniqueChunks(productIds, MAX_BATCHED_PRODUCT_IDS).map((chunk) => {
+      const marks = chunk.map(() => '?').join(',');
+      return this.db
+        .prepare(
+          `SELECT
+            p.id AS product_id, p.name AS product_name, p.product_type,
+            p.status AS product_status,
+            COALESCE(pv.id, tpc.id, p.id) AS variant_id,
+            COALESCE(pv.name, 'Giá mặc định') AS variant_name,
+            COALESCE(pv.status, 'ACTIVE') AS variant_status,
+            COALESCE(pv.sale_price, tpc.base_price, 0) AS sale_price,
+            COALESCE(pv.prompt_price, 0) AS prompt_price,
+            COALESCE(u.name, CASE WHEN p.product_type = 'TIME' THEN 'giờ' ELSE NULL END) AS unit_name
+          FROM products p
+          LEFT JOIN product_variants pv
+            ON pv.product_id = p.id AND pv.store_id = p.store_id
+          LEFT JOIN time_price_configs tpc
+            ON tpc.product_id = p.id AND tpc.store_id = p.store_id
+          LEFT JOIN units u ON u.id = p.unit_id AND u.store_id = p.store_id
+          WHERE p.store_id = ? AND p.id IN (${marks})
+          ORDER BY p.id, pv.created_at, pv.id`,
+        )
+        .bind(storeId, ...chunk);
+    });
+    const batches =
+      statements.length === 1
+        ? [await statements[0]!.all<SaleVariantRow>()]
+        : await this.db.batch<SaleVariantRow>(statements);
+    return { results: batches.flatMap((batch) => batch.results) };
   }
 
   findAddItemCommand(storeId: string, commandId: string) {
@@ -2572,15 +2623,15 @@ export class PosRepository {
                 subtotal, discount_total AS discountTotal, total,
                 status, issued_at AS issuedAt, snapshot_json AS snapshotJson,
                 'DINE_IN' AS orderType
-         FROM invoices WHERE store_id = ? AND id = ?
+         FROM invoices WHERE store_id = ? AND (id = ? OR order_id = ? OR display_code = ?)
          UNION ALL
          SELECT id, order_id AS orderId, display_code AS displayCode,
                 subtotal, discount_total AS discountTotal, total,
                 status, issued_at AS issuedAt, snapshot_json AS snapshotJson,
                 'TAKEAWAY' AS orderType
-         FROM takeaway_invoices WHERE store_id = ? AND id = ? LIMIT 1`,
+         FROM takeaway_invoices WHERE store_id = ? AND (id = ? OR order_id = ? OR display_code = ?) LIMIT 1`,
       )
-      .bind(storeId, invoiceId, storeId, invoiceId)
+      .bind(storeId, invoiceId, invoiceId, invoiceId, storeId, invoiceId, invoiceId, invoiceId)
       .first<{
         id: string;
         orderId: string;

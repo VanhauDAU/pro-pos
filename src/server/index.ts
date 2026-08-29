@@ -18,6 +18,8 @@ import { ownerCustomerRoutes } from '@server/routes/owner-customers';
 import { ownerPromotionRoutes } from '@server/routes/owner-promotions';
 import { ownerQrOrderRoutes } from '@server/routes/owner-qr-order';
 import { guestOrderRoutes } from '@server/routes/guest-order';
+import { qzRoutes } from '@server/routes/qz';
+import { printJobRoutes } from '@server/routes/print-jobs';
 import type { AppEnv } from '@server/types';
 import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
 import { MaintenanceService } from '@server/services/maintenance-service';
@@ -111,6 +113,8 @@ app.route('/api/v1/owner/analytics', ownerAnalyticsRoutes);
 app.route('/api/v1/owner/customers', ownerCustomerRoutes);
 app.route('/api/v1/owner/promotions', ownerPromotionRoutes);
 app.route('/api/v1/owner/qr-order', ownerQrOrderRoutes);
+app.route('/api/v1/pos/printing/qz', qzRoutes);
+app.route('/api/v1/pos/print-jobs', printJobRoutes);
 
 app.notFound((c) => failure(c, { code: 'NOT_FOUND', message: 'Không tìm thấy tài nguyên.' }, 404));
 

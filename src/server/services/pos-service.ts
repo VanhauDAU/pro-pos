@@ -20,6 +20,7 @@ import type {
   OrderRow,
   OverviewPauseRow,
   ProductPricingSnapshotRow,
+  SaleVariantRow,
   TableTimeSegmentRow,
   TimeSessionRow,
 } from '@server/repositories/pos-repository';
@@ -89,6 +90,31 @@ function groupBy<T, K>(values: T[], keyFor: (value: T) => K) {
     grouped.set(key, group);
   }
   return grouped;
+}
+
+function saleVariantLookupKey(productId: string, variantId: string | null | undefined) {
+  return `${productId}:${variantId ?? ''}`;
+}
+
+function indexSaleVariants(
+  rows: SaleVariantRow[],
+  targets: Array<{ productId: string; variantId: string | null | undefined }>,
+) {
+  const rowsByProduct = groupBy(rows, (row) => row.product_id);
+  const variants = new Map<string, SaleVariantRow | null>();
+  for (const target of targets) {
+    const product =
+      rowsByProduct
+        .get(target.productId)
+        ?.find(
+          (row) =>
+            row.product_type === 'TIME' ||
+            target.variantId == null ||
+            row.variant_id === target.variantId,
+        ) ?? null;
+    variants.set(saleVariantLookupKey(target.productId, target.variantId), product);
+  }
+  return variants;
 }
 
 function pricingSnapshotsFromRows(
@@ -786,95 +812,115 @@ export class PosService {
     takeaway: boolean,
     now: number,
   ): Promise<PreparedSaveItem[]> {
-    return Promise.all(
-      items.map(async (input) => {
-        const product = await this.repository.findSaleVariant(
-          storeId,
-          input.productId,
-          input.variantId,
-        );
-        if (
-          !product ||
-          product.product_status !== 'ACTIVE' ||
-          (product.product_type !== 'TIME' && product.variant_status !== 'ACTIVE') ||
-          (product.prompt_price !== 1 && product.sale_price === null)
-        ) {
-          throw new AppError('PRODUCT_NOT_AVAILABLE', 'Mặt hàng không khả dụng.', 422);
-        }
-        if (takeaway && product.product_type === 'TIME') {
-          throw new AppError(
-            'TIME_ITEM_DINE_IN_ONLY',
-            'Mặt hàng tính giờ chỉ dùng cho đơn tại chỗ.',
-            422,
-          );
-        }
-        if (product.product_type === 'QUANTITY' && input.quantityMilli % 1000 !== 0) {
-          throw new AppError(
-            'QUANTITY_MUST_BE_WHOLE',
-            'Mặt hàng theo số lượng phải là số nguyên.',
-            422,
-          );
-        }
-        if (product.prompt_price === 1 && input.enteredUnitPriceVnd === undefined) {
-          throw new AppError('ENTERED_UNIT_PRICE_REQUIRED', 'Mặt hàng yêu cầu nhập giá bán.', 422);
-        }
-        let unitPriceVnd =
-          product.prompt_price === 1 ? input.enteredUnitPriceVnd! : product.sale_price!;
-        let quantityMilli = input.quantityMilli;
-        const timeStartedAtMs =
-          product.product_type === 'TIME' ? (input.timeStartedAtMs ?? now) : null;
-        const timeEndedAtMs =
-          product.product_type === 'TIME' ? (input.timeEndedAtMs ?? null) : null;
-        let grossLineTotalVnd = checkedMoneyFromMilli(unitPriceVnd, quantityMilli);
-        if (product.product_type === 'TIME') {
-          const effectiveStartedAtMs = timeStartedAtMs!;
-          if (timeEndedAtMs !== null && timeEndedAtMs <= effectiveStartedAtMs) {
-            throw new AppError('TIME_RANGE_INVALID', 'Giờ ra phải sau giờ vào.', 422);
-          }
-          const config = await this.productPricingSnapshot(storeId, product.product_id);
-          if (config) {
-            unitPriceVnd = config.basePriceVnd;
-            const result = calculateTimePrice({
-              startedAtMs: effectiveStartedAtMs,
-              endedAtMs: Math.max(effectiveStartedAtMs + 1_000, timeEndedAtMs ?? now),
-              config,
-            });
-            quantityMilli = Math.max(1, Math.round((result.elapsedSeconds / 3600) * 1000));
-            grossLineTotalVnd = result.amountAfterRoundingVnd;
-          }
-        }
-        let discountAmountVnd = 0;
-        if (input.discount?.type === 'PERCENT') {
-          if (input.discount.value > 100) {
-            throw new AppError('DISCOUNT_INVALID', 'Phần trăm giảm giá không hợp lệ.', 422);
-          }
-          discountAmountVnd = checkedPercentAmount(grossLineTotalVnd, input.discount.value);
-        } else if (input.discount?.type === 'FIXED') {
-          discountAmountVnd = input.discount.value;
-        }
-        discountAmountVnd = Math.min(grossLineTotalVnd, discountAmountVnd);
-        return {
-          itemId: crypto.randomUUID(),
-          productId: product.product_id,
-          variantId: product.product_type === 'TIME' ? null : product.variant_id,
-          productType: product.product_type,
-          productName: product.product_name,
-          variantName: product.variant_name,
-          unitName: product.unit_name,
-          unitPriceVnd,
-          quantityMilli,
-          timeStartedAtMs,
-          timeEndedAtMs,
-          note: input.note?.trim() || null,
-          discountType: input.discount?.type ?? null,
-          discountInputValue: input.discount?.value ?? null,
-          discountAmountVnd,
-          discountReason: input.discount?.reason.trim() || null,
-          grossLineTotalVnd,
-          netLineTotalVnd: grossLineTotalVnd - discountAmountVnd,
-        };
-      }),
+    if (items.length === 0) return [];
+    const variantTargets = items.map((item) => ({
+      productId: item.productId,
+      variantId: item.variantId,
+    }));
+    const variantRows = await this.repository.findSaleVariants(
+      storeId,
+      variantTargets.map((target) => target.productId),
     );
+    const saleVariants = indexSaleVariants(variantRows.results, variantTargets);
+    const resolved = items.map((input) => {
+      const product =
+        saleVariants.get(saleVariantLookupKey(input.productId, input.variantId)) ?? null;
+      if (
+        !product ||
+        product.product_status !== 'ACTIVE' ||
+        (product.product_type !== 'TIME' && product.variant_status !== 'ACTIVE') ||
+        (product.prompt_price !== 1 && product.sale_price === null)
+      ) {
+        throw new AppError('PRODUCT_NOT_AVAILABLE', 'Mặt hàng không khả dụng.', 422);
+      }
+      if (takeaway && product.product_type === 'TIME') {
+        throw new AppError(
+          'TIME_ITEM_DINE_IN_ONLY',
+          'Mặt hàng tính giờ chỉ dùng cho đơn tại chỗ.',
+          422,
+        );
+      }
+      if (product.product_type === 'QUANTITY' && input.quantityMilli % 1000 !== 0) {
+        throw new AppError(
+          'QUANTITY_MUST_BE_WHOLE',
+          'Mặt hàng theo số lượng phải là số nguyên.',
+          422,
+        );
+      }
+      if (product.prompt_price === 1 && input.enteredUnitPriceVnd === undefined) {
+        throw new AppError('ENTERED_UNIT_PRICE_REQUIRED', 'Mặt hàng yêu cầu nhập giá bán.', 422);
+      }
+      const timeStartedAtMs =
+        product.product_type === 'TIME' ? (input.timeStartedAtMs ?? now) : null;
+      const timeEndedAtMs = product.product_type === 'TIME' ? (input.timeEndedAtMs ?? null) : null;
+      if (
+        product.product_type === 'TIME' &&
+        timeEndedAtMs !== null &&
+        timeEndedAtMs <= timeStartedAtMs!
+      ) {
+        throw new AppError('TIME_RANGE_INVALID', 'Giờ ra phải sau giờ vào.', 422);
+      }
+      return { input, product, timeStartedAtMs, timeEndedAtMs };
+    });
+    const timeProductIds = resolved.flatMap(({ product }) =>
+      product.product_type === 'TIME' ? [product.product_id] : [],
+    );
+    const pricingRows =
+      timeProductIds.length === 0
+        ? { results: [] as ProductPricingSnapshotRow[] }
+        : await this.repository.listProductPricingSnapshots(storeId, timeProductIds);
+    const pricingByProduct = pricingSnapshotsFromRows(pricingRows.results, this.env.STORE_TIMEZONE);
+
+    return resolved.map(({ input, product, timeStartedAtMs, timeEndedAtMs }) => {
+      let unitPriceVnd =
+        product.prompt_price === 1 ? input.enteredUnitPriceVnd! : product.sale_price!;
+      let quantityMilli = input.quantityMilli;
+      let grossLineTotalVnd = checkedMoneyFromMilli(unitPriceVnd, quantityMilli);
+      if (product.product_type === 'TIME') {
+        const effectiveStartedAtMs = timeStartedAtMs!;
+        const config = pricingByProduct.get(product.product_id);
+        if (config) {
+          unitPriceVnd = config.basePriceVnd;
+          const result = calculateTimePrice({
+            startedAtMs: effectiveStartedAtMs,
+            endedAtMs: Math.max(effectiveStartedAtMs + 1_000, timeEndedAtMs ?? now),
+            config,
+          });
+          quantityMilli = Math.max(1, Math.round((result.elapsedSeconds / 3600) * 1000));
+          grossLineTotalVnd = result.amountAfterRoundingVnd;
+        }
+      }
+      let discountAmountVnd = 0;
+      if (input.discount?.type === 'PERCENT') {
+        if (input.discount.value > 100) {
+          throw new AppError('DISCOUNT_INVALID', 'Phần trăm giảm giá không hợp lệ.', 422);
+        }
+        discountAmountVnd = checkedPercentAmount(grossLineTotalVnd, input.discount.value);
+      } else if (input.discount?.type === 'FIXED') {
+        discountAmountVnd = input.discount.value;
+      }
+      discountAmountVnd = Math.min(grossLineTotalVnd, discountAmountVnd);
+      return {
+        itemId: crypto.randomUUID(),
+        productId: product.product_id,
+        variantId: product.product_type === 'TIME' ? null : product.variant_id,
+        productType: product.product_type,
+        productName: product.product_name,
+        variantName: product.variant_name,
+        unitName: product.unit_name,
+        unitPriceVnd,
+        quantityMilli,
+        timeStartedAtMs,
+        timeEndedAtMs,
+        note: input.note?.trim() || null,
+        discountType: input.discount?.type ?? null,
+        discountInputValue: input.discount?.value ?? null,
+        discountAmountVnd,
+        discountReason: input.discount?.reason.trim() || null,
+        grossLineTotalVnd,
+        netLineTotalVnd: grossLineTotalVnd - discountAmountVnd,
+      };
+    });
   }
 
   private async resolveGuest(
@@ -1406,19 +1452,29 @@ export class PosService {
         this.resolveGuest(input.storeId, input.values.guest),
       ]),
     );
-    const updateVariantEntries = await Promise.all(
-      input.values.updatedItems.map(async (update) => {
-        const item = current.items.find((candidate) => candidate.id === update.itemId);
-        if (!item || update.variantId === undefined || update.variantId === item.variantId) {
-          return [update.itemId, null] as const;
-        }
-        return [
-          update.itemId,
-          await this.repository.findSaleVariant(input.storeId, item.productId, update.variantId),
-        ] as const;
-      }),
+    const updateVariantTargets = input.values.updatedItems.flatMap((update) => {
+      const item = current.items.find((candidate) => candidate.id === update.itemId);
+      if (!item || update.variantId === undefined || update.variantId === item.variantId) return [];
+      return [{ itemId: update.itemId, productId: item.productId, variantId: update.variantId }];
+    });
+    const updateVariantRows =
+      updateVariantTargets.length === 0
+        ? { results: [] as SaleVariantRow[] }
+        : await this.repository.findSaleVariants(
+            input.storeId,
+            updateVariantTargets.map((target) => target.productId),
+          );
+    const indexedUpdateVariants = indexSaleVariants(
+      updateVariantRows.results,
+      updateVariantTargets,
     );
-    const updateVariants = new Map(updateVariantEntries);
+    const updateVariants = new Map<string, SaleVariantRow | null>();
+    for (const target of updateVariantTargets) {
+      updateVariants.set(
+        target.itemId,
+        indexedUpdateVariants.get(saleVariantLookupKey(target.productId, target.variantId)) ?? null,
+      );
+    }
     const statements: D1PreparedStatement[] = [
       this.repository.prepareSaveCommand({
         commandId: input.idempotencyKey,

@@ -1,0 +1,21 @@
+export const ESC_POS = {
+  initialize: Uint8Array.of(0x1b, 0x40),
+  alignCenter: Uint8Array.of(0x1b, 0x61, 0x01),
+  alignLeft: Uint8Array.of(0x1b, 0x61, 0x00),
+  feedFourLines: Uint8Array.of(0x0a, 0x0a, 0x0a, 0x0a),
+  cut: Uint8Array.of(0x1d, 0x56, 0x41, 0x00),
+  openCashDrawer: Uint8Array.of(0x1b, 0x70, 0x00, 0x19, 0xfa),
+} as const;
+
+export function rasterHeader(widthBytes: number, height: number) {
+  return Uint8Array.of(
+    0x1d,
+    0x76,
+    0x30,
+    0x00,
+    widthBytes & 0xff,
+    (widthBytes >> 8) & 0xff,
+    height & 0xff,
+    (height >> 8) & 0xff,
+  );
+}

@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { CatalogService } from '@server/services/catalog-service';
 import { PlatformService } from '@server/services/platform-service';
@@ -8,6 +8,7 @@ import { PromotionService } from '@server/services/promotion-service';
 import { QrOrderService } from '@server/services/qr-order-service';
 import { StoreService } from '@server/services/store-service';
 import { QrOrderRepository } from '@server/repositories/qr-order-repository';
+import { PosRepository } from '@server/repositories/pos-repository';
 
 describe('online POS vertical slice', () => {
   let storeId: string;
@@ -1626,6 +1627,199 @@ describe('online POS vertical slice', () => {
     });
   });
 
+  it('loads sale variants once when saveOrderCommand adds eight item lines', async () => {
+    const pos = new PosService(env);
+    const order = await pos.createTakeaway({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-batched-variant-order',
+      idempotencyKey: 'batched-variant-order-001',
+      note: null,
+    });
+    const before = await pos.quote(storeId, order.orderId);
+    const batchedLookup = vi.spyOn(PosRepository.prototype, 'findSaleVariants');
+    const singleLookup = vi.spyOn(PosRepository.prototype, 'findSaleVariant');
+
+    try {
+      const saved = await pos.saveOrderCommand({
+        storeId,
+        actorId: ownerUserId,
+        requestId: 'request-batched-variant-save',
+        idempotencyKey: 'batched-variant-save-001',
+        orderId: order.orderId,
+        values: {
+          expectedOrderVersion: before.order.version,
+          nextAction: 'STAY',
+          addedItems: Array.from({ length: 8 }, (_, index) => ({
+            productId,
+            variantId,
+            quantityMilli: 1_000,
+            note: `Dòng batch ${index + 1}`,
+            discount: null,
+          })),
+          updatedItems: [],
+        },
+      });
+
+      expect(saved.quote.items).toHaveLength(8);
+      expect(batchedLookup).toHaveBeenCalledTimes(1);
+      expect(batchedLookup).toHaveBeenCalledWith(storeId, Array(8).fill(productId));
+      expect(singleLookup).not.toHaveBeenCalled();
+    } finally {
+      batchedLookup.mockRestore();
+      singleLookup.mockRestore();
+    }
+  });
+
+  it('loads TIME item pricing snapshots in one batch during saveOrderCommand', async () => {
+    const catalog = new CatalogService(env);
+    const table = await catalog.createTable({
+      storeId,
+      areaId,
+      timeProductId,
+      name: 'Bàn test batch TIME pricing',
+      sortOrder: 17,
+    });
+    const pos = new PosService(env);
+    const opened = await pos.openOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-batched-time-open',
+      idempotencyKey: 'batched-time-open-001',
+      values: {
+        orderType: 'DINE_IN',
+        tableId: table.id,
+        expectedTableVersion: 1,
+        items: [],
+      },
+    });
+    const pricingBatch = vi.spyOn(PosRepository.prototype, 'listProductPricingSnapshots');
+    const singlePricing = vi.spyOn(PosService.prototype, 'productPricingSnapshot');
+    const endedAtMs = Date.now() - 1_000;
+
+    try {
+      const saved = await pos.saveOrderCommand({
+        storeId,
+        actorId: ownerUserId,
+        requestId: 'request-batched-time-save',
+        idempotencyKey: 'batched-time-save-001',
+        orderId: opened.order.id,
+        values: {
+          expectedOrderVersion: opened.order.version,
+          nextAction: 'STAY',
+          addedItems: [
+            {
+              productId: timeProductId,
+              variantId: null,
+              quantityMilli: 1_000,
+              timeStartedAtMs: endedAtMs - 60 * 60_000,
+              timeEndedAtMs: endedAtMs,
+              note: 'Khung giờ 1',
+              discount: null,
+            },
+            {
+              productId: timeProductId,
+              variantId: null,
+              quantityMilli: 1_000,
+              timeStartedAtMs: endedAtMs - 30 * 60_000,
+              timeEndedAtMs: endedAtMs,
+              note: 'Khung giờ 2',
+              discount: null,
+            },
+          ],
+          updatedItems: [],
+        },
+      });
+
+      expect(saved.quote.items.filter((item) => item.productType === 'TIME')).toHaveLength(2);
+      expect(
+        pricingBatch.mock.calls.filter(
+          ([targetStoreId, productIds]) => targetStoreId === storeId && productIds.length === 2,
+        ),
+      ).toEqual([[storeId, [timeProductId, timeProductId]]]);
+      expect(singlePricing).not.toHaveBeenCalled();
+    } finally {
+      pricingBatch.mockRestore();
+      singlePricing.mockRestore();
+    }
+  });
+
+  it('loads changed variants once when saveOrderCommand edits multiple saved items', async () => {
+    const catalog = new CatalogService(env);
+    const product = await catalog.createProduct(storeId, {
+      name: 'Nước ép batch variant',
+      productType: 'QUANTITY',
+      variants: [
+        { name: 'Ly M', salePriceVnd: 25_000, costPriceVnd: 0, promptPrice: false },
+        { name: 'Ly L', salePriceVnd: 35_000, costPriceVnd: 0, promptPrice: false },
+      ],
+    });
+    const variants = await env.DB.prepare(
+      'SELECT id, name FROM product_variants WHERE store_id = ? AND product_id = ?',
+    )
+      .bind(storeId, product.id)
+      .all<{ id: string; name: string }>();
+    const medium = variants.results.find((variant) => variant.name === 'Ly M')!;
+    const large = variants.results.find((variant) => variant.name === 'Ly L')!;
+    const pos = new PosService(env);
+    const opened = await pos.openOrderCommand({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-batched-update-open',
+      idempotencyKey: 'batched-update-open-001',
+      values: {
+        orderType: 'TAKEAWAY',
+        items: [
+          {
+            productId: product.id,
+            variantId: medium.id,
+            quantityMilli: 1_000,
+            note: 'Dòng A',
+            discount: null,
+          },
+          {
+            productId: product.id,
+            variantId: medium.id,
+            quantityMilli: 1_000,
+            note: 'Dòng B',
+            discount: null,
+          },
+        ],
+      },
+    });
+    const batchedLookup = vi.spyOn(PosRepository.prototype, 'findSaleVariants');
+    const singleLookup = vi.spyOn(PosRepository.prototype, 'findSaleVariant');
+
+    try {
+      const saved = await pos.saveOrderCommand({
+        storeId,
+        actorId: ownerUserId,
+        requestId: 'request-batched-update-save',
+        idempotencyKey: 'batched-update-save-001',
+        orderId: opened.order.id,
+        values: {
+          expectedOrderVersion: opened.order.version,
+          nextAction: 'STAY',
+          addedItems: [],
+          updatedItems: opened.quote.items.map((item) => ({
+            itemId: item.id,
+            quantityMilli: item.quantityMilli,
+            variantId: large.id,
+          })),
+        },
+      });
+
+      expect(saved.quote.items).toHaveLength(2);
+      expect(saved.quote.items.every((item) => item.variantId === large.id)).toBe(true);
+      expect(batchedLookup).toHaveBeenCalledTimes(1);
+      expect(batchedLookup).toHaveBeenCalledWith(storeId, [product.id, product.id]);
+      expect(singleLookup).not.toHaveBeenCalled();
+    } finally {
+      batchedLookup.mockRestore();
+      singleLookup.mockRestore();
+    }
+  });
+
   it('updates price version variant and discount on existing order items', async () => {
     const catalog = new CatalogService(env);
     const createdProduct = await catalog.createProduct(storeId, {
@@ -1982,6 +2176,57 @@ describe('online POS vertical slice', () => {
     expect(invoice.lines.find((line) => line.lineType === 'TIME')).toMatchObject({
       quantityMilli: 5_400_000,
       lineTotal: 90_000,
+    });
+  });
+
+  it('keeps a manually entered end time stopped when returning from checkout', async () => {
+    const pos = new PosService(env);
+    const opened = await openFreshTable('Bàn chốt giờ thủ công', 'open-manual-end-resume-001');
+    const startedAtMs = Date.parse('2026-08-20T10:00:00.000Z');
+    const manuallyEndedAtMs = startedAtMs + 30 * 60_000;
+    const checkoutStartedAtMs = startedAtMs + 40 * 60_000;
+    const returnedAtMs = startedAtMs + 45 * 60_000;
+
+    await pos.updateTimeRange({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-manual-end-before-checkout',
+      idempotencyKey: 'manual-end-before-checkout-001',
+      orderId: opened.orderId,
+      expectedOrderVersion: 1,
+      startedAtMs,
+      endedAtMs: manuallyEndedAtMs,
+      now: checkoutStartedAtMs,
+    });
+
+    await pos.stopTimeForCheckout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-checkout-after-manual-end',
+      idempotencyKey: 'checkout-after-manual-end-001',
+      orderId: opened.orderId,
+      expectedOrderVersion: 2,
+      now: checkoutStartedAtMs,
+    });
+
+    const resumed = await pos.resumeCheckout({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-return-after-manual-end',
+      idempotencyKey: 'return-after-manual-end-001',
+      orderId: opened.orderId,
+      expectedOrderVersion: 3,
+      now: returnedAtMs,
+    });
+
+    expect(resumed.quote).toMatchObject({
+      order: { status: 'OPEN' },
+      time: {
+        status: 'ENDED',
+        startedAtMs,
+        endedAtMs: manuallyEndedAtMs,
+        elapsedSeconds: 1800,
+      },
     });
   });
 
@@ -2974,9 +3219,18 @@ describe('online POS vertical slice', () => {
     expect(resumeResult.quote.order.status).toBe('OPEN');
     expect(resumeResult.quote.time?.status).toBe('RUNNING');
     expect(resumeResult.quote.time?.endedAtMs).toBeNull();
-    // The checkout window is frozen and is not charged after returning to the order.
-    expect(resumeResult.quote.time?.elapsedSeconds).toBe(5235);
+    // The quote stays frozen until this explicit resume, then billing is continuous from t0.
+    expect(resumeResult.quote.time?.elapsedSeconds).toBe(5442);
     expect(resumeResult.quote.time?.tableSegments).toHaveLength(1);
+    const generatedCheckoutPauses = await env.DB.prepare(
+      `SELECT COUNT(*) AS count
+       FROM time_pauses tp
+       JOIN time_sessions ts ON ts.id = tp.time_session_id
+       WHERE ts.store_id = ? AND ts.order_id = ?`,
+    )
+      .bind(storeId, opened.orderId)
+      .first<{ count: number }>();
+    expect(generatedCheckoutPauses?.count).toBe(0);
 
     // 6b. Immediate stop-time right after resume (same millisecond/second) - must not crash
     const immediateStop = await pos.stopTimeForCheckout({
@@ -2989,7 +3243,7 @@ describe('online POS vertical slice', () => {
       now: tResume,
     });
     expect(immediateStop.status).toBe('PAYMENT_PENDING');
-    expect(immediateStop.quote.time?.elapsedSeconds).toBe(5235);
+    expect(immediateStop.quote.time?.elapsedSeconds).toBe(5442);
 
     // Resume again after immediate stop
     const resumeAgain = await pos.resumeCheckout({
@@ -3003,10 +3257,10 @@ describe('online POS vertical slice', () => {
     });
     expect(resumeAgain.status).toBe('OPEN');
 
-    // At 08:00:42 only actual playing time is charged; checkout time stays excluded.
+    // At 08:00:42 the full interval since opening is charged continuously.
     const tPlayingLater = tResume + 1800 * 1000;
     const playingQuote = await pos.quote(storeId, opened.orderId, tPlayingLater);
-    expect(playingQuote.time?.elapsedSeconds).toBe(7034);
+    expect(playingQuote.time?.elapsedSeconds).toBe(7242);
     expect(playingQuote.time?.tableSegments?.length).toBe(1);
 
     // 7. Stop time again at 08:00:42

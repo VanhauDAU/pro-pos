@@ -36,13 +36,14 @@ import {
 } from '@contracts/store';
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 import {
-  checkQzTrayStatus,
-  connectQzTray,
-  fetchQzPrinters,
-  getClientDeviceName,
-  printCalibrationTest,
-  printTestReceipt,
-} from '@client/lib/qz-tray-service';
+  isPrintBridgeEnabled,
+  isPrintBridgeLeader,
+  setPrintBridgeEnabled,
+  startPrintBridgeLeaderElection,
+  subscribePrintBridgeLeader,
+} from '@client/lib/print-bridge-service';
+import { getClientDeviceName } from '@client/lib/qz-tray-service';
+import { printerAction, printerService } from '@printing/printer-service';
 
 interface StaffPrinterSettingsPageProps {
   csrfToken: string | null | undefined;
@@ -69,6 +70,7 @@ export function StaffPrinterSettingsPage({
     connected: boolean;
     loading: boolean;
     version?: string;
+    error?: string;
   }>({ connected: false, loading: false });
   const [systemPrinters, setSystemPrinters] = useState<string[]>([]);
   const [selectedDiscoveredPrinter, setSelectedDiscoveredPrinter] = useState<string>();
@@ -77,6 +79,13 @@ export function StaffPrinterSettingsPage({
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [checkingConnection, setCheckingConnection] = useState(false);
+  const [bridgeEnabled, setBridgeEnabled] = useState(isPrintBridgeEnabled());
+  const [isLeader, setIsLeader] = useState(isPrintBridgeLeader());
+
+  useEffect(() => {
+    void startPrintBridgeLeaderElection();
+    return subscribePrintBridgeLeader(setIsLeader);
+  }, []);
 
   const connectionType = Form.useWatch('connectionType', form) ?? 'SYSTEM';
   const paperSize = Form.useWatch('paperSize', form) ?? 'K80';
@@ -84,8 +93,8 @@ export function StaffPrinterSettingsPage({
   const settings = useQuery({
     queryKey: ['pos-print-settings'],
     queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
-    staleTime: Infinity,
-    refetchOnMount: false,
+    staleTime: 30_000,
+    refetchOnMount: true,
   });
 
   useEffect(() => {
@@ -99,15 +108,23 @@ export function StaffPrinterSettingsPage({
 
   useEffect(() => {
     let mounted = true;
-    void checkQzTrayStatus().then(async (status) => {
-      if (!mounted || !status.connected) return;
+    void printerService.checkConnection().then(async (status) => {
+      if (!mounted) return;
+      if (!status.connected) {
+        setQzStatus({
+          connected: false,
+          loading: false,
+          ...(status.error ? { error: status.error } : {}),
+        });
+        return;
+      }
       setQzStatus({
         connected: true,
         loading: false,
         ...(status.version ? { version: status.version } : {}),
       });
       try {
-        const printers = await fetchQzPrinters();
+        const printers = await printerService.listPrinters();
         if (mounted) setSystemPrinters(printers);
       } catch {
         // The user can retry from the discovery dialog.
@@ -124,19 +141,20 @@ export function StaffPrinterSettingsPage({
     try {
       let connected = qzStatus.connected;
       if (!connected) {
-        const result = await connectQzTray();
+        const result = await printerService.checkConnection(true);
         connected = result.connected;
         setQzStatus({
           connected: result.connected,
           loading: false,
           ...(result.version ? { version: result.version } : {}),
+          ...(!result.connected && result.error ? { error: result.error } : {}),
         });
       }
       if (!connected) {
         setSystemPrinters([]);
         return;
       }
-      const printers = await fetchQzPrinters();
+      const printers = await printerService.listPrinters(true);
       setSystemPrinters(printers);
       setSelectedDiscoveredPrinter((current) => current ?? printers[0]);
     } catch (error) {
@@ -148,17 +166,20 @@ export function StaffPrinterSettingsPage({
 
   const connectQz = async () => {
     setQzStatus((current) => ({ ...current, loading: true }));
-    const result = await connectQzTray();
+    const result = qzStatus.connected
+      ? await printerService.reconnect()
+      : await printerService.checkConnection(true);
     setQzStatus({
       connected: result.connected,
       loading: false,
       ...(result.version ? { version: result.version } : {}),
+      ...(!result.connected && result.error ? { error: result.error } : {}),
     });
     if (result.connected) {
       messageApi.success('Đã kết nối QZ Tray.');
       try {
         setDiscovering(true);
-        const printers = await fetchQzPrinters();
+        const printers = await printerService.listPrinters();
         setSystemPrinters(printers);
         setSelectedDiscoveredPrinter((current) => current ?? printers[0]);
       } catch (error) {
@@ -191,9 +212,18 @@ export function StaffPrinterSettingsPage({
       await form.validateFields();
       setTesting(true);
       const result = calibration
-        ? await printCalibrationTest({ ...printerOptions(), openCashDrawer: false })
-        : await printTestReceipt(printerOptions());
+        ? await printerAction(() =>
+            printerService.calibrationPrint({ ...printerOptions(), openCashDrawer: false }),
+          )
+        : await printerAction(() => printerService.testPrint(printerOptions(), storeName));
       if (result.success) {
+        const status = await printerService.checkConnection();
+        setQzStatus({
+          connected: status.connected,
+          loading: false,
+          ...(status.version ? { version: status.version } : {}),
+          ...(!status.connected && status.error ? { error: status.error } : {}),
+        });
         messageApi.success(calibration ? 'Đã gửi bản in hiệu chuẩn.' : 'Đã gửi lệnh in thử.');
       } else {
         messageApi.error(result.message ?? 'Không thể in thử.');
@@ -207,14 +237,27 @@ export function StaffPrinterSettingsPage({
     try {
       await form.validateFields(['networkIp', 'networkPort']);
       setCheckingConnection(true);
-      const result = await printTestReceipt({
-        ...printerOptions(),
-        connectionType: 'NETWORK_TCP',
-        autoCut: false,
-        openCashDrawer: false,
-      });
-      if (result.success) messageApi.success('Máy in mạng đã phản hồi lệnh in thử.');
-      else messageApi.error(result.message ?? 'Không thể kết nối tới máy in mạng.');
+      const result = await printerAction(() =>
+        printerService.testPrint(
+          {
+            ...printerOptions(),
+            connectionType: 'NETWORK_TCP',
+            autoCut: false,
+            openCashDrawer: false,
+          },
+          storeName,
+        ),
+      );
+      if (result.success) {
+        const status = await printerService.checkConnection();
+        setQzStatus({
+          connected: status.connected,
+          loading: false,
+          ...(status.version ? { version: status.version } : {}),
+          ...(!status.connected && status.error ? { error: status.error } : {}),
+        });
+        messageApi.success('Máy in mạng đã phản hồi lệnh in thử.');
+      } else messageApi.error(result.message ?? 'Không thể kết nối tới máy in mạng.');
     } finally {
       setCheckingConnection(false);
     }
@@ -261,13 +304,17 @@ export function StaffPrinterSettingsPage({
               <span
                 className={`qz-badge qz-badge--${qzStatus.connected ? 'connected' : 'disconnected'}`}
               >
-                {qzStatus.connected ? '● Đã kết nối' : '○ Chưa kết nối'}
+                {qzStatus.connected
+                  ? '● Đã kết nối'
+                  : qzStatus.error
+                    ? '○ QZ Tray chưa chạy'
+                    : '○ Chưa kết nối'}
               </span>
             </div>
             <Typography.Text type="secondary">
               {qzStatus.connected
                 ? `Phiên bản ${qzStatus.version ?? '2.2.x'}`
-                : 'Cần QZ Tray để in trực tiếp tới máy in hệ thống hoặc IP.'}
+                : qzStatus.error || 'Cần QZ Tray để in trực tiếp tới máy in hệ thống hoặc IP.'}
             </Typography.Text>
             <Space wrap>
               <Button onClick={() => void connectQz()} loading={qzStatus.loading}>
@@ -283,6 +330,53 @@ export function StaffPrinterSettingsPage({
         </div>
       </Card>
 
+      <Card className="staff-printer-device-card" bordered={false}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: 16,
+          }}
+        >
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Typography.Title level={5} style={{ margin: 0 }}>
+                Cầu nối in từ xa (Print Bridge)
+              </Typography.Title>
+              <span
+                className={`qz-badge qz-badge--${bridgeEnabled && isLeader ? 'connected' : 'disconnected'}`}
+              >
+                {!bridgeEnabled
+                  ? '○ Đã tắt'
+                  : isLeader
+                    ? '● Đang nhận lệnh in (Leader)'
+                    : '○ Tab dự phòng (Standby)'}
+              </span>
+            </div>
+            <Typography.Text type="secondary" style={{ marginTop: 4, display: 'block' }}>
+              Cho phép điện thoại, iPad và các thiết bị khác trong cửa hàng gửi yêu cầu in hóa đơn
+              tới máy in này.
+            </Typography.Text>
+          </div>
+          <Switch
+            checked={bridgeEnabled}
+            onChange={(checked) => {
+              setPrintBridgeEnabled(checked);
+              setBridgeEnabled(checked);
+              if (checked) {
+                messageApi.success('Đã bật nhận lệnh in từ xa trên thiết bị này.');
+              } else {
+                messageApi.info('Đã tắt nhận lệnh in từ xa.');
+              }
+            }}
+            checkedChildren="BẬT"
+            unCheckedChildren="TẮT"
+          />
+        </div>
+      </Card>
+
       <Card title="Máy in hóa đơn" bordered={false}>
         <Form
           form={form}
@@ -291,6 +385,20 @@ export function StaffPrinterSettingsPage({
           onFinish={(values) => void save(values)}
         >
           <Row gutter={[20, 8]}>
+            <Col xs={24} md={16}>
+              <Form.Item
+                name="configurationName"
+                label="Tên cấu hình"
+                rules={[{ required: true, message: 'Vui lòng nhập tên cấu hình.' }]}
+              >
+                <Input size="large" placeholder="Máy in quầy" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={8}>
+              <Form.Item name="isDefault" valuePropName="checked" label="Máy in mặc định">
+                <Switch checkedChildren="MẶC ĐỊNH" unCheckedChildren="KHÔNG" />
+              </Form.Item>
+            </Col>
             <Col xs={24}>
               <Form.Item name="connectionType" label="Kiểu kết nối">
                 <Radio.Group>
@@ -338,7 +446,7 @@ export function StaffPrinterSettingsPage({
                     label="Địa chỉ IP máy in Wi‑Fi / LAN"
                     rules={[{ required: true, message: 'Vui lòng nhập địa chỉ IP máy in.' }]}
                   >
-                    <Input size="large" inputMode="decimal" placeholder="192.168.1.150" />
+                    <Input size="large" inputMode="decimal" placeholder="192.168.1.73" />
                   </Form.Item>
                 </Col>
                 <Col xs={24} md={4}>

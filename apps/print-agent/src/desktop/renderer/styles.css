@@ -89,9 +89,16 @@ summary:focus-visible {
   flex: 0 0 auto;
   place-items: center;
   border-radius: 10px;
-  background: linear-gradient(145deg, #3478f6, #1557d5);
+  overflow: hidden;
   box-shadow: 0 4px 12px rgb(37 99 235 / 22%);
-  color: white;
+  background: transparent;
+}
+
+.brand-logo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .brand-copy {

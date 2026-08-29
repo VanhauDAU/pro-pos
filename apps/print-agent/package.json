@@ -1,6 +1,6 @@
 {
   "name": "@propos/print-agent",
-  "version": "0.2.0",
+  "version": "0.3.1",
   "private": true,
   "type": "module",
   "main": "dist/desktop/main/main.cjs",

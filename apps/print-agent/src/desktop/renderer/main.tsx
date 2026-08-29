@@ -126,7 +126,7 @@ function Header({ version }: { version: string }) {
   return (
     <header className="app-header">
       <div className="brand-mark">
-        <Icon name="printer" size={21} />
+        <img src="./icon.png" alt="PRO POS Logo" className="brand-logo-img" />
       </div>
       <div className="brand-copy">
         <strong>PRO POS Print Agent</strong>
@@ -489,7 +489,11 @@ function Dashboard({
           checked={info.autostart}
           disabled={action === 'autostart'}
           onChange={onAutostart}
-          label="Khởi động cùng Windows"
+          label={
+            typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac')
+              ? 'Khởi động cùng macOS'
+              : 'Khởi động cùng Windows'
+          }
         />
         <button className="text-button" onClick={onSettings}>
           <Icon name="settings" size={16} /> Cài đặt nâng cao
@@ -620,7 +624,11 @@ function SettingsDialog({
             <div className="settings-section settings-section--rows">
               <div>
                 <div>
-                  <strong>Khởi động cùng Windows</strong>
+                  <strong>
+                    {typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac')
+                      ? 'Khởi động cùng macOS'
+                      : 'Khởi động cùng Windows'}
+                  </strong>
                   <p>Chạy ẩn trong khay hệ thống sau khi đăng nhập.</p>
                 </div>
                 <Toggle
@@ -871,7 +879,7 @@ function App() {
     }
   };
 
-  const version = info?.version || '0.2.0';
+  const version = info?.version || '0.3.1';
   const content = useMemo(
     () =>
       isUnpaired ? (

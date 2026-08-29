@@ -31,7 +31,7 @@ export class PairingHandler {
         sessionId: string;
         pairingCode: string;
         expiresAt: number;
-      }>('/api/v1/print-agent/pair/request', {});
+      }>('/api/v1/print-agent/pair/request', {}, { retry: false });
     } catch (err: any) {
       console.error(
         `\n\x1b[31m✘ Không thể kết nối tới máy chủ tại: ${this.config.serverUrl}\x1b[0m`,

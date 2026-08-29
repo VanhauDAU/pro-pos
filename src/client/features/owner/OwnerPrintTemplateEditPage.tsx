@@ -28,10 +28,8 @@ import {
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 import { ReceiptPreviewPaper } from '@client/features/pos/ReceiptPreviewModal';
 import { ThermalHourlySegmentsPreview } from '@client/components/ThermalHourlySegmentsPreview';
-import {
-  OWNER_PRINT_PREVIEW_TOTAL_VND,
-  buildOwnerPrintPreviewSample,
-} from './print-preview-sample';
+import { buildOwnerPrintPreviewSample } from './print-preview-sample';
+import { buildFixedVietQrImageUrl } from '@domain/receipt/receipt-document';
 
 function errorMessage(error: unknown, fallback: string) {
   if (error instanceof ApiError) return error.message;
@@ -265,11 +263,11 @@ export function OwnerPrintTemplateEditPage() {
     if (!settings) return null;
     if (settings.bottomImageType === 'VIETQR') {
       if (settings.bottomBankName && settings.bottomBankAccountNumber) {
-        return `https://img.vietqr.io/image/${encodeURIComponent(settings.bottomBankName.trim())}-${encodeURIComponent(
-          settings.bottomBankAccountNumber.trim(),
-        )}-qr_only.png?amount=${OWNER_PRINT_PREVIEW_TOTAL_VND}&addInfo=Thanh+toan+bill&accountName=${encodeURIComponent(
-          settings.bottomBankAccountName?.trim() || '',
-        )}`;
+        return buildFixedVietQrImageUrl({
+          bankIdentifier: settings.bottomBankName,
+          accountNumber: settings.bottomBankAccountNumber,
+          accountName: settings.bottomBankAccountName,
+        });
       }
     } else if (settings.bottomImageType === 'UPLOAD' && settings.bottomImageMediaId) {
       return `/api/v1/media/${settings.bottomImageMediaId}`;
@@ -563,7 +561,7 @@ export function OwnerPrintTemplateEditPage() {
                     <Form.Item name="showBottomImage" valuePropName="checked" noStyle>
                       <Checkbox>
                         {bottomImageIsVietQr
-                          ? 'Hiển thị VietQR theo số tiền đã chốt'
+                          ? 'Hiển thị VietQR tài khoản cố định'
                           : 'Hiển thị ảnh cuối hóa đơn'}
                       </Checkbox>
                     </Form.Item>
@@ -818,8 +816,8 @@ export function OwnerPrintTemplateEditPage() {
                     <div className="thermal-receipt-item-row">
                       <div className="thermal-receipt-item-main">
                         <span style={{ flex: 1, fontWeight: 600 }}>
-                          {showItemIndex ? '1. ' : ''}Trà sữa Ô long (size L)
-                          {showItemPriceName ? ' (Giá chuẩn)' : ''}
+                          {showItemIndex ? '1. ' : ''}Trà sữa Ô long
+                          {showItemPriceName ? ' (Size L)' : ''}
                         </span>
                         <span
                           style={{

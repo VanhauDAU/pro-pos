@@ -1,4 +1,5 @@
 import type { QueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 
 import {
   REALTIME_SCHEMA_VERSION,
@@ -8,6 +9,8 @@ import {
   type RealtimeSyncResponse,
 } from '@contracts/realtime';
 import { apiRequest } from '@client/lib/api';
+import { playPosSound } from '@client/lib/sound';
+import { recordPwaPrintTcpStart } from '@client/lib/print-performance';
 
 export type RealtimeConnectionStatus = 'DISABLED' | 'CONNECTING' | 'CONNECTED' | 'RECONNECTING';
 
@@ -16,6 +19,25 @@ export function pollingIntervalForRealtime(
   fallbackMs: number,
 ): number | false {
   return status === 'CONNECTED' ? false : fallbackMs;
+}
+
+function formatPrintDocumentName(documentType?: string, printerRole?: string | null): string {
+  switch (documentType?.toLowerCase()) {
+    case 'provisional':
+      return 'phiếu tạm tính';
+    case 'invoice':
+      return 'hóa đơn';
+    case 'debt_payment':
+      return 'phiếu thu nợ';
+    case 'kitchen':
+      return 'phiếu in bếp';
+    case 'bar':
+      return 'phiếu in pha chế';
+    default:
+      if (printerRole === 'kitchen') return 'phiếu in bếp';
+      if (printerRole === 'bar') return 'phiếu in pha chế';
+      return 'tài liệu';
+  }
 }
 
 const BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 15_000, 30_000];
@@ -342,11 +364,33 @@ export class PosRealtimeClient {
     }
   }
 
-  private routeEvent(event: RealtimeEventV1, _isLive: boolean) {
+  private routeEvent(event: RealtimeEventV1, isLive: boolean) {
+    if (
+      isLive &&
+      event.type === 'pos.print_job.updated' &&
+      event.data.reason === 'PRINT_JOB_STARTED'
+    ) {
+      recordPwaPrintTcpStart(event.data.printJobId, event.eventId);
+    }
     if (this.isOwnMutation(event)) return;
     for (const topic of event.topics) this.pendingTopics.add(topic);
     if (event.topics.includes(`pos.order:${event.aggregate.id}`)) {
       this.pendingOrderIds.add(event.aggregate.id);
+    }
+    if (isLive && event.type === 'pos.print_job.updated') {
+      const docName = formatPrintDocumentName(event.data.documentType, event.data.printerRole);
+      if (event.data.reason === 'PRINT_JOB_COMPLETED') {
+        toast.success(`🖨️ In thành công ${docName}`);
+        playPosSound('NOTIFICATION_CHIME', { dedupeKey: `print_job:${event.eventId}` });
+      } else if (event.data.reason === 'PRINT_JOB_FAILED') {
+        const errorMsg = event.data.failureMessage || 'Lỗi máy in hoặc không thể kết nối';
+        toast.error(`❌ In ${docName} thất bại: ${errorMsg}`);
+        playPosSound('NOTIFICATION_CHIME', { dedupeKey: `print_job:${event.eventId}` });
+      } else if (event.data.reason === 'PRINT_JOB_UNCERTAIN') {
+        const warnMsg = event.data.failureMessage || 'Mất kết nối máy in trong quá trình in';
+        toast.warning(`⚠️ Không thể xác nhận in ${docName}: ${warnMsg}`);
+        playPosSound('NOTIFICATION_CHIME', { dedupeKey: `print_job:${event.eventId}` });
+      }
     }
     this.scheduleInvalidationFlush();
   }

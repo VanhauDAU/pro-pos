@@ -34,6 +34,7 @@ describe('Owner print settings', () => {
   });
 
   it('updates and persists store print settings', async () => {
+    expect(await storeService.getPrintConfigVersion(storeId)).toBe(0);
     const updateResult = await storeService.updatePrintSettings({
       storeId,
       maxReceiptReprintCount: 3,
@@ -112,6 +113,33 @@ describe('Owner print settings', () => {
       showCashierName: true,
       itemFontSize: 'LARGE',
       showItemTableBorder: false,
+    });
+    expect(await storeService.getPrintConfigVersion(storeId)).toBe(1);
+    const event = await env.DB.prepare(
+      `SELECT event_type AS eventType, aggregate_type AS aggregateType,
+              aggregate_id AS aggregateId, aggregate_version AS aggregateVersion,
+              data_json AS dataJson
+       FROM realtime_events
+       WHERE store_id = ? AND event_type = 'pos.print_config.updated'
+       ORDER BY sequence DESC LIMIT 1`,
+    )
+      .bind(storeId)
+      .first<{
+        eventType: string;
+        aggregateType: string;
+        aggregateId: string;
+        aggregateVersion: number;
+        dataJson: string;
+      }>();
+    expect(event).toMatchObject({
+      eventType: 'pos.print_config.updated',
+      aggregateType: 'STORE',
+      aggregateId: storeId,
+      aggregateVersion: 1,
+    });
+    expect(JSON.parse(event!.dataJson)).toMatchObject({
+      reason: 'PRINT_CONFIG_UPDATED',
+      configVersion: 1,
     });
   });
 

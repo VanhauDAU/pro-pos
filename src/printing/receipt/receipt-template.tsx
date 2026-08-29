@@ -11,7 +11,7 @@ export function receiptRasterCss(printableDots: number) {
   const smallItemFontDots = compact ? 17 : 21;
   const largeItemFontDots = compact ? 21 : 25;
   const root = '.receipt-raster-root';
-  const receiptFont = '"Roboto Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace';
+  const receiptFont = '"Courier New", Courier, monospace';
   return `
     ${root}, ${root} * { box-sizing: border-box; }
     ${root} { width: ${printableDots}px; margin: 0; padding: 0 8px; overflow: hidden; background: #fff; color: #000; font-family: ${receiptFont}; }

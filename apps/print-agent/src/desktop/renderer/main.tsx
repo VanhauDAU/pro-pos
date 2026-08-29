@@ -12,9 +12,11 @@ import {
   presentCloudStatus,
   presentFriendlyError,
   presentOverallStatus,
+  presentPrinterErrorDetails,
   presentPrinterStatus,
   type StatusTone,
 } from './presentation';
+import { requestPrinterCheck } from './printer-actions';
 import './styles.css';
 
 const initialState: AgentRuntimeState = {
@@ -22,11 +24,11 @@ const initialState: AgentRuntimeState = {
   printer: 'UNKNOWN',
   pairing: { code: null, expiresAt: null },
   lastError: null,
+  printerDiagnostics: null,
   updatedAt: 0,
 };
 
-type Action =
-  'pair' | 'cancel-pair' | 'test' | 'reconnect' | 'autostart' | 'save' | 'logs' | 'reset' | null;
+type Action = 'pair' | 'cancel-pair' | 'test' | 'autostart' | 'save' | 'logs' | 'reset' | null;
 type ConfirmAction = 'repair' | 'reset' | null;
 
 interface ToastState {
@@ -124,7 +126,7 @@ function Header({ version }: { version: string }) {
   return (
     <header className="app-header">
       <div className="brand-mark">
-        <Icon name="printer" size={21} />
+        <img src="./icon.png" alt="PRO POS Logo" className="brand-logo-img" />
       </div>
       <div className="brand-copy">
         <strong>PRO POS Print Agent</strong>
@@ -321,7 +323,6 @@ function Dashboard({
   lastJob,
   action,
   onTest,
-  onReconnect,
   onAutostart,
   onSettings,
 }: {
@@ -330,7 +331,6 @@ function Dashboard({
   lastJob: DesktopPrintJobState | null;
   action: Action;
   onTest: () => void;
-  onReconnect: () => void;
   onAutostart: (enabled: boolean) => void;
   onSettings: () => void;
 }) {
@@ -338,6 +338,10 @@ function Dashboard({
   const cloud = presentCloudStatus(state);
   const printer = presentPrinterStatus(state);
   const friendlyError = presentFriendlyError(state);
+  const errorDetails =
+    state.printer === 'UNREACHABLE' || state.printer === 'INVALID_CONFIG'
+      ? presentPrinterErrorDetails(state.lastError, state.printerDiagnostics ?? undefined)
+      : state.lastError;
   const jobLabel =
     lastJob?.status === 'SENDING'
       ? 'Đang gửi'
@@ -364,10 +368,10 @@ function Dashboard({
           <span>!</span>
           <div>
             <strong>{friendlyError}</strong>
-            {state.lastError && (
+            {errorDetails && (
               <details>
                 <summary>Xem chi tiết</summary>
-                <code>{state.lastError}</code>
+                <code>{errorDetails}</code>
               </details>
             )}
           </div>
@@ -436,11 +440,11 @@ function Dashboard({
           </Button>
           <Button
             kind="secondary"
-            onClick={onReconnect}
-            loading={action === 'reconnect'}
+            onClick={onTest}
+            loading={action === 'test'}
             icon={<Icon name="refresh" size={17} />}
           >
-            Kết nối lại
+            Kiểm tra lại
           </Button>
         </div>
       </section>
@@ -485,7 +489,11 @@ function Dashboard({
           checked={info.autostart}
           disabled={action === 'autostart'}
           onChange={onAutostart}
-          label="Khởi động cùng Windows"
+          label={
+            typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac')
+              ? 'Khởi động cùng macOS'
+              : 'Khởi động cùng Windows'
+          }
         />
         <button className="text-button" onClick={onSettings}>
           <Icon name="settings" size={16} /> Cài đặt nâng cao
@@ -616,7 +624,11 @@ function SettingsDialog({
             <div className="settings-section settings-section--rows">
               <div>
                 <div>
-                  <strong>Khởi động cùng Windows</strong>
+                  <strong>
+                    {typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac')
+                      ? 'Khởi động cùng macOS'
+                      : 'Khởi động cùng Windows'}
+                  </strong>
                   <p>Chạy ẩn trong khay hệ thống sau khi đăng nhập.</p>
                 </div>
                 <Toggle
@@ -784,7 +796,7 @@ function App() {
     setToast(null);
     try {
       const [result] = await Promise.all([
-        window.proposPrintAgent.testPrinter(),
+        requestPrinterCheck(window.proposPrintAgent),
         new Promise((resolve) => setTimeout(resolve, 400)),
       ]);
       setToast(
@@ -793,32 +805,13 @@ function App() {
           : {
               tone: 'danger',
               message: 'Không thể kết nối máy in. Kiểm tra nguồn, dây mạng hoặc địa chỉ IP.',
-              detail: result.error,
+              detail: presentPrinterErrorDetails(result.error, result.diagnostics) ?? undefined,
             },
       );
     } catch (error) {
       setToast({
         tone: 'danger',
         message: 'Không thể gửi lệnh in thử.',
-        detail: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      setAction(null);
-    }
-  };
-  const reconnect = async () => {
-    setAction('reconnect');
-    setToast(null);
-    try {
-      await Promise.all([
-        window.proposPrintAgent.reconnect(),
-        new Promise((resolve) => setTimeout(resolve, 450)),
-      ]);
-      setToast({ tone: 'info', message: 'Đang kết nối lại tới máy chủ…' });
-    } catch (error) {
-      setToast({
-        tone: 'danger',
-        message: 'Không thể kết nối lại.',
         detail: error instanceof Error ? error.message : String(error),
       });
     } finally {
@@ -886,7 +879,7 @@ function App() {
     }
   };
 
-  const version = info?.version || '0.2.0';
+  const version = info?.version || '0.3.1';
   const content = useMemo(
     () =>
       isUnpaired ? (
@@ -905,7 +898,6 @@ function App() {
           lastJob={lastJob}
           action={action}
           onTest={() => void testPrinter()}
-          onReconnect={() => void reconnect()}
           onAutostart={(enabled) => void setAutostart(enabled)}
           onSettings={() => setSettingsOpen(true)}
         />

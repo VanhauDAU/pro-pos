@@ -10,6 +10,7 @@ describe('Remote Print & Print Agent Lifecycle (Integration Test)', () => {
   let storeId: string;
   let ownerUserId: string;
   let orderId: string;
+  let pairedAgentId: string;
   let printJobService: PrintJobService;
   let printAgentService: PrintAgentService;
 
@@ -57,6 +58,7 @@ describe('Remote Print & Print Agent Lifecycle (Integration Test)', () => {
         'Mac Quầy Thu Ngân',
       );
       expect(confirmed.agentId).toBeDefined();
+      pairedAgentId = confirmed.agentId;
       expect(confirmed.deviceName).toBe('Mac Quầy Thu Ngân');
 
       // Step 3: Agent polls status and receives credentials
@@ -69,6 +71,31 @@ describe('Remote Print & Print Agent Lifecycle (Integration Test)', () => {
       const agent = await printAgentService.verifyAgent(status.agentId!, status.agentSecret!);
       expect(agent.id).toBe(confirmed.agentId);
       expect(agent.store_id).toBe(storeId);
+    });
+
+    it('updates last_seen only through the throttled heartbeat path', async () => {
+      const before = await env.DB.prepare(
+        `SELECT last_seen_at AS lastSeenAt FROM print_agents WHERE id = ?`,
+      )
+        .bind(pairedAgentId)
+        .first<{ lastSeenAt: number | null }>();
+      expect(before?.lastSeenAt).toBeNull();
+
+      await printAgentService.heartbeat(pairedAgentId);
+      const first = await env.DB.prepare(
+        `SELECT last_seen_at AS lastSeenAt FROM print_agents WHERE id = ?`,
+      )
+        .bind(pairedAgentId)
+        .first<{ lastSeenAt: number | null }>();
+      await printAgentService.heartbeat(pairedAgentId);
+      const second = await env.DB.prepare(
+        `SELECT last_seen_at AS lastSeenAt FROM print_agents WHERE id = ?`,
+      )
+        .bind(pairedAgentId)
+        .first<{ lastSeenAt: number | null }>();
+
+      expect(first?.lastSeenAt).toBeTypeOf('number');
+      expect(second?.lastSeenAt).toBe(first?.lastSeenAt);
     });
   });
 
@@ -95,6 +122,31 @@ describe('Remote Print & Print Agent Lifecycle (Integration Test)', () => {
       expect(job.documentType).toBe('provisional');
       expect(job.documentId).toBe(orderId);
       jobId = job.id;
+
+      const event = await env.DB.prepare(
+        `SELECT event_type AS eventType, aggregate_type AS aggregateType,
+                aggregate_id AS aggregateId, data_json AS dataJson
+         FROM realtime_events
+         WHERE store_id = ? AND json_extract(data_json, '$.printJobId') = ?
+         ORDER BY sequence DESC LIMIT 1`,
+      )
+        .bind(storeId, job.id)
+        .first<{
+          eventType: string;
+          aggregateType: string;
+          aggregateId: string;
+          dataJson: string;
+        }>();
+      expect(event).toMatchObject({
+        eventType: 'pos.print_job.created',
+        aggregateType: 'PRINT_JOB',
+        aggregateId: job.id,
+      });
+      expect(JSON.parse(event!.dataJson).printJob).toMatchObject({
+        id: job.id,
+        status: 'QUEUED',
+        documentId: orderId,
+      });
     });
 
     it('returns the existing job when re-submitting with identical idempotencyKey', async () => {
@@ -137,10 +189,114 @@ describe('Remote Print & Print Agent Lifecycle (Integration Test)', () => {
 
       const fetched = await printJobService.getJob(storeId, jobId);
       expect(fetched.status).toBe('COMPLETED');
+
+      const beforeRetry = await env.DB.prepare(
+        `SELECT COUNT(*) AS total FROM realtime_events
+         WHERE store_id = ? AND json_extract(data_json, '$.printJobId') = ?
+           AND json_extract(data_json, '$.reason') = 'PRINT_JOB_COMPLETED'`,
+      )
+        .bind(storeId, jobId)
+        .first<{ total: number }>();
+      await expect(printJobService.completePrintJob(storeId, jobId)).resolves.toMatchObject({
+        status: 'COMPLETED',
+      });
+      const afterRetry = await env.DB.prepare(
+        `SELECT COUNT(*) AS total FROM realtime_events
+         WHERE store_id = ? AND json_extract(data_json, '$.printJobId') = ?
+           AND json_extract(data_json, '$.reason') = 'PRINT_JOB_COMPLETED'`,
+      )
+        .bind(storeId, jobId)
+        .first<{ total: number }>();
+      expect(afterRetry?.total).toBe(beforeRetry?.total);
+    });
+
+    it('fences an expired claim so the previous Agent cannot start printing', async () => {
+      const job = await printJobService.createPrintJob({
+        storeId,
+        documentType: 'provisional',
+        documentId: orderId,
+        printerRole: 'receipt',
+        idempotencyKey: `print:lease:${crypto.randomUUID()}`,
+      });
+      const agentA = { actorKind: 'EMPLOYEE' as const, deviceId: 'agent-lease-a' };
+      const agentB = { actorKind: 'EMPLOYEE' as const, deviceId: 'agent-lease-b' };
+      const first = await printJobService.claimPrintJob(
+        storeId,
+        job.id,
+        'agent-lease-a',
+        agentA,
+        2,
+      );
+      await env.DB.prepare(
+        `UPDATE print_jobs SET claim_lease_expires_at = ? WHERE store_id = ? AND id = ?`,
+      )
+        .bind(Date.now() - 1, storeId, job.id)
+        .run();
+      const reclaimed = await printJobService.claimPrintJob(
+        storeId,
+        job.id,
+        'agent-lease-b',
+        agentB,
+        2,
+      );
+
+      expect(reclaimed.claimGeneration).toBe(first.claimGeneration + 1);
+      await expect(
+        printJobService.startPrintJob(storeId, job.id, agentA, first.claimToken),
+      ).rejects.toMatchObject({ code: 'PRINT_JOB_CONFLICT', status: 409 });
+      await expect(
+        printJobService.startPrintJob(storeId, job.id, agentB, reclaimed.claimToken),
+      ).resolves.toMatchObject({ status: 'PRINTING' });
     });
   });
 
   describe('Error handling & Recovery', () => {
+    it('returns only FIFO jobs eligible for the requesting Agent', async () => {
+      const first = await printJobService.createPrintJob({
+        storeId,
+        documentType: 'provisional',
+        documentId: orderId,
+        printerRole: 'receipt',
+        targetDeviceId: null,
+        idempotencyKey: `print:pending:first:${crypto.randomUUID()}`,
+      });
+      const other = await printJobService.createPrintJob({
+        storeId,
+        documentType: 'provisional',
+        documentId: orderId,
+        printerRole: 'receipt',
+        targetDeviceId: 'agent-other',
+        idempotencyKey: `print:pending:other:${crypto.randomUUID()}`,
+      });
+      const targeted = await printJobService.createPrintJob({
+        storeId,
+        documentType: 'provisional',
+        documentId: orderId,
+        printerRole: 'receipt',
+        targetDeviceId: 'agent-pending',
+        idempotencyKey: `print:pending:target:${crypto.randomUUID()}`,
+      });
+      await env.DB.prepare(`UPDATE print_jobs SET created_at = ? WHERE id = ?`)
+        .bind(1, first.id)
+        .run();
+      await env.DB.prepare(`UPDATE print_jobs SET created_at = ? WHERE id = ?`)
+        .bind(2, other.id)
+        .run();
+      await env.DB.prepare(`UPDATE print_jobs SET created_at = ? WHERE id = ?`)
+        .bind(3, targeted.id)
+        .run();
+
+      const page = await printJobService.listPendingJobsForAgent({
+        storeId,
+        agentId: 'agent-pending',
+        limit: 100,
+      });
+      const relevant = page.jobs.filter((job) =>
+        [first.id, other.id, targeted.id].includes(job.id),
+      );
+      expect(relevant.map((job) => job.id)).toEqual([first.id, targeted.id]);
+    });
+
     it('handles print failure transition', async () => {
       const failIdemp = `print:fail:${crypto.randomUUID()}`;
       const job = await printJobService.createPrintJob({
@@ -186,6 +342,30 @@ describe('Remote Print & Print Agent Lifecycle (Integration Test)', () => {
       );
       expect(uncertain.status).toBe('UNCERTAIN');
       expect(uncertain.failureCode).toBe('COMMUNICATION_TIMEOUT');
+    });
+
+    it('watchdog marks stale PRINTING jobs UNCERTAIN without requeueing them', async () => {
+      const job = await printJobService.createPrintJob({
+        storeId,
+        documentType: 'provisional',
+        documentId: orderId,
+        printerRole: 'receipt',
+        idempotencyKey: `print:watchdog:${crypto.randomUUID()}`,
+      });
+      await printJobService.claimPrintJob(storeId, job.id, 'watchdog-agent');
+      await printJobService.startPrintJob(storeId, job.id);
+      await env.DB.prepare(`UPDATE print_jobs SET printing_at = ? WHERE store_id = ? AND id = ?`)
+        .bind(Date.now() - 121_000, storeId, job.id)
+        .run();
+
+      const reconciled = await printJobService.reconcileStalePrinting(storeId);
+      expect(reconciled).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: job.id, status: 'UNCERTAIN' })]),
+      );
+      await expect(printJobService.startPrintJob(storeId, job.id)).rejects.toMatchObject({
+        code: 'PRINT_JOB_CONFLICT',
+        status: 409,
+      });
     });
   });
 });

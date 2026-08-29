@@ -1,4 +1,4 @@
-import type { AgentRuntimeState } from '../../core/agent-runtime';
+import type { AgentRuntimeState, PrinterTestResult } from '../../core/agent-runtime';
 
 export type StatusTone = 'success' | 'info' | 'warning' | 'danger' | 'neutral';
 
@@ -44,6 +44,27 @@ export function presentOverallStatus(state: AgentRuntimeState): PresentedStatus 
       tone: 'info',
     };
   }
+  if (state.status === 'AUTHENTICATING') {
+    return {
+      label: 'Đang xác thực',
+      description: 'Đang xác thực Print Agent với máy chủ.',
+      tone: 'info',
+    };
+  }
+  if (state.status === 'REGISTERED' || state.status === 'SUBSCRIBED') {
+    return {
+      label: 'Đang đăng ký nhận lệnh',
+      description: 'Đang đăng ký kênh lệnh in của cửa hàng.',
+      tone: 'info',
+    };
+  }
+  if (state.status === 'SYNCING') {
+    return {
+      label: 'Đang đồng bộ lệnh in',
+      description: 'Đang kiểm tra các lệnh chưa xử lý.',
+      tone: 'info',
+    };
+  }
   if (state.status === 'DEGRADED') {
     return {
       label: 'Kết nối không ổn định',
@@ -66,6 +87,12 @@ export function presentCloudStatus(state: AgentRuntimeState): PresentedStatus {
     return { label: 'Đã kết nối', description: 'Máy chủ PRO POS', tone: 'success' };
   if (state.status === 'CONNECTING')
     return { label: 'Đang kết nối', description: 'Máy chủ PRO POS', tone: 'info' };
+  if (['AUTHENTICATING', 'REGISTERED', 'SUBSCRIBED', 'SYNCING'].includes(state.status))
+    return {
+      label: 'Đang chuẩn bị',
+      description: 'Đang xác thực và đồng bộ lệnh in',
+      tone: 'info',
+    };
   if (state.status === 'DEGRADED')
     return { label: 'Không ổn định', description: 'Đang tự khôi phục', tone: 'warning' };
   return { label: 'Mất kết nối', description: 'Máy chủ PRO POS', tone: 'danger' };
@@ -94,6 +121,26 @@ export function presentFriendlyError(state: AgentRuntimeState): string | null {
     return 'Print Agent đang mất kết nối máy chủ.';
   }
   return null;
+}
+
+export function presentPrinterErrorDetails(
+  error: string | null | undefined,
+  diagnostics: PrinterTestResult['diagnostics'],
+): string | null {
+  if (!error && !diagnostics) return null;
+  const lines = error ? [`message: ${error}`] : [];
+  if (diagnostics) {
+    lines.push(`errorCode: ${diagnostics.errorCode}`);
+    if (diagnostics.printerCode && diagnostics.printerCode !== diagnostics.errorCode) {
+      lines.push(`printerCode: ${diagnostics.printerCode}`);
+    }
+    lines.push(`host: ${diagnostics.host}`);
+    lines.push(`port: ${diagnostics.port}`);
+    lines.push(`failureStage: ${diagnostics.failureStage}`);
+    if (diagnostics.localAddress) lines.push(`localAddress: ${diagnostics.localAddress}`);
+    if (diagnostics.localPort) lines.push(`localPort: ${diagnostics.localPort}`);
+  }
+  return lines.join('\n');
 }
 
 export function formatPairingCode(code: string): string {

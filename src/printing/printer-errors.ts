@@ -11,10 +11,12 @@ export type PrinterErrorCode =
 export type PrinterFailureStage = 'BEFORE_WRITE' | 'DURING_WRITE';
 
 export interface PrinterErrorOptions extends ErrorOptions {
-  failureStage?: PrinterFailureStage;
+  failureStage?: PrinterFailureStage | undefined;
+  localAddress?: string | undefined;
+  localPort?: number | undefined;
 }
 
-const DEFAULT_MESSAGES: Record<PrinterErrorCode, string> = {
+export const DEFAULT_MESSAGES: Record<PrinterErrorCode, string> = {
   AGENT_OFFLINE: 'Print Agent tại quầy đang ngoại tuyến. Vui lòng kiểm tra máy tính quầy.',
   PRINTER_OFFLINE: 'Máy in đang ngoại tuyến. Vui lòng kiểm tra nguồn và kết nối cáp mạng.',
   NETWORK_PRINTER_UNREACHABLE: 'Không thể kết nối tới địa chỉ IP máy in LAN (cổng 9100).',
@@ -28,6 +30,8 @@ const DEFAULT_MESSAGES: Record<PrinterErrorCode, string> = {
 export class PrinterError extends Error {
   readonly code: PrinterErrorCode;
   readonly failureStage: PrinterFailureStage;
+  readonly localAddress?: string | undefined;
+  readonly localPort?: number | undefined;
 
   constructor(
     code: PrinterErrorCode,
@@ -38,6 +42,8 @@ export class PrinterError extends Error {
     this.name = 'PrinterError';
     this.code = code;
     this.failureStage = options?.failureStage ?? 'BEFORE_WRITE';
+    this.localAddress = options?.localAddress;
+    this.localPort = options?.localPort;
   }
 }
 

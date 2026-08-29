@@ -2,10 +2,13 @@ appId: com.propos.print-agent
 productName: PRO POS Print Agent
 directories:
   output: release
+  buildResources: build
 files:
   - dist/desktop/**
   - package.json
+artifactBuildStarted: ./scripts/ensure-print-agent-macos-signature.cjs
 win:
+  icon: build/icon.ico
   target:
     - target: nsis
       arch: [x64]
@@ -22,6 +25,7 @@ nsis:
 portable:
   artifactName: ${productName}-${version}-${arch}-Portable.${ext}
 mac:
+  icon: build/icon.icns
   target:
     - target: dmg
       arch: [arm64, x64]
@@ -29,7 +33,8 @@ mac:
       arch: [arm64, x64]
   category: public.app-category.business
   darkModeSupport: true
-  identity: null
+  extendInfo:
+    NSLocalNetworkUsageDescription: PRO POS Print Agent cần truy cập mạng nội bộ để kết nối và gửi dữ liệu tới máy in hóa đơn trong cửa hàng.
 dmg:
   title: ${productName} ${version}
   artifactName: ${productName}-${version}-${arch}.${ext}

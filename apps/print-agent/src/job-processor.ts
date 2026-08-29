@@ -10,9 +10,13 @@ import {
 } from '@domain/receipt/receipt-generator';
 import { buildEscPosTextReceipt } from '@printing/escpos/escpos-text-builder';
 import { createReceiptDocument } from '@domain/receipt/receipt-document';
-import type { PrintJob } from '@contracts/print-job';
+import type { PrintJob, PrintJobClaimResponse } from '@contracts/print-job';
 import { parsePrinterDeviceConfig, type StorePrintSettings } from '@contracts/store';
+import { getReceiptPrintProfile } from '@contracts/store';
 import { PrinterError, type PrinterFailureStage } from '@printing/printer-errors';
+import type { PrintBootstrap, PrintStoreContext } from '@contracts/print-bootstrap';
+import { AgentPrintCache } from './core/print-cache';
+import type { PrintBootstrapCacheStatus } from './core/print-cache';
 
 type PrintDocumentApi = Pick<AgentApiClient, 'get'>;
 
@@ -102,59 +106,83 @@ export async function loadPrintDataForJob(
   }
 }
 
-interface PrintStoreContext {
-  storeName?: string | null;
-  storeAddress?: string | null;
-  storePhone?: string | null;
-  bankName?: string | null;
-  bankAccountNumber?: string | null;
-  bankAccountName?: string | null;
-  store?: {
-    name?: string | null;
-    address?: string | null;
-    phone?: string | null;
-    bankName?: string | null;
-    bankAccountNumber?: string | null;
-    bankAccountName?: string | null;
-  };
-}
-
 interface AgentPrintTransport {
   send(data: Uint8Array, options: { host: string; port?: number }): Promise<void>;
 }
 
+export interface PrintJobTimingContext {
+  eventReceivedAt?: number;
+  serverClockOffsetMs?: number;
+}
+
+export interface PrintJobTimingSummary {
+  message: 'print job timing';
+  jobId: string;
+  documentType: string;
+  success: boolean;
+  cacheStatus: PrintBootstrapCacheStatus | 'UNKNOWN';
+  apiRetryCount: number;
+  tcpRetryCount: number;
+  queueWaitMs: number;
+  eventToTcpStartMs: number | null;
+  serverCreatedToTcpStartMs: number | null;
+  stages: {
+    eventReceived: number;
+    claimDone: number | null;
+    dataReady: number | null;
+    renderDone: number | null;
+    tcpStart: number | null;
+    tcpDone: number | null;
+    completeAck: number | null;
+  };
+}
+
 export class JobProcessor {
   private readonly inFlight = new Set<string>();
-  private readonly rasterCache = new Map<string, Uint8Array>();
 
   constructor(
     private readonly config: PrintAgentConfig,
     private readonly apiClient: AgentApiClient,
     private readonly transport: AgentPrintTransport = new AgentTcpTransport(),
+    private readonly printCache: AgentPrintCache = new AgentPrintCache(apiClient),
+    private readonly monotonicNow: () => number = () => performance.now(),
+    private readonly wallNow: () => number = Date.now,
+    private readonly reportTiming: (summary: PrintJobTimingSummary) => void = (summary) =>
+      console.log(JSON.stringify({ level: summary.success ? 'info' : 'warn', ...summary })),
   ) {}
+
+  private apiRetryTotal(): number {
+    const client = this.apiClient as AgentApiClient & { getRetryTotal?: () => number };
+    return client.getRetryTotal?.() ?? 0;
+  }
 
   private async loadOptionalRaster(
     mediaId: string | null | undefined,
     maximumWidthDots: number,
     maximumHeightDots: number,
     label: string,
+    paperSize: string,
+    configVersion: number,
   ): Promise<Uint8Array | null> {
     if (!mediaId) return null;
-    const cacheKey = `media:${mediaId}:${maximumWidthDots}x${maximumHeightDots}`;
-    const cached = this.rasterCache.get(cacheKey);
-    if (cached) return cached;
     try {
-      const media = await this.apiClient.getBytes(`/api/v1/pos/print-media/${mediaId}`);
-      if (media.contentType && !media.contentType.includes('png')) {
-        throw new Error(`định dạng ${media.contentType} chưa được hỗ trợ; hãy tải PNG`);
-      }
-      const raster = pngBytesToEscPosRaster(media.bytes, maximumWidthDots, maximumHeightDots);
-      if (this.rasterCache.size >= 32) {
-        const oldestKey = this.rasterCache.keys().next().value as string | undefined;
-        if (oldestKey) this.rasterCache.delete(oldestKey);
-      }
-      this.rasterCache.set(cacheKey, raster);
-      return raster;
+      return await this.printCache.getRaster(
+        {
+          kind: label === 'logo' ? 'logo' : 'bottom',
+          mediaId,
+          paperSize,
+          configVersion,
+          width: maximumWidthDots,
+          height: maximumHeightDots,
+        },
+        async () => {
+          const media = await this.apiClient.getBytes(`/api/v1/pos/print-media/${mediaId}`);
+          if (media.contentType && !media.contentType.includes('png')) {
+            throw new Error(`định dạng ${media.contentType} chưa được hỗ trợ; hãy tải PNG`);
+          }
+          return pngBytesToEscPosRaster(media.bytes, maximumWidthDots, maximumHeightDots);
+        },
+      );
     } catch (error) {
       console.warn(`[PrintAgent] Bỏ qua ${label} optional ${mediaId}: ${errorMessage(error)}`);
       return null;
@@ -164,33 +192,88 @@ export class JobProcessor {
   private async loadOptionalVietQrRaster(
     url: string | null,
     maximumWidthDots: number,
+    paperSize: string,
+    configVersion: number,
   ): Promise<Uint8Array | null> {
     if (!url) return null;
-    const cacheKey = `vietqr:${url}`;
-    const cached = this.rasterCache.get(cacheKey);
-    if (cached) return cached;
     try {
-      const raster = pngBytesToEscPosRaster(
-        await this.apiClient.getPublicPng(url),
-        maximumWidthDots,
-        500,
+      return await this.printCache.getRaster(
+        {
+          kind: 'vietqr',
+          mediaId: url,
+          paperSize,
+          configVersion,
+          width: maximumWidthDots,
+          height: 500,
+        },
+        async () =>
+          pngBytesToEscPosRaster(await this.apiClient.getPublicPng(url), maximumWidthDots, 500),
       );
-      if (this.rasterCache.size >= 32) {
-        const oldestKey = this.rasterCache.keys().next().value as string | undefined;
-        if (oldestKey) this.rasterCache.delete(oldestKey);
-      }
-      this.rasterCache.set(cacheKey, raster);
-      return raster;
     } catch (error) {
       console.warn(`[PrintAgent] Bỏ qua VietQR optional: ${errorMessage(error)}`);
       return null;
     }
   }
 
-  async processJob(job: PrintJob): Promise<boolean> {
+  private async preloadConfiguredMedia(bootstrap: PrintBootstrap): Promise<{
+    paperSize: 'K80' | 'K58';
+    logoRasterBytes: Uint8Array | null;
+    bottomRasterBytes: Uint8Array | null;
+  }> {
+    const printSettings = bootstrap.printSettings;
+    const printerConfig = parsePrinterDeviceConfig(printSettings.printersJson);
+    const paperSize =
+      printSettings.paperSize || printerConfig.paperSize || this.config.paperSize || 'K80';
+    const profile = getReceiptPrintProfile(paperSize, printerConfig.printableDots);
+    const isK58 = paperSize === 'K58';
+    const horizontalLogo = Boolean(printSettings.logoHorizontalLayout && printSettings.logoMediaId);
+    const [logoRasterBytes, bottomRasterBytes] = await Promise.all([
+      printSettings.logoMediaId
+        ? this.loadOptionalRaster(
+            printSettings.logoMediaId,
+            Math.round(
+              profile.defaultPrintableDots * (horizontalLogo ? (isK58 ? 0.24 : 0.22) : 0.6),
+            ),
+            horizontalLogo ? (isK58 ? 72 : 96) : 180,
+            'logo',
+            paperSize,
+            bootstrap.configVersion,
+          )
+        : null,
+      printSettings.bottomImageType === 'UPLOAD' && printSettings.bottomImageMediaId
+        ? this.loadOptionalRaster(
+            printSettings.bottomImageMediaId,
+            profile.defaultPrintableDots,
+            500,
+            'bottom image',
+            paperSize,
+            bootstrap.configVersion,
+          )
+        : null,
+    ]);
+    return { paperSize, logoRasterBytes, bottomRasterBytes };
+  }
+
+  async processJob(job: PrintJob, timingContext: PrintJobTimingContext = {}): Promise<boolean> {
     if (this.inFlight.has(job.id)) return false;
     this.inFlight.add(job.id);
     let claimed = false;
+    let claimToken: string | null = null;
+    let success = false;
+    let cacheStatus: PrintBootstrapCacheStatus | 'UNKNOWN' = 'UNKNOWN';
+    let tcpRetryCount = 0;
+    let tcpStartWallMs: number | null = null;
+    const processStartedAt = this.monotonicNow();
+    const apiRetryStartedAt = this.apiRetryTotal();
+    const stages: PrintJobTimingSummary['stages'] = {
+      eventReceived: timingContext.eventReceivedAt ?? processStartedAt,
+      claimDone: null,
+      dataReady: null,
+      renderDone: null,
+      tcpStart: null,
+      tcpDone: null,
+      completeAck: null,
+    };
 
     try {
       console.log(
@@ -198,10 +281,15 @@ export class JobProcessor {
       );
 
       try {
-        await this.apiClient.post(`/api/v1/pos/print-jobs/${job.id}/claim`, {
-          claimedByDeviceId: this.config.agentId || 'print-agent',
-        });
+        const claim = await this.apiClient.post<PrintJobClaimResponse>(
+          `/api/v1/pos/print-jobs/${job.id}/claim`,
+          {
+            claimedByDeviceId: this.config.agentId || 'print-agent',
+          },
+        );
+        claimToken = claim.claimToken ?? null;
         claimed = true;
+        stages.claimDone = this.monotonicNow();
       } catch (error) {
         console.warn(
           `[PrintAgent] Không thể claim job ${job.id} (có thể đã được claim bởi agent khác):`,
@@ -210,39 +298,28 @@ export class JobProcessor {
         return false;
       }
 
-      try {
-        await this.apiClient.post(`/api/v1/pos/print-jobs/${job.id}/start`, {});
-      } catch (error) {
+      const bootstrapPromise = this.printCache.resolveWithMetadata().catch((error) => {
         throw new PrintJobProcessingError(
-          'PRINT_JOB_START_FAILED',
-          `Không thể bắt đầu print job: ${errorMessage(error)}`,
+          'PRINT_BOOTSTRAP_FETCH_FAILED',
+          `Không thể nạp bootstrap in: ${errorMessage(error)}`,
           { cause: error },
         );
-      }
-
-      let context: PrintStoreContext | null;
-      try {
-        context = await this.apiClient.get<PrintStoreContext>('/api/v1/pos/context');
-      } catch (error) {
-        throw new PrintJobProcessingError(
-          'STORE_CONTEXT_FETCH_FAILED',
-          `Không thể nạp thông tin cửa hàng: ${errorMessage(error)}`,
-          { cause: error },
-        );
-      }
-
-      let printSettings: StorePrintSettings;
-      try {
-        printSettings = await this.apiClient.get<StorePrintSettings>('/api/v1/pos/print-settings');
-      } catch (error) {
-        throw new PrintJobProcessingError(
-          'PRINT_SETTINGS_FETCH_FAILED',
-          `Không thể nạp cấu hình in Owner: ${errorMessage(error)}`,
-          { cause: error },
-        );
-      }
-
-      const printData = await loadPrintDataForJob(this.apiClient, job);
+      });
+      const printDataPromise = loadPrintDataForJob(this.apiClient, job);
+      const mediaPromise = bootstrapPromise.then((resolution) =>
+        this.preloadConfiguredMedia(resolution.bootstrap),
+      );
+      const [bootstrapResolution, printData, preloadedMedia] = await Promise.all([
+        bootstrapPromise,
+        printDataPromise,
+        mediaPromise,
+      ]);
+      stages.dataReady = this.monotonicNow();
+      const bootstrap = bootstrapResolution.bootstrap;
+      cacheStatus = bootstrapResolution.cacheStatus;
+      const context: PrintStoreContext | null = bootstrap.context;
+      const printSettings: StorePrintSettings = bootstrap.printSettings;
+      const configVersion = bootstrap.configVersion;
       const safeContext = context ?? {};
       if (!context) {
         console.warn(
@@ -296,25 +373,36 @@ export class JobProcessor {
       );
       const [logoRasterBytes, bottomRasterBytes] = await Promise.all([
         receiptDocument.media.logoUrl
-          ? this.loadOptionalRaster(
+          ? (preloadedMedia.logoRasterBytes ??
+            this.loadOptionalRaster(
               printSettings.logoMediaId,
               Math.round(
                 maximumDots * (horizontalLogo ? (receiptDocument.isK58 ? 0.24 : 0.22) : 0.6),
               ),
               horizontalLogo ? (receiptDocument.isK58 ? 72 : 96) : 180,
               'logo',
-            )
+              paperSize,
+              configVersion,
+            ))
           : null,
         printSettings.bottomImageType === 'UPLOAD' && receiptDocument.media.bottomImageUrl
-          ? this.loadOptionalRaster(
+          ? (preloadedMedia.bottomRasterBytes ??
+            this.loadOptionalRaster(
               printSettings.bottomImageMediaId,
               maximumDots,
               500,
               'bottom image',
-            )
+              paperSize,
+              configVersion,
+            ))
           : receiptDocument.media.vietQrPayload
             ? null
-            : this.loadOptionalVietQrRaster(receiptDocument.media.bottomImageUrl, maximumDots),
+            : this.loadOptionalVietQrRaster(
+                receiptDocument.media.bottomImageUrl,
+                maximumDots,
+                paperSize,
+                configVersion,
+              ),
       ]);
 
       let escposBytes: Uint8Array;
@@ -353,6 +441,7 @@ export class JobProcessor {
           escposBytes.set(bytes, offset);
           offset += bytes.length;
         }
+        stages.renderDone = this.monotonicNow();
       } catch (error) {
         throw new PrintJobProcessingError(
           'RECEIPT_RENDER_FAILED',
@@ -367,27 +456,71 @@ export class JobProcessor {
         `[PrintAgent] Đang gửi ${copyCount} liên tới máy in LAN ${printerIp}:${printerPort}...`,
       );
       try {
-        await this.transport.send(escposBytes, { host: printerIp, port: printerPort });
+        await this.apiClient.post(
+          `/api/v1/pos/print-jobs/${job.id}/start`,
+          claimToken ? { claimToken } : {},
+        );
       } catch (error) {
-        const message = errorMessage(error);
-        const printerError = error instanceof PrinterError ? error : null;
-        const failureStage = printerError?.failureStage ?? 'BEFORE_WRITE';
-        const code =
-          printerError?.code ??
-          (/connect|kết nối|ECONN|timeout/i.test(message)
-            ? 'NETWORK_PRINTER_UNREACHABLE'
-            : 'SOCKET_WRITE_ERROR');
-        throw new PrintJobProcessingError(code, message, {
-          cause: error,
-          failureStage,
-          retryable: failureStage === 'BEFORE_WRITE',
-        });
+        throw new PrintJobProcessingError(
+          'PRINT_JOB_START_FAILED',
+          `Không thể bắt đầu print job: ${errorMessage(error)}`,
+          { cause: error },
+        );
       }
+      stages.tcpStart = this.monotonicNow();
+      tcpStartWallMs = this.wallNow();
+      for (let tcpAttempt = 1; tcpAttempt <= 2; tcpAttempt += 1) {
+        try {
+          await this.transport.send(escposBytes, { host: printerIp, port: printerPort });
+          break;
+        } catch (error) {
+          const message = errorMessage(error);
+          const printerError = error instanceof PrinterError ? error : null;
+          const failureStage = printerError?.failureStage ?? 'BEFORE_WRITE';
+          if (failureStage === 'BEFORE_WRITE' && tcpAttempt === 1) {
+            tcpRetryCount += 1;
+            console.warn(
+              JSON.stringify({
+                level: 'warn',
+                message: 'retrying TCP print before first byte',
+                jobId: job.id,
+                printerIp,
+                printerPort,
+              }),
+            );
+            continue;
+          }
+          const code =
+            printerError?.code ??
+            (/connect|kết nối|ECONN|timeout/i.test(message)
+              ? 'NETWORK_PRINTER_UNREACHABLE'
+              : 'SOCKET_WRITE_ERROR');
+          throw new PrintJobProcessingError(code, message, {
+            cause: error,
+            failureStage,
+            retryable: failureStage === 'BEFORE_WRITE',
+          });
+        }
+      }
+      stages.tcpDone = this.monotonicNow();
 
-      await this.apiClient.post(`/api/v1/pos/print-jobs/${job.id}/complete`, {});
+      try {
+        await this.apiClient.post(
+          `/api/v1/pos/print-jobs/${job.id}/complete`,
+          claimToken ? { claimToken } : {},
+        );
+      } catch (error) {
+        throw new PrintJobProcessingError(
+          'PRINT_JOB_COMPLETE_FAILED',
+          `Máy in đã nhận dữ liệu nhưng Agent không xác nhận được trạng thái complete: ${errorMessage(error)}`,
+          { cause: error, failureStage: 'DURING_WRITE', retryable: false },
+        );
+      }
+      stages.completeAck = this.monotonicNow();
       console.log(
         `\x1b[32m✔ [PrintAgent] In thành công job ${job.id} (${printData.orderCode || job.documentId})\x1b[0m`,
       );
+      success = true;
       return true;
     } catch (error) {
       const processingError =
@@ -404,6 +537,7 @@ export class JobProcessor {
           await this.apiClient.post(`/api/v1/pos/print-jobs/${job.id}/${endpoint}`, {
             failureCode: processingError.code,
             failureMessage: processingError.message,
+            ...(claimToken ? { claimToken } : {}),
           });
         } catch (failError) {
           console.error('[PrintAgent] Không thể cập nhật trạng thái print job:', failError);
@@ -412,6 +546,26 @@ export class JobProcessor {
       return false;
     } finally {
       this.inFlight.delete(job.id);
+      this.reportTiming({
+        message: 'print job timing',
+        jobId: job.id,
+        documentType: job.documentType,
+        success,
+        cacheStatus,
+        apiRetryCount: Math.max(0, this.apiRetryTotal() - apiRetryStartedAt),
+        tcpRetryCount,
+        queueWaitMs: Math.max(0, processStartedAt - stages.eventReceived),
+        eventToTcpStartMs:
+          stages.tcpStart === null ? null : Math.max(0, stages.tcpStart - stages.eventReceived),
+        serverCreatedToTcpStartMs:
+          tcpStartWallMs === null
+            ? null
+            : Math.max(
+                0,
+                tcpStartWallMs + (timingContext.serverClockOffsetMs ?? 0) - job.createdAt,
+              ),
+        stages,
+      });
     }
   }
 }

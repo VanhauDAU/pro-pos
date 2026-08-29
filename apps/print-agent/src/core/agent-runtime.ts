@@ -17,6 +17,8 @@ import type {
   PrinterStatus,
   PrinterTestResult,
 } from './agent-state';
+import { mapPrinterErrorDiagnostics } from './printer-diagnostics';
+import { AgentPrintCache } from './print-cache';
 
 export type { AgentRuntimeEvent, AgentRuntimeState, PrinterTestResult } from './agent-state';
 
@@ -44,6 +46,7 @@ export interface AgentRuntimeDependencies {
     config: PrintAgentConfig,
     apiClient: AgentApiClient,
     events: AgentRealtimeEvents,
+    printCache: AgentPrintCache,
   ) => RealtimeConnection;
   createPairingHandler?: (
     configManager: RuntimeConfigStore,
@@ -68,6 +71,7 @@ export class AgentRuntime extends EventEmitter {
   >;
   private readonly createTransport: NonNullable<AgentRuntimeDependencies['createTransport']>;
   private config: PrintAgentConfig | null;
+  private printCache: AgentPrintCache | null = null;
   private realtime: RealtimeConnection | null = null;
   private pairingAbortController: AbortController | null = null;
   private readonly state: AgentRuntimeState = {
@@ -75,6 +79,7 @@ export class AgentRuntime extends EventEmitter {
     printer: 'UNKNOWN',
     pairing: { code: null, expiresAt: null },
     lastError: null,
+    printerDiagnostics: null,
     updatedAt: Date.now(),
   };
 
@@ -100,6 +105,9 @@ export class AgentRuntime extends EventEmitter {
     return {
       ...this.state,
       pairing: { ...this.state.pairing },
+      printerDiagnostics: this.state.printerDiagnostics
+        ? { ...this.state.printerDiagnostics }
+        : null,
     };
   }
 
@@ -122,6 +130,7 @@ export class AgentRuntime extends EventEmitter {
     this.pairingAbortController = null;
     this.realtime?.destroy();
     this.realtime = null;
+    this.printCache?.clear();
     this.updatePairing({ code: null, expiresAt: null });
     this.setStatus('STOPPED');
   }
@@ -180,10 +189,20 @@ export class AgentRuntime extends EventEmitter {
   async testPrinter(): Promise<PrinterTestResult> {
     const config = this.config;
     const host = config?.printerIp?.trim() || '';
-    const port = config?.printerPort || 9100;
-    if (!host) {
-      this.setPrinterStatus('INVALID_CONFIG', 'Địa chỉ IP máy in không hợp lệ.');
-      return { ok: false, host, port, error: 'Địa chỉ IP máy in không hợp lệ.' };
+    const port = config?.printerPort ?? 9100;
+    if (!host || !Number.isInteger(port) || port < 1 || port > 65_535) {
+      const error = !host
+        ? 'Địa chỉ IP máy in không hợp lệ.'
+        : 'Cổng máy in phải nằm trong khoảng 1–65535.';
+      const diagnostics = {
+        errorCode: 'INVALID_PRINTER_CONFIG',
+        printerCode: 'INVALID_PRINTER_CONFIG',
+        host,
+        port,
+        failureStage: 'BEFORE_WRITE' as const,
+      };
+      this.setPrinterStatus('INVALID_CONFIG', error, diagnostics);
+      return { ok: false, host, port, error, diagnostics };
     }
     const receipt = buildEscPosTextReceipt(
       {
@@ -219,8 +238,9 @@ export class AgentRuntime extends EventEmitter {
       return { ok: true, host, port };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.setPrinterStatus('UNREACHABLE', message);
-      return { ok: false, host, port, error: message };
+      const diagnostics = mapPrinterErrorDiagnostics(error, host, port);
+      this.setPrinterStatus('UNREACHABLE', message, diagnostics);
+      return { ok: false, host, port, error: message, diagnostics };
     }
   }
 
@@ -233,6 +253,7 @@ export class AgentRuntime extends EventEmitter {
     this.realtime?.destroy();
     this.setStatus('CONNECTING');
     const events: AgentRealtimeEvents = {
+      onPhase: (phase) => this.setStatus(phase),
       onConnected: () => this.setStatus('ONLINE'),
       onDisconnected: (error) => this.setStatus('OFFLINE', error),
       onDegraded: (error) => this.setStatus('DEGRADED', error),
@@ -241,7 +262,9 @@ export class AgentRuntime extends EventEmitter {
       onJobCompleted: (jobId, sentAt) => this.emit('jobCompleted', { jobId, sentAt }),
       onJobFailed: (jobId, code, retryable) => this.emit('jobFailed', { jobId, code, retryable }),
     };
-    this.realtime = this.createRealtimeClient(config, this.createApiClient(config), events);
+    const apiClient = this.createApiClient(config);
+    this.printCache ??= new AgentPrintCache(apiClient);
+    this.realtime = this.createRealtimeClient(config, apiClient, events, this.printCache);
     this.realtime.connect();
   }
 
@@ -252,9 +275,14 @@ export class AgentRuntime extends EventEmitter {
     this.emit('stateChanged', this.getState());
   }
 
-  private setPrinterStatus(status: PrinterStatus, lastError: string | null = null): void {
+  private setPrinterStatus(
+    status: PrinterStatus,
+    lastError: string | null = null,
+    printerDiagnostics: AgentRuntimeState['printerDiagnostics'] = null,
+  ): void {
     this.state.printer = status;
     this.state.lastError = lastError;
+    this.state.printerDiagnostics = printerDiagnostics;
     this.state.updatedAt = Date.now();
     this.emit('printerStateChanged', { status, error: lastError });
     this.emit('stateChanged', this.getState());

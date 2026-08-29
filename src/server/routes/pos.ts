@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 
 import { REALTIME_SUBPROTOCOL } from '@contracts/realtime';
 import { updatePrinterDeviceSettingsSchema } from '@contracts/store';
+import type { PrintBootstrap } from '@contracts/print-bootstrap';
 import {
   addOrderItemSchema,
   cancelOrderSchema,
@@ -59,9 +60,14 @@ import { pushNotificationRoutes } from '@server/routes/push-notifications';
 import type { AppEnv } from '@server/types';
 import { addRequestTiming, measureRequestTiming } from '@server/lib/performance';
 import { MediaService } from '@server/services/media-service';
+import { PrintAgentService } from '@server/services/print-agent-service';
 
 const posRoutes = new Hono<AppEnv>();
 posRoutes.use('*', requireActorOrPrintAgent());
+
+function storeService(c: Parameters<typeof success>[0]): StoreService {
+  return new StoreService(c.env, (promise) => c.executionCtx.waitUntil(promise));
+}
 
 function producesRealtimeEvent(path: string) {
   return (
@@ -188,6 +194,12 @@ posRoutes.get(
     );
     const deviceId = c.get('device')?.id;
     if (deviceId) headers.set('X-Propos-Realtime-Device', deviceId);
+    const agentId = c.req.header('X-Agent-Id');
+    if (agentId) {
+      c.executionCtx.waitUntil(
+        new PrintAgentService(c.env).heartbeat(agentId).catch(() => undefined),
+      );
+    }
 
     const room = c.env.STORE_REALTIME.getByName(storeId);
     return room.fetch(new Request(c.req.url, { method: 'GET', headers }));
@@ -197,7 +209,26 @@ posRoutes.get(
 posRoutes.get(
   '/print-settings',
   requirePermission(...orderWorkspacePermissionKeys, 'order.proforma_print', 'invoice.print'),
-  async (c) => success(c, await new StoreService(c.env).getPrintSettings(c.get('actor').storeId!)),
+  async (c) => success(c, await storeService(c).getPrintSettings(c.get('actor').storeId!)),
+);
+
+posRoutes.get(
+  '/print-bootstrap',
+  requirePermission(...orderWorkspacePermissionKeys, 'order.proforma_print', 'invoice.print'),
+  async (c) => {
+    const storeId = c.get('actor').storeId!;
+    const printStoreService = storeService(c);
+    const [context, printSettings, configVersion] = await Promise.all([
+      new PosService(c.env).getPrintContext(storeId),
+      printStoreService.getPrintSettings(storeId),
+      printStoreService.getPrintConfigVersion(storeId),
+    ]);
+    return success(c, {
+      context,
+      printSettings,
+      configVersion,
+    } satisfies PrintBootstrap);
+  },
 );
 
 /** Authenticated media read dedicated to Print Agent receipt assets. */
@@ -541,7 +572,7 @@ posRoutes.put(
     const printer = await parseJson(c.req.raw, updatePrinterDeviceSettingsSchema);
     const actor = c.get('actor');
     const storeId = actor.storeId!;
-    const service = new StoreService(c.env);
+    const service = storeService(c);
     const current = await service.getPrintSettings(storeId);
 
     await service.updatePrintSettings({

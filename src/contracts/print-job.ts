@@ -27,7 +27,12 @@ export interface PrintJob {
   attemptCount: number;
   failureCode: string | null;
   failureMessage: string | null;
+  claimLeaseExpiresAt: number | null;
+  claimGeneration: number;
+  claimProtocolVersion: number;
 }
+
+export type PrintJobClaimResponse = PrintJob & { claimToken: string | null };
 
 export const createPrintJobSchema = z.object({
   documentType: z.enum(['invoice', 'provisional', 'debt_payment'], {
@@ -47,9 +52,16 @@ export const claimPrintJobSchema = z.object({
 
 export type ClaimPrintJobInput = z.infer<typeof claimPrintJobSchema>;
 
+export const transitionPrintJobSchema = z.object({
+  claimToken: z.string().uuid().optional(),
+});
+
+export type TransitionPrintJobInput = z.infer<typeof transitionPrintJobSchema>;
+
 export const failPrintJobSchema = z.object({
   failureCode: z.string().min(1, 'Mã lỗi không được để trống'),
   failureMessage: z.string().optional(),
+  claimToken: z.string().uuid().optional(),
 });
 
 export type FailPrintJobInput = z.infer<typeof failPrintJobSchema>;
@@ -62,3 +74,15 @@ export const printJobQuerySchema = z.object({
 });
 
 export type PrintJobQuery = z.infer<typeof printJobQuerySchema>;
+
+export const pendingPrintJobQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  cursor: z.string().max(200).optional(),
+});
+
+export type PendingPrintJobQuery = z.infer<typeof pendingPrintJobQuerySchema>;
+
+export interface PendingPrintJobPage {
+  jobs: PrintJob[];
+  nextCursor: string | null;
+}

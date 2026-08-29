@@ -68,6 +68,10 @@ export function reconcileReceiptTimeSegmentAmounts(
 export interface PosReceiptLineItem {
   id: string;
   name: string;
+  /** Selected price/variant name captured when the item was added. */
+  priceName?: string | null | undefined;
+  /** Number of active price variants for the product. One (or fewer) stays implicit. */
+  priceVariantCount?: number | undefined;
   quantity: number;
   unitPrice: number;
   totalPrice: number;
@@ -92,6 +96,17 @@ export interface PosReceiptLineItem {
         hourlyPrice?: number | undefined;
       }>
     | undefined;
+}
+
+export function formatReceiptLineName(
+  line: Pick<PosReceiptLineItem, 'name' | 'priceName' | 'priceVariantCount'>,
+  showItemPriceName: boolean,
+): string {
+  const priceName = line.priceName?.trim();
+  if (!showItemPriceName || !priceName || (line.priceVariantCount ?? 0) <= 1) {
+    return line.name;
+  }
+  return `${line.name} (${priceName})`;
 }
 
 export interface PosReceiptPromotion {
@@ -446,7 +461,7 @@ export function buildEscPosReceipt(
       const itemPrefix = template.showItemIndex ? `${itemIdx}. ` : '';
       itemIdx++;
 
-      const lineName = `${itemPrefix}${line.name}${template.showItemPriceName ? ' (Giá chuẩn)' : ''}`;
+      const lineName = `${itemPrefix}${formatReceiptLineName(line, template.showItemPriceName)}`;
       const qtyStr = String(line.quantity);
       const totalStr = formatVnd(line.totalPrice);
       const priceStr = formatVnd(line.unitPrice);
@@ -759,6 +774,8 @@ export function buildPrintDataFromQuote(
     lines.push({
       id: item.id,
       name: item.productNameSnapshot || item.productName || item.description || '',
+      priceName: item.variantNameSnapshot ?? item.variantName ?? null,
+      priceVariantCount: item.priceVariantCount ?? item.variantCount ?? 0,
       quantity:
         typeof item.quantityMilli === 'number'
           ? item.quantityMilli / 1000
@@ -947,6 +964,20 @@ export function buildPrintDataFromInvoice(rawInvoiceData: any): PosReceiptPrintD
     lines.push({
       id: line.id,
       name: line.description || line.productName || snapshot.productName || '',
+      priceName:
+        line.variantName ??
+        snapshot.variantNameSnapshot ??
+        snapshot.variantName ??
+        orderItemSnapshot?.variantNameSnapshot ??
+        orderItemSnapshot?.variantName ??
+        null,
+      priceVariantCount:
+        snapshot.priceVariantCount ??
+        snapshot.variantCount ??
+        orderItemSnapshot?.priceVariantCount ??
+        orderItemSnapshot?.variantCount ??
+        line.priceVariantCount ??
+        0,
       quantity:
         typeof line.quantityMilli === 'number'
           ? line.quantityMilli / 1000

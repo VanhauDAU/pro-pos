@@ -1,7 +1,14 @@
-import type { CreatePrintJobInput, PrintJob, PrintJobQuery } from '@contracts/print-job';
+import type {
+  CreatePrintJobInput,
+  PendingPrintJobPage,
+  PrintJob,
+  PrintJobQuery,
+} from '@contracts/print-job';
+import type { PrintJobClaimResponse } from '@contracts/print-job';
 import { AppError } from '@server/lib/app-error';
 import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
 import { PrintJobRepository } from '@server/repositories/print-job-repository';
+import { PushNotificationService } from '@server/services/push-notification-service';
 
 export interface PrintJobAuditContext {
   actorUserId?: string | null;
@@ -11,14 +18,46 @@ export interface PrintJobAuditContext {
 }
 
 const ALLOWED_PRINTER_ROLES = new Set(['receipt', 'temporary_bill', 'kitchen', 'bar']);
+const CLAIM_LEASE_MS = 30_000;
+const PRINTING_WATCHDOG_MS = 2 * 60_000;
+
+function formatPrintDocumentName(documentType: string, printerRole?: string | null): string {
+  switch (documentType?.toLowerCase()) {
+    case 'provisional':
+      return 'phiếu tạm tính';
+    case 'invoice':
+      return 'hóa đơn';
+    case 'debt_payment':
+      return 'phiếu thu nợ';
+    case 'kitchen':
+      return 'phiếu in bếp';
+    case 'bar':
+      return 'phiếu in pha chế';
+    default:
+      if (printerRole === 'kitchen') return 'phiếu in bếp';
+      if (printerRole === 'bar') return 'phiếu in pha chế';
+      return 'tài liệu';
+  }
+}
 
 export class PrintJobService {
   private readonly repository: PrintJobRepository;
   private readonly dispatcher: RealtimeDispatcher;
 
-  constructor(private readonly env: CloudflareBindings) {
+  constructor(
+    private readonly env: CloudflareBindings,
+    private readonly defer?: (promise: Promise<unknown>) => void,
+  ) {
     this.repository = new PrintJobRepository(env.DB);
     this.dispatcher = new RealtimeDispatcher(env);
+  }
+
+  private dispatchStore(storeId: string): void {
+    this.defer?.(this.dispatcher.dispatchStore(storeId).catch(() => undefined));
+  }
+
+  private deferNotification(task: () => Promise<unknown>): void {
+    if (this.defer) this.defer(task().catch(() => undefined));
   }
 
   private async verifyDocumentBelongsToStore(
@@ -101,7 +140,45 @@ export class PrintJobService {
       );
     }
 
+    const existing = await this.repository.getJobByIdempotencyKey(
+      input.storeId,
+      input.idempotencyKey,
+    );
+    if (existing) return existing;
+
     await this.verifyDocumentBelongsToStore(input.storeId, input.documentType, input.documentId);
+
+    const printPolicy = await this.env.DB.prepare(
+      `SELECT max_receipt_reprint_count AS maxReceiptReprintCount,
+              allow_provisional_print AS allowProvisionalPrint
+       FROM store_print_settings WHERE store_id = ? LIMIT 1`,
+    )
+      .bind(input.storeId)
+      .first<{ maxReceiptReprintCount: number; allowProvisionalPrint: number | boolean }>();
+
+    if (input.documentType === 'provisional' && printPolicy && !printPolicy.allowProvisionalPrint) {
+      throw new AppError(
+        'PROVISIONAL_PRINT_DISABLED',
+        'Chủ cửa hàng đã tắt chức năng in hóa đơn tạm tính.',
+        403,
+      );
+    }
+
+    const maxReceiptPrints = Number(printPolicy?.maxReceiptReprintCount ?? 0);
+    if (input.documentType === 'invoice' && maxReceiptPrints > 0) {
+      const currentPrints = await this.repository.countEffectiveDocumentPrints(
+        input.storeId,
+        input.documentType,
+        input.documentId,
+      );
+      if (currentPrints >= maxReceiptPrints) {
+        throw new AppError(
+          'RECEIPT_PRINT_LIMIT_REACHED',
+          `Hóa đơn đã đạt giới hạn ${maxReceiptPrints} lần in do chủ cửa hàng thiết lập.`,
+          409,
+        );
+      }
+    }
 
     const now = Date.now();
     const jobId = crypto.randomUUID();
@@ -133,7 +210,7 @@ export class PrintJobService {
         requestId: input.auditContext?.requestId ?? null,
         now,
       });
-      void this.dispatcher.dispatchStore(input.storeId).catch(() => undefined);
+      this.dispatchStore(input.storeId);
     }
 
     return job;
@@ -144,10 +221,18 @@ export class PrintJobService {
     jobId: string,
     claimedByDeviceId: string,
     auditContext?: PrintJobAuditContext,
-  ): Promise<PrintJob> {
+    protocolVersion = 1,
+  ): Promise<PrintJobClaimResponse> {
     const now = Date.now();
-    const job = await this.repository.atomicClaim(storeId, jobId, claimedByDeviceId, now);
-    if (!job) {
+    const transition = await this.repository.atomicClaim(
+      storeId,
+      jobId,
+      claimedByDeviceId,
+      now,
+      CLAIM_LEASE_MS,
+      protocolVersion,
+    );
+    if (!transition) {
       const existing = await this.repository.getJob(storeId, jobId);
       if (!existing) {
         throw new AppError('PRINT_JOB_NOT_FOUND', 'Yêu cầu in không tồn tại.', 404);
@@ -158,33 +243,43 @@ export class PrintJobService {
         409,
       );
     }
+    const job = transition.job;
 
-    const eventId = crypto.randomUUID();
-    await this.repository.recordRealtimeEvent({
-      eventId,
-      storeId,
-      eventType: 'pos.print_job.updated',
-      job,
-      reason: 'PRINT_JOB_CLAIMED',
-      actorKind: auditContext?.actorKind ?? null,
-      actorUserId: auditContext?.actorUserId ?? null,
-      deviceId: claimedByDeviceId,
-      requestId: auditContext?.requestId ?? null,
-      now,
-    });
-    void this.dispatcher.dispatchStore(storeId).catch(() => undefined);
+    if (transition.changed) {
+      const eventId = crypto.randomUUID();
+      await this.repository.recordRealtimeEvent({
+        eventId,
+        storeId,
+        eventType: 'pos.print_job.updated',
+        job,
+        reason: 'PRINT_JOB_CLAIMED',
+        actorKind: auditContext?.actorKind ?? null,
+        actorUserId: auditContext?.actorUserId ?? null,
+        deviceId: claimedByDeviceId,
+        requestId: auditContext?.requestId ?? null,
+        now,
+      });
+      this.dispatchStore(storeId);
+    }
 
-    return job;
+    return { ...job, claimToken: transition.claimToken ?? null };
   }
 
   async startPrintJob(
     storeId: string,
     jobId: string,
     auditContext?: PrintJobAuditContext,
+    claimToken: string | null = null,
   ): Promise<PrintJob> {
     const now = Date.now();
-    const job = await this.repository.startJob(storeId, jobId, now);
-    if (!job) {
+    const transition = await this.repository.startJob(
+      storeId,
+      jobId,
+      auditContext?.deviceId ?? null,
+      claimToken,
+      now,
+    );
+    if (!transition) {
       const existing = await this.repository.getJob(storeId, jobId);
       if (!existing) {
         throw new AppError('PRINT_JOB_NOT_FOUND', 'Yêu cầu in không tồn tại.', 404);
@@ -195,21 +290,24 @@ export class PrintJobService {
         409,
       );
     }
+    const job = transition.job;
 
-    const eventId = crypto.randomUUID();
-    await this.repository.recordRealtimeEvent({
-      eventId,
-      storeId,
-      eventType: 'pos.print_job.updated',
-      job,
-      reason: 'PRINT_JOB_STARTED',
-      actorKind: auditContext?.actorKind ?? null,
-      actorUserId: auditContext?.actorUserId ?? null,
-      deviceId: auditContext?.deviceId ?? null,
-      requestId: auditContext?.requestId ?? null,
-      now,
-    });
-    void this.dispatcher.dispatchStore(storeId).catch(() => undefined);
+    if (transition.changed) {
+      const eventId = crypto.randomUUID();
+      await this.repository.recordRealtimeEvent({
+        eventId,
+        storeId,
+        eventType: 'pos.print_job.updated',
+        job,
+        reason: 'PRINT_JOB_STARTED',
+        actorKind: auditContext?.actorKind ?? null,
+        actorUserId: auditContext?.actorUserId ?? null,
+        deviceId: auditContext?.deviceId ?? null,
+        requestId: auditContext?.requestId ?? null,
+        now,
+      });
+      this.dispatchStore(storeId);
+    }
 
     return job;
   }
@@ -218,10 +316,17 @@ export class PrintJobService {
     storeId: string,
     jobId: string,
     auditContext?: PrintJobAuditContext,
+    claimToken: string | null = null,
   ): Promise<PrintJob> {
     const now = Date.now();
-    const job = await this.repository.completeJob(storeId, jobId, now);
-    if (!job) {
+    const transition = await this.repository.completeJob(
+      storeId,
+      jobId,
+      auditContext?.deviceId ?? null,
+      claimToken,
+      now,
+    );
+    if (!transition) {
       const existing = await this.repository.getJob(storeId, jobId);
       if (!existing) {
         throw new AppError('PRINT_JOB_NOT_FOUND', 'Yêu cầu in không tồn tại.', 404);
@@ -232,21 +337,40 @@ export class PrintJobService {
         409,
       );
     }
+    const job = transition.job;
 
-    const eventId = crypto.randomUUID();
-    await this.repository.recordRealtimeEvent({
-      eventId,
-      storeId,
-      eventType: 'pos.print_job.updated',
-      job,
-      reason: 'PRINT_JOB_COMPLETED',
-      actorKind: auditContext?.actorKind ?? null,
-      actorUserId: auditContext?.actorUserId ?? null,
-      deviceId: auditContext?.deviceId ?? null,
-      requestId: auditContext?.requestId ?? null,
-      now,
-    });
-    void this.dispatcher.dispatchStore(storeId).catch(() => undefined);
+    if (transition.changed) {
+      const eventId = crypto.randomUUID();
+      await this.repository.recordRealtimeEvent({
+        eventId,
+        storeId,
+        eventType: 'pos.print_job.updated',
+        job,
+        reason: 'PRINT_JOB_COMPLETED',
+        actorKind: auditContext?.actorKind ?? null,
+        actorUserId: auditContext?.actorUserId ?? null,
+        deviceId: auditContext?.deviceId ?? null,
+        requestId: auditContext?.requestId ?? null,
+        now,
+      });
+      this.dispatchStore(storeId);
+    }
+
+    if (transition.changed) {
+      const docName = formatPrintDocumentName(job.documentType, job.printerRole);
+      this.deferNotification(() =>
+        new PushNotificationService(this.env).sendStoreNotification({
+          storeId,
+          kind: 'PRINT_COMPLETED',
+          soundType: 'NOTIFICATION_CHIME',
+          title: 'In thành công',
+          body: `Đã in thành công ${docName}.`,
+          url: '/pos',
+          tag: `print_job_${job.id}`,
+          timestamp: now,
+        }),
+      );
+    }
 
     return job;
   }
@@ -257,16 +381,19 @@ export class PrintJobService {
     failureCode: string,
     failureMessage?: string | null,
     auditContext?: PrintJobAuditContext,
+    claimToken: string | null = null,
   ): Promise<PrintJob> {
     const now = Date.now();
-    const job = await this.repository.failJob(
+    const transition = await this.repository.failJob(
       storeId,
       jobId,
       failureCode,
       failureMessage ?? null,
+      auditContext?.deviceId ?? null,
+      claimToken,
       now,
     );
-    if (!job) {
+    if (!transition) {
       const existing = await this.repository.getJob(storeId, jobId);
       if (!existing) {
         throw new AppError('PRINT_JOB_NOT_FOUND', 'Yêu cầu in không tồn tại.', 404);
@@ -277,21 +404,41 @@ export class PrintJobService {
         409,
       );
     }
+    const job = transition.job;
 
-    const eventId = crypto.randomUUID();
-    await this.repository.recordRealtimeEvent({
-      eventId,
-      storeId,
-      eventType: 'pos.print_job.updated',
-      job,
-      reason: 'PRINT_JOB_FAILED',
-      actorKind: auditContext?.actorKind ?? null,
-      actorUserId: auditContext?.actorUserId ?? null,
-      deviceId: auditContext?.deviceId ?? null,
-      requestId: auditContext?.requestId ?? null,
-      now,
-    });
-    void this.dispatcher.dispatchStore(storeId).catch(() => undefined);
+    if (transition.changed) {
+      const eventId = crypto.randomUUID();
+      await this.repository.recordRealtimeEvent({
+        eventId,
+        storeId,
+        eventType: 'pos.print_job.updated',
+        job,
+        reason: 'PRINT_JOB_FAILED',
+        actorKind: auditContext?.actorKind ?? null,
+        actorUserId: auditContext?.actorUserId ?? null,
+        deviceId: auditContext?.deviceId ?? null,
+        requestId: auditContext?.requestId ?? null,
+        now,
+      });
+      this.dispatchStore(storeId);
+    }
+
+    if (transition.changed) {
+      const docName = formatPrintDocumentName(job.documentType, job.printerRole);
+      const reasonText = failureMessage || 'Lỗi máy in hoặc không thể kết nối';
+      this.deferNotification(() =>
+        new PushNotificationService(this.env).sendStoreNotification({
+          storeId,
+          kind: 'PRINT_FAILED',
+          soundType: 'NOTIFICATION_CHIME',
+          title: 'In thất bại',
+          body: `In ${docName} thất bại: ${reasonText}`,
+          url: '/pos',
+          tag: `print_job_${job.id}`,
+          timestamp: now,
+        }),
+      );
+    }
 
     return job;
   }
@@ -302,16 +449,19 @@ export class PrintJobService {
     failureCode?: string | null,
     failureMessage?: string | null,
     auditContext?: PrintJobAuditContext,
+    claimToken: string | null = null,
   ): Promise<PrintJob> {
     const now = Date.now();
-    const job = await this.repository.uncertainJob(
+    const transition = await this.repository.uncertainJob(
       storeId,
       jobId,
       failureCode ?? 'PRINT_UNCERTAIN',
       failureMessage ?? 'Mất kết nối máy in trong quá trình in',
+      auditContext?.deviceId ?? null,
+      claimToken,
       now,
     );
-    if (!job) {
+    if (!transition) {
       const existing = await this.repository.getJob(storeId, jobId);
       if (!existing) {
         throw new AppError('PRINT_JOB_NOT_FOUND', 'Yêu cầu in không tồn tại.', 404);
@@ -322,21 +472,40 @@ export class PrintJobService {
         409,
       );
     }
+    const job = transition.job;
 
-    const eventId = crypto.randomUUID();
-    await this.repository.recordRealtimeEvent({
-      eventId,
-      storeId,
-      eventType: 'pos.print_job.updated',
-      job,
-      reason: 'PRINT_JOB_UNCERTAIN',
-      actorKind: auditContext?.actorKind ?? null,
-      actorUserId: auditContext?.actorUserId ?? null,
-      deviceId: auditContext?.deviceId ?? null,
-      requestId: auditContext?.requestId ?? null,
-      now,
-    });
-    void this.dispatcher.dispatchStore(storeId).catch(() => undefined);
+    if (transition.changed) {
+      const eventId = crypto.randomUUID();
+      await this.repository.recordRealtimeEvent({
+        eventId,
+        storeId,
+        eventType: 'pos.print_job.updated',
+        job,
+        reason: 'PRINT_JOB_UNCERTAIN',
+        actorKind: auditContext?.actorKind ?? null,
+        actorUserId: auditContext?.actorUserId ?? null,
+        deviceId: auditContext?.deviceId ?? null,
+        requestId: auditContext?.requestId ?? null,
+        now,
+      });
+      this.dispatchStore(storeId);
+    }
+
+    if (transition.changed) {
+      const docName = formatPrintDocumentName(job.documentType, job.printerRole);
+      this.deferNotification(() =>
+        new PushNotificationService(this.env).sendStoreNotification({
+          storeId,
+          kind: 'PRINT_UNCERTAIN',
+          soundType: 'NOTIFICATION_CHIME',
+          title: 'Lỗi in không xác định',
+          body: `Mất kết nối máy in khi đang in ${docName}.`,
+          url: '/pos',
+          tag: `print_job_${job.id}`,
+          timestamp: now,
+        }),
+      );
+    }
 
     return job;
   }
@@ -351,5 +520,62 @@ export class PrintJobService {
 
   async listJobs(storeId: string, query: PrintJobQuery): Promise<PrintJob[]> {
     return this.repository.listJobs(storeId, query.status, query.limit);
+  }
+
+  async listPendingJobsForAgent(input: {
+    storeId: string;
+    agentId: string;
+    limit: number;
+    cursor?: string | undefined;
+  }): Promise<PendingPrintJobPage> {
+    let decodedCursor: { createdAt: number; id: string } | undefined;
+    if (input.cursor) {
+      const separator = input.cursor.indexOf(':');
+      const createdAt = Number(input.cursor.slice(0, separator));
+      const id = input.cursor.slice(separator + 1);
+      if (separator < 1 || !Number.isSafeInteger(createdAt) || createdAt < 0 || !id) {
+        throw new AppError('PRINT_JOB_CURSOR_INVALID', 'Cursor print job không hợp lệ.', 422);
+      }
+      decodedCursor = { createdAt, id };
+    }
+    const jobs = await this.repository.listPendingJobsForAgent(
+      input.storeId,
+      input.agentId,
+      Date.now(),
+      input.limit,
+      decodedCursor,
+    );
+    const last = jobs.at(-1);
+    return {
+      jobs,
+      nextCursor: jobs.length === input.limit && last ? `${last.createdAt}:${last.id}` : null,
+    };
+  }
+
+  async reconcileStalePrinting(
+    storeId: string,
+    now = Date.now(),
+    claimedByDeviceId?: string | null,
+  ): Promise<PrintJob[]> {
+    const jobs = await this.repository.markStalePrintingUncertain(
+      storeId,
+      now - PRINTING_WATCHDOG_MS,
+      now,
+      claimedByDeviceId,
+    );
+    for (const job of jobs) {
+      await this.repository.recordRealtimeEvent({
+        eventId: crypto.randomUUID(),
+        storeId,
+        eventType: 'pos.print_job.updated',
+        job,
+        reason: 'PRINT_JOB_UNCERTAIN',
+        deviceId: job.claimedByDeviceId,
+        requestId: crypto.randomUUID(),
+        now,
+      });
+    }
+    if (jobs.length > 0) this.dispatchStore(storeId);
+    return jobs;
   }
 }

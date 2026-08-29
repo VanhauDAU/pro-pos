@@ -125,6 +125,7 @@ import {
   buildPrintDataFromQuote,
   type PosReceiptPrintOptions,
 } from '@domain/receipt/receipt-generator';
+import { buildFixedVietQrImageUrl } from '@domain/receipt/receipt-document';
 import logoBlack from '@client/assets/logo-black.svg?url';
 import { PosCustomerSelector } from './PosCustomerSelector';
 import { getPosCustomerAccess } from './pos-customer-access';
@@ -449,6 +450,7 @@ interface OrderQuote {
     productType: 'QUANTITY' | 'WEIGHT';
     productName: string;
     variantName: string | null;
+    priceVariantCount: number;
     unitName: string | null;
     unitPriceVnd: number;
     quantityMilli: number;
@@ -883,6 +885,7 @@ interface InvoiceDetail {
     discountAmount: number;
     lineTotal: number;
     grossLineTotal: number;
+    priceVariantCount: number;
     snapshotJson: string;
   }>;
   payment: {
@@ -1787,6 +1790,16 @@ function AreasPage() {
   const visibleTables =
     currentArea?.tables.filter((table) => status === 'ALL' || table.status === status) ?? [];
 
+  const availableCount = isTakeaway
+    ? 0
+    : (currentArea?.tables.filter((t) => t.status === 'AVAILABLE').length ?? 0);
+  const occupiedCount = isTakeaway
+    ? activeTakeaways.length
+    : (currentArea?.tables.filter((t) => t.status === 'OCCUPIED').length ?? 0);
+  const disabledCount = isTakeaway
+    ? 0
+    : (currentArea?.tables.filter((t) => t.status === 'DISABLED').length ?? 0);
+
   return (
     <div className="staff-areas-page">
       {tables.isLoading ? <Spin fullscreen description="Đang tải khu vực" /> : null}
@@ -2090,6 +2103,35 @@ function AreasPage() {
                 </button>
               );
             })}
+          </div>
+        )}
+
+        {/* Sticky 3 Status Dots Legend (Bàn trống, Đang sử dụng, Tạm ngưng) */}
+        {!isTakeaway ? (
+          <div className="staff-table-status-legend">
+            <div className="staff-table-legend-item">
+              <span className="staff-table-legend-dot staff-table-legend-dot--available" />
+              <span className="staff-table-legend-label">Bàn trống</span>
+              <span className="staff-table-legend-count">{availableCount}</span>
+            </div>
+            <div className="staff-table-legend-item">
+              <span className="staff-table-legend-dot staff-table-legend-dot--occupied" />
+              <span className="staff-table-legend-label">Đang sử dụng</span>
+              <span className="staff-table-legend-count">{occupiedCount}</span>
+            </div>
+            <div className="staff-table-legend-item">
+              <span className="staff-table-legend-dot staff-table-legend-dot--disabled" />
+              <span className="staff-table-legend-label">Tạm ngưng</span>
+              <span className="staff-table-legend-count">{disabledCount}</span>
+            </div>
+          </div>
+        ) : (
+          <div className="staff-table-status-legend">
+            <div className="staff-table-legend-item">
+              <span className="staff-table-legend-dot staff-table-legend-dot--occupied" />
+              <span className="staff-table-legend-label">Đang phục vụ mang về</span>
+              <span className="staff-table-legend-count">{activeTakeaways.length}</span>
+            </div>
           </div>
         )}
       </main>
@@ -5505,6 +5547,7 @@ function OrderEditor({
   const [cartTab, setCartTab] = useState<'DETAILS' | 'CUSTOMER' | 'ACTIONS'>('DETAILS');
   const [discardModalOpen, setDiscardModalOpen] = useState(false);
   const [provisionalBillOpen, setProvisionalBillOpen] = useState(false);
+  const [printingProvisional, setPrintingProvisional] = useState(false);
   const [resumeModalOpen, setResumeModalOpen] = useState(false);
   const [resuming, setResuming] = useState(false);
   const [autoResumeRetryToken, setAutoResumeRetryToken] = useState(0);
@@ -6064,24 +6107,29 @@ function OrderEditor({
   };
 
   const printProvisionalReceipt = async () => {
-    if (!quote.data) return;
-    const result = await printReceipt(
-      {
-        data: buildPrintDataFromQuote(quote.data, 'PROVISIONAL'),
-        printSettings: printSettings.data,
-        storeInfo: {
-          storeName: staffContext.data?.storeName ?? null,
-          phone: staffContext.data?.storePhone ?? null,
-          address: staffContext.data?.storeAddress ?? null,
-          bankName: staffContext.data?.bankName ?? null,
-          bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
-          bankAccountName: staffContext.data?.bankAccountName ?? null,
+    if (printingProvisional || !quote.data) return;
+    setPrintingProvisional(true);
+    try {
+      const result = await printReceipt(
+        {
+          data: buildPrintDataFromQuote(quote.data, 'PROVISIONAL'),
+          printSettings: printSettings.data,
+          storeInfo: {
+            storeName: staffContext.data?.storeName ?? null,
+            phone: staffContext.data?.storePhone ?? null,
+            address: staffContext.data?.storeAddress ?? null,
+            bankName: staffContext.data?.bankName ?? null,
+            bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
+            bankAccountName: staffContext.data?.bankAccountName ?? null,
+          },
         },
-      },
-      provisionalPrintIdentity(quote.data.order.id),
-    );
-    if (result.success) messageApi.success('Đã gửi lệnh in phiếu tạm tính!');
-    else messageApi.error(result.message ?? 'Không thể in phiếu tạm tính.');
+        provisionalPrintIdentity(quote.data.order.id),
+      );
+      if (result.success) messageApi.success('Đã gửi lệnh in phiếu tạm tính!');
+      else messageApi.error(result.message ?? 'Không thể in phiếu tạm tính.');
+    } finally {
+      window.setTimeout(() => setPrintingProvisional(false), 1500);
+    }
   };
 
   const categories = useMemo(() => {
@@ -9581,7 +9629,11 @@ function OrderEditor({
                             {canPrintProvisional ? (
                               <Button
                                 icon={<PrinterOutlined />}
-                                disabled={printSettings.data?.allowProvisionalPrint === false}
+                                loading={printingProvisional}
+                                disabled={
+                                  printingProvisional ||
+                                  printSettings.data?.allowProvisionalPrint === false
+                                }
                                 onClick={() => void printProvisionalReceipt()}
                                 className="staff-action-provisional-btn"
                               >
@@ -10368,6 +10420,15 @@ function OrderEditor({
         className="pos-receipt-preview-modal staff-provisional-modal"
         onCancel={() => setProvisionalBillOpen(false)}
         footer={[
+          <Button
+            key="print"
+            icon={<PrinterOutlined />}
+            loading={printingProvisional}
+            disabled={printingProvisional || printSettings.data?.allowProvisionalPrint === false}
+            onClick={() => void printProvisionalReceipt()}
+          >
+            In tạm tính
+          </Button>,
           <Button key="close" type="primary" onClick={() => setProvisionalBillOpen(false)}>
             Đóng
           </Button>,
@@ -10724,7 +10785,10 @@ function OrderEditor({
                     size="large"
                     block
                     icon={<PrinterOutlined />}
-                    disabled={printSettings.data?.allowProvisionalPrint === false}
+                    loading={printingProvisional}
+                    disabled={
+                      printingProvisional || printSettings.data?.allowProvisionalPrint === false
+                    }
                     onClick={() => {
                       setMobileActionsOpen(false);
                       void printProvisionalReceipt();
@@ -12065,11 +12129,13 @@ function PaymentPage({
   );
   const productTotalVnd = productItems.reduce((sum, item) => sum + item.grossLineTotalVnd, 0);
   const timeTotalVnd = quote.data?.time?.amountAfterRoundingVnd ?? 0;
-  const transferNote = quote.data
-    ? `TT ${quote.data.order.tableName ? `${quote.data.order.tableName} ` : ''}${quote.data.order.displayCode || quote.data.order.id.slice(0, 6)}`.trim()
-    : '';
   const transferQrUrl = selectedBankAccount
-    ? `https://img.vietqr.io/image/${encodeURIComponent(selectedBankAccount.bankBin)}-${encodeURIComponent(selectedBankAccount.accountNumber)}-compact2.png?amount=${isMultiMethod ? bankApplied : totalVnd}&addInfo=${encodeURIComponent(transferNote)}&accountName=${encodeURIComponent(selectedBankAccount.accountName)}`
+    ? buildFixedVietQrImageUrl({
+        bankIdentifier: selectedBankAccount.bankBin,
+        accountNumber: selectedBankAccount.accountNumber,
+        accountName: selectedBankAccount.accountName,
+        template: 'compact2',
+      })
     : null;
   const primaryActionDisabled =
     !quote.data ||
@@ -12650,7 +12716,7 @@ function PaymentPage({
                 {formatMoney(totalVnd)}
               </div>
               <div style={{ marginTop: 4, color: '#64748b', fontSize: 13 }}>
-                Nội dung CK: <strong style={{ color: '#d97706' }}>{transferNote}</strong>
+                QR tài khoản cố định · nhập số tiền trong ứng dụng ngân hàng
               </div>
             </div>
           );

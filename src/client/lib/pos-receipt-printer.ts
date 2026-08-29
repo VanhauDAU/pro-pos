@@ -1,12 +1,15 @@
 import { createReceiptDocument } from '@domain/receipt/receipt-document';
 import {
   formatDateOnly,
+  formatReceiptLineName,
   formatSegmentDurationLabel,
   formatTimeOnly,
   reconcileReceiptTimeSegmentAmounts,
   type PosReceiptPrintOptions,
 } from '@domain/receipt/receipt-generator';
 import { ApiError, apiRequest, jsonRequest } from './api';
+import { receiptRasterCss } from '@printing/receipt/receipt-template';
+import { trackPwaPrintRequest } from './print-performance';
 
 let cachedPosCsrfToken: string | null = null;
 
@@ -243,7 +246,7 @@ export function generateThermalReceiptHtml(
         <div class="thermal-receipt-table-header">
           <span class="thermal-receipt-col-name" style="flex: 1;">Thông tin giờ</span>
           ${!isK58 && template.showHourlyUnitPrice ? `<span class="thermal-receipt-col-unit-price" style="width: 65px; text-align: right;">Đ.Giá</span>` : ''}
-          <span class="thermal-receipt-col-total" style="width: ${isK58 ? '48px' : '65px'}; text-align: right;">${isK58 ? 'T.Tiền' : 'Thành tiền'}</span>
+          <span class="thermal-receipt-col-total" style="width: ${isK58 ? '48px' : '65px'}; text-align: right;">${isK58 ? 'T.Tiền' : 'T.tiền'}</span>
         </div>
     `;
 
@@ -350,7 +353,7 @@ export function generateThermalReceiptHtml(
           <span class="thermal-receipt-col-name" style="flex: 1;">Mặt hàng</span>
           <span class="thermal-receipt-col-quantity" style="width: ${isK58 ? '24px' : '45px'}; text-align: center;">${isK58 ? 'SL' : 'SL/TL'}</span>
           ${!isK58 && template.showItemUnitPrice && template.itemUnitPricePlacement === 'SEPARATE_COLUMN' ? `<span class="thermal-receipt-col-unit-price" style="width: 60px; text-align: right;">Đ.Giá</span>` : ''}
-          <span class="thermal-receipt-col-total" style="width: ${isK58 ? '48px' : '65px'}; text-align: right;">${isK58 ? 'T.Tiền' : 'Thành tiền'}</span>
+          <span class="thermal-receipt-col-total" style="width: ${isK58 ? '48px' : '65px'}; text-align: right;">${isK58 ? 'T.Tiền' : 'T.tiền'}</span>
         </div>
     `;
 
@@ -364,7 +367,7 @@ export function generateThermalReceiptHtml(
       html += `
         <div class="thermal-receipt-item-row" style="margin-top: 3px;">
           <div class="thermal-receipt-item-main">
-            <span class="thermal-receipt-col-name" style="flex: 1; font-weight: 600;">${prefix}${escapeHtml(line.name)}${template.showItemPriceName ? ' (Giá chuẩn)' : ''}</span>
+            <span class="thermal-receipt-col-name" style="flex: 1; font-weight: 600;">${prefix}${escapeHtml(formatReceiptLineName(line, template.showItemPriceName))}</span>
             <span class="thermal-receipt-col-quantity" style="width: ${isK58 ? '24px' : '45px'}; text-align: center;">${line.quantity}</span>
             ${!isK58 && template.showItemUnitPrice && template.itemUnitPricePlacement === 'SEPARATE_COLUMN' ? `<span class="thermal-receipt-col-unit-price" style="width: 60px; text-align: right;">${formatVnd(line.unitPrice)}</span>` : ''}
             <span class="thermal-receipt-col-total" style="width: ${isK58 ? '48px' : '65px'}; text-align: right; font-weight: 600;">${formatVnd(line.totalPrice)}</span>
@@ -590,7 +593,26 @@ export async function browserPrintFallback(options: PosReceiptPrintOptions): Pro
   message?: string;
 }> {
   try {
-    const html = generateThermalReceiptHtml(options);
+    const receiptDocument = createReceiptDocument(options);
+    const profile = receiptDocument.profile;
+    const targetWidthCssPx = (profile.printableWidthMm * 96) / 25.4;
+    const printScale = targetWidthCssPx / profile.defaultPrintableDots;
+    const receiptHtml = generateThermalReceiptHtml(options);
+    const html = `
+      <style>
+        @page { size: ${profile.paperWidthMm}mm auto; margin: 0; }
+        html, body { width: ${profile.paperWidthMm}mm; margin: 0; padding: 0; background: #fff; }
+        .receipt-browser-sheet {
+          width: ${profile.defaultPrintableDots}px;
+          margin: 0 auto;
+          zoom: ${printScale};
+        }
+        ${receiptRasterCss(profile.defaultPrintableDots)}
+      </style>
+      <div class="receipt-browser-sheet">
+        <div class="receipt-raster-root">${receiptHtml}</div>
+      </div>
+    `;
     await triggerBrowserPrint(html);
     return { success: true };
   } catch (error) {
@@ -609,6 +631,7 @@ export async function dispatchRemotePrintJob(params: {
   targetDeviceId?: string | null;
   csrfToken?: string | null;
 }): Promise<{ success: boolean; jobId?: string; message?: string }> {
+  const requestStartedAt = performance.now();
   const idempotencyKey = `print:${params.documentType}:${params.documentId}:${crypto.randomUUID()}`;
   let csrfToken = await resolvePosCsrfToken(params.csrfToken);
 
@@ -651,6 +674,7 @@ export async function dispatchRemotePrintJob(params: {
     if (import.meta.env.DEV) {
       console.log('[Print Job] Job submitted successfully (status=201, QUEUED):', result.jobId);
     }
+    trackPwaPrintRequest(result.jobId, requestStartedAt);
 
     return {
       success: true,

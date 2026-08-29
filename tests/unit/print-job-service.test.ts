@@ -303,10 +303,10 @@ describe('PrintJobService', () => {
     const uncertain = await service.uncertainPrintJob(
       'store-1',
       job.id,
-      'QZ_DISCONNECTED',
-      'Mất kết nối với QZ Tray khi đang in',
+      'PRINTER_DISCONNECTED',
+      'Mất kết nối máy in khi đang in',
     );
     expect(uncertain.status).toBe('UNCERTAIN');
-    expect(uncertain.failureCode).toBe('QZ_DISCONNECTED');
+    expect(uncertain.failureCode).toBe('PRINTER_DISCONNECTED');
   });
 });

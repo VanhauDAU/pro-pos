@@ -2,18 +2,12 @@ import { getReceiptPrintProfile } from '@contracts/store';
 
 import { buildEscPosRasterReceipt, combineEscPosReceipts } from './escpos/escpos-builder';
 import { asPrinterError, PrinterError } from './printer-errors';
-import type {
-  PrinterActionResult,
-  PrinterConfig,
-  PrinterConnectionStatus,
-  ReceiptPrintJob,
-} from './printer-types';
-import { checkQzConnection, ensureQzConnected, reconnectQz } from './qz/qz-client';
-import { listQzPrinters, requireQzPrinter } from './qz/qz-printer-discovery';
-import { qzPrintRaw } from './qz/qz-print';
+import type { PrinterActionResult, PrinterConfig, ReceiptPrintJob } from './printer-types';
 import { browserReceiptRenderer } from './receipt/receipt-renderer';
 import { createCalibrationReceiptHtml, createTestReceiptHtml } from './receipt/receipt-template';
 import type { ReceiptRenderer } from './receipt/receipt-types';
+import type { PrintTransport } from './transports/print-transport';
+import { TcpEscPosTransport } from './transports/tcp-transport';
 
 export function validatePrinterConfig(config: PrinterConfig) {
   if (!config || !['SYSTEM', 'NETWORK_TCP'].includes(config.connectionType)) {
@@ -44,33 +38,14 @@ export function validatePrinterConfig(config: PrinterConfig) {
 }
 
 export class PrinterService {
-  constructor(private readonly renderer: ReceiptRenderer = browserReceiptRenderer) {}
-
-  checkConnection(connect = false): Promise<PrinterConnectionStatus> {
-    return checkQzConnection(connect);
-  }
-
-  async reconnect(): Promise<PrinterConnectionStatus> {
-    try {
-      await reconnectQz();
-      return checkQzConnection(false);
-    } catch (error) {
-      const printerError = asPrinterError(error, 'QZ_CONNECTION_FAILED');
-      return { connected: false, error: printerError.message };
-    }
-  }
-
-  listPrinters(forceRefresh = false) {
-    return listQzPrinters(forceRefresh);
-  }
+  constructor(
+    private readonly renderer: ReceiptRenderer = browserReceiptRenderer,
+    private readonly transport: PrintTransport = new TcpEscPosTransport(),
+  ) {}
 
   async printReceipt(job: ReceiptPrintJob): Promise<void> {
     const profile = validatePrinterConfig(job.config);
     if (job.htmlCopies.length === 0) throw new PrinterError('RENDER_FAILED');
-    await ensureQzConnected();
-    if (job.config.connectionType === 'SYSTEM') {
-      await requireQzPrinter(job.config.printerName!.trim());
-    }
 
     const images = await this.renderer.renderCopies(
       job.htmlCopies.map((html) => ({ html, profile })),
@@ -82,7 +57,8 @@ export class PrinterService {
         openCashDrawer: Boolean(job.openCashDrawer) && index === images.length - 1,
       }),
     );
-    await qzPrintRaw(job.config, combineEscPosReceipts(receipts), job.jobName);
+    const payload = combineEscPosReceipts(receipts);
+    await this.transport.print(payload, job.config);
   }
 
   async testPrint(config: PrinterConfig, storeName?: string): Promise<void> {

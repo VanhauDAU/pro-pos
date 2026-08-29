@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { StorePrintSettings } from '../../src/contracts/store';
 import {
   buildVietQrPaymentPayload,
+  buildFixedVietQrImageUrl,
   createReceiptDocument,
 } from '../../src/domain/receipt/receipt-document';
 import {
@@ -122,6 +123,20 @@ function options(settings: StorePrintSettings): PosReceiptPrintOptions {
 }
 
 describe('canonical receipt document', () => {
+  it('builds cacheable fixed VietQR image URLs without transaction fields', () => {
+    const url = buildFixedVietQrImageUrl({
+      bankIdentifier: '970422',
+      accountNumber: '123 456 789',
+      accountName: 'NGUYEN VAN A',
+      template: 'compact2',
+    });
+    expect(url).toBe(
+      'https://img.vietqr.io/image/970422-123456789-compact2.png?accountName=NGUYEN%20VAN%20A',
+    );
+    expect(url).not.toContain('amount=');
+    expect(url).not.toContain('addInfo=');
+  });
+
   it('uses receipt-oriented fonts for raster preview and both ESC/POS renderers', () => {
     const settings = printSettings();
     const currentBytes = buildEscPosTextReceipt(paymentData(), {

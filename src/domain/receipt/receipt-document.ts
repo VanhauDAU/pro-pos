@@ -25,6 +25,16 @@ function crc16Ccitt(value: string): string {
   return crc.toString(16).toUpperCase().padStart(4, '0');
 }
 
+export function buildFixedVietQrImageUrl(input: {
+  bankIdentifier: string;
+  accountNumber: string;
+  accountName?: string | null | undefined;
+  template?: 'qr_only' | 'compact2';
+}): string {
+  const accountName = input.accountName?.trim();
+  return `https://img.vietqr.io/image/${encodeURIComponent(input.bankIdentifier.trim())}-${encodeURIComponent(input.accountNumber.replace(/\s+/gu, ''))}-${input.template ?? 'qr_only'}.png${accountName ? `?accountName=${encodeURIComponent(accountName)}` : ''}`;
+}
+
 /** Builds the actual NAPAS/VietQR EMV payload that banking apps consume. */
 export function buildVietQrPaymentPayload(input: {
   bankBin: string;
@@ -156,8 +166,11 @@ export function createReceiptDocument(options: PosReceiptPrintOptions): ReceiptD
     bankIdentifier &&
     accountNumber
   ) {
-    const accountNameQuery = accountName ? `?accountName=${encodeURIComponent(accountName)}` : '';
-    bottomImageUrl = `https://img.vietqr.io/image/${encodeURIComponent(bankIdentifier)}-${encodeURIComponent(accountNumber)}-qr_only.png${accountNameQuery}`;
+    bottomImageUrl = buildFixedVietQrImageUrl({
+      bankIdentifier,
+      accountNumber,
+      accountName,
+    });
     try {
       vietQrPayload = buildVietQrPaymentPayload({
         bankBin: bankIdentifier,

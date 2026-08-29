@@ -125,6 +125,7 @@ import {
   buildPrintDataFromQuote,
   type PosReceiptPrintOptions,
 } from '@domain/receipt/receipt-generator';
+import { buildFixedVietQrImageUrl } from '@domain/receipt/receipt-document';
 import logoBlack from '@client/assets/logo-black.svg?url';
 import { PosCustomerSelector } from './PosCustomerSelector';
 import { getPosCustomerAccess } from './pos-customer-access';
@@ -12128,11 +12129,13 @@ function PaymentPage({
   );
   const productTotalVnd = productItems.reduce((sum, item) => sum + item.grossLineTotalVnd, 0);
   const timeTotalVnd = quote.data?.time?.amountAfterRoundingVnd ?? 0;
-  const transferNote = quote.data
-    ? `TT ${quote.data.order.tableName ? `${quote.data.order.tableName} ` : ''}${quote.data.order.displayCode || quote.data.order.id.slice(0, 6)}`.trim()
-    : '';
   const transferQrUrl = selectedBankAccount
-    ? `https://img.vietqr.io/image/${encodeURIComponent(selectedBankAccount.bankBin)}-${encodeURIComponent(selectedBankAccount.accountNumber)}-compact2.png?amount=${isMultiMethod ? bankApplied : totalVnd}&addInfo=${encodeURIComponent(transferNote)}&accountName=${encodeURIComponent(selectedBankAccount.accountName)}`
+    ? buildFixedVietQrImageUrl({
+        bankIdentifier: selectedBankAccount.bankBin,
+        accountNumber: selectedBankAccount.accountNumber,
+        accountName: selectedBankAccount.accountName,
+        template: 'compact2',
+      })
     : null;
   const primaryActionDisabled =
     !quote.data ||
@@ -12713,7 +12716,7 @@ function PaymentPage({
                 {formatMoney(totalVnd)}
               </div>
               <div style={{ marginTop: 4, color: '#64748b', fontSize: 13 }}>
-                Nội dung CK: <strong style={{ color: '#d97706' }}>{transferNote}</strong>
+                QR tài khoản cố định · nhập số tiền trong ứng dụng ngân hàng
               </div>
             </div>
           );

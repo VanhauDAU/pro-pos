@@ -60,6 +60,7 @@ import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 import { ReceiptPreviewPaper } from '@client/features/pos/ReceiptPreviewModal';
 import { ThermalHourlySegmentsPreview } from '@client/components/ThermalHourlySegmentsPreview';
 import { buildOwnerPrintPreviewSample } from './print-preview-sample';
+import { buildFixedVietQrImageUrl } from '@domain/receipt/receipt-document';
 
 function errorMessage(error: unknown, fallback: string) {
   if (error instanceof ApiError) return error.message;
@@ -565,10 +566,11 @@ export function OwnerPrintSettingsPage() {
   const previewVietQrUrl = useMemo(() => {
     if (bottomImageType === 'VIETQR') {
       if (bottomBankName && bottomBankAccountNumber) {
-        const accountName = bottomBankAccountName?.trim();
-        return `https://img.vietqr.io/image/${encodeURIComponent(bottomBankName.trim())}-${encodeURIComponent(
-          bottomBankAccountNumber.trim(),
-        )}-qr_only.png${accountName ? `?accountName=${encodeURIComponent(accountName)}` : ''}`;
+        return buildFixedVietQrImageUrl({
+          bankIdentifier: bottomBankName,
+          accountNumber: bottomBankAccountNumber,
+          accountName: bottomBankAccountName,
+        });
       }
     } else if (bottomImageType === 'UPLOAD' && bottomImagePreviewUrl) {
       return bottomImagePreviewUrl;

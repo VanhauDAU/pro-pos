@@ -8,18 +8,14 @@ import {
 
 describe('ESC/POS WPC1258 encoding', () => {
   it('converts precomposed Vietnamese tone characters to WPC1258 combining bytes', () => {
-    expect(normalizeVietnameseForWpc1258('Nước Cam · TỔNG TIỀN')).toBe(
-      'Nước Cam · TỔNG TIỀN',
-    );
+    expect(normalizeVietnameseForWpc1258('Nước Cam · TỔNG TIỀN')).toBe('Nước Cam · TỔNG TIỀN');
 
     const encoded = Array.from(encodeWpc1258('Nước Cam · TỔNG TIỀN'));
     expect(encoded).toContain(0xfd); // ư
     expect(encoded).toContain(0xf5); // ơ
     expect(encoded).toContain(0xec); // acute
     expect(encoded).toContain(0xd2); // hook above
-    expect(encoded).not.toEqual(
-      Array.from(new TextEncoder().encode('Nước Cam · TỔNG TIỀN')),
-    );
+    expect(encoded).not.toEqual(Array.from(new TextEncoder().encode('Nước Cam · TỔNG TIỀN')));
   });
 
   it('selects WPC1258 page 52 after ESC @ initialization', () => {

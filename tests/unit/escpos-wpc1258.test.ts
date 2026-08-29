@@ -17,7 +17,9 @@ describe('ESC/POS WPC1258 encoding', () => {
     expect(encoded).toContain(0xf5); // ơ
     expect(encoded).toContain(0xec); // acute
     expect(encoded).toContain(0xd2); // hook above
-    expect(encoded).not.toEqual(Array.from(new TextEncoder().encode('Nước Cam · TỔNG TIỀN')));
+    expect(encoded).not.toEqual(
+      Array.from(new TextEncoder().encode('Nước Cam · TỔNG TIỀN')),
+    );
   });
 
   it('selects WPC1258 page 52 after ESC @ initialization', () => {

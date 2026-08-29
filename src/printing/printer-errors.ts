@@ -12,6 +12,8 @@ export type PrinterFailureStage = 'BEFORE_WRITE' | 'DURING_WRITE';
 
 export interface PrinterErrorOptions extends ErrorOptions {
   failureStage?: PrinterFailureStage;
+  localAddress?: string;
+  localPort?: number;
 }
 
 const DEFAULT_MESSAGES: Record<PrinterErrorCode, string> = {
@@ -28,6 +30,8 @@ const DEFAULT_MESSAGES: Record<PrinterErrorCode, string> = {
 export class PrinterError extends Error {
   readonly code: PrinterErrorCode;
   readonly failureStage: PrinterFailureStage;
+  readonly localAddress?: string;
+  readonly localPort?: number;
 
   constructor(
     code: PrinterErrorCode,
@@ -38,6 +42,8 @@ export class PrinterError extends Error {
     this.name = 'PrinterError';
     this.code = code;
     this.failureStage = options?.failureStage ?? 'BEFORE_WRITE';
+    this.localAddress = options?.localAddress;
+    this.localPort = options?.localPort;
   }
 }
 

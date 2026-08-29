@@ -2,6 +2,7 @@ import type { CreatePrintJobInput, PrintJob, PrintJobQuery } from '@contracts/pr
 import { AppError } from '@server/lib/app-error';
 import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
 import { PrintJobRepository } from '@server/repositories/print-job-repository';
+import { PushNotificationService } from '@server/services/push-notification-service';
 
 export interface PrintJobAuditContext {
   actorUserId?: string | null;
@@ -11,6 +12,25 @@ export interface PrintJobAuditContext {
 }
 
 const ALLOWED_PRINTER_ROLES = new Set(['receipt', 'temporary_bill', 'kitchen', 'bar']);
+
+function formatPrintDocumentName(documentType: string, printerRole?: string | null): string {
+  switch (documentType?.toLowerCase()) {
+    case 'provisional':
+      return 'phiếu tạm tính';
+    case 'invoice':
+      return 'hóa đơn';
+    case 'debt_payment':
+      return 'phiếu thu nợ';
+    case 'kitchen':
+      return 'phiếu in bếp';
+    case 'bar':
+      return 'phiếu in pha chế';
+    default:
+      if (printerRole === 'kitchen') return 'phiếu in bếp';
+      if (printerRole === 'bar') return 'phiếu in pha chế';
+      return 'tài liệu';
+  }
+}
 
 export class PrintJobService {
   private readonly repository: PrintJobRepository;
@@ -248,6 +268,20 @@ export class PrintJobService {
     });
     void this.dispatcher.dispatchStore(storeId).catch(() => undefined);
 
+    const docName = formatPrintDocumentName(job.documentType, job.printerRole);
+    void new PushNotificationService(this.env)
+      .sendStoreNotification({
+        storeId,
+        kind: 'PRINT_COMPLETED',
+        soundType: 'NOTIFICATION_CHIME',
+        title: 'In thành công',
+        body: `Đã in thành công ${docName}.`,
+        url: '/pos',
+        tag: `print_job_${job.id}`,
+        timestamp: now,
+      })
+      .catch(() => undefined);
+
     return job;
   }
 
@@ -293,6 +327,21 @@ export class PrintJobService {
     });
     void this.dispatcher.dispatchStore(storeId).catch(() => undefined);
 
+    const docName = formatPrintDocumentName(job.documentType, job.printerRole);
+    const reasonText = failureMessage || 'Lỗi máy in hoặc không thể kết nối';
+    void new PushNotificationService(this.env)
+      .sendStoreNotification({
+        storeId,
+        kind: 'PRINT_FAILED',
+        soundType: 'NOTIFICATION_CHIME',
+        title: 'In thất bại',
+        body: `In ${docName} thất bại: ${reasonText}`,
+        url: '/pos',
+        tag: `print_job_${job.id}`,
+        timestamp: now,
+      })
+      .catch(() => undefined);
+
     return job;
   }
 
@@ -337,6 +386,20 @@ export class PrintJobService {
       now,
     });
     void this.dispatcher.dispatchStore(storeId).catch(() => undefined);
+
+    const docName = formatPrintDocumentName(job.documentType, job.printerRole);
+    void new PushNotificationService(this.env)
+      .sendStoreNotification({
+        storeId,
+        kind: 'PRINT_UNCERTAIN',
+        soundType: 'NOTIFICATION_CHIME',
+        title: 'Lỗi in không xác định',
+        body: `Mất kết nối máy in khi đang in ${docName}.`,
+        url: '/pos',
+        tag: `print_job_${job.id}`,
+        timestamp: now,
+      })
+      .catch(() => undefined);
 
     return job;
   }

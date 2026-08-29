@@ -4,10 +4,16 @@ import type { PrintAgentConfig } from './config';
 import { JobQueue } from './job-queue';
 import { JobProcessor } from './job-processor';
 import type { PrintJob } from '@contracts/print-job';
-import { REALTIME_SUBPROTOCOL } from '@contracts/realtime';
+import {
+  REALTIME_SCHEMA_VERSION,
+  REALTIME_SUBPROTOCOL,
+  type RealtimeEventV1,
+  type RealtimeServerFrame,
+} from '@contracts/realtime';
 
 export interface AgentRealtimeEvents {
   onConnected?(): void;
+  onPhase?(phase: 'AUTHENTICATING' | 'REGISTERED' | 'SUBSCRIBED' | 'SYNCING'): void;
   onDisconnected?(error: string): void;
   onDegraded?(error: string): void;
   onJobReceived?(jobId: string, type: string): void;
@@ -29,6 +35,7 @@ export class AgentRealtimeClient implements RealtimeConnection {
   private pollFallbackTimer: NodeJS.Timeout | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private isRecovering = false;
+  private isReady = false;
   private readonly jobQueue = new JobQueue();
   private readonly processor: JobProcessor;
   private readonly processingJobs = new Set<string>();
@@ -53,6 +60,7 @@ export class AgentRealtimeClient implements RealtimeConnection {
     const wsUrl = `${baseWsUrl}/api/v1/pos/realtime/stream?agentId=${encodeURIComponent(this.config.agentId)}`;
 
     console.log(`[Realtime] Đang kết nối tới máy chủ (${this.config.serverUrl})...`);
+    this.events.onPhase?.('AUTHENTICATING');
 
     try {
       this.ws = new WebSocket(wsUrl, REALTIME_SUBPROTOCOL, {
@@ -63,17 +71,15 @@ export class AgentRealtimeClient implements RealtimeConnection {
       });
 
       this.ws.on('open', () => {
-        console.log('\x1b[32m● [Realtime] Đã kết nối trực tuyến với máy chủ Pro POS!\x1b[0m');
+        console.log(
+          '[PRINT-AGENT] Cloud transport connected; awaiting authentication/subscription ACK.',
+        );
         this.reconnectAttempt = 0;
-        this.startHeartbeat();
-        this.stopPollingFallback();
-        this.events.onConnected?.();
-        void this.recoverPendingJobs();
       });
 
       this.ws.on('message', (raw: WebSocket.Data) => {
         try {
-          const payload = JSON.parse(raw.toString());
+          const payload = JSON.parse(raw.toString()) as RealtimeServerFrame | { type: 'pong' };
           this.handleMessage(payload);
         } catch {
           // ignore
@@ -82,6 +88,7 @@ export class AgentRealtimeClient implements RealtimeConnection {
 
       this.ws.on('close', (code, reason) => {
         this.stopHeartbeat();
+        this.isReady = false;
         if (!this.isDestroyed) {
           const reasonStr = reason ? reason.toString() : '';
           console.warn(
@@ -103,36 +110,76 @@ export class AgentRealtimeClient implements RealtimeConnection {
     }
   }
 
-  private handleMessage(message: any): void {
+  private handleMessage(message: RealtimeServerFrame | { type: 'pong' } | { type: 'ping' }): void {
     if (message.type === 'ping') {
       this.ws?.send(JSON.stringify({ type: 'pong' }));
       return;
     }
+    if (message.type === 'ready') {
+      void this.completeHandshake(message);
+      return;
+    }
+    if (message.type === 'events') void this.receiveEvents(message.events);
+    if (message.type === 'error') this.events.onDegraded?.(`${message.code}: ${message.message}`);
+  }
 
-    // Check for print_job event
-    const eventName = message.name || message.type || message.event;
-    if (eventName === 'pos.print_job.created' || eventName === 'print_job.created') {
-      const job: PrintJob = message.payload || message.data;
-      if (job && job.id) {
-        console.log(`[Realtime] Nhận thông báo in: Job ID ${job.id}`);
-        this.enqueueJob(job);
+  private async completeHandshake(frame: Extract<RealtimeServerFrame, { type: 'ready' }>) {
+    if (this.isReady || this.isDestroyed) return;
+    if (frame.schemaVersion !== REALTIME_SCHEMA_VERSION) {
+      this.events.onDegraded?.('SUBSCRIBE_FAILED: Realtime schema mismatch.');
+      this.ws?.close(4406, 'Realtime schema mismatch');
+      return;
+    }
+    console.log('[PRINT-AGENT] Subscription acknowledged; syncing pending print jobs.');
+    this.events.onPhase?.('REGISTERED');
+    this.events.onPhase?.('SUBSCRIBED');
+    this.events.onPhase?.('SYNCING');
+    if (frame.sync?.mode === 'REPLAY') await this.receiveEvents(frame.sync.events);
+    const synced = await this.recoverPendingJobs();
+    if (!synced || this.isDestroyed) return;
+    this.isReady = true;
+    this.startHeartbeat();
+    this.startPollingFallback();
+    console.log('[PRINT-AGENT] Sync complete; print delivery is ready.');
+    this.events.onConnected?.();
+  }
+
+  private async receiveEvents(events: RealtimeEventV1[]): Promise<void> {
+    for (const event of events) {
+      if (event.type !== 'pos.print_job.created' || event.data.printJobStatus !== 'QUEUED')
+        continue;
+      if (event.data.targetDeviceId && event.data.targetDeviceId !== this.config.agentId) continue;
+      const jobId = event.data.printJobId;
+      if (!jobId) continue;
+      try {
+        const job = await this.apiClient.get<PrintJob>(`/api/v1/pos/print-jobs/${jobId}`);
+        if (job.status === 'QUEUED') {
+          console.log(`[PRINT-AGENT] Job received id=${job.id}`);
+          this.enqueueJob(job);
+        }
+      } catch (error) {
+        this.events.onDegraded?.(
+          `JOB_FETCH_FAILED: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     }
   }
 
-  async recoverPendingJobs(): Promise<void> {
-    if (this.isRecovering || this.isDestroyed) return;
+  async recoverPendingJobs(): Promise<boolean> {
+    if (this.isRecovering || this.isDestroyed) return false;
     this.isRecovering = true;
     try {
       const jobs = await this.apiClient.get<PrintJob[]>(
         '/api/v1/pos/print-jobs?status=QUEUED&limit=20',
       );
+      console.log(`[PRINT-AGENT] Sync pending jobs found=${Array.isArray(jobs) ? jobs.length : 0}`);
       if (Array.isArray(jobs) && jobs.length > 0) {
         const printerKey = this.config.printerIp || 'default';
         for (const job of jobs) {
           this.enqueueJob(job, printerKey);
         }
       }
+      return true;
     } catch (err: any) {
       this.events.onDegraded?.(err?.message || String(err));
       if (err?.message?.includes('401') || err?.message?.includes('UNAUTHORIZED')) {
@@ -143,6 +190,7 @@ export class AgentRealtimeClient implements RealtimeConnection {
           'Thông tin ghép nối trên máy này không khớp với máy chủ. Hãy chạy lại với cờ \x1b[1m--reset\x1b[0m để ghép nối lại mã mới:\n👉 pnpm dev -- --reset\n',
         );
       }
+      return false;
     } finally {
       this.isRecovering = false;
     }
@@ -197,12 +245,12 @@ export class AgentRealtimeClient implements RealtimeConnection {
 
   private startPollingFallback(): void {
     if (this.pollFallbackTimer) return;
-    // Periodic check every 3s as zero-latency safeguard for queued print jobs
+    // Realtime is primary. This is a low-frequency safety net for missed events.
     this.pollFallbackTimer = setInterval(() => {
       if (!this.isDestroyed) {
         void this.recoverPendingJobs();
       }
-    }, 3000);
+    }, 30_000);
   }
 
   private stopPollingFallback(): void {
@@ -220,6 +268,7 @@ export class AgentRealtimeClient implements RealtimeConnection {
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (!this.isDestroyed) {
+        this.isReady = false;
         this.connect();
       }
     }, delay);
@@ -229,6 +278,7 @@ export class AgentRealtimeClient implements RealtimeConnection {
     this.isDestroyed = true;
     this.stopHeartbeat();
     this.stopPollingFallback();
+    this.isReady = false;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
     if (this.ws) {

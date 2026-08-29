@@ -54,6 +54,16 @@ export class TcpEscPosTransport implements PrintTransport {
         resolve();
       };
 
+      const socketErrorOptions = (
+        cause: Error | undefined,
+        failureStage: 'BEFORE_WRITE' | 'DURING_WRITE',
+      ) => ({
+        cause,
+        failureStage,
+        localAddress: socket.localAddress || undefined,
+        localPort: socket.localPort || undefined,
+      });
+
       socket.setTimeout(this.connectTimeoutMs);
 
       socket.on('timeout', () => {
@@ -62,7 +72,7 @@ export class TcpEscPosTransport implements PrintTransport {
             new PrinterError(
               'CONNECTION_TIMEOUT',
               `Quá thời gian kết nối tới máy in LAN (${host}:${port}).`,
-              { failureStage: 'BEFORE_WRITE' },
+              socketErrorOptions(undefined, 'BEFORE_WRITE'),
             ),
           );
         } else {
@@ -70,7 +80,7 @@ export class TcpEscPosTransport implements PrintTransport {
             new PrinterError(
               'SOCKET_WRITE_ERROR',
               `Quá thời gian truyền dữ liệu in tới máy in (${host}:${port}).`,
-              { failureStage: 'DURING_WRITE' },
+              socketErrorOptions(undefined, 'DURING_WRITE'),
             ),
           );
         }
@@ -82,7 +92,7 @@ export class TcpEscPosTransport implements PrintTransport {
             new PrinterError(
               'NETWORK_PRINTER_UNREACHABLE',
               `Không thể kết nối tới máy in LAN (${host}:${port}): ${err.message}`,
-              { cause: err, failureStage: 'BEFORE_WRITE' },
+              socketErrorOptions(err, 'BEFORE_WRITE'),
             ),
           );
         } else {
@@ -90,7 +100,7 @@ export class TcpEscPosTransport implements PrintTransport {
             new PrinterError(
               'SOCKET_WRITE_ERROR',
               `Lỗi truyền dữ liệu tới máy in (${host}:${port}): ${err.message}`,
-              { cause: err, failureStage: 'DURING_WRITE' },
+              socketErrorOptions(err, 'DURING_WRITE'),
             ),
           );
         }
@@ -108,7 +118,7 @@ export class TcpEscPosTransport implements PrintTransport {
               new PrinterError(
                 'SOCKET_WRITE_ERROR',
                 `Lỗi khi ghi dữ liệu tới máy in: ${err.message}`,
-                { cause: err, failureStage: 'DURING_WRITE' },
+                socketErrorOptions(err, 'DURING_WRITE'),
               ),
             );
             return;

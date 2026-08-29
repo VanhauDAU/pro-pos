@@ -67,6 +67,7 @@ export function ReceiptPreviewModal({
                 type="primary"
                 icon={<PrinterOutlined />}
                 loading={printing}
+                disabled={printing}
                 onClick={() => void onPrint?.()}
               >
                 Xác nhận in

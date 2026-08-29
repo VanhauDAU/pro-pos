@@ -305,6 +305,9 @@ export function OrderDetailPage({
   const [now, setNow] = useState(Date.now());
   const [receiptModalType, setReceiptModalType] = useState<'PROVISIONAL' | 'PAYMENT'>('PAYMENT');
   const [receiptModalVisible, setReceiptModalVisible] = useState(false);
+  const [printingReceiptType, setPrintingReceiptType] = useState<'PROVISIONAL' | 'PAYMENT' | null>(
+    null,
+  );
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
   const detailPollingInterval = usePosPollingInterval(5_000);
   const { serverTimeOffsetMs } = useRealtime();
@@ -667,33 +670,38 @@ export function OrderDetailPage({
   ]);
 
   const handlePrintReceipt = async (receiptType: 'PROVISIONAL' | 'PAYMENT') => {
-    if (!data) return;
-    const printData = buildReceiptPrintData(receiptType);
+    if (printingReceiptType !== null || !data) return;
+    setPrintingReceiptType(receiptType);
+    try {
+      const printData = buildReceiptPrintData(receiptType);
 
-    const result = await smartPrintReceipt(
-      {
-        data: printData,
-        printSettings: printSettings.data,
-        storeInfo: {
-          storeName: staffContext.data?.storeName ?? data.order.storeName,
-          phone: staffContext.data?.storePhone ?? null,
-          address: staffContext.data?.storeAddress ?? null,
-          bankName: staffContext.data?.bankName ?? null,
-          bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
-          bankAccountName: staffContext.data?.bankAccountName ?? null,
+      const result = await smartPrintReceipt(
+        {
+          data: printData,
+          printSettings: printSettings.data,
+          storeInfo: {
+            storeName: staffContext.data?.storeName ?? data.order.storeName,
+            phone: staffContext.data?.storePhone ?? null,
+            address: staffContext.data?.storeAddress ?? null,
+            bankName: staffContext.data?.bankName ?? null,
+            bankAccountNumber: staffContext.data?.bankAccountNumber ?? null,
+            bankAccountName: staffContext.data?.bankAccountName ?? null,
+          },
         },
-      },
-      receiptType === 'PAYMENT'
-        ? invoicePrintIdentity(data.invoice?.id ?? '')
-        : provisionalPrintIdentity(data.order.id),
-      authQuery.data?.csrfToken,
-    );
-    if (result.success) {
-      messageApi.success(
-        result.isRemote ? 'Đã gửi yêu cầu in tới máy in!' : 'Đã gửi lệnh in hóa đơn.',
+        receiptType === 'PAYMENT'
+          ? invoicePrintIdentity(data.invoice?.id ?? '')
+          : provisionalPrintIdentity(data.order.id),
+        authQuery.data?.csrfToken,
       );
-    } else {
-      messageApi.error(result.message ?? 'Không thể in hóa đơn.');
+      if (result.success) {
+        messageApi.success(
+          result.isRemote ? 'Đã gửi yêu cầu in tới máy in!' : 'Đã gửi lệnh in hóa đơn.',
+        );
+      } else {
+        messageApi.error(result.message ?? 'Không thể in hóa đơn.');
+      }
+    } finally {
+      window.setTimeout(() => setPrintingReceiptType(null), 1500);
     }
   };
 
@@ -930,6 +938,8 @@ export function OrderDetailPage({
                 </Button>
                 <Button
                   icon={<PrinterOutlined />}
+                  loading={printingReceiptType === 'PROVISIONAL'}
+                  disabled={printingReceiptType !== null}
                   onClick={() => handlePrintReceipt('PROVISIONAL')}
                 >
                   In tạm tính
@@ -951,6 +961,8 @@ export function OrderDetailPage({
                 <Button
                   type="primary"
                   icon={<PrinterOutlined />}
+                  loading={printingReceiptType === 'PAYMENT'}
+                  disabled={printingReceiptType !== null}
                   onClick={() => handlePrintReceipt('PAYMENT')}
                 >
                   In hóa đơn
@@ -1902,6 +1914,8 @@ export function OrderDetailPage({
                       size="small"
                       type="primary"
                       icon={<PrinterOutlined />}
+                      loading={printingReceiptType === 'PAYMENT'}
+                      disabled={printingReceiptType !== null}
                       onClick={() => handlePrintReceipt('PAYMENT')}
                     >
                       In hóa đơn
@@ -2006,6 +2020,7 @@ export function OrderDetailPage({
                 : `Xem hóa đơn tạm tính · ${orderCode}`
             }
             options={currentReceiptPrintOptions}
+            printing={printingReceiptType !== null}
             onCancel={() => setReceiptModalVisible(false)}
             onPrint={async () => {
               await handlePrintReceipt(receiptModalType);

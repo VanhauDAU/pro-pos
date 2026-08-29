@@ -2667,7 +2667,7 @@ export class PosRepository {
                  FROM invoice_lines
                  WHERE store_id = ? AND invoice_id = ? ORDER BY rowid`,
           )
-          .bind(storeId, invoiceId)
+          .bind(storeId, invoice.id)
           .all()
       : { results: [] };
     const payment = invoice
@@ -2687,7 +2687,7 @@ export class PosRepository {
           .first()
       : null;
     const allocations = invoice
-      ? await this.listInvoicePaymentAllocations(storeId, invoiceId)
+      ? await this.listInvoicePaymentAllocations(storeId, invoice.id)
       : { results: [] };
     return { invoice, lines: lines.results, payment, allocations: allocations.results };
   }

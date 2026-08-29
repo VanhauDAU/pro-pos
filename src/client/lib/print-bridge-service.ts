@@ -227,6 +227,29 @@ export async function processPrintJob(job: {
       // fallback
     }
 
+    let posContext: {
+      storeName?: string;
+      storePhone?: string | null;
+      storeAddress?: string | null;
+      bankName?: string | null;
+      bankAccountNumber?: string | null;
+      bankAccountName?: string | null;
+    } | null = null;
+    try {
+      posContext = await apiRequest('/api/v1/pos/context');
+    } catch {
+      // fallback
+    }
+
+    const storeInfo = {
+      storeName: posContext?.storeName ?? authContext?.store?.name ?? 'PRO POS',
+      phone: posContext?.storePhone ?? authContext?.store?.phone ?? null,
+      address: posContext?.storeAddress ?? authContext?.store?.address ?? null,
+      bankName: posContext?.bankName ?? null,
+      bankAccountNumber: posContext?.bankAccountNumber ?? null,
+      bankAccountName: posContext?.bankAccountName ?? null,
+    };
+
     // 4. Fetch Document Data & Build Print Options
     let receiptOptions: PosReceiptPrintOptions | null = null;
 
@@ -237,11 +260,7 @@ export async function processPrintJob(job: {
         receiptOptions = {
           data: printData,
           printSettings,
-          storeInfo: {
-            storeName: authContext?.store?.name ?? 'PRO POS',
-            phone: authContext?.store?.phone ?? null,
-            address: authContext?.store?.address ?? null,
-          },
+          storeInfo,
         };
       } catch {
         try {
@@ -252,11 +271,7 @@ export async function processPrintJob(job: {
           receiptOptions = {
             data: printData,
             printSettings,
-            storeInfo: {
-              storeName: authContext?.store?.name ?? 'PRO POS',
-              phone: authContext?.store?.phone ?? null,
-              address: authContext?.store?.address ?? null,
-            },
+            storeInfo,
           };
         } catch {
           // handled below
@@ -271,11 +286,7 @@ export async function processPrintJob(job: {
       receiptOptions = {
         data: printData,
         printSettings,
-        storeInfo: {
-          storeName: authContext?.store?.name ?? 'PRO POS',
-          phone: authContext?.store?.phone ?? null,
-          address: authContext?.store?.address ?? null,
-        },
+        storeInfo,
       };
     }
 

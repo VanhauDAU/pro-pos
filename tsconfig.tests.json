@@ -44,6 +44,7 @@
     "src/client/features/owner/print-preview-sample.ts",
     "src/client/lib/pos-receipt-printer.ts",
     "src/client/lib/print-document-identity.ts",
+    "src/client/lib/print-performance.ts",
     "src/client/lib/print-bridge-service.ts",
     "apps/print-agent/src",
     "src/client/lib/onboarding-audio.ts",

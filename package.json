@@ -33,6 +33,7 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "benchmark:pos:staging": "node scripts/benchmark-pos.mjs",
+    "benchmark:print-agent": "vitest run tests/unit/print-agent-performance.test.ts",
     "verify": "pnpm format:check && pnpm lint && pnpm cf-typegen && pnpm cf-typegen:auth && pnpm typecheck && pnpm test && pnpm test:integration && pnpm test:migrations && pnpm build",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:staging": "wrangler d1 migrations apply DB --remote --env staging",

@@ -42,6 +42,7 @@ export class AgentRealtimeClient implements RealtimeConnection {
   private handshakeAcknowledged = false;
   private offlinePollAttempt = 0;
   private supportsPendingFeed = true;
+  private serverClockOffsetMs = 0;
   private readonly jobQueue = new JobQueue();
   private readonly processor: JobProcessor;
   private readonly processingJobs = new Set<string>();
@@ -141,6 +142,7 @@ export class AgentRealtimeClient implements RealtimeConnection {
       return;
     }
     console.log('[PRINT-AGENT] Subscription acknowledged; syncing pending print jobs.');
+    this.serverClockOffsetMs = frame.serverNowMs - Date.now();
     this.handshakeAcknowledged = true;
     this.events.onPhase?.('REGISTERED');
     this.events.onPhase?.('SUBSCRIBED');
@@ -156,6 +158,7 @@ export class AgentRealtimeClient implements RealtimeConnection {
 
   private markReady(): void {
     if (this.isReady || this.isDestroyed || !this.handshakeAcknowledged) return;
+    this.stopPollingFallback();
     this.isReady = true;
     this.offlinePollAttempt = 0;
     this.startHeartbeat();
@@ -167,6 +170,7 @@ export class AgentRealtimeClient implements RealtimeConnection {
   private async receiveEvents(events: RealtimeEventV1[]): Promise<void> {
     let needsPendingScan = false;
     for (const event of events) {
+      const eventReceivedAt = performance.now();
       if (event.type === 'pos.print_config.updated') {
         this.printCache.invalidate(event.data.configVersion ?? event.aggregate.version);
         continue;
@@ -185,7 +189,7 @@ export class AgentRealtimeClient implements RealtimeConnection {
       if (job.status !== 'QUEUED') continue;
       if (job.targetDeviceId && job.targetDeviceId !== this.config.agentId) continue;
       console.log(`[PRINT-AGENT] Job received id=${job.id}`);
-      this.enqueueJob(job);
+      this.enqueueJob(job, undefined, eventReceivedAt);
     }
     if (needsPendingScan) await this.recoverPendingJobs();
   }
@@ -238,7 +242,7 @@ export class AgentRealtimeClient implements RealtimeConnection {
       console.log(`[PRINT-AGENT] Sync pending jobs found=${jobs.length}`);
       if (jobs.length > 0) {
         for (const job of jobs) {
-          this.enqueueJob(job);
+          this.enqueueJob(job, undefined, performance.now());
         }
       }
       return true;
@@ -257,7 +261,11 @@ export class AgentRealtimeClient implements RealtimeConnection {
     }
   }
 
-  private enqueueJob(job: PrintJob, printerKey = this.config.printerIp || 'default'): void {
+  private enqueueJob(
+    job: PrintJob,
+    printerKey = this.config.printerIp || 'default',
+    eventReceivedAt = performance.now(),
+  ): void {
     this.pruneRecentJobs();
     if (this.processingJobs.has(job.id) || this.recentJobs.has(job.id)) {
       console.info(`[Realtime] Bỏ qua print job trùng lặp: ${job.id}`);
@@ -268,7 +276,10 @@ export class AgentRealtimeClient implements RealtimeConnection {
     this.jobQueue.enqueue(printerKey, async () => {
       try {
         this.events.onJobStarted?.(job.id);
-        const completed = await this.processor.processJob(job);
+        const completed = await this.processor.processJob(job, {
+          eventReceivedAt,
+          serverClockOffsetMs: this.serverClockOffsetMs,
+        });
         if (completed) this.events.onJobCompleted?.(job.id, Date.now());
         else this.events.onJobFailed?.(job.id, 'PRINT_FAILED', false);
       } finally {

@@ -33,6 +33,7 @@ jobs:
           }
       - run: pnpm --filter @propos/print-agent typecheck
       - run: pnpm exec vitest run tests/unit/print-agent.test.ts tests/unit/print-agent-runtime.test.ts tests/unit/print-agent-credential-store.test.ts tests/unit/print-agent-autostart.test.ts tests/unit/print-agent-presentation.test.ts
+      - run: pnpm benchmark:print-agent
       - run: pnpm --filter @propos/print-agent dist:win
       - uses: actions/upload-artifact@v4
         with:

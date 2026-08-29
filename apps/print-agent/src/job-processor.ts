@@ -16,6 +16,7 @@ import { getReceiptPrintProfile } from '@contracts/store';
 import { PrinterError, type PrinterFailureStage } from '@printing/printer-errors';
 import type { PrintBootstrap, PrintStoreContext } from '@contracts/print-bootstrap';
 import { AgentPrintCache } from './core/print-cache';
+import type { PrintBootstrapCacheStatus } from './core/print-cache';
 
 type PrintDocumentApi = Pick<AgentApiClient, 'get'>;
 
@@ -109,6 +110,33 @@ interface AgentPrintTransport {
   send(data: Uint8Array, options: { host: string; port?: number }): Promise<void>;
 }
 
+export interface PrintJobTimingContext {
+  eventReceivedAt?: number;
+  serverClockOffsetMs?: number;
+}
+
+export interface PrintJobTimingSummary {
+  message: 'print job timing';
+  jobId: string;
+  documentType: string;
+  success: boolean;
+  cacheStatus: PrintBootstrapCacheStatus | 'UNKNOWN';
+  apiRetryCount: number;
+  tcpRetryCount: number;
+  queueWaitMs: number;
+  eventToTcpStartMs: number | null;
+  serverCreatedToTcpStartMs: number | null;
+  stages: {
+    eventReceived: number;
+    claimDone: number | null;
+    dataReady: number | null;
+    renderDone: number | null;
+    tcpStart: number | null;
+    tcpDone: number | null;
+    completeAck: number | null;
+  };
+}
+
 export class JobProcessor {
   private readonly inFlight = new Set<string>();
 
@@ -117,7 +145,16 @@ export class JobProcessor {
     private readonly apiClient: AgentApiClient,
     private readonly transport: AgentPrintTransport = new AgentTcpTransport(),
     private readonly printCache: AgentPrintCache = new AgentPrintCache(apiClient),
+    private readonly monotonicNow: () => number = () => performance.now(),
+    private readonly wallNow: () => number = Date.now,
+    private readonly reportTiming: (summary: PrintJobTimingSummary) => void = (summary) =>
+      console.log(JSON.stringify({ level: summary.success ? 'info' : 'warn', ...summary })),
   ) {}
+
+  private apiRetryTotal(): number {
+    const client = this.apiClient as AgentApiClient & { getRetryTotal?: () => number };
+    return client.getRetryTotal?.() ?? 0;
+  }
 
   private async loadOptionalRaster(
     mediaId: string | null | undefined,
@@ -217,11 +254,26 @@ export class JobProcessor {
     return { paperSize, logoRasterBytes, bottomRasterBytes };
   }
 
-  async processJob(job: PrintJob): Promise<boolean> {
+  async processJob(job: PrintJob, timingContext: PrintJobTimingContext = {}): Promise<boolean> {
     if (this.inFlight.has(job.id)) return false;
     this.inFlight.add(job.id);
     let claimed = false;
     let claimToken: string | null = null;
+    let success = false;
+    let cacheStatus: PrintBootstrapCacheStatus | 'UNKNOWN' = 'UNKNOWN';
+    let tcpRetryCount = 0;
+    let tcpStartWallMs: number | null = null;
+    const processStartedAt = this.monotonicNow();
+    const apiRetryStartedAt = this.apiRetryTotal();
+    const stages: PrintJobTimingSummary['stages'] = {
+      eventReceived: timingContext.eventReceivedAt ?? processStartedAt,
+      claimDone: null,
+      dataReady: null,
+      renderDone: null,
+      tcpStart: null,
+      tcpDone: null,
+      completeAck: null,
+    };
 
     try {
       console.log(
@@ -237,6 +289,7 @@ export class JobProcessor {
         );
         claimToken = claim.claimToken ?? null;
         claimed = true;
+        stages.claimDone = this.monotonicNow();
       } catch (error) {
         console.warn(
           `[PrintAgent] Không thể claim job ${job.id} (có thể đã được claim bởi agent khác):`,
@@ -245,7 +298,7 @@ export class JobProcessor {
         return false;
       }
 
-      const bootstrapPromise = this.printCache.resolve().catch((error) => {
+      const bootstrapPromise = this.printCache.resolveWithMetadata().catch((error) => {
         throw new PrintJobProcessingError(
           'PRINT_BOOTSTRAP_FETCH_FAILED',
           `Không thể nạp bootstrap in: ${errorMessage(error)}`,
@@ -253,14 +306,17 @@ export class JobProcessor {
         );
       });
       const printDataPromise = loadPrintDataForJob(this.apiClient, job);
-      const mediaPromise = bootstrapPromise.then((bootstrap) =>
-        this.preloadConfiguredMedia(bootstrap),
+      const mediaPromise = bootstrapPromise.then((resolution) =>
+        this.preloadConfiguredMedia(resolution.bootstrap),
       );
-      const [bootstrap, printData, preloadedMedia] = await Promise.all([
+      const [bootstrapResolution, printData, preloadedMedia] = await Promise.all([
         bootstrapPromise,
         printDataPromise,
         mediaPromise,
       ]);
+      stages.dataReady = this.monotonicNow();
+      const bootstrap = bootstrapResolution.bootstrap;
+      cacheStatus = bootstrapResolution.cacheStatus;
       const context: PrintStoreContext | null = bootstrap.context;
       const printSettings: StorePrintSettings = bootstrap.printSettings;
       const configVersion = bootstrap.configVersion;
@@ -385,6 +441,7 @@ export class JobProcessor {
           escposBytes.set(bytes, offset);
           offset += bytes.length;
         }
+        stages.renderDone = this.monotonicNow();
       } catch (error) {
         throw new PrintJobProcessingError(
           'RECEIPT_RENDER_FAILED',
@@ -410,6 +467,8 @@ export class JobProcessor {
           { cause: error },
         );
       }
+      stages.tcpStart = this.monotonicNow();
+      tcpStartWallMs = this.wallNow();
       for (let tcpAttempt = 1; tcpAttempt <= 2; tcpAttempt += 1) {
         try {
           await this.transport.send(escposBytes, { host: printerIp, port: printerPort });
@@ -419,6 +478,7 @@ export class JobProcessor {
           const printerError = error instanceof PrinterError ? error : null;
           const failureStage = printerError?.failureStage ?? 'BEFORE_WRITE';
           if (failureStage === 'BEFORE_WRITE' && tcpAttempt === 1) {
+            tcpRetryCount += 1;
             console.warn(
               JSON.stringify({
                 level: 'warn',
@@ -442,14 +502,25 @@ export class JobProcessor {
           });
         }
       }
+      stages.tcpDone = this.monotonicNow();
 
-      await this.apiClient.post(
-        `/api/v1/pos/print-jobs/${job.id}/complete`,
-        claimToken ? { claimToken } : {},
-      );
+      try {
+        await this.apiClient.post(
+          `/api/v1/pos/print-jobs/${job.id}/complete`,
+          claimToken ? { claimToken } : {},
+        );
+      } catch (error) {
+        throw new PrintJobProcessingError(
+          'PRINT_JOB_COMPLETE_FAILED',
+          `Máy in đã nhận dữ liệu nhưng Agent không xác nhận được trạng thái complete: ${errorMessage(error)}`,
+          { cause: error, failureStage: 'DURING_WRITE', retryable: false },
+        );
+      }
+      stages.completeAck = this.monotonicNow();
       console.log(
         `\x1b[32m✔ [PrintAgent] In thành công job ${job.id} (${printData.orderCode || job.documentId})\x1b[0m`,
       );
+      success = true;
       return true;
     } catch (error) {
       const processingError =
@@ -475,6 +546,26 @@ export class JobProcessor {
       return false;
     } finally {
       this.inFlight.delete(job.id);
+      this.reportTiming({
+        message: 'print job timing',
+        jobId: job.id,
+        documentType: job.documentType,
+        success,
+        cacheStatus,
+        apiRetryCount: Math.max(0, this.apiRetryTotal() - apiRetryStartedAt),
+        tcpRetryCount,
+        queueWaitMs: Math.max(0, processStartedAt - stages.eventReceived),
+        eventToTcpStartMs:
+          stages.tcpStart === null ? null : Math.max(0, stages.tcpStart - stages.eventReceived),
+        serverCreatedToTcpStartMs:
+          tcpStartWallMs === null
+            ? null
+            : Math.max(
+                0,
+                tcpStartWallMs + (timingContext.serverClockOffsetMs ?? 0) - job.createdAt,
+              ),
+        stages,
+      });
     }
   }
 }

@@ -29,8 +29,8 @@ function crc16Ccitt(value: string): string {
 export function buildVietQrPaymentPayload(input: {
   bankBin: string;
   accountNumber: string;
-  amountVnd: number;
-  transferContent: string;
+  amountVnd?: number;
+  transferContent?: string;
 }): string {
   const bankBin = input.bankBin.trim();
   const accountNumber = input.accountNumber.replace(/\s+/gu, '');
@@ -43,12 +43,13 @@ export function buildVietQrPaymentPayload(input: {
   const beneficiary = emvField('00', bankBin) + emvField('01', accountNumber);
   const merchantAccount =
     emvField('00', 'A000000727') + emvField('01', beneficiary) + emvField('02', 'QRIBFTTA');
-  const content = input.transferContent.trim().slice(0, 50);
+  const content = input.transferContent?.trim().slice(0, 50) ?? '';
   const additionalData = content ? emvField('08', content) : '';
-  const amount = Math.max(0, Math.round(input.amountVnd));
+  const amount = Math.max(0, Math.round(input.amountVnd ?? 0));
+  const isDynamic = amount > 0 || Boolean(content);
   const body =
     emvField('00', '01') +
-    emvField('01', '12') +
+    emvField('01', isDynamic ? '12' : '11') +
     emvField('38', merchantAccount) +
     emvField('53', '704') +
     (amount > 0 ? emvField('54', String(amount)) : '') +
@@ -132,7 +133,6 @@ export function createReceiptDocument(options: PosReceiptPrintOptions): ReceiptD
       : options.storeInfo?.address
     )?.trim() || '';
   const storePhone = options.storeInfo?.phone?.trim() || '';
-  const rawCode = data.invoiceCode || data.orderCode;
   const showBottom = template.showBottomImage && data.receiptType === 'PAYMENT';
   const bankIdentifier = (settings?.bottomBankName || options.storeInfo?.bankName || '').trim();
   const accountNumber = (
@@ -156,13 +156,12 @@ export function createReceiptDocument(options: PosReceiptPrintOptions): ReceiptD
     bankIdentifier &&
     accountNumber
   ) {
-    bottomImageUrl = `https://img.vietqr.io/image/${encodeURIComponent(bankIdentifier)}-${encodeURIComponent(accountNumber)}-qr_only.png?amount=${data.total}&addInfo=${encodeURIComponent(rawCode)}&accountName=${encodeURIComponent(accountName)}`;
+    const accountNameQuery = accountName ? `?accountName=${encodeURIComponent(accountName)}` : '';
+    bottomImageUrl = `https://img.vietqr.io/image/${encodeURIComponent(bankIdentifier)}-${encodeURIComponent(accountNumber)}-qr_only.png${accountNameQuery}`;
     try {
       vietQrPayload = buildVietQrPaymentPayload({
         bankBin: bankIdentifier,
         accountNumber,
-        amountVnd: data.total,
-        transferContent: rawCode,
       });
     } catch {
       // Legacy settings stored a bank short name. Preview can still load the VietQR image,

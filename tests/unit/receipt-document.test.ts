@@ -306,18 +306,18 @@ describe('canonical receipt document', () => {
     expect(containsByteSequence(verticalBytes, [0x1d, 0x76, 0x30, 0x00])).toBe(true);
   });
 
-  it('builds a payment EMV payload rather than a VietQR image URL', () => {
+  it('builds a fixed VietQR payload without amount or transfer content', () => {
     const payload = buildVietQrPaymentPayload({
       bankBin: '970422',
       accountNumber: '123456789',
-      amountVnd: 100_000,
-      transferContent: 'INV-1',
     });
-    expect(payload).toMatch(/^000201010212/u);
+    expect(payload).toMatch(/^000201010211/u);
     expect(payload).toContain('A000000727');
     expect(payload).toContain('970422');
     expect(payload).toContain('123456789');
     expect(payload).not.toContain('http');
+    expect(payload).not.toContain('100000');
+    expect(payload).not.toContain('INV-1');
     expect(payload.slice(-8, -4)).toBe('6304');
 
     const document = createReceiptDocument(
@@ -331,7 +331,27 @@ describe('canonical receipt document', () => {
       ),
     );
     expect(document.media.bottomImageUrl).toContain('img.vietqr.io/image/970422-123456789');
+    expect(document.media.bottomImageUrl).not.toContain('amount=');
+    expect(document.media.bottomImageUrl).not.toContain('addInfo=');
     expect(document.media.vietQrPayload).toBe(payload);
+    const anotherDocument = createReceiptDocument({
+      ...options(
+        printSettings({
+          bottomImageType: 'VIETQR',
+          bottomBankName: '970422',
+          bottomBankAccountNumber: '123456789',
+          bottomBankAccountName: 'NGUYEN VAN A',
+        }),
+      ),
+      data: {
+        ...paymentData(),
+        orderCode: 'ORDER-OTHER',
+        invoiceCode: 'INV-OTHER',
+        total: 999_000,
+      },
+    });
+    expect(anotherDocument.media.bottomImageUrl).toBe(document.media.bottomImageUrl);
+    expect(anotherDocument.media.vietQrPayload).toBe(document.media.vietQrPayload);
 
     const escposText = new TextDecoder().decode(
       buildEscPosTextReceipt(paymentData(), {

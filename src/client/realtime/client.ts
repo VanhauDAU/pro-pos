@@ -10,6 +10,7 @@ import {
 } from '@contracts/realtime';
 import { apiRequest } from '@client/lib/api';
 import { playPosSound } from '@client/lib/sound';
+import { recordPwaPrintTcpStart } from '@client/lib/print-performance';
 
 export type RealtimeConnectionStatus = 'DISABLED' | 'CONNECTING' | 'CONNECTED' | 'RECONNECTING';
 
@@ -364,6 +365,13 @@ export class PosRealtimeClient {
   }
 
   private routeEvent(event: RealtimeEventV1, isLive: boolean) {
+    if (
+      isLive &&
+      event.type === 'pos.print_job.updated' &&
+      event.data.reason === 'PRINT_JOB_STARTED'
+    ) {
+      recordPwaPrintTcpStart(event.data.printJobId, event.eventId);
+    }
     if (this.isOwnMutation(event)) return;
     for (const topic of event.topics) this.pendingTopics.add(topic);
     if (event.topics.includes(`pos.order:${event.aggregate.id}`)) {

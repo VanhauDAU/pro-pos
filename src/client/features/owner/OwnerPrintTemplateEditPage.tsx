@@ -28,10 +28,7 @@ import {
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 import { ReceiptPreviewPaper } from '@client/features/pos/ReceiptPreviewModal';
 import { ThermalHourlySegmentsPreview } from '@client/components/ThermalHourlySegmentsPreview';
-import {
-  OWNER_PRINT_PREVIEW_TOTAL_VND,
-  buildOwnerPrintPreviewSample,
-} from './print-preview-sample';
+import { buildOwnerPrintPreviewSample } from './print-preview-sample';
 
 function errorMessage(error: unknown, fallback: string) {
   if (error instanceof ApiError) return error.message;
@@ -265,11 +262,10 @@ export function OwnerPrintTemplateEditPage() {
     if (!settings) return null;
     if (settings.bottomImageType === 'VIETQR') {
       if (settings.bottomBankName && settings.bottomBankAccountNumber) {
+        const accountName = settings.bottomBankAccountName?.trim();
         return `https://img.vietqr.io/image/${encodeURIComponent(settings.bottomBankName.trim())}-${encodeURIComponent(
           settings.bottomBankAccountNumber.trim(),
-        )}-qr_only.png?amount=${OWNER_PRINT_PREVIEW_TOTAL_VND}&addInfo=Thanh+toan+bill&accountName=${encodeURIComponent(
-          settings.bottomBankAccountName?.trim() || '',
-        )}`;
+        )}-qr_only.png${accountName ? `?accountName=${encodeURIComponent(accountName)}` : ''}`;
       }
     } else if (settings.bottomImageType === 'UPLOAD' && settings.bottomImageMediaId) {
       return `/api/v1/media/${settings.bottomImageMediaId}`;
@@ -563,7 +559,7 @@ export function OwnerPrintTemplateEditPage() {
                     <Form.Item name="showBottomImage" valuePropName="checked" noStyle>
                       <Checkbox>
                         {bottomImageIsVietQr
-                          ? 'Hiển thị VietQR theo số tiền đã chốt'
+                          ? 'Hiển thị VietQR tài khoản cố định'
                           : 'Hiển thị ảnh cuối hóa đơn'}
                       </Checkbox>
                     </Form.Item>

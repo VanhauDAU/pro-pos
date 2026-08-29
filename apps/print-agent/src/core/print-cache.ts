@@ -27,6 +27,13 @@ export interface RasterCacheKey {
   height: number;
 }
 
+export type PrintBootstrapCacheStatus = 'HIT' | 'REFRESH' | 'STALE';
+
+export interface PrintBootstrapResolution {
+  bootstrap: PrintBootstrap;
+  cacheStatus: PrintBootstrapCacheStatus;
+}
+
 export class PrintBootstrapStaleError extends Error {
   constructor(message = 'Print bootstrap cache đã quá thời gian stale cho phép.') {
     super(message);
@@ -94,14 +101,18 @@ export class AgentPrintCache {
   }
 
   async resolve(): Promise<PrintBootstrap> {
+    return (await this.resolveWithMetadata()).bootstrap;
+  }
+
+  async resolveWithMetadata(): Promise<PrintBootstrapResolution> {
     const entry = this.entry;
     const age = entry ? this.now() - entry.fetchedAt : Number.POSITIVE_INFINITY;
     if (entry && age <= this.ttlMs && entry.value.configVersion >= this.desiredVersion) {
-      return entry.value;
+      return { bootstrap: entry.value, cacheStatus: 'HIT' };
     }
 
     try {
-      return await this.refresh();
+      return { bootstrap: await this.refresh(), cacheStatus: 'REFRESH' };
     } catch (error) {
       const staleEntry = this.entry;
       const staleAge = staleEntry ? this.now() - staleEntry.fetchedAt : Number.POSITIVE_INFINITY;
@@ -115,7 +126,7 @@ export class AgentPrintCache {
             error: error instanceof Error ? error.message : String(error),
           }),
         );
-        return staleEntry.value;
+        return { bootstrap: staleEntry.value, cacheStatus: 'STALE' };
       }
       throw new PrintBootstrapStaleError(
         error instanceof Error ? error.message : 'Không thể tải print bootstrap.',

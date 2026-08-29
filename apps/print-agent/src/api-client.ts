@@ -42,6 +42,7 @@ export class AgentApiClient {
   private readonly maxAttempts: number;
   private readonly sleep: (delayMs: number) => Promise<void>;
   private readonly random: () => number;
+  private retryTotal = 0;
 
   constructor(
     private readonly config: PrintAgentConfig,
@@ -74,6 +75,10 @@ export class AgentApiClient {
     return Math.round(base * (0.8 + this.random() * 0.4));
   }
 
+  getRetryTotal(): number {
+    return this.retryTotal;
+  }
+
   private async request(path: string, init: RequestInit, allowRetry = true): Promise<Response> {
     const url = new URL(path, this.config.serverUrl).toString();
     let lastError: AgentApiError | null = null;
@@ -95,6 +100,7 @@ export class AgentApiClient {
         );
         if (attempt === attempts) throw lastError;
         const delayMs = this.retryDelay(attempt);
+        this.retryTotal += 1;
         console.warn(
           JSON.stringify({
             level: 'warn',
@@ -120,6 +126,7 @@ export class AgentApiClient {
       );
       if (!canRetry || attempt === attempts) throw lastError;
       const delayMs = this.retryDelay(attempt, response);
+      this.retryTotal += 1;
       console.warn(
         JSON.stringify({
           level: 'warn',

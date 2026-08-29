@@ -43,6 +43,28 @@ jobs:
       - run: pnpm test:integration
       - run: pnpm build
 
+  print-agent-desktop-smoke:
+    name: print agent desktop smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.22.0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @propos/print-agent typecheck
+      - run: pnpm benchmark:print-agent
+      - run: pnpm --filter @propos/print-agent build:desktop
+
   authenticated-e2e:
     name: authenticated E2E (staging)
     if: github.event_name == 'workflow_dispatch'

@@ -9,6 +9,7 @@ import {
 } from '@domain/receipt/receipt-generator';
 import { ApiError, apiRequest, jsonRequest } from './api';
 import { receiptRasterCss } from '@printing/receipt/receipt-template';
+import { trackPwaPrintRequest } from './print-performance';
 
 let cachedPosCsrfToken: string | null = null;
 
@@ -630,6 +631,7 @@ export async function dispatchRemotePrintJob(params: {
   targetDeviceId?: string | null;
   csrfToken?: string | null;
 }): Promise<{ success: boolean; jobId?: string; message?: string }> {
+  const requestStartedAt = performance.now();
   const idempotencyKey = `print:${params.documentType}:${params.documentId}:${crypto.randomUUID()}`;
   let csrfToken = await resolvePosCsrfToken(params.csrfToken);
 
@@ -672,6 +674,7 @@ export async function dispatchRemotePrintJob(params: {
     if (import.meta.env.DEV) {
       console.log('[Print Job] Job submitted successfully (status=201, QUEUED):', result.jobId);
     }
+    trackPwaPrintRequest(result.jobId, requestStartedAt);
 
     return {
       success: true,

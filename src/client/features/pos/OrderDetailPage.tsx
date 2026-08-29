@@ -681,7 +681,7 @@ export function OrderDetailPage({
       },
       {
         type: receiptType === 'PAYMENT' ? 'invoice' : 'order',
-        id: data.order.id,
+        id: receiptType === 'PAYMENT' && data.invoice?.id ? data.invoice.id : data.order.id,
       },
       authQuery.data?.csrfToken,
     );

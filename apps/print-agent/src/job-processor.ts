@@ -2,38 +2,13 @@ import { AgentApiClient } from './api-client';
 import type { PrintAgentConfig } from './config';
 import { AgentTcpTransport } from './tcp-transport';
 import {
-  buildEscPosReceipt,
   buildPrintDataFromInvoice,
   buildPrintDataFromQuote,
   type PosReceiptPrintData,
 } from '@domain/receipt/receipt-generator';
-import { encodeEscPosWpc1258 } from '@printing/escpos/escpos-wpc1258';
+import { buildEscPosTextReceipt } from '@printing/escpos/escpos-text-builder';
 import type { PrintJob } from '@contracts/print-job';
 import type { StorePrintSettings } from '@contracts/store';
-
-const CASH_DRAWER_COMMAND = '\x1b\x70\x00\x19\xfa';
-
-function combinePayloads(payloads: Uint8Array[]): Uint8Array {
-  const totalLength = payloads.reduce((sum, payload) => sum + payload.length, 0);
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const payload of payloads) {
-    result.set(payload, offset);
-    offset += payload.length;
-  }
-  return result;
-}
-
-function resolveCopyCount(
-  printData: PosReceiptPrintData,
-  printSettings: StorePrintSettings | null,
-): number {
-  const configured =
-    printData.receiptType === 'PROVISIONAL'
-      ? printSettings?.provisionalCopyCount
-      : printSettings?.paymentCopyCount;
-  return Math.max(1, Math.min(9, configured ?? 1));
-}
 
 export class JobProcessor {
   private readonly inFlight = new Set<string>();
@@ -74,14 +49,14 @@ export class JobProcessor {
       let printData: PosReceiptPrintData | null = null;
       let printSettings: StorePrintSettings | null = null;
       let storeInfo: {
-        storeName: string;
+        name: string;
         address?: string;
         phone?: string;
-        bankName?: string;
-        bankAccountNumber?: string;
-        bankAccountName?: string;
+        bankName?: string | null;
+        bankAccountNumber?: string | null;
+        bankAccountName?: string | null;
       } = {
-        storeName: this.config.storeName || 'PRO POS',
+        name: this.config.storeName || 'PRO POS',
       };
 
       try {
@@ -90,14 +65,16 @@ export class JobProcessor {
           this.apiClient.get<StorePrintSettings>('/api/v1/pos/print-settings').catch(() => null),
         ]);
 
-        if (contextRes?.store) {
+        if (contextRes) {
           storeInfo = {
-            storeName: contextRes.store.name || storeInfo.storeName,
-            address: contextRes.store.address || undefined,
-            phone: contextRes.store.phone || undefined,
-            bankName: contextRes.store.bankName || undefined,
-            bankAccountNumber: contextRes.store.bankAccountNumber || undefined,
-            bankAccountName: contextRes.store.bankAccountName || undefined,
+            name: contextRes.storeName || contextRes.store?.name || storeInfo.name,
+            address: contextRes.storeAddress || contextRes.store?.address || undefined,
+            phone: contextRes.storePhone || contextRes.store?.phone || undefined,
+            bankName: contextRes.bankName ?? contextRes.store?.bankName ?? null,
+            bankAccountNumber:
+              contextRes.bankAccountNumber ?? contextRes.store?.bankAccountNumber ?? null,
+            bankAccountName:
+              contextRes.bankAccountName ?? contextRes.store?.bankAccountName ?? null,
           };
         }
         if (settingsRes) {
@@ -105,11 +82,19 @@ export class JobProcessor {
         }
 
         if (job.documentType === 'invoice') {
-          const invoice = await this.apiClient.get<any>(`/api/v1/pos/invoices/${job.documentId}`);
-          printData = buildPrintDataFromInvoice(invoice);
+          try {
+            const invoice = await this.apiClient.get<any>(`/api/v1/pos/invoices/${job.documentId}`);
+            printData = buildPrintDataFromInvoice(invoice);
+          } catch {
+            // Fallback: if documentId was order ID, fetch quote and format as PAYMENT
+            const orderDoc = await this.apiClient.get<any>(
+              `/api/v1/pos/orders/${job.documentId}/quote`,
+            );
+            printData = buildPrintDataFromQuote(orderDoc, 'PAYMENT');
+          }
         } else {
           const quote = await this.apiClient.get<any>(`/api/v1/pos/orders/${job.documentId}/quote`);
-          printData = buildPrintDataFromQuote(quote);
+          printData = buildPrintDataFromQuote(quote, 'PROVISIONAL');
         }
       } catch (err: any) {
         console.error(`[PrintAgent] Lỗi khi nạp dữ liệu hóa đơn:`, err);
@@ -147,26 +132,58 @@ export class JobProcessor {
         } as StorePrintSettings;
       }
 
-      const copyCount = resolveCopyCount(printData, effectivePrintSettings);
-      const payloads: Uint8Array[] = [];
-      for (let copyIndex = 0; copyIndex < copyCount; copyIndex += 1) {
-        const receipt = buildEscPosReceipt(
-          {
-            data: printData,
-            printSettings: effectivePrintSettings,
-            storeInfo,
-          },
-          { index: copyIndex + 1, total: copyCount },
-        );
+      let paperSize: 'K80' | 'K58' = this.config.paperSize || 'K80';
+      let autoCut = this.config.autoCut ?? true;
+      let openCashDrawer = this.config.openCashDrawer ?? false;
 
-        // A cash drawer pulse must happen only once for a multi-copy payment.
-        const raw =
-          copyIndex === copyCount - 1
-            ? receipt.escPosData
-            : receipt.escPosData.replaceAll(CASH_DRAWER_COMMAND, '');
-        payloads.push(encodeEscPosWpc1258(raw));
+      if (effectivePrintSettings?.printersJson) {
+        try {
+          const parsed = JSON.parse(effectivePrintSettings.printersJson);
+          if (parsed.paperSize) paperSize = parsed.paperSize;
+          if (parsed.autoCut !== undefined) autoCut = parsed.autoCut;
+          if (parsed.openCashDrawer !== undefined) openCashDrawer = parsed.openCashDrawer;
+        } catch {
+          // ignore
+        }
       }
-      const escposBytes = combinePayloads(payloads);
+
+      const copyCount = Math.max(
+        1,
+        printData.receiptType === 'PROVISIONAL'
+          ? (effectivePrintSettings?.provisionalCopyCount ?? 1)
+          : (effectivePrintSettings?.paymentCopyCount ?? 1),
+      );
+
+      const copyByteArrays: Uint8Array[] = [];
+      for (let cIdx = 1; cIdx <= copyCount; cIdx++) {
+        const singleCopyBytes = buildEscPosTextReceipt(printData, {
+          paperSize,
+          autoCut,
+          openCashDrawer: openCashDrawer && printData.receiptType === 'PAYMENT' && cIdx === 1,
+          storeName: storeInfo.name,
+          storeAddress: storeInfo.address,
+          storePhone: storeInfo.phone,
+          printSettings: effectivePrintSettings,
+          storeInfo: {
+            storeName: storeInfo.name,
+            address: storeInfo.address,
+            phone: storeInfo.phone,
+            bankName: storeInfo.bankName ?? null,
+            bankAccountNumber: storeInfo.bankAccountNumber ?? null,
+            bankAccountName: storeInfo.bankAccountName ?? null,
+          },
+          copy: { index: cIdx, total: copyCount },
+        });
+        copyByteArrays.push(singleCopyBytes);
+      }
+
+      const totalLen = copyByteArrays.reduce((sum, b) => sum + b.length, 0);
+      const escposBytes = new Uint8Array(totalLen);
+      let offset = 0;
+      for (const b of copyByteArrays) {
+        escposBytes.set(b, offset);
+        offset += b.length;
+      }
 
       // 4. Send to LAN Printer via TCP 9100
       let printerIp = this.config.printerIp || '192.168.1.73';

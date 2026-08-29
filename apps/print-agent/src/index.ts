@@ -1,26 +1,18 @@
-import { AgentApiClient } from './api-client';
 import { ConfigManager } from './config';
-import { PairingHandler } from './pairing';
-import { AgentRealtimeClient } from './realtime-client';
-import { AgentTcpTransport } from './tcp-transport';
-import { buildEscPosTextReceipt } from '@printing/escpos/escpos-text-builder';
+import { AgentRuntime } from './core/agent-runtime';
 
 async function main() {
   const configManager = new ConfigManager();
   let config = configManager.loadConfig();
   const initialServerUrl = config.serverUrl;
-
-  // Parse CLI args
   const args = process.argv.slice(2);
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === '--server' && args[i + 1]) {
-      config.serverUrl = args[++i]!;
-    } else if (arg === '--ip' && args[i + 1]) {
-      config.printerIp = args[++i]!;
-    } else if (arg === '--port' && args[i + 1]) {
-      config.printerPort = Number(args[++i]);
-    } else if (arg === '--reset') {
+
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === '--server' && args[index + 1]) config.serverUrl = args[++index]!;
+    else if (argument === '--ip' && args[index + 1]) config.printerIp = args[++index]!;
+    else if (argument === '--port' && args[index + 1]) config.printerPort = Number(args[++index]);
+    else if (argument === '--reset') {
       config.agentId = undefined;
       config.agentSecret = undefined;
       config.storeId = undefined;
@@ -30,16 +22,8 @@ async function main() {
     }
   }
 
-  // If serverUrl changed from saved config, invalidate previous pairing since credentials belong to different server
-  if (
-    initialServerUrl &&
-    config.serverUrl &&
-    initialServerUrl !== config.serverUrl &&
-    configManager.isPaired(config)
-  ) {
-    console.log(
-      `\x1b[33m[Config] Phát hiện máy chủ thay đổi: ${initialServerUrl} ➔ ${config.serverUrl}\x1b[0m`,
-    );
+  if (initialServerUrl && config.serverUrl && initialServerUrl !== config.serverUrl && configManager.isPaired(config)) {
+    console.log(`\x1b[33m[Config] Phát hiện máy chủ thay đổi: ${initialServerUrl} ➔ ${config.serverUrl}\x1b[0m`);
     console.log('Xóa khóa ghép nối cũ để ghép nối với máy chủ mới...\n');
     config.agentId = undefined;
     config.agentSecret = undefined;
@@ -48,89 +32,45 @@ async function main() {
     configManager.saveConfig(config);
   }
 
-  // 1. Check if device is paired
-  if (!configManager.isPaired(config)) {
-    const pairing = new PairingHandler(configManager, config);
-    config = await pairing.startPairingFlow();
-  }
+  const runtime = new AgentRuntime(config);
+  runtime.on('stateChanged', (state) => {
+    if (state.status === 'ONLINE') console.log('\x1b[32m● Trạng thái: ĐANG HOẠT ĐỘNG (ONLINE)\x1b[0m');
+    if (state.status === 'OFFLINE' || state.status === 'DEGRADED') {
+      console.warn(`[Runtime] ${state.status}: ${state.lastError || 'đang khôi phục kết nối'}`);
+    }
+  });
+  runtime.on('pairingChanged', (pairing) => {
+    if (pairing.code) console.log(`[Runtime] Mã ghép nối đã sẵn sàng (hết hạn: ${new Date(pairing.expiresAt!).toLocaleTimeString()}).`);
+  });
 
-  // 2. Display Status Banner
+  await runtime.start();
+  if (runtime.getState().status === 'UNPAIRED') await runtime.startPairing();
+
+  const currentConfig = runtime.getConfig();
   console.log('\n========================================');
   console.log('    PRO POS PRINT AGENT (v0.1.0)');
   console.log('========================================');
-  console.log('● Trạng thái : \x1b[32mĐANG HOẠT ĐỘNG (ONLINE)\x1b[0m');
-  console.log(`Cửa hàng     : ${config.storeName || config.storeId}`);
-  console.log(
-    `Máy in LAN   : \x1b[1m${config.printerIp || '192.168.1.73'}:${config.printerPort || 9100}\x1b[0m (${config.paperSize || 'K80'})`,
-  );
-  console.log(`Máy chủ      : ${config.serverUrl}`);
-  console.log('----------------------------------------');
-  console.log('Tự động in tất cả yêu cầu in từ Điện thoại / iPad / Web POS.');
-  console.log('Không mở popup, không cần xác nhận trên máy tính.');
-  console.log('========================================\n');
+  console.log(`Cửa hàng     : ${currentConfig?.storeName || currentConfig?.storeId || 'Đang ghép nối'}`);
+  console.log(`Máy in LAN   : \x1b[1m${currentConfig?.printerIp || '192.168.1.73'}:${currentConfig?.printerPort || 9100}\x1b[0m (${currentConfig?.paperSize || 'K80'})`);
+  console.log(`Máy chủ      : ${currentConfig?.serverUrl || config.serverUrl}`);
+  console.log('Tự động in tất cả yêu cầu in từ Điện thoại / iPad / Web POS.\n');
 
-  // 3. Test print on start if requested
   if (args.includes('--test')) {
     console.log('[Test] Đang thực hiện in thử máy in LAN...');
-    const transport = new AgentTcpTransport();
-    const testReceipt = buildEscPosTextReceipt(
-      {
-        receiptType: 'PAYMENT',
-        orderCode: 'TEST-001',
-        invoiceCode: 'TEST-001',
-        orderType: 'DINE_IN',
-        total: 50000,
-        subtotal: 50000,
-        discountTotal: 0,
-        issuedAtMs: Date.now(),
-        tableName: 'Bàn Test',
-        cashierName: 'Print Agent Test',
-        lines: [
-          {
-            id: '1',
-            name: 'In thử Pro POS Print Agent',
-            quantity: 1,
-            unitPrice: 50000,
-            totalPrice: 50000,
-          },
-        ],
-      },
-      {
-        paperSize: config.paperSize || 'K80',
-        storeName: 'PRO POS PRINT AGENT TEST',
-        autoCut: true,
-      },
-    );
-    try {
-      await transport.send(testReceipt, {
-        host: config.printerIp || '192.168.1.73',
-        port: config.printerPort || 9100,
-      });
-      console.log('\x1b[32m✔ In thử thành công!\x1b[0m');
-    } catch (err: any) {
-      console.error('\x1b[31m✘ In thử thất bại:\x1b[0m', err.message);
-    }
+    const result = await runtime.testPrinter();
+    if (result.ok) console.log('\x1b[32m✔ Đã gửi lệnh in thử tới máy in.\x1b[0m');
+    else console.error(`\x1b[31m✘ In thử thất bại: ${result.error}\x1b[0m`);
   }
 
-  // 4. Start Realtime Outbound Client
-  const apiClient = new AgentApiClient(config);
-  const realtimeClient = new AgentRealtimeClient(config, apiClient);
-  realtimeClient.connect();
-
-  // Handle graceful exit
-  process.on('SIGINT', () => {
+  const shutdown = () => {
     console.log('\nĐang dừng Pro POS Print Agent...');
-    realtimeClient.destroy();
-    process.exit(0);
-  });
-
-  process.on('SIGTERM', () => {
-    realtimeClient.destroy();
-    process.exit(0);
-  });
+    void runtime.stop().finally(() => process.exit(0));
+  };
+  process.once('SIGINT', shutdown);
+  process.once('SIGTERM', shutdown);
 }
 
-main().catch((err) => {
-  console.error('\x1b[31mLỗi khởi động Print Agent:\x1b[0m', err);
+main().catch((error) => {
+  console.error('\x1b[31mLỗi khởi động Print Agent:\x1b[0m', error);
   process.exit(1);
 });

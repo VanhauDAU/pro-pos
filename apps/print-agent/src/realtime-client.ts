@@ -6,7 +6,22 @@ import { JobProcessor } from './job-processor';
 import type { PrintJob } from '@contracts/print-job';
 import { REALTIME_SUBPROTOCOL } from '@contracts/realtime';
 
-export class AgentRealtimeClient {
+export interface AgentRealtimeEvents {
+  onConnected?(): void;
+  onDisconnected?(error: string): void;
+  onDegraded?(error: string): void;
+  onJobReceived?(jobId: string, type: string): void;
+  onJobStarted?(jobId: string): void;
+  onJobCompleted?(jobId: string, sentAt: number): void;
+  onJobFailed?(jobId: string, code: string, retryable: boolean): void;
+}
+
+export interface RealtimeConnection {
+  connect(): void;
+  destroy(): void;
+}
+
+export class AgentRealtimeClient implements RealtimeConnection {
   private ws: WebSocket | null = null;
   private isDestroyed = false;
   private reconnectAttempt = 0;
@@ -19,6 +34,7 @@ export class AgentRealtimeClient {
   constructor(
     private readonly config: PrintAgentConfig,
     private readonly apiClient: AgentApiClient,
+    private readonly events: AgentRealtimeEvents = {},
   ) {
     this.processor = new JobProcessor(config, apiClient);
   }
@@ -49,6 +65,7 @@ export class AgentRealtimeClient {
         console.log('\x1b[32m● [Realtime] Đã kết nối trực tuyến với máy chủ Pro POS!\x1b[0m');
         this.reconnectAttempt = 0;
         this.startHeartbeat();
+        this.events.onConnected?.();
         void this.recoverPendingJobs();
       });
 
@@ -68,12 +85,14 @@ export class AgentRealtimeClient {
           console.warn(
             `[Realtime] Mất kết nối (code: ${code}${reasonStr ? `, lý do: ${reasonStr}` : ''}). Đang thử kết nối lại...`,
           );
+          this.events.onDisconnected?.(reasonStr || `WebSocket closed (${code})`);
           this.scheduleReconnect();
         }
       });
 
       this.ws.on('error', (err) => {
         console.error('[Realtime] Lỗi kết nối WebSocket:', err.message);
+        this.events.onDegraded?.(err.message);
       });
     } catch (err: any) {
       console.error('[Realtime] Lỗi khởi tạo WebSocket:', err?.message || err);
@@ -93,9 +112,16 @@ export class AgentRealtimeClient {
       const job: PrintJob = message.payload || message.data;
       if (job && job.id) {
         console.log(`[Realtime] Nhận thông báo in: Job ID ${job.id}`);
+        this.events.onJobReceived?.(job.id, job.documentType);
         const printerKey = this.config.printerIp || 'default';
         this.jobQueue.enqueue(printerKey, async () => {
-          await this.processor.processJob(job);
+          this.events.onJobStarted?.(job.id);
+          const completed = await this.processor.processJob(job);
+          if (completed) {
+            this.events.onJobCompleted?.(job.id, Date.now());
+          } else {
+            this.events.onJobFailed?.(job.id, 'PRINT_FAILED', false);
+          }
         });
       }
     }
@@ -112,11 +138,19 @@ export class AgentRealtimeClient {
         const printerKey = this.config.printerIp || 'default';
         for (const job of jobs) {
           this.jobQueue.enqueue(printerKey, async () => {
-            await this.processor.processJob(job);
+            this.events.onJobReceived?.(job.id, job.documentType);
+            this.events.onJobStarted?.(job.id);
+            const completed = await this.processor.processJob(job);
+            if (completed) {
+              this.events.onJobCompleted?.(job.id, Date.now());
+            } else {
+              this.events.onJobFailed?.(job.id, 'PRINT_FAILED', false);
+            }
           });
         }
       }
     } catch (err: any) {
+      this.events.onDegraded?.(err?.message || String(err));
       if (err?.message?.includes('401') || err?.message?.includes('UNAUTHORIZED')) {
         console.error(
           '\n\x1b[31m✘ [PrintAgent] Xác thực thất bại với máy chủ (401 Unauthorized).\x1b[0m',

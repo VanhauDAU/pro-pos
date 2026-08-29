@@ -157,6 +157,78 @@ export function wrapTextToWidth(text: string, maxWidth: number): string[] {
   return lines.length > 0 ? lines : [''];
 }
 
+interface EscPosRasterImage {
+  widthBytes: number;
+  height: number;
+  data: Uint8Array;
+}
+
+function parseEscPosRasterImage(bytes: Uint8Array): EscPosRasterImage | null {
+  if (bytes.length < 8 || bytes[0] !== 0x1d || bytes[1] !== 0x76 || bytes[2] !== 0x30) {
+    return null;
+  }
+  const widthBytes = bytes[4]! | (bytes[5]! << 8);
+  const height = bytes[6]! | (bytes[7]! << 8);
+  const dataLength = widthBytes * height;
+  if (widthBytes <= 0 || height <= 0 || bytes.length < 8 + dataLength) return null;
+  return { widthBytes, height, data: bytes.subarray(8, 8 + dataLength) };
+}
+
+function build24DotStripe(raster: EscPosRasterImage, sourceTop: number): Uint8Array {
+  const widthDots = raster.widthBytes * 8;
+  const command = new Uint8Array(5 + widthDots * 3);
+  command.set([0x1b, 0x2a, 33, widthDots & 0xff, (widthDots >> 8) & 0xff]);
+  for (let x = 0; x < widthDots; x += 1) {
+    for (let verticalByte = 0; verticalByte < 3; verticalByte += 1) {
+      let output = 0;
+      for (let bit = 0; bit < 8; bit += 1) {
+        const y = sourceTop + verticalByte * 8 + bit;
+        if (y < 0 || y >= raster.height) continue;
+        const source = raster.data[y * raster.widthBytes + (x >> 3)]!;
+        if ((source & (0x80 >> (x & 7))) !== 0) output |= 0x80 >> bit;
+      }
+      command[5 + x * 3 + verticalByte] = output;
+    }
+  }
+  return command;
+}
+
+function absolutePrintPosition(positionDots: number): Uint8Array {
+  const safePosition = Math.max(0, Math.min(65_535, Math.round(positionDots)));
+  return Uint8Array.of(0x1b, 0x24, safePosition & 0xff, (safePosition >> 8) & 0xff);
+}
+
+function buildHorizontalLogoHeader(options: {
+  logoRasterBytes: Uint8Array;
+  printableDots: number;
+  textLines: Array<{ text: string; bold: boolean }>;
+  encodeText: (text: string) => Uint8Array;
+}): Uint8Array[] | null {
+  const raster = parseEscPosRasterImage(options.logoRasterBytes);
+  if (!raster) return null;
+
+  const stripeHeight = 24;
+  const logoWidthDots = raster.widthBytes * 8;
+  const textStartDots = Math.min(options.printableDots - 1, logoWidthDots + 16);
+  const rowCount = Math.max(Math.ceil(raster.height / stripeHeight), options.textLines.length);
+  const logoTop = Math.floor((rowCount * stripeHeight - raster.height) / 2);
+  const textTop = Math.floor((rowCount - options.textLines.length) / 2);
+  const output: Uint8Array[] = [ESC_POS.alignLeft, Uint8Array.of(0x1b, 0x33, stripeHeight)];
+
+  for (let row = 0; row < rowCount; row += 1) {
+    output.push(build24DotStripe(raster, row * stripeHeight - logoTop));
+    output.push(absolutePrintPosition(textStartDots));
+    const line = options.textLines[row - textTop];
+    if (line) {
+      output.push(line.bold ? ESC_POS.boldOn : ESC_POS.boldOff);
+      output.push(options.encodeText(line.text));
+    }
+    output.push(Uint8Array.of(0x0a));
+  }
+  output.push(ESC_POS.boldOff, Uint8Array.of(0x1b, 0x32));
+  return output;
+}
+
 function formatVnd(amount: number): string {
   return new Intl.NumberFormat('vi-VN').format(amount);
 }
@@ -216,7 +288,6 @@ export function buildEscPosTextReceipt(
   const profile = document.profile;
   const widthChars = isK58 ? 32 : profile.charsPerLineFontA || 48;
   const divider = '-'.repeat(widthChars);
-  const doubleDivider = '='.repeat(widthChars);
 
   const vietnameseMode = options.vietnameseMode ?? 'UNACCENTED';
   const isUnaccented = vietnameseMode === 'UNACCENTED';
@@ -237,36 +308,64 @@ export function buildEscPosTextReceipt(
   };
 
   // 1. Initialize Printer
-  parts.push(ESC_POS.initialize);
+  // Do not inherit Font B/C from a previous print job.
+  parts.push(ESC_POS.initialize, ESC_POS.selectFontA);
   if (vietnameseMode === 'WPC1258') {
     parts.push(Uint8Array.of(0x1b, 0x74, 52));
   }
 
-  // Logo if raster bytes provided
-  if (options.logoRasterBytes && template.showLogo) {
-    parts.push(ESC_POS.alignCenter);
-    parts.push(options.logoRasterBytes);
-    writeLine();
-  }
-
-  // 2. Header: Store Name, Address, Phone
+  // 2. Header: Logo, Store Name, Address, Phone
   const storeName = sanitize(document.store.name);
   const storeAddress = sanitize(document.store.address);
   const storePhone = sanitize(document.store.phone);
+  const horizontalHeaderEnabled = Boolean(
+    options.logoRasterBytes && template.showLogo && printSettings?.logoHorizontalLayout,
+  );
+  const horizontalTextWidth = Math.max(8, Math.floor(widthChars * (isK58 ? 0.72 : 0.76)));
+  const horizontalHeader =
+    horizontalHeaderEnabled && options.logoRasterBytes
+      ? buildHorizontalLogoHeader({
+          logoRasterBytes: options.logoRasterBytes,
+          printableDots: profile.defaultPrintableDots,
+          textLines: [
+            ...wrapTextToWidth(storeName.toUpperCase(), horizontalTextWidth).map((text) => ({
+              text,
+              bold: true,
+            })),
+            ...wrapTextToWidth(storeAddress, horizontalTextWidth).map((text) => ({
+              text,
+              bold: false,
+            })),
+            ...(storePhone ? [{ text: `SDT: ${storePhone}`, bold: false }] : []),
+          ].filter((line) => line.text.length > 0),
+          encodeText,
+        })
+      : null;
 
-  parts.push(ESC_POS.alignCenter);
-  if (storeName) {
-    // Store Name: Bold & Double Size
-    parts.push(ESC_POS.doubleSizeOn);
-    parts.push(ESC_POS.boldOn);
-    writeLine(storeName.toUpperCase());
-    parts.push(ESC_POS.resetSize);
-    parts.push(ESC_POS.boldOff);
+  if (horizontalHeader) {
+    parts.push(...horizontalHeader);
+    writeLine();
+  } else {
+    if (options.logoRasterBytes && template.showLogo) {
+      parts.push(ESC_POS.alignCenter);
+      parts.push(options.logoRasterBytes);
+      writeLine();
+    }
+
+    parts.push(ESC_POS.alignCenter);
+    if (storeName) {
+      // Store Name: Bold & Double Size
+      parts.push(ESC_POS.doubleSizeOn);
+      parts.push(ESC_POS.boldOn);
+      writeLine(storeName.toUpperCase());
+      parts.push(ESC_POS.resetSize);
+      parts.push(ESC_POS.boldOff);
+    }
+
+    if (storeAddress) writeLine(storeAddress);
+    if (storePhone) writeLine(`SDT: ${storePhone}`);
+    writeLine();
   }
-
-  if (storeAddress) writeLine(storeAddress);
-  if (storePhone) writeLine(`SDT: ${storePhone}`);
-  writeLine();
 
   // 3. Receipt Title & Copy
   const rawTitle =
@@ -277,17 +376,12 @@ export function buildEscPosTextReceipt(
         : 'HOA DON THANH TOAN';
   const title = sanitize(document.title);
 
+  parts.push(ESC_POS.alignCenter);
   parts.push(ESC_POS.doubleHeightOn);
   parts.push(ESC_POS.boldOn);
   writeLine(title || rawTitle);
   parts.push(ESC_POS.resetSize);
   parts.push(ESC_POS.boldOff);
-
-  if (data.receiptType === 'PROVISIONAL') {
-    parts.push(ESC_POS.boldOn);
-    writeLine(sanitize('*** CHƯA THANH TOÁN ***'));
-    parts.push(ESC_POS.boldOff);
-  }
 
   const copyIndex = options.copy?.index ?? 1;
   const copyTotal =
@@ -355,6 +449,7 @@ export function buildEscPosTextReceipt(
 
   // 5. Section: Hourly Services (Thông tin giờ)
   if (timeLines.length > 0) {
+    parts.push(ESC_POS.boldOn);
     if (isK58) {
       writeLine(padRow(sanitize('Thong tin gio'), sanitize('T.Tien'), widthChars));
     } else if (template.showHourlyUnitPrice) {
@@ -369,6 +464,7 @@ export function buildEscPosTextReceipt(
       const colTotal = padStartVisual(sanitize('Thanh tien'), 14);
       writeLine(`${colName} ${colTotal}`);
     }
+    parts.push(ESC_POS.boldOff);
     writeLine(divider);
 
     for (const line of timeLines) {
@@ -413,8 +509,7 @@ export function buildEscPosTextReceipt(
 
           if (isK58) {
             writeLine(padRow(timeRange, segTotalStr, widthChars));
-            writeLine(`  ${dateOnly}`);
-            writeLine(`  ${durLabel}`);
+            writeLine(`  ${dateOnly}  ${durLabel}`);
             if (template.showHourlyUnitPrice) {
               writeLine(`  D.Gia: ${unitPriceStr}`);
             }
@@ -423,14 +518,12 @@ export function buildEscPosTextReceipt(
             const colPrice = padStartVisual(unitPriceStr, 12);
             const colTotal = padStartVisual(segTotalStr, 13);
             writeLine(`${colName} ${colPrice} ${colTotal}`);
-            writeLine(`  ${dateOnly}`);
-            writeLine(`  ${durLabel}`);
+            writeLine(`  ${dateOnly}  ${durLabel}`);
           } else {
             const colName = padEndVisual(timeRange, 33);
             const colTotal = padStartVisual(segTotalStr, 14);
             writeLine(`${colName} ${colTotal}`);
-            writeLine(`  ${dateOnly}`);
-            writeLine(`  ${durLabel}`);
+            writeLine(`  ${dateOnly}  ${durLabel}`);
           }
         }
       } else {
@@ -479,6 +572,7 @@ export function buildEscPosTextReceipt(
     let priceWidth = 10;
     let totalWidth = 12;
 
+    parts.push(ESC_POS.boldOn);
     if (isK58) {
       nameWidth = 16;
       qtyWidth = 3;
@@ -508,6 +602,7 @@ export function buildEscPosTextReceipt(
       const colTotal = padStartVisual(sanitize('Thanh tien'), totalWidth);
       writeLine(`${colName} ${colQty} ${colTotal}`);
     }
+    parts.push(ESC_POS.boldOff);
     writeLine(divider);
 
     let itemIdx = 1;
@@ -517,8 +612,9 @@ export function buildEscPosTextReceipt(
       const prefix = template.showItemIndex ? `${itemIdx}. ` : '';
       itemIdx++;
 
-      const fullName = sanitize(`${prefix}${line.name}`);
-      const priceNameSuffix = template.showItemPriceName ? sanitize(' (Gia chuan)') : '';
+      const fullName = sanitize(
+        `${prefix}${line.name}${template.showItemPriceName ? ' (Gia chuan)' : ''}`,
+      );
       const qtyStr = String(line.quantity);
       const priceStr = formatVnd(line.unitPrice);
       const totalStr = formatVnd(line.totalPrice);
@@ -536,10 +632,6 @@ export function buildEscPosTextReceipt(
         for (let i = 1; i < nameLines.length; i++) {
           writeLine(nameLines[i]!);
         }
-        if (priceNameSuffix) {
-          writeLine(priceNameSuffix);
-        }
-
         if (template.showItemUnitPrice) {
           writeLine(`  D.Gia: ${priceStr}`);
         }
@@ -555,9 +647,6 @@ export function buildEscPosTextReceipt(
         for (let i = 1; i < nameLines.length; i++) {
           writeLine(nameLines[i]!);
         }
-        if (priceNameSuffix) {
-          writeLine(priceNameSuffix);
-        }
       } else {
         // Line 1: First part of name + Qty + Total
         const colName = padEndVisual(nameLines[0]!, nameWidth);
@@ -569,10 +658,6 @@ export function buildEscPosTextReceipt(
         for (let i = 1; i < nameLines.length; i++) {
           writeLine(nameLines[i]!);
         }
-        if (priceNameSuffix) {
-          writeLine(priceNameSuffix);
-        }
-
         if (template.showItemUnitPrice) {
           writeLine(`  Don gia: ${priceStr}`);
         }
@@ -692,13 +777,11 @@ export function buildEscPosTextReceipt(
   );
   const grandAmount = `${formatVnd(data.total)} ${currencyUnit}`;
 
-  writeLine(doubleDivider);
   parts.push(ESC_POS.doubleHeightOn);
   parts.push(ESC_POS.boldOn);
   writeLine(padRow(grandLabel, grandAmount, widthChars));
   parts.push(ESC_POS.resetSize);
   parts.push(ESC_POS.boldOff);
-  writeLine(doubleDivider);
 
   // 8. Payment Details & Allocations
   if (data.receiptType === 'PAYMENT' && template.showPaymentMethod) {
@@ -796,7 +879,6 @@ export function buildEscPosTextReceipt(
 
   // 9. Star Divider
   parts.push(ESC_POS.alignCenter);
-  writeLine();
   writeLine('----------------*----------------');
 
   // 10. Bottom Image / VietQR
@@ -810,6 +892,9 @@ export function buildEscPosTextReceipt(
     }
   } else if (bottomQrContent && template.showBottomImage) {
     parts.push(buildEscPosQrCode(bottomQrContent, isK58 ? 5 : 6));
+    // buildEscPosQrCode restores left alignment for following content.
+    // The QR description and receipt footer must remain centered.
+    parts.push(ESC_POS.alignCenter);
     writeLine();
     if (document.media.bottomDescription) {
       writeLine(sanitize(document.media.bottomDescription));

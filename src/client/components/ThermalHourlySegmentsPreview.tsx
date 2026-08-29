@@ -52,11 +52,9 @@ export function ThermalHourlySegmentsPreview({
               {segment.total}
             </span>
           </div>
-          <div>20/06/2024</div>
-          <div style={{ display: 'flex', alignItems: 'baseline' }}>
-            <span style={{ flex: 1, color: '#64748b' }}>{segment.duration}</span>
-            {!isK58 && showUnitPrice ? <span style={{ width: 65 }} /> : null}
-            <span style={{ width: columnWidth }} />
+          <div className="thermal-receipt-time-meta">
+            <span>20/06/2024</span>
+            <span>{segment.duration}</span>
           </div>
           {isK58 && showUnitPrice ? (
             <div className="thermal-receipt-item-sub">

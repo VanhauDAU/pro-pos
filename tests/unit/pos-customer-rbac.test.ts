@@ -7,6 +7,7 @@ import {
   debtPaymentSchema,
 } from '@contracts/customer';
 import { rolePermissionCatalog, rolePermissionKeys } from '@contracts/staff';
+import { getPosCustomerAccess } from '@client/features/pos/pos-customer-access';
 
 const checkCustomerAccess = (userPermissions: string[], isOwner: boolean) => {
   const perms = userPermissions;
@@ -25,6 +26,21 @@ const checkCustomerAccess = (userPermissions: string[], isOwner: boolean) => {
 };
 
 describe('POS Customer RBAC Permission Matrix & Schemas', () => {
+  it('shows inline customer creation only when the corresponding permission is granted', () => {
+    expect(getPosCustomerAccess(['order.add_customer'], false)).toEqual({
+      canAttachCustomer: true,
+      canCreateCustomer: false,
+    });
+    expect(getPosCustomerAccess(['order.add_customer', 'customer.list.create'], false)).toEqual({
+      canAttachCustomer: true,
+      canCreateCustomer: true,
+    });
+    expect(getPosCustomerAccess([], true)).toEqual({
+      canAttachCustomer: true,
+      canCreateCustomer: true,
+    });
+  });
+
   it('contains all 9 required customer permissions in rolePermissionCatalog', () => {
     const customerGroup = rolePermissionCatalog
       .find((group) => group.key === 'management')

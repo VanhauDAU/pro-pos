@@ -138,7 +138,6 @@ export function generateThermalReceiptHtml(
 
   html += `
     <div class="thermal-receipt-title">${title}</div>
-    ${data.receiptType === 'PROVISIONAL' ? '<div class="thermal-receipt-unpaid">CHƯA THANH TOÁN</div>' : ''}
     <div class="thermal-receipt-copy-count">Liên ${copy?.index ?? 1}/${copy?.total ?? 1}</div>
     <div class="thermal-receipt-code-line">
       <span>Số: ${code}</span>
@@ -302,11 +301,9 @@ export function generateThermalReceiptHtml(
                       ${!isK58 && template.showHourlyUnitPrice ? `<span class="thermal-receipt-col-unit-price" style="width: 65px; text-align: right; white-space: nowrap;">${formatVnd(seg.priceVnd)}${template.showHourlyUnitDuration ? '/1h' : ''}</span>` : ''}
                       <span class="thermal-receipt-col-total" style="width: ${isK58 ? '48px' : '65px'}; text-align: right; font-weight: 600;">${formatVnd(seg.amount)}</span>
                     </div>
-                    <div>${dateStr}</div>
-                    <div class="thermal-receipt-time-row" style="display: flex; align-items: baseline;">
-                      <span class="thermal-receipt-col-name" style="flex: 1; color: #64748b;">${durationLabel}</span>
-                      ${!isK58 && template.showHourlyUnitPrice ? `<span class="thermal-receipt-col-unit-price" style="width: 65px;"></span>` : ''}
-                      <span class="thermal-receipt-col-total" style="width: ${isK58 ? '48px' : '65px'};"></span>
+                    <div class="thermal-receipt-time-meta">
+                      <span>${dateStr}</span>
+                      <span>${durationLabel}</span>
                     </div>
                     ${isK58 && template.showHourlyUnitPrice ? `<div class="thermal-receipt-item-sub">Đ.Giá: ${formatVnd(seg.priceVnd)}${template.showHourlyUnitDuration ? '/1h' : ''}</div>` : ''}
                   </div>

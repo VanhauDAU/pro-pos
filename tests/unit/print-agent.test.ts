@@ -6,11 +6,18 @@ import {
   JobProcessor,
   loadPrintDataForJob,
   PrintJobProcessingError,
+  resolveAgentVietnameseMode,
 } from '../../apps/print-agent/src/job-processor';
 import type { AgentApiClient } from '../../apps/print-agent/src/api-client';
 import type { PrintJob } from '../../src/contracts/print-job';
 
 describe('Pro POS Print Agent Unit Tests', () => {
+  it('uses reliable text encoding when a printer reports the problematic WPC1258 mode', () => {
+    expect(resolveAgentVietnameseMode('WPC1258')).toBe('UNACCENTED');
+    expect(resolveAgentVietnameseMode('UNACCENTED')).toBe('UNACCENTED');
+    expect(resolveAgentVietnameseMode('UTF8')).toBe('UTF8');
+  });
+
   it('loads invoice snapshots as PAYMENT without falling back to an order quote', async () => {
     const get = vi.fn(async (path: string) => {
       expect(path).toBe('/api/v1/pos/invoices/INV_1');
@@ -323,5 +330,46 @@ describe('Pro POS Print Agent Unit Tests', () => {
     expect(text).not.toContain('·');
     expect(text).not.toContain('┬╥');
     expect(text).toContain('Ban 01 - Khu vuc 1');
+  });
+
+  it('bolds table headings and omits separator rows around the grand total', () => {
+    const bytes = buildEscPosTextReceipt(
+      {
+        receiptType: 'PAYMENT',
+        orderCode: 'HD-102',
+        orderType: 'DINE_IN',
+        subtotal: 110000,
+        discountTotal: 0,
+        total: 110000,
+        issuedAtMs: Date.now(),
+        lines: [
+          {
+            id: 'time',
+            name: 'Tiền giờ',
+            quantity: 1,
+            unitPrice: 60000,
+            totalPrice: 60000,
+            isTime: true,
+          },
+          {
+            id: 'item',
+            name: 'Bia Tiger',
+            quantity: 1,
+            unitPrice: 50000,
+            totalPrice: 50000,
+          },
+        ],
+      },
+      { paperSize: 'K80', vietnameseMode: 'UNACCENTED' },
+    );
+    const text = new TextDecoder().decode(bytes);
+    expect(text).not.toContain('='.repeat(48));
+
+    const boldOn = [0x1b, 0x45, 0x01];
+    const headingIndexes = ['Thong tin gio', 'Mat hang'].map((heading) => text.indexOf(heading));
+    for (const headingIndex of headingIndexes) {
+      expect(headingIndex).toBeGreaterThan(2);
+      expect(Array.from(bytes.slice(headingIndex - 3, headingIndex))).toEqual(boldOn);
+    }
   });
 });

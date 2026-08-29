@@ -1,11 +1,11 @@
 import { ESC_POS, buildEscPosQrCode } from './escpos-commands';
+import { encodeWpc1258 } from './escpos-wpc1258';
 import {
   type PaperSize,
   type StorePrintSettings,
-  getReceiptPrintProfile,
-  parsePrintTemplateConfigs,
   parsePrinterDeviceConfig,
 } from '@contracts/store';
+import { createReceiptDocument } from '@domain/receipt/receipt-document';
 import {
   type PosReceiptPrintData,
   formatDateOnly,
@@ -34,7 +34,7 @@ export interface EscPosTextBuilderOptions {
     | null
     | undefined;
   copy?: { index: number; total: number } | undefined;
-  vietnameseMode?: 'UNACCENTED' | 'UTF8' | 'TCVN3' | undefined;
+  vietnameseMode?: 'WPC1258' | 'UNACCENTED' | 'UTF8' | undefined;
   bottomRasterBytes?: Uint8Array | null | undefined;
   logoRasterBytes?: Uint8Array | null | undefined;
   bottomQrContent?: string | null | undefined;
@@ -192,24 +192,34 @@ function formatDuration(sec: number): string {
  * and wrapping long product names neatly without pushing numeric columns onto subsequent lines.
  */
 export function buildEscPosTextReceipt(
-  data: PosReceiptPrintData,
+  inputData: PosReceiptPrintData,
   options: EscPosTextBuilderOptions = {},
 ): Uint8Array {
   const printSettings = options.printSettings;
-  const templateConfigs = parsePrintTemplateConfigs(printSettings?.templateConfigJson);
-  const template =
-    data.receiptType === 'PROVISIONAL' ? templateConfigs.PROVISIONAL : templateConfigs.PAYMENT;
+  const document = createReceiptDocument({
+    data: inputData,
+    printSettings,
+    storeInfo: {
+      storeName: options.storeName ?? options.storeInfo?.storeName ?? null,
+      address: options.storeAddress ?? options.storeInfo?.address ?? null,
+      phone: options.storePhone ?? options.storeInfo?.phone ?? null,
+      bankName: options.storeInfo?.bankName ?? null,
+      bankAccountNumber: options.storeInfo?.bankAccountNumber ?? null,
+      bankAccountName: options.storeInfo?.bankAccountName ?? null,
+    },
+  });
+  const { data, template } = document;
 
   const printerConfig = parsePrinterDeviceConfig(printSettings?.printersJson);
-  const paperSize: PaperSize =
-    options.paperSize || printSettings?.paperSize || printerConfig.paperSize || 'K80';
+  const paperSize: PaperSize = options.paperSize || document.paperSize;
   const isK58 = paperSize === 'K58';
-  const profile = getReceiptPrintProfile(paperSize, printerConfig.printableDots);
+  const profile = document.profile;
   const widthChars = isK58 ? 32 : profile.charsPerLineFontA || 48;
   const divider = '-'.repeat(widthChars);
   const doubleDivider = '='.repeat(widthChars);
 
-  const isUnaccented = options.vietnameseMode !== 'UTF8';
+  const vietnameseMode = options.vietnameseMode ?? 'UNACCENTED';
+  const isUnaccented = vietnameseMode === 'UNACCENTED';
   const currencyUnit = isUnaccented ? 'd' : 'đ';
 
   const sanitize = (text: string | null | undefined): string => {
@@ -219,13 +229,18 @@ export function buildEscPosTextReceipt(
 
   const parts: Uint8Array[] = [];
   const encoder = new TextEncoder();
+  const encodeText = (text: string) =>
+    vietnameseMode === 'WPC1258' ? encodeWpc1258(text) : encoder.encode(text);
 
   const writeLine = (text = '') => {
-    parts.push(encoder.encode(text + '\n'));
+    parts.push(encodeText(text + '\n'));
   };
 
   // 1. Initialize Printer
   parts.push(ESC_POS.initialize);
+  if (vietnameseMode === 'WPC1258') {
+    parts.push(Uint8Array.of(0x1b, 0x74, 52));
+  }
 
   // Logo if raster bytes provided
   if (options.logoRasterBytes && template.showLogo) {
@@ -235,23 +250,9 @@ export function buildEscPosTextReceipt(
   }
 
   // 2. Header: Store Name, Address, Phone
-  const storeName = sanitize(
-    options.storeName ||
-      options.storeInfo?.storeName ||
-      (options.storeInfo as any)?.name ||
-      (printSettings as any)?.storeName ||
-      '',
-  );
-  const storeAddress = sanitize(
-    printSettings?.customAddressEnabled && printSettings?.customAddress
-      ? printSettings.customAddress
-      : options.storeAddress ||
-          options.storeInfo?.address ||
-          (options.storeInfo as any)?.storeAddress,
-  );
-  const storePhone = sanitize(
-    options.storePhone || options.storeInfo?.phone || (options.storeInfo as any)?.storePhone,
-  );
+  const storeName = sanitize(document.store.name);
+  const storeAddress = sanitize(document.store.address);
+  const storePhone = sanitize(document.store.phone);
 
   parts.push(ESC_POS.alignCenter);
   if (storeName) {
@@ -274,13 +275,7 @@ export function buildEscPosTextReceipt(
       : data.receiptType === 'DEBT_PAYMENT'
         ? 'PHIEU THU CONG NO'
         : 'HOA DON THANH TOAN';
-  const title = sanitize(
-    data.receiptType === 'PROVISIONAL'
-      ? 'HÓA ĐƠN TẠM TÍNH'
-      : data.receiptType === 'DEBT_PAYMENT'
-        ? 'PHIẾU THU CÔNG NỢ'
-        : 'HÓA ĐƠN THANH TOÁN',
-  );
+  const title = sanitize(document.title);
 
   parts.push(ESC_POS.doubleHeightOn);
   parts.push(ESC_POS.boldOn);
@@ -805,68 +800,35 @@ export function buildEscPosTextReceipt(
   writeLine('----------------*----------------');
 
   // 10. Bottom Image / VietQR
+  const bottomQrContent = options.bottomQrContent || document.media.vietQrPayload;
   if (options.bottomRasterBytes && template.showBottomImage) {
     parts.push(ESC_POS.alignCenter);
     parts.push(options.bottomRasterBytes);
     writeLine();
-    if (printSettings?.bottomImageDescription) {
-      writeLine(sanitize(printSettings.bottomImageDescription));
+    if (document.media.bottomDescription) {
+      writeLine(sanitize(document.media.bottomDescription));
     }
-  } else if (options.bottomQrContent && template.showBottomImage) {
-    parts.push(buildEscPosQrCode(options.bottomQrContent, isK58 ? 5 : 6));
+  } else if (bottomQrContent && template.showBottomImage) {
+    parts.push(buildEscPosQrCode(bottomQrContent, isK58 ? 5 : 6));
     writeLine();
-    if (printSettings?.bottomImageDescription) {
-      writeLine(sanitize(printSettings.bottomImageDescription));
-    }
-  } else if (
-    template.showBottomImage &&
-    printSettings?.bottomImageType === 'VIETQR' &&
-    data.receiptType === 'PAYMENT'
-  ) {
-    const bank = (printSettings?.bottomBankName || options.storeInfo?.bankName || '').trim();
-    const account = (
-      printSettings?.bottomBankAccountNumber ||
-      options.storeInfo?.bankAccountNumber ||
-      ''
-    ).trim();
-    const accountName = (
-      printSettings?.bottomBankAccountName ||
-      options.storeInfo?.bankAccountName ||
-      ''
-    ).trim();
-
-    if (bank && account) {
-      const vietQrUrl = `https://img.vietqr.io/image/${encodeURIComponent(bank)}-${encodeURIComponent(account)}-qr_only.png?amount=${data.total}&addInfo=${encodeURIComponent(rawCode)}&accountName=${encodeURIComponent(accountName)}`;
-      parts.push(buildEscPosQrCode(vietQrUrl, isK58 ? 5 : 6));
-      writeLine();
-      if (printSettings?.bottomImageDescription) {
-        writeLine(sanitize(printSettings.bottomImageDescription));
-      }
+    if (document.media.bottomDescription) {
+      writeLine(sanitize(document.media.bottomDescription));
     }
   }
 
   // 11. Wi-Fi Info
-  if (printSettings?.printWifiEnabled && (printSettings.wifiName || printSettings.wifiPassword)) {
+  if (document.wifi) {
     const wifiText = sanitize(
-      `Wi-Fi: ${printSettings.wifiName || 'Cua hang'}${printSettings.wifiPassword ? ` - Pass: ${printSettings.wifiPassword}` : ''}`,
+      `Wi-Fi: ${document.wifi.name || 'Cua hang'}${document.wifi.password ? ` - Pass: ${document.wifi.password}` : ''}`,
     );
     writeLine(wifiText);
   }
 
   // 12. Footer Lines
-  if (printSettings?.footerLine1) {
-    if (printSettings.footerLine1Bold) parts.push(ESC_POS.boldOn);
-    writeLine(sanitize(printSettings.footerLine1));
-    if (printSettings.footerLine1Bold) parts.push(ESC_POS.boldOff);
-  }
-  if (printSettings?.footerLine2) {
-    if (printSettings.footerLine2Bold) parts.push(ESC_POS.boldOn);
-    writeLine(sanitize(printSettings.footerLine2));
-    if (printSettings.footerLine2Bold) parts.push(ESC_POS.boldOff);
-  }
-  if (!printSettings?.footerLine1 && !printSettings?.footerLine2) {
-    writeLine(sanitize('Cảm ơn quý khách và hẹn gặp lại'));
-    writeLine(sanitize('Pro POS - Hân hạnh phục vụ'));
+  for (const footerLine of document.footer) {
+    if (footerLine.bold) parts.push(ESC_POS.boldOn);
+    writeLine(sanitize(footerLine.text));
+    if (footerLine.bold) parts.push(ESC_POS.boldOff);
   }
 
   writeLine();

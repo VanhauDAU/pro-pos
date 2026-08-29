@@ -219,6 +219,39 @@ export class CustomerRepository {
       .all();
   }
 
+  findDebtPayment(storeId: string, documentId: string) {
+    return this.db
+      .prepare(
+        `SELECT p.id, p.idempotency_key AS referenceCode, p.amount_vnd AS signedAmountVnd,
+          p.payment_method AS paymentMethod, p.note, p.created_at AS createdAt,
+          c.name AS customerName, c.phone AS customerPhone, c.address_line AS customerAddress,
+          c.ward_name AS customerWardName, c.province_name AS customerProvinceName,
+          COALESCE((SELECT SUM(e.amount_vnd) FROM customer_debt_entries e
+            WHERE e.store_id = p.store_id AND e.customer_id = p.customer_id
+              AND e.created_at <= p.created_at), 0) AS debtAfterVnd
+        FROM customer_debt_entries p
+        JOIN customers c ON c.store_id = p.store_id AND c.id = p.customer_id
+        WHERE p.store_id = ? AND p.entry_type = 'PAYMENT'
+          AND (p.id = ? OR p.idempotency_key = ? OR p.reference = ?)
+        LIMIT 1`,
+      )
+      .bind(storeId, documentId, documentId, documentId)
+      .first<{
+        id: string;
+        referenceCode: string | null;
+        signedAmountVnd: number;
+        paymentMethod: 'CASH' | 'BANK_TRANSFER';
+        note: string | null;
+        createdAt: number;
+        customerName: string;
+        customerPhone: string;
+        customerAddress: string | null;
+        customerWardName: string | null;
+        customerProvinceName: string | null;
+        debtAfterVnd: number;
+      }>();
+  }
+
   async listGroups(storeId: string) {
     return this.db
       .prepare(

@@ -166,7 +166,7 @@ export function PosCustomerSelector({
     try {
       const debtBefore = c.debtBalanceVnd;
       const referenceCode = `PTN-${Date.now().toString(36).toUpperCase()}`;
-      const updated = await jsonRequest<CustomerDetail>(
+      const updated = await jsonRequest<CustomerDetail & { debtPaymentId: string }>(
         `/api/v1/pos/customers/${c.id}/debt-payments`,
         {
           amountVnd: debtPaymentAmount,
@@ -207,14 +207,14 @@ export function PosCustomerSelector({
             },
             printSettings: printSettings.data,
             storeInfo: {
-              storeName: posContext.data?.storeName ?? 'PRO POS',
+              storeName: posContext.data?.storeName ?? null,
               phone: posContext.data?.storePhone ?? null,
               address: posContext.data?.storeAddress ?? null,
             },
           },
           {
             type: 'debt_payment',
-            id: referenceCode,
+            id: updated.debtPaymentId,
           },
           csrfToken,
         );

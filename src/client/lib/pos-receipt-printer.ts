@@ -1,9 +1,4 @@
-import {
-  type PaperSize,
-  getReceiptPrintProfile,
-  parsePrintTemplateConfigs,
-  parsePrinterDeviceConfig,
-} from '@contracts/store';
+import { createReceiptDocument } from '@domain/receipt/receipt-document';
 import {
   formatDateOnly,
   formatSegmentDurationLabel,
@@ -87,54 +82,18 @@ export function generateThermalReceiptHtml(
   options: PosReceiptPrintOptions,
   copy?: { index: number; total: number },
 ): string {
-  const { data, printSettings, storeInfo } = options;
-  const templateConfigs = parsePrintTemplateConfigs(printSettings?.templateConfigJson);
-  const template =
-    data.receiptType === 'PROVISIONAL' ? templateConfigs.PROVISIONAL : templateConfigs.PAYMENT;
+  const document = createReceiptDocument(options);
+  const { data, template, profile } = document;
+  const printSettings = options.printSettings;
   const customerDisplayName = data.customerName?.trim() || 'Khách lẻ';
-
-  const printerConfig = parsePrinterDeviceConfig(printSettings?.printersJson);
-  const paperSize: PaperSize = printSettings?.paperSize || printerConfig.paperSize || 'K80';
-  const isK58 = paperSize === 'K58';
-  const profile = getReceiptPrintProfile(paperSize, printerConfig.printableDots);
-
-  const storeName = escapeHtml(storeInfo?.storeName || 'PRO POS');
-  const storeAddress = escapeHtml(
-    printSettings?.customAddressEnabled ? printSettings.customAddress : storeInfo?.address,
-  );
-  const storePhone = escapeHtml(storeInfo?.phone);
-
-  // Resolve Logo URL
-  let logoUrl: string | null = null;
-  if (template.showLogo && printSettings?.logoMediaId) {
-    logoUrl = `/api/v1/media/${printSettings.logoMediaId}`;
-  }
-
-  // Resolve Bottom Image / VietQR URL
+  const isK58 = document.isK58;
+  const storeName = escapeHtml(document.store.name);
+  const storeAddress = escapeHtml(document.store.address);
+  const storePhone = escapeHtml(document.store.phone);
+  const logoUrl = document.media.logoUrl;
+  const bottomImageUrl = document.media.bottomImageUrl;
   const rawCode = data.invoiceCode || data.orderCode;
   const code = escapeHtml(rawCode);
-  let bottomImageUrl: string | null = null;
-  if (template.showBottomImage && data.receiptType !== 'DEBT_PAYMENT') {
-    if (printSettings?.bottomImageType === 'UPLOAD' && printSettings?.bottomImageMediaId) {
-      bottomImageUrl = `/api/v1/media/${printSettings.bottomImageMediaId}`;
-    } else if (printSettings?.bottomImageType === 'VIETQR' && data.receiptType === 'PAYMENT') {
-      const bank = (printSettings?.bottomBankName || storeInfo?.bankName || '').trim();
-      const account = (
-        printSettings?.bottomBankAccountNumber ||
-        storeInfo?.bankAccountNumber ||
-        ''
-      ).trim();
-      const accountName = (
-        printSettings?.bottomBankAccountName ||
-        storeInfo?.bankAccountName ||
-        ''
-      ).trim();
-
-      if (bank && account) {
-        bottomImageUrl = `https://img.vietqr.io/image/${encodeURIComponent(bank)}-${encodeURIComponent(account)}-qr_only.png?amount=${data.total}&addInfo=${encodeURIComponent(rawCode)}&accountName=${encodeURIComponent(accountName)}`;
-      }
-    }
-  }
 
   const isHorizontalHeader = Boolean(printSettings?.logoHorizontalLayout && logoUrl);
 
@@ -175,12 +134,7 @@ export function generateThermalReceiptHtml(
   }
 
   // 2. Receipt Title & Code
-  const title =
-    data.receiptType === 'PROVISIONAL'
-      ? 'HÓA ĐƠN TẠM TÍNH'
-      : data.receiptType === 'DEBT_PAYMENT'
-        ? 'PHIẾU THU CÔNG NỢ'
-        : 'HÓA ĐƠN THANH TOÁN';
+  const title = document.title;
 
   html += `
     <div class="thermal-receipt-title">${title}</div>
@@ -599,33 +553,26 @@ export function generateThermalReceiptHtml(
     html += `
       <div class="thermal-receipt-bottom-qr-container" style="text-align: center; margin: 6px 0 3px;">
         <img src="${bottomImageUrl}" alt="" onerror="this.style.display='none'" class="thermal-receipt-bottom-qr-img" style="width: ${profile.maxQrSizePx}px; height: ${profile.maxQrSizePx}px; object-fit: contain; margin: 0 auto; display: block;" />
-        ${printSettings?.bottomImageDescription ? `<div class="thermal-receipt-qr-desc" style="font-size: 9px; margin-top: 2px;">${escapeHtml(printSettings.bottomImageDescription)}</div>` : ''}
+        ${document.media.bottomDescription ? `<div class="thermal-receipt-qr-desc" style="font-size: 9px; margin-top: 2px;">${escapeHtml(document.media.bottomDescription)}</div>` : ''}
       </div>
     `;
   }
 
   // 8. Wi-Fi
-  if (printSettings?.printWifiEnabled && (printSettings.wifiName || printSettings.wifiPassword)) {
+  if (document.wifi) {
     html += `
       <div class="thermal-receipt-wifi">
-        <span>Wi-Fi: <strong>${escapeHtml(printSettings.wifiName || 'Cửa hàng')}</strong></span>
-        ${printSettings.wifiPassword ? `<span>Pass: <strong>${escapeHtml(printSettings.wifiPassword)}</strong></span>` : ''}
+        <span>Wi-Fi: <strong>${escapeHtml(document.wifi.name || 'Cửa hàng')}</strong></span>
+        ${document.wifi.password ? `<span>Pass: <strong>${escapeHtml(document.wifi.password)}</strong></span>` : ''}
       </div>
     `;
   }
 
   // 9. Footer text
-  if (printSettings?.footerLine1) {
+  for (const footerLine of document.footer) {
     html += `
-      <div class="thermal-receipt-footer-text" style="${printSettings.footerLine1Bold ? 'font-weight: 700;' : ''}">
-        ${escapeHtml(printSettings.footerLine1)}
-      </div>
-    `;
-  }
-  if (printSettings?.footerLine2) {
-    html += `
-      <div class="thermal-receipt-footer-text" style="${printSettings.footerLine2Bold ? 'font-weight: 700;' : ''}">
-        ${escapeHtml(printSettings.footerLine2)}
+      <div class="thermal-receipt-footer-text" style="${footerLine.bold ? 'font-weight: 700;' : 'font-weight: 400;'}">
+        ${escapeHtml(footerLine.text)}
       </div>
     `;
   }
@@ -659,7 +606,7 @@ export async function browserPrintFallback(options: PosReceiptPrintOptions): Pro
 
 /** Sends an async remote print job to the server for processing by the active Pro POS Print Agent. */
 export async function dispatchRemotePrintJob(params: {
-  documentType: 'invoice' | 'order' | 'provisional' | 'debt_payment';
+  documentType: 'invoice' | 'provisional' | 'debt_payment';
   documentId: string;
   printerRole?: string;
   targetDeviceId?: string | null;
@@ -731,7 +678,7 @@ export async function dispatchRemotePrintJob(params: {
 export async function smartPrintReceipt(
   options: PosReceiptPrintOptions,
   documentIdentity?: {
-    type: 'invoice' | 'order' | 'provisional' | 'debt_payment';
+    type: 'invoice' | 'provisional' | 'debt_payment';
     id: string;
   },
   csrfToken?: string | null,

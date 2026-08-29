@@ -58,6 +58,7 @@ import { QrOrderService } from '@server/services/qr-order-service';
 import { pushNotificationRoutes } from '@server/routes/push-notifications';
 import type { AppEnv } from '@server/types';
 import { addRequestTiming, measureRequestTiming } from '@server/lib/performance';
+import { MediaService } from '@server/services/media-service';
 
 const posRoutes = new Hono<AppEnv>();
 posRoutes.use('*', requireActorOrPrintAgent());
@@ -117,7 +118,13 @@ posRoutes.get(
 
 posRoutes.get('/context', async (c) => {
   const actor = c.get('actor');
-  return success(c, await new PosService(c.env).getStaffContext(actor.storeId!, actor.id));
+  const service = new PosService(c.env);
+  // A Print Agent is a device identity, not a store membership/user. Its context
+  // must therefore be loaded directly from the store instead of staff membership.
+  if (c.req.header('X-Agent-Id')) {
+    return success(c, await service.getPrintContext(actor.storeId!));
+  }
+  return success(c, await service.getStaffContext(actor.storeId!, actor.id));
 });
 
 posRoutes.get(
@@ -191,6 +198,23 @@ posRoutes.get(
   '/print-settings',
   requirePermission(...orderWorkspacePermissionKeys, 'order.proforma_print', 'invoice.print'),
   async (c) => success(c, await new StoreService(c.env).getPrintSettings(c.get('actor').storeId!)),
+);
+
+/** Authenticated media read dedicated to Print Agent receipt assets. */
+posRoutes.get(
+  '/print-media/:mediaId',
+  requirePermission(...orderWorkspacePermissionKeys, 'order.proforma_print', 'invoice.print'),
+  async (c) => {
+    const result = await new MediaService(c.env).get(
+      c.get('actor').storeId!,
+      c.req.param('mediaId'),
+    );
+    const headers = new Headers();
+    result.object.writeHttpMetadata(headers);
+    headers.set('ETag', result.object.httpEtag);
+    headers.set('Cache-Control', 'private, max-age=300');
+    return new Response(result.object.body, { headers });
+  },
 );
 
 posRoutes.get(
@@ -336,6 +360,16 @@ posRoutes.post(
       await new CustomerService(c.env).payDebt(actor.storeId!, c.req.param('id'), actor.id, body),
     );
   },
+);
+
+posRoutes.get(
+  '/debt-payments/:id',
+  requirePermission('customer.list.view', 'customer.list.edit_debt', 'invoice.print'),
+  async (c) =>
+    success(
+      c,
+      await new CustomerService(c.env).getDebtPayment(c.get('actor').storeId!, c.req.param('id')),
+    ),
 );
 
 posRoutes.post(

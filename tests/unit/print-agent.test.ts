@@ -2,8 +2,127 @@ import { describe, expect, it, vi } from 'vitest';
 import { JobQueue } from '../../apps/print-agent/src/job-queue';
 import { isDesktopPlatform } from '../../src/client/lib/print-bridge-service';
 import { buildEscPosTextReceipt } from '../../src/printing/escpos/escpos-text-builder';
+import {
+  JobProcessor,
+  loadPrintDataForJob,
+  PrintJobProcessingError,
+} from '../../apps/print-agent/src/job-processor';
+import type { AgentApiClient } from '../../apps/print-agent/src/api-client';
+import type { PrintJob } from '../../src/contracts/print-job';
 
 describe('Pro POS Print Agent Unit Tests', () => {
+  it('loads invoice snapshots as PAYMENT without falling back to an order quote', async () => {
+    const get = vi.fn(async (path: string) => {
+      expect(path).toBe('/api/v1/pos/invoices/INV_1');
+      return {
+        invoice: {
+          id: 'INV_1',
+          displayCode: 'HD-1',
+          totalVnd: 100000,
+          issuedAt: 1720000000000,
+        },
+        lines: [],
+        payment: { method: 'CASH', cashReceived: 100000, cashChange: 0 },
+      };
+    });
+    const data = await loadPrintDataForJob({ get } as never, {
+      documentType: 'invoice',
+      documentId: 'INV_1',
+    });
+    expect(get).toHaveBeenCalledOnce();
+    expect(data.receiptType).toBe('PAYMENT');
+    expect(data.invoiceCode).toBe('HD-1');
+  });
+
+  it('loads provisional jobs only from the order quote endpoint', async () => {
+    const get = vi.fn(async () => ({
+      order: { id: 'ORDER_1', displayCode: 'D-1', orderType: 'DINE_IN' },
+      items: [],
+      totalVnd: 50000,
+    }));
+    const data = await loadPrintDataForJob({ get } as never, {
+      documentType: 'provisional',
+      documentId: 'ORDER_1',
+    });
+    expect(get).toHaveBeenCalledWith('/api/v1/pos/orders/ORDER_1/quote');
+    expect(data.receiptType).toBe('PROVISIONAL');
+  });
+
+  it('fails unknown document types instead of silently building provisional', async () => {
+    const get = vi.fn();
+    await expect(
+      loadPrintDataForJob(
+        { get } as never,
+        {
+          documentType: 'order',
+          documentId: 'ORDER_1',
+        } as never,
+      ),
+    ).rejects.toMatchObject({
+      code: 'INVALID_DOCUMENT_TYPE',
+    } satisfies Partial<PrintJobProcessingError>);
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it('continues printing text when an optional logo cannot be loaded', async () => {
+    const post = vi.fn(async () => ({}));
+    const get = vi.fn(async (path: string) => {
+      if (path === '/api/v1/pos/context') return null;
+      if (path === '/api/v1/pos/print-settings') {
+        return {
+          storeId: 'STORE-1',
+          logoMediaId: 'LOGO-1',
+          paperSize: 'K80',
+          printersJson: JSON.stringify({
+            networkIp: '192.168.1.10',
+            networkPort: 9100,
+            paperSize: 'K80',
+            vietnameseMode: 'UNACCENTED',
+          }),
+          paymentCopyCount: 1,
+          provisionalCopyCount: 1,
+        };
+      }
+      if (path === '/api/v1/pos/invoices/INV_1') {
+        return {
+          invoice: {
+            id: 'INV_1',
+            displayCode: 'HD-1',
+            totalVnd: 100000,
+            issuedAt: 1720000000000,
+          },
+          lines: [],
+          payment: { method: 'CASH' },
+        };
+      }
+      throw new Error(`Unexpected GET ${path}`);
+    });
+    const getBytes = vi.fn(async () => {
+      throw new Error('logo offline');
+    });
+    const send = vi.fn(async () => undefined);
+    const api = { get, getBytes, post } as unknown as AgentApiClient;
+    const processor = new JobProcessor(
+      { serverUrl: 'https://pos.example', agentId: 'AGENT-1', storeName: 'ĐẠI BILLIARDS' },
+      api,
+      { send },
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const job = {
+      id: 'JOB-1',
+      documentType: 'invoice',
+      documentId: 'INV_1',
+    } as PrintJob;
+
+    await expect(processor.processJob(job)).resolves.toBe(true);
+    expect(getBytes).toHaveBeenCalledWith('/api/v1/pos/print-media/LOGO-1');
+    expect(send).toHaveBeenCalledOnce();
+    expect(post).toHaveBeenCalledWith('/api/v1/pos/print-jobs/JOB-1/complete', {});
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Bỏ qua logo optional'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('không trả store context'));
+    warn.mockRestore();
+  });
+
   it('detects desktop vs mobile platforms accurately', () => {
     vi.stubGlobal('window', {});
     vi.stubGlobal('navigator', {

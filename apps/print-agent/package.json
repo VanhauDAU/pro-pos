@@ -6,7 +6,7 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx src/index.ts",
-    "build": "tsc",
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js --external:ws --alias:@contracts=../../src/contracts --alias:@domain=../../src/domain --alias:@printing=../../src/printing",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit"
   },
@@ -16,6 +16,7 @@
   "devDependencies": {
     "@types/node": "^26.2.0",
     "@types/ws": "^8.5.14",
+    "esbuild": "^0.28.1",
     "tsx": "^4.19.3",
     "typescript": "^7.0.2"
   }

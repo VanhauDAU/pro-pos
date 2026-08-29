@@ -284,8 +284,9 @@ export class CustomerService {
     if (!customer) throw new AppError('CUSTOMER_NOT_FOUND', 'Không tìm thấy khách hàng.', 404);
     if (input.amountVnd > customer.debtBalanceVnd)
       throw new AppError('DEBT_PAYMENT_TOO_HIGH', 'Số tiền thu vượt quá công nợ.', 422);
+    const debtPaymentId = crypto.randomUUID();
     await this.repository.addDebtEntry({
-      id: crypto.randomUUID(),
+      id: debtPaymentId,
       storeId,
       customerId,
       actorId,
@@ -296,7 +297,27 @@ export class CustomerService {
       idempotencyKey: input.idempotencyKey,
       now: Date.now(),
     });
-    return this.detail(storeId, customerId);
+    return { ...(await this.detail(storeId, customerId)), debtPaymentId };
+  }
+
+  async getDebtPayment(storeId: string, documentId: string) {
+    const payment = await this.repository.findDebtPayment(storeId, documentId);
+    if (!payment) {
+      throw new AppError('DEBT_PAYMENT_NOT_FOUND', 'Không tìm thấy phiếu thu công nợ.', 404);
+    }
+    const amountVnd = Math.abs(payment.signedAmountVnd);
+    return {
+      ...payment,
+      amountVnd,
+      debtBeforeVnd: payment.debtAfterVnd + amountVnd,
+      customerAddress: [
+        payment.customerAddress,
+        payment.customerWardName,
+        payment.customerProvinceName,
+      ]
+        .filter(Boolean)
+        .join(', '),
+    };
   }
 
   async adjustDebt(

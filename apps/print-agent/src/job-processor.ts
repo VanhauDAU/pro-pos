@@ -2,13 +2,38 @@ import { AgentApiClient } from './api-client';
 import type { PrintAgentConfig } from './config';
 import { AgentTcpTransport } from './tcp-transport';
 import {
+  buildEscPosReceipt,
   buildPrintDataFromInvoice,
   buildPrintDataFromQuote,
   type PosReceiptPrintData,
 } from '@domain/receipt/receipt-generator';
-import { buildEscPosTextReceipt } from '@printing/escpos/escpos-text-builder';
+import { encodeEscPosWpc1258 } from '@printing/escpos/escpos-wpc1258';
 import type { PrintJob } from '@contracts/print-job';
 import type { StorePrintSettings } from '@contracts/store';
+
+const CASH_DRAWER_COMMAND = '\x1b\x70\x00\x19\xfa';
+
+function combinePayloads(payloads: Uint8Array[]): Uint8Array {
+  const totalLength = payloads.reduce((sum, payload) => sum + payload.length, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const payload of payloads) {
+    result.set(payload, offset);
+    offset += payload.length;
+  }
+  return result;
+}
+
+function resolveCopyCount(
+  printData: PosReceiptPrintData,
+  printSettings: StorePrintSettings | null,
+): number {
+  const configured =
+    printData.receiptType === 'PROVISIONAL'
+      ? printSettings?.provisionalCopyCount
+      : printSettings?.paymentCopyCount;
+  return Math.max(1, Math.min(9, configured ?? 1));
+}
 
 export class JobProcessor {
   private readonly inFlight = new Set<string>();
@@ -113,20 +138,23 @@ export class JobProcessor {
         return false;
       }
 
-      // 3. Render ESC/POS Bytes
-      let paperSize: 'K80' | 'K58' = this.config.paperSize || 'K80';
-      let autoCut = this.config.autoCut ?? true;
-      let openCashDrawer = this.config.openCashDrawer ?? false;
-
-      if (printSettings?.printersJson) {
-        try {
-          const parsed = JSON.parse(printSettings.printersJson);
-          if (parsed.paperSize) paperSize = parsed.paperSize;
-          if (parsed.autoCut !== undefined) autoCut = parsed.autoCut;
-          if (parsed.openCashDrawer !== undefined) openCashDrawer = parsed.openCashDrawer;
-        } catch {
-          // ignore
-        }
+      // 3. Render the canonical receipt used by Owner print-template settings.
+      // The previous Print Agent used a reduced text-only builder, which ignored
+      // templateConfigJson, footer/Wi-Fi/custom address, copy counts and other
+      // configured fields. Keep the domain receipt generator as the single source
+      // of truth, then encode its Vietnamese text using the printer's WPC1258 page.
+      let effectivePrintSettings = printSettings;
+      if (!effectivePrintSettings) {
+        effectivePrintSettings = {
+          paperSize: this.config.paperSize || 'K80',
+          printersJson: JSON.stringify({
+            paperSize: this.config.paperSize || 'K80',
+            autoCut: this.config.autoCut ?? true,
+            openCashDrawer: this.config.openCashDrawer ?? false,
+          }),
+          paymentCopyCount: 1,
+          provisionalCopyCount: 1,
+        } as StorePrintSettings;
       }
 
       const copyCount = Math.max(
@@ -171,17 +199,19 @@ export class JobProcessor {
       let printerIp = this.config.printerIp || '192.168.1.73';
       let printerPort = this.config.printerPort || 9100;
 
-      if (printSettings?.printersJson) {
+      if (effectivePrintSettings?.printersJson) {
         try {
-          const parsed = JSON.parse(printSettings.printersJson);
+          const parsed = JSON.parse(effectivePrintSettings.printersJson);
           if (parsed.networkIp) printerIp = parsed.networkIp;
           if (parsed.networkPort) printerPort = parsed.networkPort;
         } catch {
-          // ignore
+          // ignore malformed legacy config and keep agent fallback
         }
       }
 
-      console.log(`[PrintAgent] Đang gửi lệnh in tới máy in LAN ${printerIp}:${printerPort}...`);
+      console.log(
+        `[PrintAgent] Đang gửi ${copyCount} liên tới máy in LAN ${printerIp}:${printerPort}...`,
+      );
       await this.transport.send(escposBytes, {
         host: printerIp,
         port: printerPort,

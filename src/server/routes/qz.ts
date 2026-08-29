@@ -23,8 +23,9 @@ qzRoutes.get('/certificate', (c) => {
     string | undefined;
   const cert = getDefaultQzCertificate(envKey);
 
+  const isDownload = c.req.query('download') === '1' || c.req.query('download') === 'true';
   const accept = c.req.header('Accept') || '';
-  if (accept.includes('application/json')) {
+  if (!isDownload && accept.includes('application/json')) {
     return success(c, { certificate: cert });
   }
 
@@ -33,6 +34,7 @@ qzRoutes.get('/certificate', (c) => {
     headers: {
       'Content-Type': 'text/plain; charset=utf-8',
       'Cache-Control': 'public, max-age=86400, stale-while-revalidate=604800',
+      ...(isDownload ? { 'Content-Disposition': 'attachment; filename="propos-qz-cert.pem"' } : {}),
     },
   });
 });
@@ -46,6 +48,14 @@ qzRoutes.post('/sign', requireActor('OWNER', 'EMPLOYEE'), async (c) => {
   const body = await parseJson(c.req.raw, qzSignRequestSchema);
   const privateKey = (c.env as unknown as Record<string, unknown>)?.QZ_PRIVATE_KEY as
     string | undefined;
+
+  if (!privateKey) {
+    throw new AppError(
+      'SERVER_MISCONFIGURED',
+      'Thiếu cấu hình secret QZ_PRIVATE_KEY trên máy chủ.',
+      503,
+    );
+  }
 
   try {
     const signature = await signQzPayload(body.data, privateKey);

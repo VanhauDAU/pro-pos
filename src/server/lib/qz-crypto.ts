@@ -24,35 +24,6 @@ ZIYlNSui2BPNlj9IjLnJUW9D+Sa7DE2JoD0T2Rlq56b3C/oa9XPiZXiF8gdT7M1S
 ZzHBL0mcFcXlvVwiUi/X4w==
 -----END CERTIFICATE-----`.trim();
 
-export const DEFAULT_QZ_PRIVATE_KEY_PEM = `-----BEGIN PRIVATE KEY-----
-MIIEwAIBADANBgkqhkiG9w0BAQEFAASCBKowggSmAgEAAoIBAQCw+K+wg6mXTMxC
-U/cQxs4msy/1OA5zUsk20+3LajGerm9AbRwzyjBGIAaLc8xXB7ux2hJcitJy5sqn
-6+l4visVnCiSUF/sFh+d+0JZ/7kub4FxLgTRPXRNGX2JkLFu+/mmkAES8xHlY/iv
-TnM5i49VeYAXpEMxu5zHvxJUSYW9TPSrTiKxbdsSQBQJ76ZQcIYVibqb0aVWkjT7
-oh4sy6pto2t2nH/qOd+0lg9OeG53YZu8lqA62uMSu+E3mykI/h0gPsUVcjmZrtc4
-ByfrFaxtjw6FSyP3t7rwhMoWVloXJy3z32bZbbqKUyq8qM0NpeTlQSQKGZ+e3yme
-mN4rqzGXAgMBAAECggEBAIUy+JGD166QWCEIL6pJ6DoKnmsUQRQd2GLTCmUTTbug
-kQ3N0e9NHB571lE53DAZGvWXLEDJH/LpsNjI4JZHlAgU3BicNEZutGdlCSDSL+A6
-fxPfzjJq7dFmAS38YQAm2VW7h4NqviqIn1HbWzCR0VVFONsSgJy7GBrjvnkASZAb
-Tke1+C8Dnw/ARuWpbvJ13C5iojZTNRPyjk5JkDvuFBj8MpbkbLtiKPoA4vo2GCYa
-HoQhNWZr2wlriubqEY+J6V4bFWITvrcso8nUDi7JcII8hgCMlPonuCJMZFLY/EZd
-21eDuQ9p4zt8AHJUVcX9oiIqbV7uo3CVtuOFSIJnXSECgYEA3nEB8TNe1AHgqT5C
-xs+Ep5UHFhJ4D+55ue2QbclqC+pW55FgGG2rfRP2B+6TGcKnebM2t68IkvSQov4a
-ZAJ9pGPYJxiYYr0P1sW+FWwKpqfeBvU8IBqUZemhqV9UHFGOXbWBFt/Cb+1+QALf
-MMQ4m5CHfgbndlI+7mv7eB1gGOcCgYEAy6uQn0NcyWwPZYiNnITImx7ufsUpLP25
-65Jj7L0MznIxDCo+0clB89AToLQDO6NQUFQuwfjOotu4Xn96XOXu3D8C+CkdUvZI
-eLK5Nu9fzsRCStf4sNfTPvhNDgETpxJ75FORkdLNc/KpCs7FcUgwid4roBQgDU8s
-XtXRv6Jlm9ECgYEAwgoQaKioMwaERP6D38vMaydsLAvmYfdkhhU+5RZLBKPiNVSy
-X/zjGFPeTeMGvPT5hQcZVzg/oXnn5dcFjHJDybAzMT+aRp+n/nE2tJcv31sWKjmo
-vlSRWSlplUcMJzvZldMsDZkZkuu4MvyOV4sD2mhEWWKKbMOoE/FsRsZROscCgYEA
-tq8M6c3iTElBBjGV0+7GgV0dT1hJtrFfMo38Uzy/X+3NULwT3NhI8AiTknHk9Hlo
-cKURy6sArdOnbBusBee4eJWMdEtsoh2Go7yrpTrRFQW08K0HxJfSQ4k0lHsixZku
-x36t877Byl6+gZM2RoYaA4/kUZG7rjR1+BqSKPHhcgECgYEA26GFo85VGClAXmVJ
-vJarkmKg+d0qCdkLB8ueTSO0LTO/KY6EYVII3eJNFYCJgqnDGgOT0w7m4ydiRhRy
-zAIxZaKOGJq9FR/Kx+4jGqVVOktQoyCGAzVnQj5Jse30Qvy5856Nu/7TCE2VtiQg
-pEtnGqoKJBsetq28tVtVMPYFJdo=
------END PRIVATE KEY-----`.trim();
-
 const keyCache = new Map<string, CryptoKey>();
 
 export function normalizePemKey(pem?: string | null): string | null {
@@ -87,7 +58,14 @@ export function getDefaultQzCertificate(customPem?: string | null): string {
 }
 
 export async function getQzSigningKey(customPrivateKeyPem?: string | null): Promise<CryptoKey> {
-  const pem = (normalizePemKey(customPrivateKeyPem) || DEFAULT_QZ_PRIVATE_KEY_PEM).trim();
+  const pem = normalizePemKey(customPrivateKeyPem);
+  if (!pem) {
+    throw new AppError(
+      'SERVER_MISCONFIGURED',
+      'Thiếu cấu hình secret QZ_PRIVATE_KEY trên máy chủ.',
+      503,
+    );
+  }
   const cached = keyCache.get(pem);
   if (cached) return cached;
 

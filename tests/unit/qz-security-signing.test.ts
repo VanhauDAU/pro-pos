@@ -23,6 +23,7 @@ import {
   getDefaultQzCertificate,
   signQzPayload,
 } from '../../src/server/lib/qz-crypto';
+import { TEST_QZ_PRIVATE_KEY_PEM } from '../fixtures/qz-test-keys';
 import { configureQzSecurity, resetQzSecurityForTests } from '../../src/printing/qz/qz-security';
 
 describe('QZ security and WebCrypto signing', () => {
@@ -44,7 +45,7 @@ describe('QZ security and WebCrypto signing', () => {
 
   it('signs payload with RSA-SHA512 and verifies against public certificate', async () => {
     const challengeData = 'qz-challenge-token-123456789';
-    const signatureBase64 = await signQzPayload(challengeData);
+    const signatureBase64 = await signQzPayload(challengeData, TEST_QZ_PRIVATE_KEY_PEM);
 
     expect(typeof signatureBase64).toBe('string');
     expect(signatureBase64.length).toBeGreaterThan(50);
@@ -61,14 +62,21 @@ describe('QZ security and WebCrypto signing', () => {
     expect(isValid).toBe(true);
   });
 
+  it('fails fast with SERVER_MISCONFIGURED when private key is missing', async () => {
+    await expect(signQzPayload('test-data', null)).rejects.toMatchObject({
+      code: 'SERVER_MISCONFIGURED',
+      status: 503,
+    });
+  });
+
   it('rejects empty or oversized signing payloads', async () => {
-    await expect(signQzPayload('')).rejects.toMatchObject({
+    await expect(signQzPayload('', TEST_QZ_PRIVATE_KEY_PEM)).rejects.toMatchObject({
       code: 'INVALID_PAYLOAD',
       status: 400,
     });
 
     const oversized = 'a'.repeat(70000);
-    await expect(signQzPayload(oversized)).rejects.toMatchObject({
+    await expect(signQzPayload(oversized, TEST_QZ_PRIVATE_KEY_PEM)).rejects.toMatchObject({
       code: 'PAYLOAD_TOO_LARGE',
       status: 413,
     });

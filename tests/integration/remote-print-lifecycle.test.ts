@@ -5,6 +5,7 @@ import { PlatformService } from '@server/services/platform-service';
 import { PosService } from '@server/services/pos-service';
 import { PrintJobService } from '@server/services/print-job-service';
 import { getDefaultQzCertificate, signQzPayload } from '@server/lib/qz-crypto';
+import { TEST_QZ_PRIVATE_KEY_PEM } from '../fixtures/qz-test-keys';
 
 describe('Remote Print & QZ Security Lifecycle (Integration Test)', () => {
   let storeId: string;
@@ -44,7 +45,8 @@ describe('Remote Print & QZ Security Lifecycle (Integration Test)', () => {
       expect(cert).toContain('BEGIN CERTIFICATE');
 
       const challenge = 'test-challenge-12345';
-      const signature = await signQzPayload(challenge);
+      const privateKey = (env as any).QZ_PRIVATE_KEY || TEST_QZ_PRIVATE_KEY_PEM;
+      const signature = await signQzPayload(challenge, privateKey);
       expect(typeof signature).toBe('string');
       expect(signature.length).toBeGreaterThan(64);
     });

@@ -8,6 +8,7 @@ import {
 import { ApiError, apiRequest, jsonRequest } from './api';
 import type { PrintJob } from '@contracts/print-job';
 import type { StorePrintSettings } from '@contracts/store';
+import { ensureQzConnected } from '@printing/qz/qz-client';
 
 const PRINT_BRIDGE_STORAGE_KEY = 'propos:print_bridge_enabled';
 const LOCK_NAME = 'propos:print_bridge_leader_lock';
@@ -18,6 +19,36 @@ const inFlightJobs = new Set<string>();
 const leaderListeners = new Set<(leader: boolean) => void>();
 
 let cachedCsrfToken: string | null = null;
+let windowListenersAttached = false;
+
+function attachWindowReconnectListeners() {
+  if (
+    windowListenersAttached ||
+    typeof window === 'undefined' ||
+    typeof window.addEventListener !== 'function'
+  ) {
+    return;
+  }
+  windowListenersAttached = true;
+
+  const tryReconnectQz = () => {
+    if (isDesktopPlatform() && isPrintBridgeEnabled() && isLeader) {
+      void ensureQzConnected().catch(() => {});
+    }
+  };
+
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        tryReconnectQz();
+      }
+    });
+  }
+
+  window.addEventListener('online', () => {
+    tryReconnectQz();
+  });
+}
 
 async function resolveCsrfToken(): Promise<string> {
   if (cachedCsrfToken) return cachedCsrfToken;
@@ -112,6 +143,7 @@ export function setPrintBridgeEnabled(enabled: boolean): void {
 export async function startPrintBridgeLeaderElection(): Promise<void> {
   if (typeof window === 'undefined') return;
   if (!isPrintBridgeEnabled()) return;
+  attachWindowReconnectListeners();
   if (leaderAbortController) return;
 
   leaderAbortController = new AbortController();
@@ -123,6 +155,17 @@ export async function startPrintBridgeLeaderElection(): Promise<void> {
         notifyLeaderListeners();
         if (import.meta.env.DEV) {
           console.log('[PrintBridge] Tab acquired print bridge leader lock.');
+        }
+
+        // Auto-connect QZ Tray on desktop leader tab before recovering print jobs
+        if (isDesktopPlatform()) {
+          try {
+            await ensureQzConnected();
+          } catch (err) {
+            if (import.meta.env.DEV) {
+              console.warn('[PrintBridge] QZ Tray not reachable upon leader election:', err);
+            }
+          }
         }
 
         // Recover any pending queued jobs upon becoming leader
@@ -146,6 +189,10 @@ export async function startPrintBridgeLeaderElection(): Promise<void> {
     // Fallback for environments without Web Locks API
     isLeader = true;
     notifyLeaderListeners();
+    if (isDesktopPlatform()) {
+      void ensureQzConnected().catch(() => {});
+    }
+    void recoverPendingPrintJobs();
   }
 }
 
@@ -227,6 +274,29 @@ export async function processPrintJob(job: {
       // fallback
     }
 
+    let posContext: {
+      storeName?: string;
+      storePhone?: string | null;
+      storeAddress?: string | null;
+      bankName?: string | null;
+      bankAccountNumber?: string | null;
+      bankAccountName?: string | null;
+    } | null = null;
+    try {
+      posContext = await apiRequest('/api/v1/pos/context');
+    } catch {
+      // fallback
+    }
+
+    const storeInfo = {
+      storeName: posContext?.storeName ?? authContext?.store?.name ?? 'PRO POS',
+      phone: posContext?.storePhone ?? authContext?.store?.phone ?? null,
+      address: posContext?.storeAddress ?? authContext?.store?.address ?? null,
+      bankName: posContext?.bankName ?? null,
+      bankAccountNumber: posContext?.bankAccountNumber ?? null,
+      bankAccountName: posContext?.bankAccountName ?? null,
+    };
+
     // 4. Fetch Document Data & Build Print Options
     let receiptOptions: PosReceiptPrintOptions | null = null;
 
@@ -237,11 +307,7 @@ export async function processPrintJob(job: {
         receiptOptions = {
           data: printData,
           printSettings,
-          storeInfo: {
-            storeName: authContext?.store?.name ?? 'PRO POS',
-            phone: authContext?.store?.phone ?? null,
-            address: authContext?.store?.address ?? null,
-          },
+          storeInfo,
         };
       } catch {
         try {
@@ -252,11 +318,7 @@ export async function processPrintJob(job: {
           receiptOptions = {
             data: printData,
             printSettings,
-            storeInfo: {
-              storeName: authContext?.store?.name ?? 'PRO POS',
-              phone: authContext?.store?.phone ?? null,
-              address: authContext?.store?.address ?? null,
-            },
+            storeInfo,
           };
         } catch {
           // handled below
@@ -271,11 +333,7 @@ export async function processPrintJob(job: {
       receiptOptions = {
         data: printData,
         printSettings,
-        storeInfo: {
-          storeName: authContext?.store?.name ?? 'PRO POS',
-          phone: authContext?.store?.phone ?? null,
-          address: authContext?.store?.address ?? null,
-        },
+        storeInfo,
       };
     }
 

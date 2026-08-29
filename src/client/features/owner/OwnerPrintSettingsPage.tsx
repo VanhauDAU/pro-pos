@@ -5,6 +5,7 @@ import {
   PictureOutlined,
   PrinterOutlined,
   QrcodeOutlined,
+  SafetyCertificateOutlined,
   SaveOutlined,
   WifiOutlined,
 } from '@ant-design/icons';
@@ -43,10 +44,12 @@ import {
   parsePrinterDeviceConfig,
 } from '@contracts/store';
 import { getClientDeviceName } from '@client/lib/qz-tray-service';
+import { isDesktopPlatform } from '@client/lib/print-bridge-service';
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 import { printerAction, printerService } from '@printing/printer-service';
 import { ReceiptPreviewPaper } from '@client/features/pos/ReceiptPreviewModal';
 import { ThermalHourlySegmentsPreview } from '@client/components/ThermalHourlySegmentsPreview';
+import { QzTrustedSetupModal } from '@client/components/QzTrustedSetupModal';
 import {
   OWNER_PRINT_PREVIEW_TOTAL_VND,
   buildOwnerPrintPreviewSample,
@@ -122,6 +125,7 @@ export function OwnerPrintSettingsPage() {
   const [testingPrint, setTestingPrint] = useState(false);
   const [checkingConnection, setCheckingConnection] = useState(false);
   const [savingPrinter, setSavingPrinter] = useState(false);
+  const [trustedModalOpen, setTrustedModalOpen] = useState(false);
 
   const printerConnectionType = Form.useWatch('connectionType', printerForm) ?? 'SYSTEM';
   const printerPaperSize = Form.useWatch('paperSize', printerForm) ?? 'K80';
@@ -421,7 +425,7 @@ export function OwnerPrintSettingsPage() {
   // Initial check for QZ Tray
   useEffect(() => {
     let isMounted = true;
-    printerService.checkConnection().then((res) => {
+    printerService.checkConnection(isDesktopPlatform()).then((res) => {
       if (!isMounted) return;
       if (res.connected) {
         setQzStatus({ connected: true, version: res.version, loading: false });
@@ -1662,15 +1666,30 @@ export function OwnerPrintSettingsPage() {
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
+                        flexWrap: 'wrap',
+                        gap: 8,
                         marginTop: 8,
                       }}
                     >
                       <span style={{ fontSize: 13, color: '#64748b' }}>
                         Phiên bản: <strong>{qzStatus.version || '2.2.x'}</strong>
                       </span>
-                      <Button size="small" onClick={handleConnectQzTray} loading={qzStatus.loading}>
-                        Kết nối lại
-                      </Button>
+                      <Space>
+                        <Button
+                          size="small"
+                          icon={<SafetyCertificateOutlined />}
+                          onClick={() => setTrustedModalOpen(true)}
+                        >
+                          Bỏ qua hộp thoại Allow
+                        </Button>
+                        <Button
+                          size="small"
+                          onClick={handleConnectQzTray}
+                          loading={qzStatus.loading}
+                        >
+                          Kết nối lại
+                        </Button>
+                      </Space>
                     </div>
                   ) : (
                     <div>
@@ -1678,7 +1697,7 @@ export function OwnerPrintSettingsPage() {
                         {qzStatus.error ||
                           'Để in trực tiếp không cần hộp thoại, hãy cài QZ Tray trên máy này.'}
                       </p>
-                      <Space>
+                      <Space wrap>
                         <Button
                           type="default"
                           href="https://qz.io/download/"
@@ -1693,6 +1712,13 @@ export function OwnerPrintSettingsPage() {
                           loading={qzStatus.loading}
                         >
                           Thử kết nối
+                        </Button>
+                        <Button
+                          size="middle"
+                          icon={<SafetyCertificateOutlined />}
+                          onClick={() => setTrustedModalOpen(true)}
+                        >
+                          Bỏ qua hộp thoại Allow
                         </Button>
                       </Space>
                     </div>
@@ -1907,6 +1933,8 @@ export function OwnerPrintSettingsPage() {
           </Card>
         </div>
       )}
+
+      <QzTrustedSetupModal open={trustedModalOpen} onClose={() => setTrustedModalOpen(false)} />
     </div>
   );
 }

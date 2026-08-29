@@ -87,9 +87,7 @@ export class JobProcessor {
       try {
         const [contextRes, settingsRes] = await Promise.all([
           this.apiClient.get<any>('/api/v1/pos/context').catch(() => null),
-          this.apiClient
-            .get<StorePrintSettings>('/api/v1/pos/print-settings')
-            .catch(() => null),
+          this.apiClient.get<StorePrintSettings>('/api/v1/pos/print-settings').catch(() => null),
         ]);
 
         if (contextRes?.store) {
@@ -110,9 +108,7 @@ export class JobProcessor {
           const invoice = await this.apiClient.get<any>(`/api/v1/pos/invoices/${job.documentId}`);
           printData = buildPrintDataFromInvoice(invoice);
         } else {
-          const quote = await this.apiClient.get<any>(
-            `/api/v1/pos/orders/${job.documentId}/quote`,
-          );
+          const quote = await this.apiClient.get<any>(`/api/v1/pos/orders/${job.documentId}/quote`);
           printData = buildPrintDataFromQuote(quote);
         }
       } catch (err: any) {
@@ -201,10 +197,7 @@ export class JobProcessor {
       );
       return true;
     } catch (error: any) {
-      console.error(
-        `\x1b[31m✘ [PrintAgent] In thất bại cho job ${job.id}:\x1b[0m`,
-        error.message,
-      );
+      console.error(`\x1b[31m✘ [PrintAgent] In thất bại cho job ${job.id}:\x1b[0m`, error.message);
       try {
         await this.apiClient.post(`/api/v1/pos/print-jobs/${job.id}/fail`, {
           failureCode: 'PRINT_FAILED',

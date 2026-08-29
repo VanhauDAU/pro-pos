@@ -34,7 +34,11 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm format:check
+      - name: Inspect receipt formatting
+        run: |
+          pnpm exec prettier --write apps/print-agent/src/job-processor.ts src/printing/escpos/escpos-wpc1258.ts tests/unit/escpos-wpc1258.test.ts
+          git diff -- apps/print-agent/src/job-processor.ts src/printing/escpos/escpos-wpc1258.ts tests/unit/escpos-wpc1258.test.ts
+          exit 1
       - run: pnpm lint
       - run: pnpm cf-typegen
       - run: pnpm cf-typegen:auth

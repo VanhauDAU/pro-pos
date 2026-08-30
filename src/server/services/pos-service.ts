@@ -1007,8 +1007,14 @@ export class PosService {
     expectedVersion: number;
     actorId: string;
     now: number;
-  }) {
-    if (input.promotionIds === undefined) return [];
+  }): Promise<{
+    statements: D1PreparedStatement[];
+    changed: boolean;
+    versionDelta: number;
+  }> {
+    if (input.promotionIds === undefined) {
+      return { statements: [], changed: false, versionDelta: 0 };
+    }
     const preview = await this.promotions.previewForOrder({
       storeId: input.storeId,
       orderId: input.orderId,
@@ -1032,10 +1038,35 @@ export class PosService {
       }
     }
     const selected = new Set(input.promotionIds);
+    const desiredPromotionIds = [...selected].toSorted();
     const suppressedPromotionIds = preview.options
       .filter((item) => item.autoApply && item.eligible && !selected.has(item.id))
-      .map((item) => item.id);
-    return new PromotionRepository(this.env.DB).buildSetOrderPromotionStatements({
+      .map((item) => item.id)
+      .toSorted();
+
+    if (input.orderId) {
+      const promoRepo = new PromotionRepository(this.env.DB);
+      const [currentSelectedRows, currentSuppressedRows] = await Promise.all([
+        promoRepo.listSelected(input.storeId, input.orderId),
+        promoRepo.listSuppressed(input.storeId, input.orderId),
+      ]);
+      const currentAppliedIds = currentSelectedRows.results.map((r) => r.promotionId).toSorted();
+      const currentSuppressedIds = currentSuppressedRows.results
+        .map((r) => r.promotionId)
+        .toSorted();
+      const isSameApplied =
+        desiredPromotionIds.length === currentAppliedIds.length &&
+        desiredPromotionIds.every((id, idx) => id === currentAppliedIds[idx]);
+      const isSameSuppressed =
+        suppressedPromotionIds.length === currentSuppressedIds.length &&
+        suppressedPromotionIds.every((id, idx) => id === currentSuppressedIds[idx]);
+
+      if (isSameApplied && isSameSuppressed) {
+        return { statements: [], changed: false, versionDelta: 0 };
+      }
+    }
+
+    const statements = new PromotionRepository(this.env.DB).buildSetOrderPromotionStatements({
       storeId: input.storeId,
       orderId: input.orderId!,
       orderType: input.orderType,
@@ -1045,6 +1076,7 @@ export class PosService {
       expectedVersion: input.expectedVersion,
       now: input.now,
     });
+    return { statements, changed: true, versionDelta: 1 };
   }
 
   private async orderMutationSnapshot(
@@ -1297,17 +1329,21 @@ export class PosService {
         takeaway
           ? this.repository.buildAddTakeawayItemStatement(command)
           : this.repository.buildAddItemStatement(command),
-        this.repository.buildSetOrderItemDiscountReasonStatement({
-          storeId: input.storeId,
-          orderType: input.values.orderType,
-          orderId,
-          itemId: item.itemId,
-          reason: item.discountReason,
-        }),
       );
+      if (item.discountReason) {
+        statements.push(
+          this.repository.buildSetOrderItemDiscountReasonStatement({
+            storeId: input.storeId,
+            orderType: input.values.orderType,
+            orderId,
+            itemId: item.itemId,
+            reason: item.discountReason,
+          }),
+        );
+      }
       version += 1;
     }
-    if (!takeaway && input.values.note !== undefined) {
+    if (!takeaway && input.values.note?.trim()) {
       statements.push(
         this.repository.buildUpdateNoteStatement({
           commandId: `${input.idempotencyKey}:note`,
@@ -1315,7 +1351,7 @@ export class PosService {
           orderType: input.values.orderType,
           orderId,
           expectedOrderVersion: version,
-          note: input.values.note?.trim() || null,
+          note: input.values.note.trim(),
           actorId: input.actorId,
           requestId: input.requestId,
           issuedAt: now,
@@ -1373,31 +1409,39 @@ export class PosService {
       }),
       removalReason: null,
     }));
-    statements.push(
-      ...(await measurePhase(input.timing, 'cmd_promotion', () =>
-        this.promotionStatements({
-          storeId: input.storeId,
-          orderId,
-          orderType: input.values.orderType,
-          promotionIds: input.values.promotionIds,
-          customerId: guest?.customerId ?? null,
-          items: promotionItems,
-          subtotalVnd: promotionItems.reduce((sum, item) => sum + item.netLineTotalVnd, 0),
-          expectedVersion: version,
-          actorId: input.actorId,
-          now,
-        }),
-      )),
-      ...this.repository.buildOrderCallBatchStatements({
-        batchId: crypto.randomUUID(),
+    const promotionResult = await measurePhase(input.timing, 'cmd_promotion', () =>
+      this.promotionStatements({
         storeId: input.storeId,
         orderId,
         orderType: input.values.orderType,
+        promotionIds: input.values.promotionIds,
+        customerId: guest?.customerId ?? null,
+        items: promotionItems,
+        subtotalVnd: promotionItems.reduce((sum, item) => sum + item.netLineTotalVnd, 0),
+        expectedVersion: version,
         actorId: input.actorId,
-        requestId: input.requestId,
-        entries: initialBatchEntries,
         now,
       }),
+    );
+    if (promotionResult.statements.length > 0) {
+      statements.push(...promotionResult.statements);
+      version += promotionResult.versionDelta;
+    }
+    if (initialBatchEntries.length > 0) {
+      statements.push(
+        ...this.repository.buildOrderCallBatchStatements({
+          batchId: crypto.randomUUID(),
+          storeId: input.storeId,
+          orderId,
+          orderType: input.values.orderType,
+          actorId: input.actorId,
+          requestId: input.requestId,
+          entries: initialBatchEntries,
+          now,
+        }),
+      );
+    }
+    statements.push(
       ...this.repository.buildConsolidateSaveAuditStatements({
         storeId: input.storeId,
         orderId,
@@ -1411,7 +1455,7 @@ export class PosService {
         storeId: input.storeId,
         commandId: input.idempotencyKey,
         orderId,
-        orderVersion: version + (input.values.promotionIds === undefined ? 0 : 1),
+        orderVersion: version,
         actorId: input.actorId,
         requestId: input.requestId,
         created: true,
@@ -1488,7 +1532,7 @@ export class PosService {
       );
     }
     const takeaway = current.order.orderType === 'TAKEAWAY';
-    const recordCallHistory = current.order.hasCallHistory;
+    const recordCallHistory = current.order.orderType === 'DINE_IN' || current.order.hasCallHistory;
     const [preparedItems, guest] = await measurePhase(input.timing, 'cmd_prepare', () =>
       Promise.all([
         this.prepareSaveItems(
@@ -1539,6 +1583,7 @@ export class PosService {
       }),
     ];
     let version = input.values.expectedOrderVersion;
+    let genuinelyChangedUpdatedCount = 0;
     const batchEntries: OrderCallBatchEntryInput[] = [];
     const updatedPromotionItems = new Map<string, PromotionPreviewItem | null>();
     for (const [index, update] of input.values.updatedItems.entries()) {
@@ -1552,6 +1597,7 @@ export class PosService {
         if (!update.removalReason?.trim()) {
           throw new AppError('REMOVAL_REASON_REQUIRED', 'Vui lòng nhập lý do xóa món.', 422);
         }
+        genuinelyChangedUpdatedCount += 1;
         statements.push(
           this.repository.buildRemoveOrderItemStatement({
             commandId: `${input.idempotencyKey}:remove:${index}`,
@@ -1632,12 +1678,35 @@ export class PosService {
           : discountType === 'FIXED'
             ? Math.min(gross, discountInputValue ?? 0)
             : 0;
-      const metadataChanged =
-        variantId !== item.variantId ||
-        note !== item.note ||
-        discountType !== item.discountType ||
-        discountInputValue !== item.discountInputValue ||
-        discountReason !== item.discountReason;
+
+      const quantityChanged = update.quantityMilli !== item.quantityMilli;
+      const variantChanged = variantId !== item.variantId;
+      const priceChanged = unitPriceVnd !== item.unitPriceVnd;
+      const noteChanged = note !== item.note;
+      const discountTypeChanged = discountType !== item.discountType;
+      const discountInputChanged = discountInputValue !== item.discountInputValue;
+      const discountReasonChanged = discountReason !== item.discountReason;
+      const discountChanged = discountTypeChanged || discountInputChanged || discountReasonChanged;
+      const itemChanged =
+        quantityChanged || variantChanged || priceChanged || noteChanged || discountChanged;
+
+      if (!itemChanged) {
+        updatedPromotionItems.set(item.id, {
+          productId: item.productId,
+          variantId: item.variantId,
+          productType: item.productType,
+          productName: item.productName,
+          variantName: item.variantName,
+          unitPriceVnd: item.unitPriceVnd,
+          quantityMilli: item.quantityMilli,
+          grossLineTotalVnd: item.grossLineTotalVnd,
+          netLineTotalVnd: item.netLineTotalVnd,
+        });
+        continue;
+      }
+
+      genuinelyChangedUpdatedCount += 1;
+      const metadataChanged = variantChanged || noteChanged || discountChanged;
       const commandDiscountType = update.discount === null ? 'NONE' : discountType;
       const commandDiscountInputValue = update.discount === null ? -1 : discountInputValue;
       statements.push(
@@ -1664,14 +1733,18 @@ export class PosService {
           requestId: input.requestId,
           issuedAt: now,
         }),
-        this.repository.buildSetOrderItemDiscountReasonStatement({
-          storeId: input.storeId,
-          orderType: current.order.orderType,
-          orderId: input.orderId,
-          itemId: item.id,
-          reason: discountReason,
-        }),
       );
+      if (discountReasonChanged) {
+        statements.push(
+          this.repository.buildSetOrderItemDiscountReasonStatement({
+            storeId: input.storeId,
+            orderType: current.order.orderType,
+            orderId: input.orderId,
+            itemId: item.id,
+            reason: discountReason,
+          }),
+        );
+      }
       batchEntries.push({
         itemId: item.id,
         changeType: metadataChanged ? 'EDIT' : 'ADJUST',
@@ -1750,14 +1823,18 @@ export class PosService {
         takeaway
           ? this.repository.buildAddTakeawayItemStatement(command)
           : this.repository.buildAddItemStatement(command),
-        this.repository.buildSetOrderItemDiscountReasonStatement({
-          storeId: input.storeId,
-          orderType: current.order.orderType,
-          orderId: input.orderId,
-          itemId: effectiveItemId,
-          reason: item.discountReason,
-        }),
       );
+      if (item.discountReason) {
+        statements.push(
+          this.repository.buildSetOrderItemDiscountReasonStatement({
+            storeId: input.storeId,
+            orderType: current.order.orderType,
+            orderId: input.orderId,
+            itemId: effectiveItemId,
+            reason: item.discountReason,
+          }),
+        );
+      }
       const beforeQuantityMilli = matchingCurrentItem ? matchingCurrentItem.quantityMilli : 0;
       const currentRunningQuantity = mergedCurrentQuantities.get(effectiveItemId) ?? 0;
       const afterQuantityMilli = currentRunningQuantity + item.quantityMilli;
@@ -1801,37 +1878,60 @@ export class PosService {
       }
       version += 1;
     }
+    let noteChanged = false;
     if (input.values.note !== undefined) {
-      statements.push(
-        this.repository.buildUpdateNoteStatement({
-          commandId: `${input.idempotencyKey}:note`,
-          storeId: input.storeId,
-          orderType: current.order.orderType,
-          orderId: input.orderId,
-          expectedOrderVersion: version,
-          note: input.values.note?.trim() || null,
-          actorId: input.actorId,
-          requestId: input.requestId,
-          issuedAt: now,
-        }),
-      );
-      version += 1;
+      const normalizedTargetNote = input.values.note?.trim() || null;
+      const currentNote = current.order.note ?? null;
+      if (normalizedTargetNote !== currentNote) {
+        noteChanged = true;
+        statements.push(
+          this.repository.buildUpdateNoteStatement({
+            commandId: `${input.idempotencyKey}:note`,
+            storeId: input.storeId,
+            orderType: current.order.orderType,
+            orderId: input.orderId,
+            expectedOrderVersion: version,
+            note: normalizedTargetNote,
+            actorId: input.actorId,
+            requestId: input.requestId,
+            issuedAt: now,
+          }),
+        );
+        version += 1;
+      }
     }
+    let guestChanged = false;
     if (guest) {
-      statements.push(
-        this.repository.buildUpdateGuestStatement({
-          commandId: `${input.idempotencyKey}:guest`,
-          storeId: input.storeId,
-          orderType: current.order.orderType,
-          orderId: input.orderId,
-          expectedOrderVersion: version,
-          ...guest,
-          actorId: input.actorId,
-          requestId: input.requestId,
-          issuedAt: now,
-        }),
-      );
-      version += 1;
+      const targetGuestCount = guest.guestCount ?? 1;
+      const targetCustomerId = guest.customerId ?? null;
+      const targetCustomerName = guest.customerName ?? null;
+      const targetCustomerPhone = guest.customerPhone ?? null;
+      const currentGuestCount = current.order.guestCount ?? 1;
+      const currentCustomerId = current.order.customerId ?? null;
+      const currentCustomerName = current.order.customerName ?? null;
+      const currentCustomerPhone = current.order.customerPhone ?? null;
+      if (
+        targetGuestCount !== currentGuestCount ||
+        targetCustomerId !== currentCustomerId ||
+        targetCustomerName !== currentCustomerName ||
+        targetCustomerPhone !== currentCustomerPhone
+      ) {
+        guestChanged = true;
+        statements.push(
+          this.repository.buildUpdateGuestStatement({
+            commandId: `${input.idempotencyKey}:guest`,
+            storeId: input.storeId,
+            orderType: current.order.orderType,
+            orderId: input.orderId,
+            expectedOrderVersion: version,
+            ...guest,
+            actorId: input.actorId,
+            requestId: input.requestId,
+            issuedAt: now,
+          }),
+        );
+        version += 1;
+      }
     }
     const finalItems: PromotionPreviewItem[] = current.items
       .filter((item) => !('promotionGift' in item && item.promotionGift))
@@ -1876,23 +1976,88 @@ export class PosService {
         });
       }
     }
-    statements.push(
-      ...(await measurePhase(input.timing, 'cmd_promotion', () =>
-        this.promotionStatements({
+    const promotionResult = await measurePhase(input.timing, 'cmd_promotion', () =>
+      this.promotionStatements({
+        storeId: input.storeId,
+        orderId: input.orderId,
+        orderType: current.order.orderType,
+        promotionIds: input.values.promotionIds,
+        customerId: guest?.customerId ?? current.order.customerId,
+        items: finalItems,
+        subtotalVnd:
+          finalItems.reduce((sum, item) => sum + item.netLineTotalVnd, 0) +
+          (current.time?.amountAfterRoundingVnd ?? 0),
+        expectedVersion: version,
+        actorId: input.actorId,
+        now,
+      }),
+    );
+    const promotionChanged = promotionResult.changed;
+    if (promotionResult.statements.length > 0) {
+      statements.push(...promotionResult.statements);
+      version += promotionResult.versionDelta;
+    }
+
+    const hasBusinessMutation =
+      preparedItems.length > 0 ||
+      genuinelyChangedUpdatedCount > 0 ||
+      noteChanged ||
+      guestChanged ||
+      promotionChanged;
+
+    if (!hasBusinessMutation) {
+      const noopStatements = [
+        this.repository.prepareSaveCommand({
+          commandId: input.idempotencyKey,
           storeId: input.storeId,
           orderId: input.orderId,
-          orderType: current.order.orderType,
-          promotionIds: input.values.promotionIds,
-          customerId: guest?.customerId ?? current.order.customerId,
-          items: finalItems,
-          subtotalVnd:
-            finalItems.reduce((sum, item) => sum + item.netLineTotalVnd, 0) +
-            (current.time?.amountAfterRoundingVnd ?? 0),
-          expectedVersion: version,
-          actorId: input.actorId,
+          payloadHash,
           now,
         }),
-      )),
+      ];
+      try {
+        await measurePhase(input.timing, 'cmd_atomic', () =>
+          this.repository.executeAtomic(noopStatements),
+        );
+      } catch (error) {
+        const concurrent = await this.replaySaveCommand(
+          input.storeId,
+          input.idempotencyKey,
+          payloadHash,
+        );
+        if (concurrent) {
+          return this.finishSaveNextAction(concurrent, {
+            ...input,
+            nextAction: input.values.nextAction,
+          });
+        }
+        mapDatabaseError(error);
+      }
+      const snapshot = await measurePhase(input.timing, 'cmd_snapshot', () =>
+        this.orderMutationSnapshot(
+          input.storeId,
+          input.orderId,
+          input.idempotencyKey,
+          now,
+          false,
+          input.timing,
+        ),
+      );
+      await measurePhase(input.timing, 'cmd_complete', () =>
+        this.repository.completeSaveCommand(
+          input.storeId,
+          input.idempotencyKey,
+          JSON.stringify(snapshot),
+          Date.now(),
+        ),
+      );
+      return this.finishSaveNextAction(snapshot, {
+        ...input,
+        nextAction: input.values.nextAction,
+      });
+    }
+
+    statements.push(
       ...(recordCallHistory && batchEntries.length > 0
         ? this.repository.buildOrderCallBatchStatements({
             batchId: crypto.randomUUID(),
@@ -1911,14 +2076,14 @@ export class PosService {
         actorId: input.actorId,
         requestId: input.requestId,
         addedCount: preparedItems.length,
-        updatedCount: input.values.updatedItems.length,
+        updatedCount: genuinelyChangedUpdatedCount,
         now,
       }),
       ...this.repository.buildCompleteRealtimeBatchStatements({
         storeId: input.storeId,
         commandId: input.idempotencyKey,
         orderId: input.orderId,
-        orderVersion: version + (input.values.promotionIds === undefined ? 0 : 1),
+        orderVersion: version,
         actorId: input.actorId,
         requestId: input.requestId,
         created: false,
@@ -1950,7 +2115,7 @@ export class PosService {
         input.orderId,
         input.idempotencyKey,
         now,
-        recordCallHistory && batchEntries.length > 0,
+        true,
         input.timing,
       ),
     );
@@ -2316,13 +2481,16 @@ export class PosService {
     try {
       if (takeawayOrder) await this.repository.executeAddTakeawayItem(command);
       else await this.repository.executeAddItem(command);
-      await this.repository.setOrderItemDiscountReason({
-        storeId: input.storeId,
-        orderType: takeawayOrder ? 'TAKEAWAY' : 'DINE_IN',
-        orderId: input.orderId,
-        itemId,
-        reason: input.discount?.reason.trim() || null,
-      });
+      const discountReason = input.discount?.reason.trim() || null;
+      if (discountReason) {
+        await this.repository.setOrderItemDiscountReason({
+          storeId: input.storeId,
+          orderType: takeawayOrder ? 'TAKEAWAY' : 'DINE_IN',
+          orderId: input.orderId,
+          itemId,
+          reason: discountReason,
+        });
+      }
     } catch (error) {
       mapDatabaseError(error);
     }
@@ -2546,13 +2714,15 @@ export class PosService {
         requestId: input.requestId,
         issuedAt: now,
       });
-      await this.repository.setOrderItemDiscountReason({
-        storeId: input.storeId,
-        orderType: order.order_type,
-        orderId: input.orderId,
-        itemId: input.itemId,
-        reason: discountReason,
-      });
+      if (discountReason !== (item.discountReason ?? null)) {
+        await this.repository.setOrderItemDiscountReason({
+          storeId: input.storeId,
+          orderType: order.order_type,
+          orderId: input.orderId,
+          itemId: input.itemId,
+          reason: discountReason,
+        });
+      }
     } catch (error) {
       mapDatabaseError(error);
     }

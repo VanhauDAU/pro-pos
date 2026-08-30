@@ -313,6 +313,20 @@ export function OrderDetailPage({
   const { serverTimeOffsetMs } = useRealtime();
 
   const location = useLocation();
+  const [isZooming, setIsZooming] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return Boolean(document.documentElement.style.getPropertyValue('--pos-zoom-origin-x'));
+  });
+  useEffect(() => {
+    if (!isZooming) return undefined;
+    const timer = window.setTimeout(() => {
+      setIsZooming(false);
+      document.documentElement.style.removeProperty('--pos-zoom-origin-x');
+      document.documentElement.style.removeProperty('--pos-zoom-origin-y');
+      document.documentElement.style.removeProperty('--pos-zoom-scale');
+    }, 280);
+    return () => window.clearTimeout(timer);
+  }, [isZooming]);
   const authQuery = useQuery({
     queryKey: ['auth-context'],
     queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
@@ -862,7 +876,7 @@ export function OrderDetailPage({
   ];
 
   return (
-    <div className="order-detail-page">
+    <div className={`order-detail-page${isZooming ? ' order-detail-page--zoom-in' : ''}`}>
       {contextHolder}
       {/* ── Top Header Navigation ── */}
       <div className="order-detail-header">

@@ -128,6 +128,9 @@ import {
 } from '@domain/receipt/receipt-generator';
 import { buildFixedVietQrImageUrl } from '@domain/receipt/receipt-document';
 import logoBlack from '@client/assets/logo-black.svg?url';
+import areaIcon from '@client/assets/navigation/nav-khu-vuc.webp';
+import qrIcon from '@client/assets/navigation/nav-qr-order.webp';
+import moreIcon from '@client/assets/navigation/nav-them.webp';
 import { PosCustomerSelector } from './PosCustomerSelector';
 import { getPosCustomerAccess } from './pos-customer-access';
 import { PosAppSplash } from './PosAppSplash';
@@ -1594,9 +1597,9 @@ function StaffHeader({
 }
 
 const navItems = [
-  { key: 'areas', label: 'Khu vực', icon: <AppstoreOutlined />, path: '/pos/areas' },
-  { key: 'qr', label: 'QR Order', icon: <QrcodeOutlined />, path: '/pos/qr-order' },
-  { key: 'more', label: 'Thêm', icon: <EllipsisOutlined />, path: '/pos/more' },
+  { key: 'areas', label: 'Khu vực', icon: areaIcon, path: '/pos/areas' },
+  { key: 'qr', label: 'QR Order', icon: qrIcon, path: '/pos/qr-order' },
+  { key: 'more', label: 'Thêm', icon: moreIcon, path: '/pos/more' },
 ] as const;
 
 function StaffBottomNav({ active }: { active: (typeof navItems)[number]['key'] }) {
@@ -1632,7 +1635,15 @@ function StaffBottomNav({ active }: { active: (typeof navItems)[number]['key'] }
           onClick={() => navigate(item.path)}
         >
           <span className="staff-pos-nav-icon">
-            {item.icon}
+            <img
+              src={item.icon}
+              alt=""
+              width={26}
+              height={26}
+              className="staff-pos-nav-img"
+              draggable={false}
+              aria-hidden="true"
+            />
             {item.key === 'qr' && pendingNotificationCount > 0 ? (
               <b className="staff-pos-nav-badge">
                 {pendingNotificationCount > 99 ? '99+' : pendingNotificationCount}
@@ -1714,6 +1725,21 @@ function AreasPage() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, [queryClient]);
+
+  const recordCardZoomOrigin = useCallback((element: HTMLElement) => {
+    try {
+      const rect = element.getBoundingClientRect();
+      const root = document.documentElement;
+      const originX = rect.left + rect.width / 2;
+      const originY = rect.top + rect.height / 2;
+      const scale = Math.max(0.25, Math.min(0.65, rect.width / Math.max(window.innerWidth, 1)));
+      root.style.setProperty('--pos-zoom-origin-x', `${Math.round(originX)}px`);
+      root.style.setProperty('--pos-zoom-origin-y', `${Math.round(originY)}px`);
+      root.style.setProperty('--pos-zoom-scale', scale.toFixed(3));
+    } catch {
+      // Ignore in non-browser environment
+    }
+  }, []);
 
   const prefetchOrder = useCallback(
     (activeOrderId: string) => {
@@ -1943,7 +1969,11 @@ function AreasPage() {
               <button
                 type="button"
                 className="staff-table-card staff-table-card--takeaway-create"
-                onClick={() => navigate('/pos/orders/new?type=TAKEAWAY')}
+                onPointerDown={(e) => recordCardZoomOrigin(e.currentTarget)}
+                onClick={(e) => {
+                  recordCardZoomOrigin(e.currentTarget);
+                  navigate('/pos/orders/new?type=TAKEAWAY');
+                }}
               >
                 <div className="staff-takeaway-create-header">
                   <svg
@@ -2045,14 +2075,18 @@ function AreasPage() {
                       className="staff-table-card staff-table-card--occupied"
                       onPointerEnter={() => prefetchOrderOnHoverIntent(takeawayOrder.id)}
                       onPointerLeave={cancelHoverPrefetch}
-                      onPointerDown={() => {
+                      onPointerDown={(e) => {
                         startPosInteraction('order-shell');
                         startPosInteraction('order-verified');
                         cancelHoverPrefetch();
+                        recordCardZoomOrigin(e.currentTarget);
                         prefetchOrder(takeawayOrder.id);
                       }}
                       onFocus={() => prefetchOrder(takeawayOrder.id)}
-                      onClick={() => navigate(`/pos/orders/${takeawayOrder.id}`)}
+                      onClick={(e) => {
+                        recordCardZoomOrigin(e.currentTarget);
+                        navigate(`/pos/orders/${takeawayOrder.id}`);
+                      }}
                     >
                       <div className="staff-table-card__header">
                         <strong className="staff-table-card__name">{label}</strong>
@@ -2096,9 +2130,10 @@ function AreasPage() {
                     if (table.activeOrderId) prefetchOrderOnHoverIntent(table.activeOrderId);
                   }}
                   onPointerLeave={cancelHoverPrefetch}
-                  onPointerDown={() => {
+                  onPointerDown={(e) => {
                     startPosInteraction('order-shell');
                     startPosInteraction('order-verified');
+                    recordCardZoomOrigin(e.currentTarget);
                     if (table.activeOrderId) {
                       cancelHoverPrefetch();
                       prefetchOrder(table.activeOrderId);
@@ -2107,7 +2142,8 @@ function AreasPage() {
                   onFocus={() => {
                     if (table.activeOrderId) prefetchOrder(table.activeOrderId);
                   }}
-                  onClick={() => {
+                  onClick={(e) => {
+                    recordCardZoomOrigin(e.currentTarget);
                     if (table.activeOrderId) navigate(`/pos/orders/${table.activeOrderId}`);
                     else navigate(`/pos/orders/new?tableId=${table.id}`);
                   }}
@@ -5527,6 +5563,20 @@ function OrderEditor({
   useEffect(() => {
     finishPosInteraction('order-shell', 'TAP_TO_SHELL', 'ORDER');
   }, []);
+  const [isZooming, setIsZooming] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return Boolean(document.documentElement.style.getPropertyValue('--pos-zoom-origin-x'));
+  });
+  useEffect(() => {
+    if (!isZooming) return undefined;
+    const timer = window.setTimeout(() => {
+      setIsZooming(false);
+      document.documentElement.style.removeProperty('--pos-zoom-origin-x');
+      document.documentElement.style.removeProperty('--pos-zoom-origin-y');
+      document.documentElement.style.removeProperty('--pos-zoom-scale');
+    }, 280);
+    return () => window.clearTimeout(timer);
+  }, [isZooming]);
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -7982,7 +8032,9 @@ function OrderEditor({
   if (!quoteReady) {
     const failed = !quote.isFetching && (quote.isError || quote.isRefetchError);
     return (
-      <div className="staff-order-editor staff-order-editor--opening">
+      <div
+        className={`staff-order-editor staff-order-editor--opening${isZooming ? ' staff-order-editor--zoom-in' : ''}`}
+      >
         {failed ? (
           <div className="staff-order-opening__error">
             <Alert
@@ -8042,7 +8094,7 @@ function OrderEditor({
   }
 
   return (
-    <div className="staff-order-editor">
+    <div className={`staff-order-editor${isZooming ? ' staff-order-editor--zoom-in' : ''}`}>
       {holder}
       <PosPromotionModal
         open={promotionModalOpen}

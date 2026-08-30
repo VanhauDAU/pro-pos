@@ -11,6 +11,7 @@ export default defineConfig({
   environments: {
     client: {
       build: {
+        assetsInlineLimit: 0,
         manifest: true,
         modulePreload: {
           resolveDependencies(filename, dependencies) {
@@ -105,6 +106,7 @@ export default defineConfig({
           'assets/propos-*.css',
           'assets/propos-*.js',
           'assets/rolldown-runtime-*.js',
+          'assets/nav-*.webp',
         ],
       },
     }),

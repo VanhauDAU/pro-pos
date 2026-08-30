@@ -88,7 +88,6 @@ export class SoundManager {
     document.addEventListener('visibilitychange', this.handleVisibilityChange);
     window.addEventListener('pageshow', this.handleForeground);
     window.addEventListener('focus', this.handleForeground);
-    this.preloadAll();
   }
 
   setMuted(muted: boolean): void {
@@ -117,10 +116,8 @@ export class SoundManager {
     }
   }
 
-  private preloadAll(): void {
-    for (const type of Object.keys(SOUND_FILES) as Array<keyof typeof SOUND_FILES>) {
-      void this.preload(type);
-    }
+  warm(types: Array<Exclude<PosSoundType, 'NOTIFICATION_CHIME'>>): void {
+    for (const type of types) void this.preload(type);
   }
 
   private preload(type: Exclude<PosSoundType, 'NOTIFICATION_CHIME'>): Promise<AudioBuffer | null> {
@@ -449,4 +446,8 @@ export function playPosSound(
   },
 ): void {
   posSound.play(type, options);
+}
+
+export function warmPosSounds(types: Array<Exclude<PosSoundType, 'NOTIFICATION_CHIME'>>): void {
+  posSound.warm(types);
 }

@@ -61,6 +61,8 @@ import type { AppEnv } from '@server/types';
 import { addRequestTiming, measureRequestTiming } from '@server/lib/performance';
 import { MediaService } from '@server/services/media-service';
 import { PrintAgentService } from '@server/services/print-agent-service';
+import { posPerformanceBatchSchema } from '@contracts/performance';
+import { parseJsonWithLimit } from '@server/lib/validation';
 
 const posRoutes = new Hono<AppEnv>();
 posRoutes.use('*', requireActorOrPrintAgent());
@@ -120,6 +122,46 @@ posRoutes.get(
   '/tables',
   requirePermission('table.view', ...orderWorkspacePermissionKeys),
   async (c) => success(c, await new PosService(c.env).listTables(c.get('actor').storeId!)),
+);
+
+posRoutes.post(
+  '/performance',
+  requirePermission('table.view', ...orderWorkspacePermissionKeys),
+  async (c) => {
+    const batch = await parseJsonWithLimit(c.req.raw, posPerformanceBatchSchema, 8 * 1024);
+    if (c.req.header('X-Agent-Id')) {
+      throw new AppError('PERMISSION_DENIED', 'Print Agent không gửi telemetry trình duyệt.', 403);
+    }
+    const actor = c.get('actor');
+    const deviceKey = c.get('device')?.id ?? `actor:${actor.id}`;
+    try {
+      const inserted = await c.env.DB.prepare(
+        `INSERT OR IGNORE INTO pos_performance_sessions
+         (session_id, store_id, device_key, received_at) VALUES (?, ?, ?, ?)`,
+      )
+        .bind(batch.sessionId, actor.storeId!, deviceKey, Date.now())
+        .run();
+      if (Number(inserted.meta.changes ?? 0) === 0) return success(c, { accepted: 0 }, 202);
+    } catch (error) {
+      if (String(error).includes('POS_PERFORMANCE_RATE_LIMITED')) {
+        throw new AppError('POS_PERFORMANCE_RATE_LIMITED', 'Đã đạt giới hạn đo hiệu năng.', 429, {
+          retryAfterSeconds: 3600,
+        });
+      }
+      throw error;
+    }
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        message: 'pos client performance',
+        requestId: c.get('requestId'),
+        storeId: actor.storeId,
+        serverAppVersion: c.env.APP_VERSION,
+        ...batch,
+      }),
+    );
+    return success(c, { accepted: batch.metrics.length }, 202);
+  },
 );
 
 posRoutes.get('/context', async (c) => {
@@ -768,8 +810,12 @@ posRoutes.get(
 posRoutes.get(
   '/orders/:orderId/quote',
   requirePermission('table.view', ...orderWorkspacePermissionKeys),
-  async (c) =>
-    success(
+  async (c) => {
+    const projection = c.req.query('projection');
+    if (projection !== undefined && projection !== 'editor') {
+      throw new AppError('VALIDATION_ERROR', 'Projection quote không hợp lệ.', 422);
+    }
+    return success(
       c,
       await new PosService(c.env).quote(
         c.get('actor').storeId!,
@@ -777,9 +823,12 @@ posRoutes.get(
         Date.now(),
         {
           requestId: c.get('requestId'),
+          projection: projection === 'editor' ? 'EDITOR' : 'FULL',
+          timing: (name, durationMs) => addRequestTiming(c, name, durationMs),
         },
       ),
-    ),
+    );
+  },
 );
 
 posRoutes.get(

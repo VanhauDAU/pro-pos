@@ -78,6 +78,17 @@ export class RealtimeRepository {
     return row ? row.enabled === 1 : true;
   }
 
+  async deltasEnabled(storeId: string) {
+    const row = await this.db
+      .prepare(
+        `SELECT enabled FROM store_capabilities
+         WHERE store_id = ? AND capability = 'POS_REALTIME_DELTAS_V2' LIMIT 1`,
+      )
+      .bind(storeId)
+      .first<{ enabled: 0 | 1 }>();
+    return row?.enabled === 1;
+  }
+
   async sync(storeId: string, after: number | null): Promise<RealtimeSyncResponse> {
     const now = Date.now();
     const bounds = await this.db

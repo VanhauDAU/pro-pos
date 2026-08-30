@@ -110,11 +110,13 @@ async function api(page, path, options = {}) {
     async ({ requestPath, requestOptions }) => {
       const startedAt = performance.now();
       const fetchResponse = await fetch(requestPath, requestOptions);
+      const responseText = await fetchResponse.text();
       return {
         browserMs: performance.now() - startedAt,
         status: fetchResponse.status,
         timing: fetchResponse.headers.get('Server-Timing'),
-        body: await fetchResponse.json(),
+        body: JSON.parse(responseText),
+        responseBytes: new TextEncoder().encode(responseText).byteLength,
       };
     },
     { requestPath: path, requestOptions: options },
@@ -126,6 +128,8 @@ async function api(page, path, options = {}) {
     browserMs: response.browserMs,
     serverTiming: parseServerTiming(response.timing),
     data: response.body.data,
+    responseBytes: response.responseBytes,
+    requestCount: 1,
   };
 }
 
@@ -188,12 +192,15 @@ async function cancel(page, orderId) {
   });
 }
 
-async function collectSamples(page, endpoint, fn) {
+async function collectSamples(page, endpoint, fn, measurements) {
   await fn(); // warm-up, intentionally excluded from reporting
   const samples = [];
-  for (let index = 0; index < 5; index += 1) samples.push(await fn());
+  for (let index = 0; index < measurements; index += 1) samples.push(await fn());
   return { endpoint, samples };
 }
+
+const GET_MEASUREMENTS = 20;
+const MUTATION_MEASUREMENTS = 10;
 
 const browser = await chromium.launch();
 const page = await browser.newPage({ baseURL });
@@ -212,61 +219,87 @@ try {
 
     const endpoints = [];
     endpoints.push(
-      await collectSamples(page, 'GET /api/v1/pos/overview', () =>
-        api(page, '/api/v1/pos/overview'),
+      await collectSamples(
+        page,
+        'GET /api/v1/pos/overview',
+        () => api(page, '/api/v1/pos/overview'),
+        GET_MEASUREMENTS,
       ),
     );
     endpoints.push(
-      await collectSamples(page, 'GET /api/v1/pos/orders/:id/quote', () =>
-        api(page, `/api/v1/pos/orders/${seeded[0]}/quote`),
+      await collectSamples(
+        page,
+        'GET /api/v1/pos/orders/:id/quote',
+        () => api(page, `/api/v1/pos/orders/${seeded[0]}/quote`),
+        GET_MEASUREMENTS,
       ),
     );
     endpoints.push(
-      await collectSamples(page, 'POST /api/v1/pos/orders/open', async () => {
-        const result = await openTakeaway(page, item);
-        createdOrderIds.add(result.data.order.id);
-        await cancel(page, result.data.order.id);
-        return result;
-      }),
+      await collectSamples(
+        page,
+        'POST /api/v1/pos/orders/open',
+        async () => {
+          const result = await openTakeaway(page, item);
+          createdOrderIds.add(result.data.order.id);
+          await cancel(page, result.data.order.id);
+          return result;
+        },
+        MUTATION_MEASUREMENTS,
+      ),
     );
     endpoints.push(
-      await collectSamples(page, 'POST /api/v1/pos/orders/:id/save', async () => {
-        const opened = await openTakeaway(page, item);
-        const orderId = opened.data.order.id;
-        createdOrderIds.add(orderId);
-        const result = await mutation(page, `/api/v1/pos/orders/${orderId}/save`, {
-          expectedOrderVersion: opened.data.quote.order.version,
-          nextAction: 'STAY',
-          addedItems: [],
-          updatedItems: [],
-        });
-        await cancel(page, orderId);
-        return result;
-      }),
+      await collectSamples(
+        page,
+        'POST /api/v1/pos/orders/:id/save',
+        async () => {
+          const opened = await openTakeaway(page, item);
+          const orderId = opened.data.order.id;
+          createdOrderIds.add(orderId);
+          const result = await mutation(page, `/api/v1/pos/orders/${orderId}/save`, {
+            expectedOrderVersion: opened.data.quote.order.version,
+            nextAction: 'STAY',
+            addedItems: [],
+            updatedItems: [],
+          });
+          await cancel(page, orderId);
+          return result;
+        },
+        MUTATION_MEASUREMENTS,
+      ),
     );
     endpoints.push(
-      await collectSamples(page, 'POST /api/v1/pos/orders/:id/stop-time', async () => {
-        const opened = await openTimedDineIn(page, item);
-        const orderId = opened.data.order.id;
-        createdOrderIds.add(orderId);
-        const result = await mutation(page, `/api/v1/pos/orders/${orderId}/stop-time`, {
-          expectedOrderVersion: opened.data.quote.order.version,
-        });
-        await cancel(page, orderId);
-        return result;
-      }),
+      await collectSamples(
+        page,
+        'POST /api/v1/pos/orders/:id/stop-time',
+        async () => {
+          const opened = await openTimedDineIn(page, item);
+          const orderId = opened.data.order.id;
+          createdOrderIds.add(orderId);
+          const result = await mutation(page, `/api/v1/pos/orders/${orderId}/stop-time`, {
+            expectedOrderVersion: opened.data.quote.order.version,
+          });
+          await cancel(page, orderId);
+          return result;
+        },
+        MUTATION_MEASUREMENTS,
+      ),
     );
     endpoints.push(
-      await collectSamples(page, 'POST /api/v1/pos/orders/:id/checkout', async () => {
-        const opened = await openTakeaway(page, item);
-        const orderId = opened.data.order.id;
-        createdOrderIds.add(orderId);
-        return mutation(page, `/api/v1/pos/orders/${orderId}/checkout`, {
-          expectedOrderVersion: opened.data.quote.order.version,
-          method: 'CASH',
-          cashReceivedVnd: opened.data.quote.totalVnd,
-        });
-      }),
+      await collectSamples(
+        page,
+        'POST /api/v1/pos/orders/:id/checkout',
+        async () => {
+          const opened = await openTakeaway(page, item);
+          const orderId = opened.data.order.id;
+          createdOrderIds.add(orderId);
+          return mutation(page, `/api/v1/pos/orders/${orderId}/checkout`, {
+            expectedOrderVersion: opened.data.quote.order.version,
+            method: 'CASH',
+            cashReceivedVnd: opened.data.quote.totalVnd,
+          });
+        },
+        MUTATION_MEASUREMENTS,
+      ),
     );
     scenarios.push({ activeOrders, endpoints });
     await Promise.all(seeded.map((id) => cancel(page, id)));
@@ -278,7 +311,7 @@ try {
     branch: process.env.GITHUB_REF_NAME ?? 'local',
     baseURL,
     browser: 'chromium',
-    measurements: 5,
+    measurements: { get: GET_MEASUREMENTS, mutation: MUTATION_MEASUREMENTS },
     limitations: [
       'The benchmark mutates only the dedicated E2E store and cleans up open/PAYMENT_PENDING orders.',
       'A time-tracked available table is required to measure stop-time.',
@@ -288,12 +321,17 @@ try {
   const rows = scenarios.flatMap((scenario) =>
     scenario.endpoints.map((endpoint) => {
       const totals = summary(endpoint.samples, 'total');
+      const responseBytes = endpoint.samples.map((sample) => sample.responseBytes ?? 0);
+      const requestCounts = endpoint.samples.map((sample) => sample.requestCount ?? 1);
       return {
         scenario: `${scenario.activeOrders} active orders`,
         endpoint: endpoint.endpoint,
-        browser: totals.browser.median,
-        server: totals.server?.median ?? null,
-        max: totals.browser.max,
+        browserP50: totals.browser.median,
+        browserP95: totals.browser.p95,
+        serverP50: totals.server?.median ?? null,
+        serverP95: totals.server?.p95 ?? null,
+        responseBytesP50: percentile(responseBytes, 0.5),
+        requestCountP50: percentile(requestCounts, 0.5),
         dominant: dominantTiming(endpoint.samples),
       };
     }),
@@ -315,13 +353,13 @@ try {
     '',
     `Generated: ${report.generatedAt}`,
     `Base URL: ${baseURL}`,
-    `Commit: ${report.commit} · Branch: ${report.branch} · Browser: Chromium · Measurements: 5 (+ 1 warm-up)`,
+    `Commit: ${report.commit} · Branch: ${report.branch} · Browser: Chromium · Measurements: ${GET_MEASUREMENTS} GET / ${MUTATION_MEASUREMENTS} mutation (+ 1 warm-up)`,
     '',
-    '| Scenario | Endpoint | Median browser | Median server | Max | Dominant timing |',
-    '|---|---|---:|---:|---:|---|',
+    '| Scenario | Endpoint | Browser p50 | Browser p95 | Server p50 | Server p95 | Payload p50 | Requests p50 | Dominant timing |',
+    '|---|---|---:|---:|---:|---:|---:|---:|---|',
     ...rows.map(
       (row) =>
-        `| ${row.scenario} | ${row.endpoint} | ${row.browser.toFixed(1)} ms | ${row.server?.toFixed(1) ?? 'n/a'} ms | ${row.max.toFixed(1)} ms | ${row.dominant} |`,
+        `| ${row.scenario} | ${row.endpoint} | ${row.browserP50.toFixed(1)} ms | ${row.browserP95.toFixed(1)} ms | ${row.serverP50?.toFixed(1) ?? 'n/a'} ms | ${row.serverP95?.toFixed(1) ?? 'n/a'} ms | ${row.responseBytesP50} B | ${row.requestCountP50} | ${row.dominant} |`,
     ),
     '',
     '## Server-Timing medians',

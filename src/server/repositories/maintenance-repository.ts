@@ -135,6 +135,11 @@ export class MaintenanceRepository {
     }
     await remove('pos_save_commands', 'DELETE FROM pos_save_commands WHERE created_at < ?', cutoff);
     await remove(
+      'pos_performance_sessions',
+      'DELETE FROM pos_performance_sessions WHERE received_at < ?',
+      cutoff,
+    );
+    await remove(
       'realtime_batch_contexts',
       'DELETE FROM realtime_batch_contexts WHERE created_at < ?',
       cutoff,

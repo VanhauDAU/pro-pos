@@ -24,7 +24,7 @@ function quote(version: number, status = 'OPEN', timeStatus: string | null = nul
 describe('POS order quote cache policy', () => {
   it('reuses a quote prefetched for the current tap without a duplicate mount request', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const fetcher = vi.fn(async () => quote(12));
+    const fetcher = vi.fn(async (_path: string, _signal: AbortSignal | undefined) => quote(12));
     const options = orderQuoteQueryOptions({
       orderId: 'order-1',
       enabled: true,
@@ -68,6 +68,45 @@ describe('POS order quote cache policy', () => {
 
     unsubscribe();
     client.clear();
+  });
+
+  it('forces a full payment quote after mount even when an editor quote is cached', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const paths: string[] = [];
+    const options = orderQuoteQueryOptions({
+      orderId: 'order-1',
+      enabled: true,
+      realtimeStatus: 'CONNECTED',
+      projection: 'full',
+      requireFreshMount: true,
+      fetcher: async (path) => {
+        paths.push(path);
+        return quote(12);
+      },
+    });
+    client.setQueryData(options.queryKey, quote(12));
+
+    const observer = new QueryObserver(client, options);
+    const unsubscribe = observer.subscribe(() => undefined);
+    await vi.waitFor(() => expect(paths).toEqual(['/api/v1/pos/orders/order-1/quote']));
+
+    unsubscribe();
+    client.clear();
+  });
+
+  it('requests the editor projection for intent prefetch', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const fetcher = vi.fn(async (_path: string, _signal: AbortSignal | undefined) => quote(12));
+    await client.prefetchQuery(
+      orderQuoteQueryOptions({
+        orderId: 'order-1',
+        enabled: true,
+        realtimeStatus: 'CONNECTED',
+        projection: 'editor',
+        fetcher,
+      }),
+    );
+    expect(fetcher.mock.calls[0]?.[0]).toBe('/api/v1/pos/orders/order-1/quote?projection=editor');
   });
 
   it('polls only running quotes while realtime is connected', () => {

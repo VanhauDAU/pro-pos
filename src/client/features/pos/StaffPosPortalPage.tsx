@@ -106,6 +106,7 @@ import type { AuthContextResponse } from '@contracts/auth';
 import type {
   OrderCallBatchDto,
   OrderCallBatchPageDto,
+  OrderClosureSnapshot,
   PosOverviewOrder,
   PosOverviewSnapshot,
   PosOverviewTable,
@@ -127,6 +128,9 @@ import {
 } from '@domain/receipt/receipt-generator';
 import { buildFixedVietQrImageUrl } from '@domain/receipt/receipt-document';
 import logoBlack from '@client/assets/logo-black.svg?url';
+import areaIcon from '@client/assets/navigation/nav-khu-vuc.webp';
+import qrIcon from '@client/assets/navigation/nav-qr-order.webp';
+import moreIcon from '@client/assets/navigation/nav-them.webp';
 import { PosCustomerSelector } from './PosCustomerSelector';
 import { getPosCustomerAccess } from './pos-customer-access';
 import { PosAppSplash } from './PosAppSplash';
@@ -269,7 +273,12 @@ function renderLazyPosRoute(content: ReactNode) {
 }
 
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
-import { playPosSound } from '@client/lib/sound';
+import {
+  finishPosInteraction,
+  setPosPerformanceCsrfToken,
+  startPosInteraction,
+} from '@client/lib/pos-performance';
+import { playPosSound, warmPosSounds } from '@client/lib/sound';
 import {
   RealtimeProvider,
   usePosPollingInterval,
@@ -1223,6 +1232,7 @@ function PosNotificationWatcher() {
 
 function PosNotificationsProvider({ children }: { children: React.ReactNode }) {
   const pollingInterval = usePosPollingInterval(15_000);
+  const { status: realtimeStatus } = useRealtime();
   const [qrConfirmModalOpen, setQrConfirmModalOpen] = useState(false);
   const context = useQuery({
     queryKey: ['pos-context'],
@@ -1261,6 +1271,20 @@ function PosNotificationsProvider({ children }: { children: React.ReactNode }) {
       qrConfirmModalOpen,
     ],
   );
+  useEffect(() => {
+    if (realtimeStatus !== 'CONNECTED') return undefined;
+    const warm = () => warmPosSounds(['NEW_QR_ORDER', 'TABLE_OPEN_REQUEST', 'CHECKOUT_REQUEST']);
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    if (idleWindow.requestIdleCallback) {
+      const id = idleWindow.requestIdleCallback(warm, { timeout: 5_000 });
+      return () => idleWindow.cancelIdleCallback?.(id);
+    }
+    const id = window.setTimeout(warm, 1_000);
+    return () => window.clearTimeout(id);
+  }, [realtimeStatus]);
   return (
     <PosNotificationsContext.Provider value={value}>
       <PosNotificationWatcher />
@@ -1485,6 +1509,8 @@ function StaffHeader({
         <div
           className={`staff-pos-sync-badge staff-pos-sync-badge--${status.toLowerCase()}`}
           aria-label="Trạng thái kết nối"
+          role="status"
+          aria-live="polite"
         >
           <span className="staff-pos-sync-dot" />
           <span className="staff-pos-sync-label">
@@ -1571,9 +1597,9 @@ function StaffHeader({
 }
 
 const navItems = [
-  { key: 'areas', label: 'Khu vực', icon: <AppstoreOutlined />, path: '/pos/areas' },
-  { key: 'qr', label: 'QR Order', icon: <QrcodeOutlined />, path: '/pos/qr-order' },
-  { key: 'more', label: 'Thêm', icon: <EllipsisOutlined />, path: '/pos/more' },
+  { key: 'areas', label: 'Khu vực', icon: areaIcon, path: '/pos/areas' },
+  { key: 'qr', label: 'QR Order', icon: qrIcon, path: '/pos/qr-order' },
+  { key: 'more', label: 'Thêm', icon: moreIcon, path: '/pos/more' },
 ] as const;
 
 function StaffBottomNav({ active }: { active: (typeof navItems)[number]['key'] }) {
@@ -1609,7 +1635,15 @@ function StaffBottomNav({ active }: { active: (typeof navItems)[number]['key'] }
           onClick={() => navigate(item.path)}
         >
           <span className="staff-pos-nav-icon">
-            {item.icon}
+            <img
+              src={item.icon}
+              alt=""
+              width={26}
+              height={26}
+              className="staff-pos-nav-img"
+              draggable={false}
+              aria-hidden="true"
+            />
             {item.key === 'qr' && pendingNotificationCount > 0 ? (
               <b className="staff-pos-nav-badge">
                 {pendingNotificationCount > 99 ? '99+' : pendingNotificationCount}
@@ -1692,6 +1726,21 @@ function AreasPage() {
     return () => window.clearTimeout(timer);
   }, [queryClient]);
 
+  const recordCardZoomOrigin = useCallback((element: HTMLElement) => {
+    try {
+      const rect = element.getBoundingClientRect();
+      const root = document.documentElement;
+      const originX = rect.left + rect.width / 2;
+      const originY = rect.top + rect.height / 2;
+      const scale = Math.max(0.25, Math.min(0.65, rect.width / Math.max(window.innerWidth, 1)));
+      root.style.setProperty('--pos-zoom-origin-x', `${Math.round(originX)}px`);
+      root.style.setProperty('--pos-zoom-origin-y', `${Math.round(originY)}px`);
+      root.style.setProperty('--pos-zoom-scale', scale.toFixed(3));
+    } catch {
+      // Ignore in non-browser environment
+    }
+  }, []);
+
   const prefetchOrder = useCallback(
     (activeOrderId: string) => {
       void queryClient.prefetchQuery(
@@ -1699,6 +1748,7 @@ function AreasPage() {
           orderId: activeOrderId,
           enabled: true,
           realtimeStatus,
+          projection: 'editor',
         }),
       );
     },
@@ -1738,8 +1788,16 @@ function AreasPage() {
     if (!hasActiveOrder) return undefined;
     const update = () => setNow(Date.now() + serverTimeOffsetMs);
     update();
-    const timer = window.setInterval(update, 1_000);
-    return () => window.clearInterval(timer);
+    const delayToNextMinute = 60_000 - ((Date.now() + serverTimeOffsetMs) % 60_000);
+    let interval: number | null = null;
+    const timeout = window.setTimeout(() => {
+      update();
+      interval = window.setInterval(update, 60_000);
+    }, delayToNextMinute);
+    return () => {
+      window.clearTimeout(timeout);
+      if (interval !== null) window.clearInterval(interval);
+    };
   }, [activeTakeaways.length, serverTimeOffsetMs, tables.data]);
 
   const areas = useMemo(() => {
@@ -1911,7 +1969,11 @@ function AreasPage() {
               <button
                 type="button"
                 className="staff-table-card staff-table-card--takeaway-create"
-                onClick={() => navigate('/pos/orders/new?type=TAKEAWAY')}
+                onPointerDown={(e) => recordCardZoomOrigin(e.currentTarget)}
+                onClick={(e) => {
+                  recordCardZoomOrigin(e.currentTarget);
+                  navigate('/pos/orders/new?type=TAKEAWAY');
+                }}
               >
                 <div className="staff-takeaway-create-header">
                   <svg
@@ -2013,12 +2075,18 @@ function AreasPage() {
                       className="staff-table-card staff-table-card--occupied"
                       onPointerEnter={() => prefetchOrderOnHoverIntent(takeawayOrder.id)}
                       onPointerLeave={cancelHoverPrefetch}
-                      onPointerDown={() => {
+                      onPointerDown={(e) => {
+                        startPosInteraction('order-shell');
+                        startPosInteraction('order-verified');
                         cancelHoverPrefetch();
+                        recordCardZoomOrigin(e.currentTarget);
                         prefetchOrder(takeawayOrder.id);
                       }}
                       onFocus={() => prefetchOrder(takeawayOrder.id)}
-                      onClick={() => navigate(`/pos/orders/${takeawayOrder.id}`)}
+                      onClick={(e) => {
+                        recordCardZoomOrigin(e.currentTarget);
+                        navigate(`/pos/orders/${takeawayOrder.id}`);
+                      }}
                     >
                       <div className="staff-table-card__header">
                         <strong className="staff-table-card__name">{label}</strong>
@@ -2062,7 +2130,10 @@ function AreasPage() {
                     if (table.activeOrderId) prefetchOrderOnHoverIntent(table.activeOrderId);
                   }}
                   onPointerLeave={cancelHoverPrefetch}
-                  onPointerDown={() => {
+                  onPointerDown={(e) => {
+                    startPosInteraction('order-shell');
+                    startPosInteraction('order-verified');
+                    recordCardZoomOrigin(e.currentTarget);
                     if (table.activeOrderId) {
                       cancelHoverPrefetch();
                       prefetchOrder(table.activeOrderId);
@@ -2071,7 +2142,8 @@ function AreasPage() {
                   onFocus={() => {
                     if (table.activeOrderId) prefetchOrder(table.activeOrderId);
                   }}
-                  onClick={() => {
+                  onClick={(e) => {
+                    recordCardZoomOrigin(e.currentTarget);
                     if (table.activeOrderId) navigate(`/pos/orders/${table.activeOrderId}`);
                     else navigate(`/pos/orders/new?tableId=${table.id}`);
                   }}
@@ -5488,6 +5560,23 @@ function OrderEditor({
   const location = useLocation();
   const orderId = orderIdOverride ?? location.pathname.match(/^\/pos\/orders\/([^/]+)$/u)?.[1];
   const isNew = !orderId || orderId === 'new';
+  useEffect(() => {
+    finishPosInteraction('order-shell', 'TAP_TO_SHELL', 'ORDER');
+  }, []);
+  const [isZooming, setIsZooming] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return Boolean(document.documentElement.style.getPropertyValue('--pos-zoom-origin-x'));
+  });
+  useEffect(() => {
+    if (!isZooming) return undefined;
+    const timer = window.setTimeout(() => {
+      setIsZooming(false);
+      document.documentElement.style.removeProperty('--pos-zoom-origin-x');
+      document.documentElement.style.removeProperty('--pos-zoom-origin-y');
+      document.documentElement.style.removeProperty('--pos-zoom-scale');
+    }, 280);
+    return () => window.clearTimeout(timer);
+  }, [isZooming]);
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -5560,6 +5649,11 @@ function OrderEditor({
     typeof window !== 'undefined' ? window.innerWidth >= 1200 : false,
   );
   const [mobileView, setMobileView] = useState<'CART' | 'PRODUCTS'>('CART');
+  useEffect(() => {
+    if (mobileView === 'PRODUCTS') {
+      finishPosInteraction('product-picker', 'TAP_TO_SHELL', 'PRODUCT_PICKER');
+    }
+  }, [mobileView]);
   const cartIconRef = useRef<HTMLButtonElement>(null);
   const mobileOrderViewRef = useRef<HTMLDivElement>(null);
   const mobilePullDistanceRef = useRef(0);
@@ -5726,6 +5820,8 @@ function OrderEditor({
   };
 
   const navigateToPayment = (targetOrderId: string, replace = false) => {
+    startPosInteraction('payment-shell');
+    startPosInteraction('payment-verified');
     markPaymentNavigationStarted(targetOrderId);
     const canonicalOrderPath = `/pos/orders/${targetOrderId}`;
     const leavingNewOrder =
@@ -5798,9 +5894,6 @@ function OrderEditor({
   };
 
   const handleExit = () => {
-    void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
-    void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
-    void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
     if (draftLines.length > 0 || hasPendingSavedItemChanges()) {
       setDiscardModalOpen(true);
     } else if (orderType === 'TAKEAWAY' || quote.data?.order.orderType === 'TAKEAWAY') {
@@ -5838,6 +5931,7 @@ function OrderEditor({
       orderId: orderId ?? '',
       enabled: !isNew && Boolean(orderId),
       realtimeStatus,
+      projection: 'editor',
     }),
   );
   const [verifiedQuoteOrderId, setVerifiedQuoteOrderId] = useState<string | null>(null);
@@ -5872,6 +5966,9 @@ function OrderEditor({
     realtimeStatus,
   ]);
   const quoteReady = isNew || (Boolean(orderId) && verifiedQuoteOrderId === orderId);
+  useEffect(() => {
+    if (quoteReady) finishPosInteraction('order-verified', 'TAP_TO_VERIFIED', 'ORDER');
+  }, [quoteReady]);
   const callHistory = useQuery({
     queryKey: ['pos-order-call-batches', orderId],
     queryFn: ({ signal }) =>
@@ -5885,8 +5982,9 @@ function OrderEditor({
   const printSettings = useQuery({
     queryKey: ['pos-print-settings'],
     queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
-    staleTime: 30_000,
-    refetchOnMount: true,
+    enabled: provisionalBillOpen,
+    staleTime: Infinity,
+    refetchOnMount: false,
   });
   const staffContext = useQuery({
     queryKey: ['pos-context'],
@@ -5999,26 +6097,40 @@ function OrderEditor({
       draftLines.length > 0 ||
       Object.keys(modifiedItemQuantities).length > 0 ||
       Object.keys(modifiedItemDetails).length > 0;
-    try {
-      if (!hasItemDraft) {
-        localStorage.removeItem(`propos:order-draft:${orderId}`);
-        draftBaseVersionRef.current = null;
-        return;
+    const persistDraft = () => {
+      try {
+        if (!hasItemDraft) {
+          localStorage.removeItem(`propos:order-draft:${orderId}`);
+          draftBaseVersionRef.current = null;
+          return;
+        }
+        draftBaseVersionRef.current ??= quote.data.order.version;
+        localStorage.setItem(
+          `propos:order-draft:${orderId}`,
+          JSON.stringify({
+            baseVersion: draftBaseVersionRef.current,
+            draftLines,
+            modifiedItemQuantities,
+            modifiedItemDetails,
+            savedAt: Date.now(),
+          }),
+        );
+      } catch {
+        // Local recovery is best-effort only.
       }
-      draftBaseVersionRef.current ??= quote.data.order.version;
-      localStorage.setItem(
-        `propos:order-draft:${orderId}`,
-        JSON.stringify({
-          baseVersion: draftBaseVersionRef.current,
-          draftLines,
-          modifiedItemQuantities,
-          modifiedItemDetails,
-          savedAt: Date.now(),
-        }),
-      );
-    } catch {
-      // Local recovery is best-effort only.
-    }
+    };
+    const timer = window.setTimeout(persistDraft, 200);
+    const onPageHide = () => persistDraft();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') persistDraft();
+    };
+    window.addEventListener('pagehide', onPageHide);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('pagehide', onPageHide);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, [draftLines, isNew, modifiedItemDetails, modifiedItemQuantities, orderId, quote.data]);
   const paymentSnapshotV2Enabled = staffContext.data?.capabilities?.posPaymentSnapshotV2 !== false;
 
@@ -6110,10 +6222,18 @@ function OrderEditor({
     if (printingProvisional || !quote.data) return;
     setPrintingProvisional(true);
     try {
+      const [latestPrintSettings] = await Promise.all([
+        queryClient.fetchQuery({
+          queryKey: ['pos-print-settings'],
+          queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
+          staleTime: Infinity,
+        }),
+        import('@client/lib/pos-receipt-printer'),
+      ]);
       const result = await printReceipt(
         {
           data: buildPrintDataFromQuote(quote.data, 'PROVISIONAL'),
-          printSettings: printSettings.data,
+          printSettings: latestPrintSettings,
           storeInfo: {
             storeName: staffContext.data?.storeName ?? null,
             phone: staffContext.data?.storePhone ?? null,
@@ -6443,20 +6563,27 @@ function OrderEditor({
     };
   }, [isMobile, isNew, mobileView, orderId, quoteReady]);
 
-  const refreshCachesAfterCancel = async (cancelledOrderId: string) => {
-    // Cancel responses only acknowledge the order id. Fetch one authoritative
-    // overview before navigation so tables and active-order lists cannot remain
-    // stale when the own realtime event is intentionally ignored.
-    const overview = await queryClient.fetchQuery<PosOverviewSnapshot>({
-      queryKey: ['pos-overview'],
-      queryFn: ({ signal }) => apiRequest<PosOverviewSnapshot>('/api/v1/pos/overview', { signal }),
-      staleTime: 0,
-    });
-    queryClient.setQueryData(['pos-tables'], overview.tables);
-    queryClient.setQueryData(['pos-orders-list'], overview.orders);
-    queryClient.removeQueries({ queryKey: ['pos-order-quote', cancelledOrderId] });
-    queryClient.removeQueries({ queryKey: ['pos-order-detail', cancelledOrderId] });
-    queryClient.removeQueries({ queryKey: ['pos-payment-snapshot', cancelledOrderId] });
+  const applyClosureSnapshot = (snapshot: OrderClosureSnapshot) => {
+    const changedTables = new Map(snapshot.tableSummaries.map((table) => [table.id, table]));
+    queryClient.setQueryData<PosTable[]>(['pos-tables'], (cached) =>
+      cached?.map((table) => changedTables.get(table.id) ?? table),
+    );
+    queryClient.setQueryData<PosOverviewSnapshot>(['pos-overview'], (cached) =>
+      cached
+        ? {
+            ...cached,
+            tables: cached.tables.map((table) => changedTables.get(table.id) ?? table),
+            orders: cached.orders.filter((order) => order.id !== snapshot.orderId),
+            serverNowMs: snapshot.serverNowMs,
+          }
+        : cached,
+    );
+    queryClient.setQueryData<PosOverviewOrder[]>(['pos-orders-list'], (cached) =>
+      cached?.filter((order) => order.id !== snapshot.orderId),
+    );
+    queryClient.removeQueries({ queryKey: ['pos-order-quote', snapshot.orderId] });
+    queryClient.removeQueries({ queryKey: ['pos-order-detail', snapshot.orderId] });
+    queryClient.removeQueries({ queryKey: ['pos-payment-snapshot', snapshot.orderId] });
   };
 
   const chooseProduct = (product: CatalogProduct, event?: React.MouseEvent) => {
@@ -7448,7 +7575,7 @@ function OrderEditor({
     if (cancellingOrder || !quote.data || !cancelReason.trim()) return;
     try {
       setCancellingOrder(true);
-      await jsonRequest(
+      const snapshot = await jsonRequest<OrderClosureSnapshot>(
         `/api/v1/pos/orders/${quote.data.order.id}/cancel`,
         { expectedOrderVersion: quote.data.order.version, reason: cancelReason.trim() },
         { headers: mutationHeaders(csrf) },
@@ -7456,7 +7583,7 @@ function OrderEditor({
       setCancelOpen(false);
       setCancelReason('');
       messageApi.success('Đã hủy đơn hàng thành công.');
-      await refreshCachesAfterCancel(quote.data.order.id);
+      applyClosureSnapshot(snapshot);
       if (orderType === 'TAKEAWAY' || quote.data.order.orderType === 'TAKEAWAY') {
         navigate('/pos/areas?tab=takeaway', {
           replace: true,
@@ -7905,7 +8032,9 @@ function OrderEditor({
   if (!quoteReady) {
     const failed = !quote.isFetching && (quote.isError || quote.isRefetchError);
     return (
-      <div className="staff-order-editor staff-order-editor--opening">
+      <div
+        className={`staff-order-editor staff-order-editor--opening${isZooming ? ' staff-order-editor--zoom-in' : ''}`}
+      >
         {failed ? (
           <div className="staff-order-opening__error">
             <Alert
@@ -7965,7 +8094,7 @@ function OrderEditor({
   }
 
   return (
-    <div className="staff-order-editor">
+    <div className={`staff-order-editor${isZooming ? ' staff-order-editor--zoom-in' : ''}`}>
       {holder}
       <PosPromotionModal
         open={promotionModalOpen}
@@ -8816,6 +8945,7 @@ function OrderEditor({
                           type="dashed"
                           icon={<PlusOutlined />}
                           onClick={() => {
+                            startPosInteraction('product-picker');
                             setMobileView('PRODUCTS');
                           }}
                         >
@@ -8886,6 +9016,7 @@ function OrderEditor({
               type="button"
               className="staff-order-mobile-fab"
               onClick={() => {
+                startPosInteraction('product-picker');
                 setMobileView('PRODUCTS');
               }}
             >
@@ -10423,8 +10554,12 @@ function OrderEditor({
           <Button
             key="print"
             icon={<PrinterOutlined />}
-            loading={printingProvisional}
-            disabled={printingProvisional || printSettings.data?.allowProvisionalPrint === false}
+            loading={printingProvisional || printSettings.isLoading}
+            disabled={
+              printingProvisional ||
+              printSettings.isLoading ||
+              printSettings.data?.allowProvisionalPrint === false
+            }
             onClick={() => void printProvisionalReceipt()}
           >
             In tạm tính
@@ -11001,8 +11136,8 @@ function InvoicePage() {
   const printSettings = useQuery({
     queryKey: ['pos-print-settings'],
     queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
-    staleTime: 30_000,
-    refetchOnMount: true,
+    staleTime: Infinity,
+    refetchOnMount: false,
   });
   const staffContext = useQuery({
     queryKey: ['pos-context'],
@@ -11384,6 +11519,9 @@ function PaymentPage({
   const { status: realtimeStatus } = useRealtime();
   const messageApi = toast;
   const holder = null;
+  useEffect(() => {
+    finishPosInteraction('payment-shell', 'TAP_TO_SHELL', 'PAYMENT');
+  }, []);
   const [selectedMethod, setSelectedMethod] = useState<PaymentMethodType>('CASH');
   const [isMultiMethod, setIsMultiMethod] = useState(false);
   const [cashReceived, setCashReceived] = useState<number | null>(null);
@@ -11430,6 +11568,8 @@ function PaymentPage({
       orderId,
       enabled: true,
       realtimeStatus,
+      projection: 'full',
+      requireFreshMount: true,
     }),
   );
   const [verifiedQuoteOrderId, setVerifiedQuoteOrderId] = useState<string | null>(null);
@@ -11461,12 +11601,15 @@ function PaymentPage({
     realtimeStatus,
   ]);
   const quoteReady = verifiedQuoteOrderId === orderId;
+  useEffect(() => {
+    if (quoteReady) finishPosInteraction('payment-verified', 'TAP_TO_VERIFIED', 'PAYMENT');
+  }, [quoteReady]);
 
   const printSettings = useQuery({
     queryKey: ['pos-print-settings'],
     queryFn: () => apiRequest<StorePrintSettings>('/api/v1/pos/print-settings'),
-    staleTime: 30_000,
-    refetchOnMount: true,
+    staleTime: Infinity,
+    refetchOnMount: false,
   });
 
   const staffContext = useQuery({
@@ -12881,6 +13024,10 @@ export function StaffPosPortalPage() {
     staleTime: Infinity,
     refetchOnMount: false,
   });
+  useEffect(() => {
+    setPosPerformanceCsrfToken(auth.data?.csrfToken);
+    return () => setPosPerformanceCsrfToken(null);
+  }, [auth.data?.csrfToken]);
   useEffect(() => {
     const media = window.matchMedia('(min-width: 1200px)');
     const sync = () => setDesktopPayment(media.matches);

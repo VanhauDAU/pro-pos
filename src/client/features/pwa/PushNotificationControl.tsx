@@ -5,6 +5,28 @@ import { Button, message, Modal, Tooltip } from 'antd';
 import { apiRequest, jsonRequest } from '@client/lib/api';
 
 let subscriptionSyncPromise: Promise<PushSubscription> | null = null;
+const SUBSCRIPTION_SYNC_TTL_MS = 24 * 60 * 60_000;
+
+function scheduleIdle(callback: () => void) {
+  const idleWindow = window as Window & {
+    requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
+    cancelIdleCallback?: (id: number) => void;
+  };
+  if (idleWindow.requestIdleCallback) {
+    const id = idleWindow.requestIdleCallback(callback, { timeout: 3_000 });
+    return () => idleWindow.cancelIdleCallback?.(id);
+  }
+  const id = window.setTimeout(callback, 500);
+  return () => window.clearTimeout(id);
+}
+
+async function subscriptionSyncKey(endpoint: string) {
+  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(endpoint));
+  const fingerprint = Array.from(new Uint8Array(bytes).slice(0, 8))
+    .map((value) => value.toString(16).padStart(2, '0'))
+    .join('');
+  return `propos:push-synced:${fingerprint}`;
+}
 
 function vapidKeyToBytes(value: string) {
   const padding = '='.repeat((4 - (value.length % 4)) % 4);
@@ -62,45 +84,53 @@ export function PushNotificationControl({
     [csrfToken],
   );
 
-  const ensureSubscription = useCallback(async () => {
-    if (!subscriptionSyncPromise) {
-      subscriptionSyncPromise = (async () => {
-        const registration = await navigator.serviceWorker.ready;
-        const existing = await registration.pushManager.getSubscription();
-        const subscription = existing
-          ? existing
-          : await (async () => {
-              const { publicKey } = await apiRequest<{ publicKey: string }>(
-                '/api/v1/pos/push/public-key',
-              );
-              return registration.pushManager.subscribe({
-                userVisibleOnly: true,
-                applicationServerKey: vapidKeyToBytes(publicKey),
-              });
-            })();
-        const syncKey = `propos:push-synced:${subscription.endpoint}`;
-        if (sessionStorage.getItem(syncKey) !== '1') {
-          await persistSubscription(subscription);
-          sessionStorage.setItem(syncKey, '1');
-        }
-        return subscription;
-      })().catch((error) => {
-        subscriptionSyncPromise = null;
-        throw error;
-      });
-    }
-    await subscriptionSyncPromise;
-    setSubscriptionActive(true);
-  }, [persistSubscription]);
+  const ensureSubscription = useCallback(
+    async (forceSync = false) => {
+      if (!subscriptionSyncPromise) {
+        subscriptionSyncPromise = (async () => {
+          const registration = await navigator.serviceWorker.ready;
+          const existing = await registration.pushManager.getSubscription();
+          const created = !existing;
+          const subscription = existing
+            ? existing
+            : await (async () => {
+                const { publicKey } = await apiRequest<{ publicKey: string }>(
+                  '/api/v1/pos/push/public-key',
+                );
+                return registration.pushManager.subscribe({
+                  userVisibleOnly: true,
+                  applicationServerKey: vapidKeyToBytes(publicKey),
+                });
+              })();
+          const syncKey = await subscriptionSyncKey(subscription.endpoint);
+          const lastSyncedAt = Number(localStorage.getItem(syncKey) ?? '0');
+          if (forceSync || created || Date.now() - lastSyncedAt >= SUBSCRIPTION_SYNC_TTL_MS) {
+            await persistSubscription(subscription);
+            localStorage.setItem(syncKey, String(Date.now()));
+          }
+          return subscription;
+        })().catch((error) => {
+          subscriptionSyncPromise = null;
+          throw error;
+        });
+      }
+      await subscriptionSyncPromise;
+      setSubscriptionActive(true);
+    },
+    [persistSubscription],
+  );
 
   useEffect(() => {
     if (!supported || permission !== 'granted' || !csrfToken) return;
     let cancelled = false;
-    void ensureSubscription().catch(() => {
-      if (!cancelled) setSubscriptionActive(false);
+    const cancelIdle = scheduleIdle(() => {
+      void ensureSubscription().catch(() => {
+        if (!cancelled) setSubscriptionActive(false);
+      });
     });
     return () => {
       cancelled = true;
+      cancelIdle();
     };
   }, [csrfToken, ensureSubscription, permission, supported]);
 
@@ -118,7 +148,7 @@ export function PushNotificationControl({
         messageApi.info('Bạn chưa cho phép nhận thông báo.');
         return;
       }
-      await ensureSubscription();
+      await ensureSubscription(true);
       messageApi.success('Đã đồng bộ thông báo trên thiết bị.');
     } catch (error) {
       messageApi.error(error instanceof Error ? error.message : 'Không thể bật thông báo.');

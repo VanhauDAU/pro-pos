@@ -9,6 +9,8 @@ import type {
   OrderAuditEventDetail,
 } from '@contracts/order-detail';
 import type { OrderCallBatchDto, OrderCallBatchPageDto } from '@contracts/pos';
+import type { OrderClosureSnapshot } from '@contracts/pos';
+import type { PosOverviewDelta, PosOverviewOrder } from '@contracts/pos';
 import type { PosPromotionOption } from '@contracts/promotion';
 import type { BankAccountDto } from '@contracts/store';
 import { calculateTimePrice } from '@domain/pricing/engine';
@@ -593,6 +595,52 @@ export class PosService {
       409,
       { retryable: true },
     );
+  }
+
+  async realtimeOverviewDelta(
+    storeId: string,
+    orderId: string,
+    closed: boolean,
+    now = Date.now(),
+  ): Promise<PosOverviewDelta> {
+    const table = await this.repository.findTableByOrderId(storeId, orderId);
+    const tables = table ? [{ ...table, totalVnd: 0, itemCount: 0 }] : [];
+    if (closed) return { closedOrderId: orderId, tables, serverNowMs: now };
+
+    const quote = await this.quote(storeId, orderId, now, { projection: 'EDITOR' });
+    const order: PosOverviewOrder = {
+      id: quote.order.id,
+      displayCode: quote.order.displayCode ?? '',
+      orderType: quote.order.orderType,
+      status: quote.order.status,
+      version: quote.order.version,
+      openedAt: quote.order.openedAt,
+      itemCount: quote.items.reduce((sum, item) => sum + Number(item.quantityMilli) / 1000, 0),
+      totalVnd: quote.totalVnd,
+      tableId: quote.order.tableId,
+      tableName: quote.order.tableName,
+      areaName: quote.order.areaName,
+      timeStatus: quote.time?.status ?? null,
+    };
+    return {
+      order,
+      tables: table
+        ? [
+            {
+              ...table,
+              totalVnd: quote.totalVnd,
+              itemCount: quote.items.reduce(
+                (sum, item) =>
+                  sum + (item.productType === 'TIME' ? 0 : Number(item.quantityMilli) / 1000),
+                0,
+              ),
+              guestCount: quote.order.guestCount,
+              timeSessionStatus: quote.time?.status ?? null,
+            },
+          ]
+        : [],
+      serverNowMs: now,
+    };
   }
 
   private async buildOverviewQuoteSummaries(
@@ -2748,16 +2796,22 @@ export class PosService {
     storeId: string,
     orderId: string,
     now = Date.now(),
-    context?: { requestId?: string },
+    context?: {
+      requestId?: string;
+      projection?: 'FULL' | 'EDITOR';
+      timing?: TimingCallback;
+    },
   ) {
     const quote = await readStableVersionedSnapshot({
-      build: () => this.buildQuote(storeId, orderId, now),
-      latestVersion: async () => {
-        const latest =
-          (await this.repository.findOrder(storeId, orderId)) ??
-          (await this.repository.findTakeawayOrder(storeId, orderId));
-        return latest?.version ?? null;
-      },
+      build: () =>
+        this.buildQuote(storeId, orderId, now, context?.projection ?? 'FULL', context?.timing),
+      latestVersion: () =>
+        measurePhase(context?.timing, 'quote_verify', async () => {
+          const latest =
+            (await this.repository.findOrder(storeId, orderId)) ??
+            (await this.repository.findTakeawayOrder(storeId, orderId));
+          return latest?.version ?? null;
+        }),
       onVersionChange: ({ attempt, quotedVersion, latestVersion }) =>
         console.warn(
           JSON.stringify({
@@ -2781,20 +2835,39 @@ export class PosService {
     );
   }
 
-  private async buildQuote(storeId: string, orderId: string, now: number) {
-    const order =
-      (await this.repository.findOrder(storeId, orderId)) ??
-      (await this.repository.findTakeawayOrder(storeId, orderId));
+  private async buildQuote(
+    storeId: string,
+    orderId: string,
+    now: number,
+    projection: 'FULL' | 'EDITOR',
+    timing?: TimingCallback,
+  ) {
+    const order = await measurePhase(
+      timing,
+      'quote_load',
+      async () =>
+        (await this.repository.findOrder(storeId, orderId)) ??
+        (await this.repository.findTakeawayOrder(storeId, orderId)),
+    );
     if (!order) throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn.', 404);
 
-    const [session, items, bankSettings, bankAccountRows] = await Promise.all([
-      this.repository.findTimeSession(storeId, orderId),
-      order.order_type === 'TAKEAWAY'
-        ? this.repository.listTakeawayOrderItems(storeId, orderId)
-        : this.repository.listOrderItems(storeId, orderId),
-      this.repository.findStoreBankSettings(storeId),
-      this.repository.listStoreBankAccounts(storeId),
-    ]);
+    const [session, items, bankSettings, bankAccountRows] = await measurePhase(
+      timing,
+      'quote_load',
+      () =>
+        Promise.all([
+          this.repository.findTimeSession(storeId, orderId),
+          order.order_type === 'TAKEAWAY'
+            ? this.repository.listTakeawayOrderItems(storeId, orderId)
+            : this.repository.listOrderItems(storeId, orderId),
+          projection === 'FULL'
+            ? this.repository.findStoreBankSettings(storeId)
+            : Promise.resolve(null),
+          projection === 'FULL'
+            ? this.repository.listStoreBankAccounts(storeId)
+            : Promise.resolve({ results: [] }),
+        ]),
+    );
     const timeProductIds = [
       ...new Set(
         items.results.flatMap((item) =>
@@ -2802,45 +2875,54 @@ export class PosService {
         ),
       ),
     ];
-    const [tableSegments, pauses, productPricingRows] = await Promise.all([
-      session
-        ? this.repository.listTableTimeSegments(storeId, session.id)
-        : Promise.resolve({ results: [] as TableTimeSegmentRow[] }),
-      session
-        ? this.repository.listPauses(storeId, session.id)
-        : Promise.resolve({ results: [] as OverviewPauseRow[] }),
-      this.repository.listProductPricingSnapshots(storeId, timeProductIds),
-    ]);
-    const pricing = calculateSessionPricing({
-      session,
-      tableSegments: tableSegments.results,
-      pauses: pauses.results,
-      now,
-    });
-    const processedItems = priceOrderItems(
-      items.results,
-      now,
-      pricingSnapshotsFromRows(productPricingRows.results, this.env.STORE_TIMEZONE),
+    const [tableSegments, pauses, productPricingRows] = await measurePhase(
+      timing,
+      'quote_load',
+      () =>
+        Promise.all([
+          session
+            ? this.repository.listTableTimeSegments(storeId, session.id)
+            : Promise.resolve({ results: [] as TableTimeSegmentRow[] }),
+          session
+            ? this.repository.listPauses(storeId, session.id)
+            : Promise.resolve({ results: [] as OverviewPauseRow[] }),
+          this.repository.listProductPricingSnapshots(storeId, timeProductIds),
+        ]),
     );
+    const { pricing, processedItems } = await measurePhase(timing, 'quote_pricing', async () => ({
+      pricing: calculateSessionPricing({
+        session,
+        tableSegments: tableSegments.results,
+        pauses: pauses.results,
+        now,
+      }),
+      processedItems: priceOrderItems(
+        items.results,
+        now,
+        pricingSnapshotsFromRows(productPricingRows.results, this.env.STORE_TIMEZONE),
+      ),
+    }));
     const preliminaryTotals = calculateQuoteTotals(processedItems, pricing, []);
-    const promotions = await this.promotions.optionsForOrder({
-      storeId,
-      orderId,
-      subtotalVnd: Math.max(0, preliminaryTotals.subtotalVnd - preliminaryTotals.itemDiscountVnd),
-      customerId: order.customer_id ?? null,
-      items: processedItems.map((item) => ({
-        productId: item.productId,
-        variantId: item.variantId,
-        productType: item.productType,
-        productName: item.productName,
-        variantName: item.variantName,
-        unitPriceVnd: Number(item.unitPriceVnd),
-        quantityMilli: Number(item.quantityMilli),
-        grossLineTotalVnd: Number(item.grossLineTotalVnd),
-        netLineTotalVnd: Number(item.netLineTotalVnd),
-      })),
-      now,
-    });
+    const promotions = await measurePhase(timing, 'quote_promotions', () =>
+      this.promotions.optionsForOrder({
+        storeId,
+        orderId,
+        subtotalVnd: Math.max(0, preliminaryTotals.subtotalVnd - preliminaryTotals.itemDiscountVnd),
+        customerId: order.customer_id ?? null,
+        items: processedItems.map((item) => ({
+          productId: item.productId,
+          variantId: item.variantId,
+          productType: item.productType,
+          productName: item.productName,
+          variantName: item.variantName,
+          unitPriceVnd: Number(item.unitPriceVnd),
+          quantityMilli: Number(item.quantityMilli),
+          grossLineTotalVnd: Number(item.grossLineTotalVnd),
+          netLineTotalVnd: Number(item.netLineTotalVnd),
+        })),
+        now,
+      }),
+    );
     const totals = calculateQuoteTotals(processedItems, pricing, promotions.applied);
     const bankAccounts: BankAccountDto[] = bankAccountRows.results.map((account) =>
       Object.assign({}, account, { isDefault: account.isDefault === 1 }),
@@ -2916,8 +2998,7 @@ export class PosService {
       promotion: promotions.applied[0] ?? null,
       promotionOptions: promotions.options,
       totalVnd: totals.totalVnd,
-      bankSettings: bankSettings ?? null,
-      bankAccounts,
+      ...(projection === 'FULL' ? { bankSettings: bankSettings ?? null, bankAccounts } : {}),
     };
   }
 
@@ -3916,14 +3997,30 @@ export class PosService {
     actorSessionId?: string | null;
     deviceId?: string | null;
   }) {
-    const replay =
-      (await this.repository.findCancelCommand(input.storeId, input.idempotencyKey)) ??
-      (await this.repository.findCancelTakeawayCommand(input.storeId, input.idempotencyKey));
-    if (replay) return { ...replay, cancelled: true };
+    const dineInReplay = await this.repository.findCancelCommand(
+      input.storeId,
+      input.idempotencyKey,
+    );
+    const takeawayReplay = dineInReplay
+      ? null
+      : await this.repository.findCancelTakeawayCommand(input.storeId, input.idempotencyKey);
+    const replay = dineInReplay ?? takeawayReplay;
+    if (replay) {
+      if (replay.responseJson) return JSON.parse(replay.responseJson) as OrderClosureSnapshot;
+      const snapshot = await this.cancelClosureSnapshot(input.storeId, replay.orderId, Date.now());
+      await this.repository.completeCancelCommand(
+        input.storeId,
+        input.idempotencyKey,
+        JSON.stringify(snapshot),
+        Boolean(takeawayReplay),
+      );
+      return snapshot;
+    }
     const order =
       (await this.repository.findOrder(input.storeId, input.orderId)) ??
       (await this.repository.findTakeawayOrder(input.storeId, input.orderId));
     if (!order) throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn.', 404);
+    const now = Date.now();
     try {
       if (order.order_type === 'TAKEAWAY') {
         await this.repository.executeCancelTakeaway({
@@ -3934,7 +4031,7 @@ export class PosService {
           reason: input.reason.trim(),
           actorId: input.actorId,
           requestId: input.requestId,
-          now: Date.now(),
+          now,
         });
       } else {
         await this.repository.executeCancel({
@@ -3946,7 +4043,7 @@ export class PosService {
           reason: input.reason.trim(),
           actorId: input.actorId,
           requestId: input.requestId,
-          now: Date.now(),
+          now,
         });
       }
     } catch (error) {
@@ -3958,7 +4055,28 @@ export class PosService {
       deviceId: input.deviceId ?? null,
       requestId: input.requestId,
     });
-    return { orderId: input.orderId, cancelled: true };
+    const snapshot = await this.cancelClosureSnapshot(input.storeId, input.orderId, now);
+    await this.repository.completeCancelCommand(
+      input.storeId,
+      input.idempotencyKey,
+      JSON.stringify(snapshot),
+      order.order_type === 'TAKEAWAY',
+    );
+    return snapshot;
+  }
+
+  private async cancelClosureSnapshot(
+    storeId: string,
+    orderId: string,
+    serverNowMs: number,
+  ): Promise<OrderClosureSnapshot> {
+    const table = await this.repository.findTableByOrderId(storeId, orderId);
+    return {
+      orderId,
+      status: 'CANCELLED',
+      tableSummaries: table ? [{ ...table, totalVnd: 0, itemCount: 0 }] : [],
+      serverNowMs,
+    };
   }
 
   async listInvoices(storeId: string) {

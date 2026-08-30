@@ -74,6 +74,8 @@ export function orderQuoteQueryOptions<T extends RefreshableOrderQuote>(input: {
   orderId: string;
   enabled: boolean;
   realtimeStatus: RealtimeConnectionStatus;
+  projection?: 'editor' | 'full';
+  requireFreshMount?: boolean;
   fetcher?: QuoteFetcher<T>;
 }) {
   const fetcher =
@@ -82,13 +84,17 @@ export function orderQuoteQueryOptions<T extends RefreshableOrderQuote>(input: {
       apiRequest<T>(path, signal ? { signal } : undefined));
   return queryOptions({
     queryKey: ['pos-order-quote', input.orderId] as const,
-    queryFn: ({ signal }) => fetcher(`/api/v1/pos/orders/${input.orderId}/quote`, signal),
+    queryFn: ({ signal }) =>
+      fetcher(
+        `/api/v1/pos/orders/${input.orderId}/quote${input.projection === 'editor' ? '?projection=editor' : ''}`,
+        signal,
+      ),
     enabled: input.enabled,
     // Hover/focus/pointer-down warm this query before route navigation. Realtime-connected
     // clients can safely reuse it briefly because every remote order event invalidates it;
     // disconnected clients retain the conservative gesture-sized window.
-    staleTime: quoteInteractionFreshMs(input.realtimeStatus),
-    refetchOnMount: true,
+    staleTime: input.requireFreshMount ? 0 : quoteInteractionFreshMs(input.realtimeStatus),
+    refetchOnMount: input.requireFreshMount ? 'always' : true,
     refetchOnWindowFocus: 'always',
     refetchInterval: (query) => quoteRefreshInterval(query.state.data, input.realtimeStatus),
   });

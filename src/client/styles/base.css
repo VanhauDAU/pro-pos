@@ -503,7 +503,7 @@ body,
   border: 0;
   border-radius: 12px;
   background: transparent;
-  color: #737782;
+  color: #596273;
   font: inherit;
   font-weight: 700;
   display: flex;
@@ -546,8 +546,16 @@ body,
 }
 
 .staff-pos-bottom-nav button.is-active {
-  color: #0877ee;
+  color: #0759b0;
   background: #eef6ff;
+}
+
+.staff-pos-bottom-nav button:focus-visible,
+.staff-table-card:focus-visible,
+.staff-area-pill:focus-visible,
+.staff-status-tab:focus-visible {
+  outline: 3px solid #0759b0;
+  outline-offset: 2px;
 }
 
 .staff-areas-page {
@@ -792,7 +800,7 @@ body,
 .staff-table-card__total {
   font-size: 20px;
   font-weight: 800;
-  color: #0975f7;
+  color: #0759b0;
   letter-spacing: -0.3px;
   line-height: 1.2;
 }
@@ -888,7 +896,7 @@ body,
 }
 
 .staff-table-card--occupied .staff-table-card__total {
-  color: #0975f7;
+  color: #0759b0;
 }
 
 .staff-table-card--occupied.staff-table-card--paused {
@@ -5272,24 +5280,24 @@ body,
   }
 
   .staff-area-pill.is-active {
-    background: #0975f7;
+    background: #0759b0;
     color: #ffffff;
-    border-color: #0975f7;
+    border-color: #0759b0;
     font-weight: 700;
     box-shadow: 0 2px 8px rgba(9, 117, 247, 0.28);
   }
 
   .staff-area-pill--takeaway {
     background: #eff6ff;
-    color: #0975f7;
+    color: #0759b0;
     border: 1px dashed #93c5fd;
     font-weight: 600;
   }
 
   .staff-area-pill--takeaway.is-active {
-    background: #0975f7;
+    background: #0759b0;
     color: #ffffff;
-    border-color: #0975f7;
+    border-color: #0759b0;
     border-style: solid;
   }
 

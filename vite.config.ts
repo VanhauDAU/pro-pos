@@ -5,9 +5,13 @@ import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
+  define: {
+    PROPOS_APP_VERSION: JSON.stringify(process.env['npm_package_version'] ?? 'unknown'),
+  },
   environments: {
     client: {
       build: {
+        manifest: true,
         modulePreload: {
           resolveDependencies(filename, dependencies) {
             if (!filename.includes('StaffPosPortalPage')) return dependencies;
@@ -66,7 +70,7 @@ export default defineConfig({
       srcDir: 'src/client',
       filename: 'sw.js',
       registerType: 'prompt',
-      includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'sounds/*.mp3'],
+      includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
       manifest: {
         id: '/',
         name: 'Pro POS',
@@ -96,14 +100,11 @@ export default defineConfig({
           'manifest.webmanifest',
           'favicon.svg',
           'apple-touch-icon.png',
-          'sounds/*.mp3',
           'pwa-*.png',
           'assets/index-*.js',
           'assets/propos-*.css',
           'assets/propos-*.js',
           'assets/rolldown-runtime-*.js',
-          'assets/vendor-initial-*.css',
-          'assets/vendor-initial-*.js',
         ],
       },
     }),

@@ -1,4 +1,5 @@
 import type { PrintJob } from './print-job';
+import type { PosOverviewDelta } from './pos';
 
 export const REALTIME_SUBPROTOCOL = 'propos.realtime.v1';
 export const REALTIME_SCHEMA_VERSION = 1 as const;
@@ -91,6 +92,7 @@ export interface RealtimeEventV1 {
     failureMessage?: string | null;
     printJob?: PrintJob;
     configVersion?: number;
+    overviewDelta?: PosOverviewDelta;
   };
 }
 

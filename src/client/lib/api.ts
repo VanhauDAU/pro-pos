@@ -1,6 +1,7 @@
 import type { ApiErrorEnvelope, ApiSuccessEnvelope } from '@contracts/api';
 
 import { beginMutation, endMutation } from './request-activity';
+import { posApiContext, recordPosApiMetric } from './pos-performance';
 
 export class ApiError extends Error {
   readonly code: string;
@@ -83,15 +84,24 @@ export async function apiRequest<T>(
       const startedAt = performance.now();
       const response = await fetch(path, requestInit);
       const payload = (await response.json()) as ApiSuccessEnvelope<T> | ApiErrorEnvelope;
+      const durationMs = performance.now() - startedAt;
       logRequestMetric({
         path,
         method,
         status: response.status,
-        durationMs: Math.round(performance.now() - startedAt),
+        durationMs: Math.round(durationMs),
         actionId,
         requestId: response.headers.get('X-Request-ID'),
         attempt,
       });
+      if (path.startsWith('/api/v1/pos/')) {
+        recordPosApiMetric({
+          context: posApiContext(path),
+          method,
+          status: response.status,
+          durationMs,
+        });
+      }
       if (!response.ok || 'error' in payload) {
         throw new ApiError(payload as ApiErrorEnvelope, response.status);
       }

@@ -11,6 +11,8 @@ import {
 import { apiRequest } from '@client/lib/api';
 import { playPosSound } from '@client/lib/sound';
 import { recordPwaPrintTcpStart } from '@client/lib/print-performance';
+import type { PosOverviewOrder, PosOverviewSnapshot, PosOverviewTable } from '@contracts/pos';
+import { mergePosOverviewDelta } from '@client/features/pos/pos-overview-delta';
 
 export type RealtimeConnectionStatus = 'DISABLED' | 'CONNECTING' | 'CONNECTED' | 'RECONNECTING';
 
@@ -373,7 +375,11 @@ export class PosRealtimeClient {
       recordPwaPrintTcpStart(event.data.printJobId, event.eventId);
     }
     if (this.isOwnMutation(event)) return;
-    for (const topic of event.topics) this.pendingTopics.add(topic);
+    const overviewDeltaApplied = this.applyOverviewDelta(event);
+    for (const topic of event.topics) {
+      if (overviewDeltaApplied && (topic === 'pos.orders' || topic === 'pos.tables')) continue;
+      this.pendingTopics.add(topic);
+    }
     if (event.topics.includes(`pos.order:${event.aggregate.id}`)) {
       this.pendingOrderIds.add(event.aggregate.id);
     }
@@ -395,6 +401,18 @@ export class PosRealtimeClient {
     this.scheduleInvalidationFlush();
   }
 
+  private applyOverviewDelta(event: RealtimeEventV1) {
+    const delta = event.data.overviewDelta;
+    if (!delta) return false;
+    const current = this.queryClient.getQueryData<PosOverviewSnapshot>(['pos-overview']);
+    const merged = mergePosOverviewDelta(current, delta);
+    if (!merged.complete || !merged.snapshot) return false;
+    this.queryClient.setQueryData(['pos-overview'], merged.snapshot);
+    this.queryClient.setQueryData<PosOverviewTable[]>(['pos-tables'], merged.snapshot.tables);
+    this.queryClient.setQueryData<PosOverviewOrder[]>(['pos-orders-list'], merged.snapshot.orders);
+    return true;
+  }
+
   private scheduleInvalidationFlush() {
     if (this.invalidationTimer !== null) return;
     this.invalidationTimer = window.setTimeout(() => {
@@ -408,6 +426,18 @@ export class PosRealtimeClient {
         invalidations.push(
           this.queryClient.invalidateQueries({
             queryKey: ['pos-print-jobs'],
+            refetchType: 'active',
+          }),
+        );
+      }
+      if (topics.has('pos.print_config')) {
+        invalidations.push(
+          this.queryClient.invalidateQueries({
+            queryKey: ['pos-print-settings'],
+            refetchType: 'active',
+          }),
+          this.queryClient.invalidateQueries({
+            queryKey: ['pos-print-bootstrap'],
             refetchType: 'active',
           }),
         );
@@ -482,6 +512,8 @@ export class PosRealtimeClient {
           root === 'pos-staff-all-qr-orders' ||
           root === 'pos-order-quote' ||
           root === 'pos-order-detail' ||
+          root === 'pos-print-settings' ||
+          root === 'pos-print-bootstrap' ||
           root === 'guest-order-requests' ||
           root === 'service-requests' ||
           root === 'table-open-requests' ||

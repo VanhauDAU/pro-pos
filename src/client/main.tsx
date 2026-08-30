@@ -9,6 +9,7 @@ import { BrowserRouter } from 'react-router';
 
 import { App } from './App';
 import { ApiError } from './lib/api';
+import { initPosPerformanceMonitoring } from './lib/pos-performance';
 
 const PRELOAD_RECOVERY_KEY = 'propos-preload-recovery-at';
 
@@ -61,3 +62,7 @@ createRoot(root).render(
     </QueryClientProvider>
   </StrictMode>,
 );
+
+const schedulePerformanceMonitoring =
+  window.requestIdleCallback ?? ((callback: IdleRequestCallback) => window.setTimeout(callback, 0));
+schedulePerformanceMonitoring(() => initPosPerformanceMonitoring(), { timeout: 2_000 });

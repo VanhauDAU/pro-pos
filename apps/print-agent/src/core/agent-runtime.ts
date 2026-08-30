@@ -309,7 +309,7 @@ export class AgentRuntime extends EventEmitter {
       onJobFailed: (jobId, code, retryable) => this.emit('jobFailed', { jobId, code, retryable }),
     };
     const apiClient = this.createApiClient(config);
-    this.printCache ??= new AgentPrintCache(apiClient);
+    this.printCache = new AgentPrintCache(apiClient);
     this.realtime = this.createRealtimeClient(config, apiClient, events, this.printCache);
     this.realtime.connect();
   }

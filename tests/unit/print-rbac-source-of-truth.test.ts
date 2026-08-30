@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { defaultPrinterDeviceConfig, parsePrinterDeviceConfig } from '../../src/contracts/store';
 import { formatPairingCode } from '../../apps/print-agent/src/desktop/renderer/presentation';
-import { ConfigManager } from '../../apps/print-agent/src/config';
+import { ConfigManager, type PrintAgentConfig } from '../../apps/print-agent/src/config';
 import { AgentRuntime } from '../../apps/print-agent/src/core/agent-runtime';
 
 describe('Print System RBAC & Source of Truth Invariants', () => {
@@ -57,6 +57,58 @@ describe('Print System RBAC & Source of Truth Invariants', () => {
     expect(current?.agentSecret).toBe('secret-xyz');
     expect(current?.connectionType).toBe('WINDOWS_PRINTER');
     expect(current?.printerName).toBe('XP-80C Thermal Printer');
+  });
+
+  it('re-creates fresh print cache with authenticated client upon successful pairing flow', async () => {
+    let activeClientConfig: PrintAgentConfig | null = null;
+    const mockRealtime = {
+      connect: vi.fn(),
+      destroy: vi.fn(),
+    };
+
+    const unassignedConfig: PrintAgentConfig = {
+      serverUrl: 'http://localhost:5173',
+      printerIp: '192.168.1.73',
+      printerPort: 9100,
+    };
+
+    const mockConfigStore = {
+      loadConfig: () => unassignedConfig,
+      saveConfig: vi.fn(),
+      isPaired: (cfg: PrintAgentConfig) => Boolean(cfg.agentId && cfg.agentSecret && cfg.storeId),
+      clearPairing: vi.fn(),
+      reset: vi.fn(),
+    };
+
+    const pairedConfig: PrintAgentConfig = {
+      ...unassignedConfig,
+      agentId: 'new-agent-uuid',
+      agentSecret: 'new-secret-xyz',
+      storeId: 'store-abc',
+    };
+
+    const mockPairingHandler = {
+      startPairingFlow: vi.fn(async () => pairedConfig),
+    };
+
+    const runtime = new AgentRuntime(unassignedConfig, {
+      configManager: mockConfigStore,
+      createApiClient: (cfg) => {
+        activeClientConfig = cfg;
+        return {
+          get: vi.fn(),
+          post: vi.fn(),
+        } as any;
+      },
+      createRealtimeClient: () => mockRealtime,
+      createPairingHandler: () => mockPairingHandler,
+    });
+
+    await runtime.startPairing();
+
+    expect(mockPairingHandler.startPairingFlow).toHaveBeenCalled();
+    expect(activeClientConfig).toEqual(pairedConfig);
+    expect(mockRealtime.connect).toHaveBeenCalled();
   });
 
   it('formats pairing codes cleanly without raw technical metadata in UI', () => {

@@ -1129,11 +1129,19 @@ function App() {
     const api = window.proposPrintAgent;
     if (!api) return;
 
+    const refreshInfo = () => {
+      api.getInfo().then((i) => !unmounted && setInfo(i));
+    };
+
     api.getState().then((s) => !unmounted && setState(s));
-    api.getInfo().then((i) => !unmounted && setInfo(i));
+    refreshInfo();
     api.getLastJob().then((j) => !unmounted && setLastJob(j));
 
-    const unsubscribeState = api.onStateChanged((s) => !unmounted && setState(s));
+    const unsubscribeState = api.onStateChanged((s) => {
+      if (unmounted) return;
+      setState(s);
+      refreshInfo();
+    });
     const unsubscribeJob = api.onJobChanged((j) => !unmounted && setLastJob(j));
 
     return () => {

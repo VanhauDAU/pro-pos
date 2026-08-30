@@ -5,9 +5,14 @@ export interface DesktopAgentConfig {
   storeId: string | null;
   storeName: string | null;
   agentId: string | null;
+  connectionType: 'NETWORK_TCP' | 'WINDOWS_PRINTER';
+  printerName: string;
   printerIp: string;
   printerPort: number;
   paperSize: 'K80' | 'K58';
+  autoCut?: boolean | undefined;
+  openCashDrawer?: boolean | undefined;
+  printableDots?: number | undefined;
 }
 
 export interface DesktopAgentInfo {
@@ -18,9 +23,21 @@ export interface DesktopAgentInfo {
 
 export interface DesktopSettingsInput {
   serverUrl: string;
-  printerIp: string;
-  printerPort: number;
+  connectionType: 'NETWORK_TCP' | 'WINDOWS_PRINTER';
+  printerName?: string | undefined;
+  printerIp?: string | undefined;
+  printerPort?: number | undefined;
   paperSize: 'K80' | 'K58';
+  autoCut?: boolean | undefined;
+  openCashDrawer?: boolean | undefined;
+  printableDots?: number | undefined;
+}
+
+export interface DesktopPrinterItem {
+  name: string;
+  displayName: string;
+  isDefault: boolean;
+  status?: number | string;
 }
 
 export type DesktopPrintJobStatus = 'SENDING' | 'COMPLETED' | 'FAILED';
@@ -37,7 +54,8 @@ export interface ProPosPrintAgentApi {
   getState(): Promise<AgentRuntimeState>;
   getInfo(): Promise<DesktopAgentInfo>;
   getLastJob(): Promise<DesktopPrintJobState | null>;
-  testPrinter(): Promise<PrinterTestResult>;
+  testPrinter(settings?: DesktopSettingsInput): Promise<PrinterTestResult>;
+  listPrinters(): Promise<DesktopPrinterItem[]>;
   reconnect(): Promise<void>;
   startPairing(): Promise<void>;
   cancelPairing(): Promise<void>;

@@ -1,11 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { ProPosPrintAgentApi } from '../shared/desktop-api';
+import type { DesktopSettingsInput, ProPosPrintAgentApi } from '../shared/desktop-api';
 
 const api: ProPosPrintAgentApi = {
   getState: () => ipcRenderer.invoke('agent:get-state'),
   getInfo: () => ipcRenderer.invoke('agent:get-info'),
   getLastJob: () => ipcRenderer.invoke('agent:get-last-job'),
-  testPrinter: () => ipcRenderer.invoke('agent:test-printer'),
+  testPrinter: (settings?: DesktopSettingsInput) =>
+    ipcRenderer.invoke('agent:test-printer', settings),
+  listPrinters: () => ipcRenderer.invoke('agent:list-printers'),
   reconnect: () => ipcRenderer.invoke('agent:reconnect'),
   startPairing: () => ipcRenderer.invoke('agent:start-pairing'),
   cancelPairing: () => ipcRenderer.invoke('agent:cancel-pairing'),

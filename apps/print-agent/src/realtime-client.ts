@@ -3,6 +3,7 @@ import { AgentApiClient, AgentApiError } from './api-client';
 import type { PrintAgentConfig } from './config';
 import { JobQueue } from './job-queue';
 import { JobProcessor } from './job-processor';
+import type { AgentPrinterTransport } from './transports/printer-transport';
 import type { PendingPrintJobPage, PrintJob } from '@contracts/print-job';
 import { AgentPrintCache } from './core/print-cache';
 import {
@@ -65,8 +66,10 @@ export class AgentRealtimeClient implements RealtimeConnection {
     private readonly apiClient: AgentApiClient,
     private readonly events: AgentRealtimeEvents = {},
     private readonly printCache: AgentPrintCache = new AgentPrintCache(apiClient),
+    transport?: AgentPrinterTransport,
+    processor?: JobProcessor,
   ) {
-    this.processor = new JobProcessor(config, apiClient, undefined, printCache);
+    this.processor = processor ?? new JobProcessor(config, apiClient, transport, printCache);
   }
 
   connect(): void {

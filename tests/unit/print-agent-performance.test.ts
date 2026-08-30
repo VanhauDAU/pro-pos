@@ -100,7 +100,7 @@ describe('Print Agent deterministic performance gate', () => {
     }
 
     const latencies = summaries
-      .map((summary) => summary.eventToTcpStartMs ?? Number.POSITIVE_INFINITY)
+      .map((summary) => summary.eventToTransportStartMs ?? Number.POSITIVE_INFINITY)
       .toSorted((a, b) => a - b);
     const p95 = latencies[Math.ceil(latencies.length * 0.95) - 1]!;
     expect(p95).toBeLessThan(1_000);

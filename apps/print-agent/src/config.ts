@@ -2,12 +2,16 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+export type AgentPrinterConnectionType = 'NETWORK_TCP' | 'WINDOWS_PRINTER';
+
 export interface PrintAgentConfig {
   serverUrl: string;
   storeId?: string | undefined;
   storeName?: string | undefined;
   agentId?: string | undefined;
   agentSecret?: string | undefined;
+  connectionType?: AgentPrinterConnectionType | undefined;
+  printerName?: string | undefined;
   printerIp?: string | undefined;
   printerPort?: number | undefined;
   paperSize?: 'K80' | 'K58' | undefined;
@@ -34,6 +38,7 @@ export class ConfigManager {
         const parsed = JSON.parse(raw);
         return {
           serverUrl: parsed.serverUrl || DEFAULT_SERVER_URL,
+          connectionType: parsed.connectionType || 'NETWORK_TCP',
           ...parsed,
         };
       }
@@ -43,6 +48,7 @@ export class ConfigManager {
 
     return {
       serverUrl: process.env.PROPOS_SERVER_URL || DEFAULT_SERVER_URL,
+      connectionType: 'NETWORK_TCP',
       printerIp: process.env.PRINTER_IP || '192.168.1.73',
       printerPort: Number(process.env.PRINTER_PORT) || 9100,
       paperSize: 'K80',

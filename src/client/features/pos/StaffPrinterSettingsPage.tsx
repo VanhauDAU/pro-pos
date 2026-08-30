@@ -278,7 +278,7 @@ export function StaffPrinterSettingsPage({
               onClick={() => setPairModalOpen(true)}
               style={{ borderRadius: 8 }}
             >
-              + Thêm Print Agent
+              Thêm Print Agent
             </Button>
           </div>
 

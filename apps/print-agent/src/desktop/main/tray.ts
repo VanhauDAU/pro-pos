@@ -47,7 +47,10 @@ export function createAgentTray(
                 : 'Khởi động cùng hệ thống',
           type: 'checkbox',
           checked: autostart.isEnabled(),
-          click: (item) => autostart.setEnabled(item.checked),
+          click: (item) => {
+            autostart.setEnabled(item.checked);
+            refreshMenu();
+          },
         },
         { type: 'separator' },
         { label: 'Thoát', click: () => process.emit('SIGTERM') },
@@ -55,6 +58,7 @@ export function createAgentTray(
     );
   };
   tray.on('click', () => getWindow()?.show());
+  tray.on('right-click', () => refreshMenu());
   runtime.on('stateChanged', refreshMenu);
   refreshMenu();
   return tray;

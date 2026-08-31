@@ -45,7 +45,7 @@ test('connected QR confirmation modal fetches once without five-second polling',
   expect(qrOrderRequests).toEqual([]);
 });
 
-test('connected POS refreshes overview every 15 seconds only while a table is running', async ({
+test('connected POS does not poll a running table within the first 30 seconds', async ({
   page,
 }) => {
   const fixture = await createTimedDineInOrder(page);
@@ -64,11 +64,33 @@ test('connected POS refreshes overview every 15 seconds only while a table is ru
     overviewRequests.length = 0;
     await page.waitForTimeout(32_000);
 
-    expect(overviewRequests.length).toBeGreaterThanOrEqual(2);
-    expect(overviewRequests.length).toBeLessThanOrEqual(3);
-    if (overviewRequests.length >= 2) {
-      expect(overviewRequests[1]! - overviewRequests[0]!).toBeGreaterThanOrEqual(13_500);
-    }
+    expect(overviewRequests).toEqual([]);
+  } finally {
+    await cancelOrder(page, fixture.orderId);
+  }
+});
+
+test('connected POS does not poll a running quote within the first 30 seconds', async ({
+  page,
+}) => {
+  const fixture = await createTimedDineInOrder(page);
+  try {
+    const quoteRequests: number[] = [];
+    page.on('request', (request) => {
+      if (
+        request.method() === 'GET' &&
+        new URL(request.url()).pathname === `/api/v1/pos/orders/${fixture.orderId}/quote`
+      ) {
+        quoteRequests.push(Date.now());
+      }
+    });
+    await page.goto(`/pos/orders/${fixture.orderId}`);
+    await expect(page.getByLabel('Trạng thái kết nối')).toContainText('Trực tiếp');
+    await expect(page.getByText('Đang xác minh dữ liệu mới nhất của đơn...')).toBeHidden();
+    quoteRequests.length = 0;
+    await page.waitForTimeout(32_000);
+
+    expect(quoteRequests).toEqual([]);
   } finally {
     await cancelOrder(page, fixture.orderId);
   }

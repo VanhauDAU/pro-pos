@@ -11,10 +11,12 @@ export interface RawRevenueInvoiceRow {
   roleName: string | null;
 }
 
-export interface RawRevenueProductLineRow {
+export interface RawRevenueInvoiceLineRow {
   invoiceId: string;
   issuedAt: number;
+  lineType: 'PRODUCT' | 'TIME';
   quantityMilli: number;
+  grossAmount: number;
 }
 
 export interface RawRevenueCancelledOrderRow {
@@ -90,31 +92,33 @@ export class OwnerRevenueReportRepository {
     return result.results;
   }
 
-  async getProductLines(
+  async getInvoiceLines(
     storeId: string,
     fromMs: number,
     toMs: number,
-  ): Promise<RawRevenueProductLineRow[]> {
+  ): Promise<RawRevenueInvoiceLineRow[]> {
     const result = await this.db
       .prepare(
         `SELECT il.invoice_id AS invoiceId, i.issued_at AS issuedAt,
-                il.quantity_milli AS quantityMilli
+                il.line_type AS lineType, il.quantity_milli AS quantityMilli,
+                il.gross_line_total AS grossAmount
          FROM invoice_lines il
          JOIN invoices i ON i.id = il.invoice_id AND i.store_id = il.store_id
-         WHERE il.store_id = ? AND i.status = 'COMPLETED' AND il.line_type = 'PRODUCT'
+         WHERE il.store_id = ? AND i.status = 'COMPLETED'
            AND i.issued_at >= ? AND i.issued_at <= ?
 
          UNION ALL
 
          SELECT il.invoice_id AS invoiceId, i.issued_at AS issuedAt,
-                il.quantity_milli AS quantityMilli
+                il.line_type AS lineType, il.quantity_milli AS quantityMilli,
+                il.gross_line_total AS grossAmount
          FROM takeaway_invoice_lines il
          JOIN takeaway_invoices i ON i.id = il.invoice_id AND i.store_id = il.store_id
-         WHERE il.store_id = ? AND i.status = 'COMPLETED' AND il.line_type = 'PRODUCT'
+         WHERE il.store_id = ? AND i.status = 'COMPLETED'
            AND i.issued_at >= ? AND i.issued_at <= ?`,
       )
       .bind(storeId, fromMs, toMs, storeId, fromMs, toMs)
-      .all<RawRevenueProductLineRow>();
+      .all<RawRevenueInvoiceLineRow>();
     return result.results;
   }
 

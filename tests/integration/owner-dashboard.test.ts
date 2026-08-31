@@ -154,6 +154,19 @@ describe('Owner Dashboard Real Analytics (Acceptance Test)', () => {
       expectedOrderVersion: 1,
     });
 
+    const checkout1At = Date.now();
+    const checkout1StartedAt = checkout1At - 60 * 60_000;
+    await env.DB.batch([
+      env.DB.prepare('UPDATE time_sessions SET started_at = ? WHERE order_id = ?').bind(
+        checkout1StartedAt,
+        open1.orderId,
+      ),
+      env.DB.prepare('UPDATE table_time_segments SET started_at = ? WHERE order_id = ?').bind(
+        checkout1StartedAt,
+        open1.orderId,
+      ),
+    ]);
+
     const checkout1 = await pos.checkout({
       storeId,
       actorId: ownerUserId,
@@ -162,7 +175,8 @@ describe('Owner Dashboard Real Analytics (Acceptance Test)', () => {
       orderId: open1.orderId,
       expectedOrderVersion: 2,
       method: 'CASH',
-      cashReceivedVnd: 100_000,
+      cashReceivedVnd: 200_000,
+      now: checkout1At,
     });
     expect(checkout1.invoiceId).toBeDefined();
 
@@ -339,8 +353,14 @@ describe('Owner Dashboard Real Analytics (Acceptance Test)', () => {
       completedInvoiceCount: 2,
       cancelledOrderCount: 0,
       productQuantity: 5,
+      goodsRevenue: 80_000,
+      timeRevenue: 60_000,
+      grossRevenue: 140_000,
       netRevenue: data.summary.revenue,
     });
+    expect(revenueReport.summary.goodsRevenue! + revenueReport.summary.timeRevenue!).toBe(
+      revenueReport.summary.grossRevenue,
+    );
     expect(revenueReport.paymentMethods).toEqual([]);
     expect(revenueReport.orderTypes).toEqual([]);
     const paymentReport = await new OwnerRevenueReportService(env).getRevenueReport(storeId, {
@@ -414,6 +434,11 @@ describe('Owner Dashboard Real Analytics (Acceptance Test)', () => {
     expect(job).toMatchObject({ documentType: 'revenue_report', status: 'QUEUED' });
     const snapshot = await service.get(storeId, job!.documentId);
     expect(snapshot.report.summary.completedInvoiceCount).toBe(2);
+    expect(snapshot.report.summary.goodsRevenue).toBe(80_000);
+    expect(snapshot.report.summary.timeRevenue).toBe(60_000);
+    expect(snapshot.report.summary.goodsRevenue! + snapshot.report.summary.timeRevenue!).toBe(
+      snapshot.report.summary.grossRevenue,
+    );
     expect(snapshot.requestedByName).toBe('Store Owner');
 
     const productService = new ProductReportPrintService(env);

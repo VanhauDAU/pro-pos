@@ -992,9 +992,51 @@ export class PosRepository {
   }
 
   async listSaleCatalog(storeId: string) {
+    const now = Date.now();
+    const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
+    const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
+    const ninetyDaysAgo = now - 90 * 24 * 60 * 60 * 1000;
     return this.db
       .prepare(
-        `SELECT
+        `WITH recent_product_orders AS (
+          SELECT
+            oi.product_id AS productId,
+            o.id AS orderId,
+            o.closed_at AS soldAt
+          FROM orders o
+          JOIN order_items oi ON oi.order_id = o.id AND oi.store_id = o.store_id
+          WHERE o.store_id = ? AND o.status = 'PAID'
+            AND o.created_at >= ? AND oi.product_type != 'TIME'
+          GROUP BY oi.product_id, o.id
+
+          UNION ALL
+
+          SELECT
+            oi.product_id AS productId,
+            o.id AS orderId,
+            o.closed_at AS soldAt
+          FROM takeaway_orders o
+          JOIN takeaway_order_items oi ON oi.order_id = o.id AND oi.store_id = o.store_id
+          WHERE o.store_id = ? AND o.status = 'PAID'
+            AND o.opened_at >= ?
+          GROUP BY oi.product_id, o.id
+        ),
+        product_popularity AS (
+          SELECT
+            productId,
+            SUM(
+              CASE
+                WHEN soldAt >= ? THEN 13
+                WHEN soldAt >= ? THEN 4
+                ELSE 1
+              END
+            ) AS popularityScore,
+            COUNT(*) AS paidOrderCount,
+            MAX(soldAt) AS lastSoldAt
+          FROM recent_product_orders
+          GROUP BY productId
+        )
+        SELECT
           p.id AS productId, p.name AS productName, p.product_type AS productType,
           p.avatar_type AS avatarType, p.avatar_color AS avatarColor,
           p.media_id AS mediaId,
@@ -1010,11 +1052,18 @@ export class PosRepository {
          LEFT JOIN time_price_configs tpc ON tpc.product_id = p.id AND tpc.store_id = p.store_id
          LEFT JOIN categories c ON c.id = p.category_id AND c.store_id = p.store_id
          LEFT JOIN units u ON u.id = p.unit_id AND u.store_id = p.store_id
+         LEFT JOIN product_popularity popularity ON popularity.productId = p.id
          WHERE p.store_id = ? AND p.status = 'ACTIVE' AND p.is_system = 0
            AND p.product_type IN ('QUANTITY', 'WEIGHT')
-         ORDER BY c.sort_order, p.name COLLATE NOCASE, pv.name COLLATE NOCASE`,
+         ORDER BY
+           COALESCE(popularity.popularityScore, 0) DESC,
+           COALESCE(popularity.paidOrderCount, 0) DESC,
+           COALESCE(popularity.lastSoldAt, 0) DESC,
+           c.sort_order,
+           p.name COLLATE NOCASE,
+           pv.name COLLATE NOCASE`,
       )
-      .bind(storeId)
+      .bind(storeId, ninetyDaysAgo, storeId, ninetyDaysAgo, sevenDaysAgo, thirtyDaysAgo, storeId)
       .all<SaleCatalogRow>();
   }
 

@@ -16,8 +16,13 @@ import {
   verifyPinDigest,
 } from '@server/lib/crypto';
 import { requireSecret } from '@server/lib/env';
-import { AuthRepository, type DeviceContextRow } from '@server/repositories/auth-repository';
+import {
+  AuthRepository,
+  type DeviceContextRow,
+  type PrincipalContextRow,
+} from '@server/repositories/auth-repository';
 import { AuditRepository, type AuditContext } from '@server/repositories/audit-repository';
+import type { RequestPrincipal } from '@server/types';
 
 const EMPLOYEE_REMEMBER_SESSION_MAX_HOURS = 30 * 24;
 const OWNER_SHORT_ABSOLUTE_SECONDS = 24 * 60 * 60;
@@ -501,77 +506,103 @@ export class AuthService {
     return this.repository.findDeviceBySecretHash(secretHash);
   }
 
+  private async resolvePrincipalContext(rawSession?: string, rawDevice?: string) {
+    if (!rawSession && !rawDevice) {
+      return { principal: null, device: null };
+    }
+    const [sessionHash, deviceHash] = await Promise.all([
+      rawSession ? hashOpaqueToken(rawSession, this.sessionTokenPepper) : Promise.resolve(null),
+      rawDevice ? hashOpaqueToken(rawDevice, this.deviceTokenPepper) : Promise.resolve(null),
+    ]);
+    const now = Date.now();
+    const row = await this.repository.findPrincipalContext({ sessionHash, deviceHash, now });
+    const device = this.deviceFromPrincipalRow(row);
+    if (!rawSession || !row?.session_id) return { principal: null, device };
+
+    const sessionValid =
+      row.session_status === 'ACTIVE' &&
+      row.user_status === 'ACTIVE' &&
+      row.current_credential_version === row.session_credential_version &&
+      row.expires_at > now &&
+      row.idle_expires_at > now;
+    const employeeDeviceValid =
+      row.session_kind !== 'EMPLOYEE' ||
+      (device?.status === 'ACTIVE' &&
+        row.session_device_id === device.id &&
+        row.store_id === device.storeId);
+    if (!sessionValid || !employeeDeviceValid) return { principal: null, device };
+
+    if (now - row.last_seen_at > 5 * 60_000) {
+      const idleSeconds =
+        row.session_kind === 'EMPLOYEE'
+          ? Math.min(
+              EMPLOYEE_REMEMBER_SESSION_MAX_HOURS,
+              Math.max(1, row.employee_remember_session_hours ?? 12),
+            ) *
+            60 *
+            60
+          : row.session_kind === 'SUPER_ADMIN'
+            ? PLATFORM_IDLE_SECONDS
+            : OWNER_LONG_IDLE_SECONDS;
+      await this.repository.touchSession(
+        row.session_id,
+        now,
+        Math.min(row.expires_at, now + idleSeconds * 1000),
+      );
+    }
+
+    const permissionKeys = row.permission_keys?.split('\u001f').filter(Boolean) ?? [];
+    const principal: RequestPrincipal = {
+      actor: {
+        id: row.user_id,
+        displayName: row.display_name,
+        kind: row.session_kind,
+        storeId: row.store_id,
+      },
+      device,
+      sessionId: row.session_id,
+      storeStatus: row.store_status,
+      permissions: new Set(permissionKeys),
+    };
+    return { principal, device };
+  }
+
+  private deviceFromPrincipalRow(row: PrincipalContextRow | null): RequestPrincipal['device'] {
+    if (!row?.device_id || !row.device_name || !row.device_status || !row.device_store_id) {
+      return null;
+    }
+    return {
+      id: row.device_id,
+      name: row.device_name,
+      status: row.device_status,
+      storeId: row.device_store_id,
+      ...(row.device_store_name ? { storeName: row.device_store_name } : {}),
+    };
+  }
+
+  async requestPrincipal(rawSession: string, rawDevice?: string): Promise<RequestPrincipal | null> {
+    return (await this.resolvePrincipalContext(rawSession, rawDevice)).principal;
+  }
+
   async context(
     rawSession?: string,
     rawDevice?: string,
   ): Promise<AuthContextResponse & { sessionId: string | null }> {
-    const now = Date.now();
-    const device = await this.resolveDevice(rawDevice);
-    let actor: AuthContextResponse['actor'] = null;
-    let csrfToken: string | null = null;
-    let sessionId: string | null = null;
-
-    if (rawSession) {
-      const sessionHash = await hashOpaqueToken(rawSession, this.sessionTokenPepper);
-      const session = await this.repository.findSessionByHash(sessionHash);
-      const sessionValid =
-        session?.session_status === 'ACTIVE' &&
-        session.user_status === 'ACTIVE' &&
-        session.current_credential_version === session.session_credential_version &&
-        session.expires_at > now &&
-        session.idle_expires_at > now;
-      const employeeDeviceValid =
-        session?.session_kind !== 'EMPLOYEE' ||
-        (device?.device_status === 'ACTIVE' &&
-          session.session_device_id === device.device_id &&
-          session.store_id === device.store_id);
-
-      if (session && sessionValid && employeeDeviceValid) {
-        sessionId = session.session_id;
-        actor = {
-          id: session.user_id,
-          displayName: session.display_name,
-          kind: session.session_kind,
-          storeId: session.store_id,
-        };
-        csrfToken = await deriveCsrfToken(rawSession, this.authPepper);
-        if (now - session.last_seen_at > 5 * 60_000) {
-          const idleSeconds =
-            session.session_kind === 'EMPLOYEE'
-              ? Math.min(
-                  EMPLOYEE_REMEMBER_SESSION_MAX_HOURS,
-                  Math.max(1, session.employee_remember_session_hours ?? 12),
-                ) *
-                60 *
-                60
-              : session.session_kind === 'SUPER_ADMIN'
-                ? PLATFORM_IDLE_SECONDS
-                : OWNER_LONG_IDLE_SECONDS;
-          await this.repository.touchSession(
-            session.session_id,
-            now,
-            Math.min(session.expires_at, now + idleSeconds * 1000),
-          );
-        }
-      }
-    }
+    const resolved = await this.resolvePrincipalContext(rawSession, rawDevice);
+    const actor = resolved.principal?.actor ?? null;
+    const csrfToken =
+      rawSession && actor ? await deriveCsrfToken(rawSession, this.authPepper) : null;
+    const sessionId = resolved.principal?.sessionId ?? null;
+    const device = resolved.device;
 
     const allowedEntrypoints: AuthContextResponse['allowedEntrypoints'] = [];
     if (actor?.kind === 'OWNER') allowedEntrypoints.push('OWNER');
     if (actor?.kind === 'SUPER_ADMIN') allowedEntrypoints.push('PLATFORM');
-    if (device?.device_status === 'ACTIVE') allowedEntrypoints.push('EMPLOYEE');
+    if (device?.status === 'ACTIVE') allowedEntrypoints.push('EMPLOYEE');
 
     return {
       actor,
-      device: device
-        ? {
-            id: device.device_id,
-            name: device.device_name,
-            status: device.device_status,
-            storeId: device.store_id,
-            storeName: device.store_name,
-          }
-        : null,
+      device,
       allowedEntrypoints,
       csrfToken,
       sessionId,

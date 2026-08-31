@@ -12144,6 +12144,10 @@ function PaymentPage({
       queryClient.setQueryData<PosOverviewOrder[]>(['pos-orders-list'], (cached) =>
         cached?.filter((order) => order.id !== quote.data!.order.id),
       );
+      // The catalog response is popularity-ranked. Mark it stale after a completed
+      // sale so the next order sees the latest ranking without refetching on the
+      // payment screen.
+      void queryClient.invalidateQueries({ queryKey: ['pos-catalog'], refetchType: 'none' });
 
       const resolvedCode =
         result.displayCode ||

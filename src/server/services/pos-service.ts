@@ -27,7 +27,6 @@ import type {
   TimeSessionRow,
 } from '@server/repositories/pos-repository';
 import { AuditRepository } from '@server/repositories/audit-repository';
-import { AuthorizationRepository } from '@server/repositories/authorization-repository';
 import { CustomerService } from '@server/services/customer-service';
 import { PromotionService } from '@server/services/promotion-service';
 import { PromotionRepository } from '@server/repositories/promotion-repository';
@@ -2173,13 +2172,9 @@ export class PosService {
     return [...products.values()];
   }
 
-  async getStaffContext(storeId: string, actorId: string) {
+  async getStaffContext(storeId: string, actorId: string, permissionKeys: readonly string[]) {
     const context = await this.repository.getStaffContext(storeId, actorId);
     if (!context) return context;
-    const permissions = await new AuthorizationRepository(this.env.DB).listUserPermissions(
-      storeId,
-      actorId,
-    );
     const {
       posRealtimeEnabled,
       posCommandsV2Enabled,
@@ -2189,7 +2184,7 @@ export class PosService {
     } = context;
     return {
       ...staffContext,
-      permissions,
+      permissions: [...permissionKeys],
       capabilities: {
         posRealtime: posRealtimeEnabled === 1,
         posCommandsV2: posCommandsV2Enabled === 1,

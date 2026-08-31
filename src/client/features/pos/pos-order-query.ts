@@ -3,7 +3,7 @@ import { queryOptions } from '@tanstack/react-query';
 import { apiRequest } from '@client/lib/api';
 export type RealtimeConnectionStatus = 'DISABLED' | 'CONNECTING' | 'CONNECTED' | 'RECONNECTING';
 
-export const RUNNING_SERVER_REFRESH_MS = 15_000;
+export const CONNECTED_RUNNING_SAFETY_REFRESH_MS = 120_000;
 export const QUOTE_DISCONNECTED_REFRESH_MS = 5_000;
 export const OVERVIEW_DISCONNECTED_REFRESH_MS = 20_000;
 export const QUOTE_INTERACTION_FRESH_MS = 2_000;
@@ -56,16 +56,20 @@ export function quoteRefreshInterval(
   realtimeStatus: RealtimeConnectionStatus,
 ): number | false {
   if (quote?.order.status === 'PAYMENT_PENDING') return false;
-  if (quote?.time?.status === 'RUNNING') return RUNNING_SERVER_REFRESH_MS;
-  return realtimeStatus === 'CONNECTED' ? false : QUOTE_DISCONNECTED_REFRESH_MS;
+  if (realtimeStatus === 'CONNECTED') {
+    return quote?.time?.status === 'RUNNING' ? CONNECTED_RUNNING_SAFETY_REFRESH_MS : false;
+  }
+  return QUOTE_DISCONNECTED_REFRESH_MS;
 }
 
 export function overviewRefreshInterval(
   hasRunningTable: boolean,
   realtimeStatus: RealtimeConnectionStatus,
 ): number | false {
-  if (hasRunningTable) return RUNNING_SERVER_REFRESH_MS;
-  return realtimeStatus === 'CONNECTED' ? false : OVERVIEW_DISCONNECTED_REFRESH_MS;
+  if (realtimeStatus === 'CONNECTED') {
+    return hasRunningTable ? CONNECTED_RUNNING_SAFETY_REFRESH_MS : false;
+  }
+  return OVERVIEW_DISCONNECTED_REFRESH_MS;
 }
 
 type QuoteFetcher<T> = (path: string, signal: AbortSignal | undefined) => Promise<T>;

@@ -72,6 +72,10 @@ export interface RevenueReportSummaryDto {
   completedInvoiceCount: number;
   cancelledOrderCount: number;
   productQuantity: number;
+  /** Gross product revenue before discounts. Optional for persisted legacy print snapshots. */
+  goodsRevenue?: number;
+  /** Gross table-time revenue before discounts. Optional for persisted legacy print snapshots. */
+  timeRevenue?: number;
   grossRevenue: number;
   cancelledAmount: number;
   discountAmount: number;

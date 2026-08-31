@@ -4,13 +4,13 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { printAgentUpdateRoutes } from '@server/routes/print-agent-update';
 
 describe('Print Agent Worker Update Route (Integration Test)', () => {
-  const sampleManifest = `version: 0.5.1
+  const sampleManifest = `version: 0.5.2
 files:
-  - url: PRO POS Print Agent Setup 0.5.1.exe
+  - url: PRO POS Print Agent Setup 0.5.2.exe
     sha512: dGVzdC1zaGE1MTItY2hlY2tzdW0=
     size: 95536000
     blockMapSize: 102400
-path: PRO POS Print Agent Setup 0.5.1.exe
+path: PRO POS Print Agent Setup 0.5.2.exe
 sha512: dGVzdC1zaGE1MTItY2hlY2tzdW0=
 releaseDate: '2026-08-31T06:00:00.000Z'
 `;
@@ -27,7 +27,7 @@ releaseDate: '2026-08-31T06:00:00.000Z'
     });
 
     await env.PRINT_AGENT_UPDATES.put(
-      'print-agent/windows/stable/PRO POS Print Agent Setup 0.5.1.exe',
+      'print-agent/windows/stable/PRO POS Print Agent Setup 0.5.2.exe',
       sampleExeBuffer,
       {
         httpMetadata: {
@@ -37,7 +37,7 @@ releaseDate: '2026-08-31T06:00:00.000Z'
     );
 
     await env.PRINT_AGENT_UPDATES.put(
-      'print-agent/windows/stable/PRO POS Print Agent Setup 0.5.1.exe.blockmap',
+      'print-agent/windows/stable/PRO POS Print Agent Setup 0.5.2.exe.blockmap',
       sampleBlockmapBuffer,
       {
         httpMetadata: {
@@ -73,7 +73,7 @@ releaseDate: '2026-08-31T06:00:00.000Z'
 
   it('serves .exe installer binary with HTTP 200, immutable cache, and correct Content-Type', async () => {
     const res = await printAgentUpdateRoutes.request(
-      '/PRO%20POS%20Print%20Agent%20Setup%200.5.1.exe',
+      '/PRO%20POS%20Print%20Agent%20Setup%200.5.2.exe',
       { method: 'GET' },
       env,
     );
@@ -89,7 +89,7 @@ releaseDate: '2026-08-31T06:00:00.000Z'
 
   it('serves .blockmap with HTTP 200, immutable cache, and correct Content-Type', async () => {
     const res = await printAgentUpdateRoutes.request(
-      '/PRO%20POS%20Print%20Agent%20Setup%200.5.1.exe.blockmap',
+      '/PRO%20POS%20Print%20Agent%20Setup%200.5.2.exe.blockmap',
       { method: 'GET' },
       env,
     );

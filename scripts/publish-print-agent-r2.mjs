@@ -146,7 +146,8 @@ async function main() {
     process.env.FEED_BASE_URL ||
     'https://pro-pos-production.vanhau-laravel.workers.dev'
   ).replace(/\/$/, '');
-  const feedPrefix = process.env.CLOUDFLARE_R2_FEED_PREFIX || 'print-agent/windows/stable';
+  const r2KeyPrefix = 'print-agent/windows/stable';
+  const workerFeedPath = 'api/v1/print-agent-updates/windows/stable';
 
   const pkg = JSON.parse(await readFile(packageJsonPath, 'utf8'));
   const version = pkg.version;
@@ -155,8 +156,8 @@ async function main() {
     `[R2Publisher] Preparing to publish PRO POS Print Agent v${version} updater artifacts...`,
   );
   console.log(`  - Target Bucket: ${bucketName}`);
-  console.log(`  - Feed Prefix:   ${feedPrefix}`);
-  console.log(`  - Worker Feed:   ${workerUrl}/${feedPrefix}/`);
+  console.log(`  - R2 Key Prefix: ${r2KeyPrefix}`);
+  console.log(`  - Worker Feed:   ${workerUrl}/${workerFeedPath}/`);
 
   if (!accountId || !accessKeyId || !secretAccessKey) {
     if (isDryRun) {
@@ -209,7 +210,7 @@ async function main() {
   });
 
   // STEP 1: Upload Installer Executable (Immutable Cache)
-  const installerKey = `${feedPrefix}/${installerFileName}`;
+  const installerKey = `${r2KeyPrefix}/${installerFileName}`;
   console.log(
     `\n🚀 [Step 1/5] Uploading Installer binary to s3://${bucketName}/${installerKey}...`,
   );
@@ -224,7 +225,7 @@ async function main() {
   );
 
   // STEP 2: Upload Blockmap (Immutable Cache)
-  const blockmapKey = `${feedPrefix}/${blockmapFileName}`;
+  const blockmapKey = `${r2KeyPrefix}/${blockmapFileName}`;
   console.log(`\n🚀 [Step 2/5] Uploading Blockmap to s3://${bucketName}/${blockmapKey}...`);
   await client.putObject({
     key: blockmapKey,
@@ -253,7 +254,7 @@ async function main() {
   console.log(`✔ [Step 3/5] Remote installer & blockmap verified on R2.`);
 
   // STEP 4: Upload latest.yml LAST (No Cache)
-  const latestYmlKey = `${feedPrefix}/latest.yml`;
+  const latestYmlKey = `${r2KeyPrefix}/latest.yml`;
   console.log(
     `\n🚀 [Step 4/5] Uploading latest.yml manifest LAST to s3://${bucketName}/${latestYmlKey}...`,
   );
@@ -269,7 +270,7 @@ async function main() {
 
   // STEP 5: Verify Live Feed URL via Worker
   console.log(`\n🔍 [Step 5/5] Verifying live feed endpoint via Worker URL...`);
-  const liveUrl = `${workerUrl}/${feedPrefix}/latest.yml`;
+  const liveUrl = `${workerUrl}/${workerFeedPath}/latest.yml`;
   try {
     const liveRes = await fetch(liveUrl, {
       method: 'GET',
@@ -279,30 +280,29 @@ async function main() {
       },
     });
 
-    if (liveRes.ok) {
-      const liveText = await liveRes.text();
-      if (
-        liveText.includes(`version: ${version}`) ||
-        liveText.includes(`version: '${version}'`) ||
-        liveText.includes(`version: "${version}"`)
-      ) {
-        console.log(
-          `✔ [Step 5/5] Live Worker feed ${liveUrl} verified: HTTP 200 OK with version ${version}!`,
-        );
-      } else {
-        console.warn(
-          `⚠️ [Step 5/5] Live feed returned HTTP 200 but content did not match version ${version} yet (CDN edge propagation).`,
-        );
-      }
-    } else {
-      console.warn(
-        `⚠️ [Step 5/5] Live Worker feed returned HTTP ${liveRes.status}. Ensure Worker with PRINT_AGENT_UPDATES binding is deployed.`,
+    if (!liveRes.ok) {
+      throw new Error(
+        `Live Worker feed ${liveUrl} returned HTTP ${liveRes.status}. Ensure Worker is deployed and PRINT_AGENT_UPDATES binding is active.`,
       );
     }
-  } catch (err) {
-    console.warn(
-      `⚠️ [Step 5/5] Could not reach ${liveUrl}: ${err.message}. Ensure Worker is accessible.`,
+
+    const liveText = await liveRes.text();
+    const isVersionMatched =
+      liveText.includes(`version: ${version}`) ||
+      liveText.includes(`version: '${version}'`) ||
+      liveText.includes(`version: "${version}"`);
+
+    if (!isVersionMatched) {
+      throw new Error(
+        `Live Worker feed ${liveUrl} returned HTTP 200 but manifest version did not match expected version "${version}". Content:\n${liveText.slice(0, 200)}`,
+      );
+    }
+
+    console.log(
+      `✔ [Step 5/5] Live Worker feed ${liveUrl} verified: HTTP 200 OK with version ${version}!`,
     );
+  } catch (err) {
+    throw new Error(`Step 5 failed: ${err.message}`, { cause: err });
   }
 
   console.log(

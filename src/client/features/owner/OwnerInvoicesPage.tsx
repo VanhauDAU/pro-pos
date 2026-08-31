@@ -272,7 +272,9 @@ export function OwnerInvoicesPage({
             style={{ padding: 0, height: 'auto', fontWeight: 600 }}
             onClick={() => setSelectedOrderId(row.orderId)}
           >
-            <span className="owner-invoice-code">{code}</span>
+            <span className="owner-invoice-code">
+              {code || row.displayCode || (row.orderId ? `D-${row.orderId.slice(0, 8)}` : '—')}
+            </span>
           </Button>
         ),
       },

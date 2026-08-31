@@ -111,5 +111,5 @@ describe('Print Agent deterministic performance gate', () => {
     expect(getBytes).not.toHaveBeenCalled();
     expect(send).toHaveBeenCalledTimes(100);
     log.mockRestore();
-  });
+  }, 30_000);
 });

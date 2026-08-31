@@ -118,6 +118,10 @@ app.route('/api/v1/print-agent', publicPrintAgentRoutes);
 app.route('/api/v1/pos/print-agent', posPrintAgentRoutes);
 app.route('/api/v1/pos/print-jobs', printJobRoutes);
 app.route('/api/v1/print-agent-updates/windows/stable', printAgentUpdateRoutes);
+app.route('/api/v1/print-agent/windows/stable', printAgentUpdateRoutes);
+app.route('/api/print-agent-updates/windows/stable', printAgentUpdateRoutes);
+app.route('/api/print-agent/windows/stable', printAgentUpdateRoutes);
+app.route('/print-agent/windows/stable', printAgentUpdateRoutes);
 
 app.notFound((c) => failure(c, { code: 'NOT_FOUND', message: 'Không tìm thấy tài nguyên.' }, 404));
 

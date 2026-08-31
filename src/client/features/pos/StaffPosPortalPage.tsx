@@ -22,6 +22,7 @@ import {
   EllipsisOutlined,
   EnvironmentOutlined,
   FileTextOutlined,
+  FireFilled,
   FireOutlined,
   GiftOutlined,
   HistoryOutlined,
@@ -435,6 +436,7 @@ interface CatalogProduct {
   categoryId: string | null;
   categoryName: string | null;
   unitName: string | null;
+  isPopular: boolean;
   variants: CatalogVariant[];
 }
 
@@ -5565,6 +5567,16 @@ const PosProductCard = memo(function PosProductCard({
           background: hasImage ? undefined : product.avatarColor || '#0975f7',
         }}
       >
+        {product.isPopular ? (
+          <span
+            className="staff-product-card__hot-badge"
+            title="Bán chạy gần đây"
+            aria-label="Bán chạy gần đây"
+          >
+            <FireFilled aria-hidden="true" />
+            <span>Bán chạy</span>
+          </span>
+        ) : null}
         {hasImage ? (
           <img
             src={`/api/v1/media/${product.mediaId}`}
@@ -6325,11 +6337,12 @@ function OrderEditor({
     }));
   }, [catalog.data]);
 
+  const normalizedCatalogSearch = normalizeCategoryName(catalogSearch);
   const visibleCatalog = (catalog.data ?? []).filter((product) => {
-    const haystack = `${product.productName} ${product.variants.map((variant) => variant.name).join(' ')}`;
-    const matchesSearch = haystack
-      .toLocaleLowerCase('vi-VN')
-      .includes(catalogSearch.trim().toLocaleLowerCase('vi-VN'));
+    const haystack = normalizeCategoryName(
+      `${product.productName} ${product.variants.map((variant) => variant.name).join(' ')}`,
+    );
+    const matchesSearch = haystack.includes(normalizedCatalogSearch);
     return matchesSearch && (selectedCategory === 'ALL' || product.categoryId === selectedCategory);
   });
   const isPaymentPending = !isNew && quote.data?.order.status === 'PAYMENT_PENDING';
@@ -8352,6 +8365,15 @@ function OrderEditor({
                                 : product.avatarColor || '#0975f7',
                           }}
                         >
+                          {product.isPopular ? (
+                            <span
+                              className="staff-product-compact-row__hot-icon"
+                              title="Bán chạy gần đây"
+                              aria-label="Bán chạy gần đây"
+                            >
+                              <FireFilled aria-hidden="true" />
+                            </span>
+                          ) : null}
                           {product.avatarType === 'IMAGE' && product.mediaId ? (
                             <img
                               src={`/api/v1/media/${product.mediaId}`}

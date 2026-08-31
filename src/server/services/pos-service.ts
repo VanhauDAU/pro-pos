@@ -2159,6 +2159,8 @@ export class PosService {
         categoryId: row.categoryId,
         categoryName: row.categoryName,
         unitName: row.unitName,
+        popularityScore: row.popularityScore,
+        paidOrderCount: row.paidOrderCount,
         variants: [],
       };
       product.variants.push({
@@ -2169,7 +2171,14 @@ export class PosService {
       });
       products.set(row.productId, product);
     }
-    return [...products.values()];
+    const productList = [...products.values()];
+    const popularProductLimit = 3;
+    return productList.map(({ popularityScore, paidOrderCount, ...product }, index) => ({
+      ...product,
+      // Keep the signal intentionally scarce: only the three highest-ranked
+      // products with paid-order history receive the visual treatment.
+      isPopular: index < popularProductLimit && popularityScore > 0 && paidOrderCount > 0,
+    }));
   }
 
   async getStaffContext(storeId: string, actorId: string, permissionKeys: readonly string[]) {

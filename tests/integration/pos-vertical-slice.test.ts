@@ -1405,6 +1405,7 @@ describe('online POS vertical slice', () => {
       alphabeticalFirst.id,
       popular.id,
     ]);
+    expect(initialCatalog.every((product) => !product.isPopular)).toBe(true);
 
     const popularVariant = initialCatalog.find((product) => product.productId === popular.id)!
       .variants[0]!;
@@ -1442,6 +1443,7 @@ describe('online POS vertical slice', () => {
       popular.id,
       alphabeticalFirst.id,
     ]);
+    expect(reorderedCatalog.map((product) => product.isPopular)).toEqual([true, false]);
     expect(reorderedCatalog[0]).not.toHaveProperty('popularityScore');
   });
 

@@ -121,6 +121,8 @@ export interface SaleCatalogRow {
   salePriceVnd: number | null;
   promptPrice: 0 | 1;
   unitName: string | null;
+  popularityScore: number;
+  paidOrderCount: number;
 }
 
 export interface PosTableRecord {
@@ -1045,7 +1047,9 @@ export class PosRepository {
           COALESCE(pv.name, 'Giá mặc định') AS variantName,
           COALESCE(pv.sale_price, tpc.base_price, 0) AS salePriceVnd,
           COALESCE(pv.prompt_price, 0) AS promptPrice,
-          COALESCE(u.name, CASE WHEN p.product_type = 'TIME' THEN 'giờ' ELSE NULL END) AS unitName
+          COALESCE(u.name, CASE WHEN p.product_type = 'TIME' THEN 'giờ' ELSE NULL END) AS unitName,
+          COALESCE(popularity.popularityScore, 0) AS popularityScore,
+          COALESCE(popularity.paidOrderCount, 0) AS paidOrderCount
          FROM products p
          LEFT JOIN product_variants pv ON pv.product_id = p.id AND pv.store_id = p.store_id
            AND pv.status = 'ACTIVE'

@@ -224,29 +224,146 @@ export function OwnerRevenueReportPage({
   const exportExcel = () => {
     if (!data || !hasData) return messageApi.warning('Chưa có dữ liệu để xuất.');
     const workbook = XLSX.utils.book_new();
-    const summary = Object.entries({
-      'Loại báo cáo': TITLES[data.reportType],
-      Từ: timestamp(data.fromMs, data.timezone),
-      Đến: timestamp(data.toMs, data.timezone),
-      'Hóa đơn': data.summary.completedInvoiceCount,
-      'Đơn hủy': data.summary.cancelledOrderCount,
-      'Tiền hàng': data.summary.grossRevenue,
-      'Giảm giá': data.summary.discountAmount,
-      'Doanh thu': data.summary.netRevenue,
-    }).map(([key, value]) => ({ 'Chỉ tiêu': key, 'Giá trị': value }));
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summary), 'TongQuan');
-    const detail =
-      data.reportType === 'STAFF_REVENUE'
-        ? data.staffRevenue
-        : data.reportType === 'CANCELLATIONS'
-          ? data.cancellations
-          : data.reportType === 'PAYMENT_METHOD'
-            ? data.paymentMethods
-            : data.reportType === 'SERVICE_MODE'
-              ? data.orderTypes
-              : data.timeline;
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(detail), 'ChiTiet');
+
+    const rows: (string | number)[][] = [
+      ['BÁO CÁO DOANH THU - ' + (TITLES[data.reportType] ?? '').toUpperCase()],
+      [
+        'Thời gian áp dụng:',
+        `${timestamp(data.fromMs, data.timezone)} – ${timestamp(data.toMs, data.timezone)}`,
+      ],
+      ['Thời điểm xuất file:', timestamp(Date.now(), data.timezone)],
+      [],
+      ['TỔNG HỢP CHỈ TIÊU KINH DOANH'],
+      ['Chỉ tiêu', 'Giá trị'],
+      ['Số hóa đơn hoàn tất', data.summary.completedInvoiceCount],
+      ['Số đơn hàng đã hủy', data.summary.cancelledOrderCount],
+      ['Tổng tiền hàng (đ)', data.summary.grossRevenue],
+      ['Tổng tiền hủy (đ)', data.summary.cancelledAmount],
+      ['Tổng giảm giá (đ)', data.summary.discountAmount],
+      ['Doanh thu thuần (đ)', data.summary.netRevenue],
+      ['Doanh thu trung bình / HĐ (đ)', data.summary.averageRevenuePerInvoice],
+      [],
+    ];
+
+    if (data.reportType === 'OVERVIEW') {
+      rows.push(
+        ['BẢNG CHI TIẾT THEO THỜI GIAN'],
+        [
+          'Thời gian',
+          'Số HĐ hoàn tất',
+          'Số đơn hủy',
+          'Tiền hàng (đ)',
+          'Tiền hủy (đ)',
+          'Giảm giá (đ)',
+          'Doanh thu thuần (đ)',
+          'TB / HĐ (đ)',
+        ],
+      );
+      for (const row of data.timeline) {
+        rows.push([
+          row.label,
+          row.completedInvoiceCount,
+          row.cancelledOrderCount,
+          row.grossRevenue,
+          row.cancelledAmount,
+          row.discountAmount,
+          row.netRevenue,
+          row.averageRevenuePerInvoice,
+        ]);
+      }
+      rows.push([
+        'TỔNG CỘNG',
+        data.summary.completedInvoiceCount,
+        data.summary.cancelledOrderCount,
+        data.summary.grossRevenue,
+        data.summary.cancelledAmount,
+        data.summary.discountAmount,
+        data.summary.netRevenue,
+        data.summary.averageRevenuePerInvoice,
+      ]);
+    } else if (data.reportType === 'PAYMENT_METHOD') {
+      rows.push(
+        ['BẢNG CHI TIẾT THEO PHƯƠNG THỨC THANH TOÁN'],
+        ['Phương thức thanh toán', 'Số lượng hóa đơn', 'Tỷ lệ đóng góp (%)', 'Doanh thu (đ)'],
+      );
+      for (const row of data.paymentMethods) {
+        rows.push([row.label, row.invoiceCount, `${row.percentage}%`, row.amount]);
+      }
+      rows.push(['TỔNG CỘNG', data.summary.completedInvoiceCount, '100%', data.summary.netRevenue]);
+    } else if (data.reportType === 'SERVICE_MODE') {
+      rows.push(
+        ['BẢNG CHI TIẾT THEO HÌNH THỨC PHỤC VỤ'],
+        ['Hình thức phục vụ', 'Số lượng hóa đơn', 'Tỷ lệ đóng góp (%)', 'Doanh thu (đ)'],
+      );
+      for (const row of data.orderTypes) {
+        rows.push([row.label, row.invoiceCount, `${row.percentage}%`, row.amount]);
+      }
+      rows.push(['TỔNG CỘNG', data.summary.completedInvoiceCount, '100%', data.summary.netRevenue]);
+    } else if (data.reportType === 'STAFF_REVENUE') {
+      rows.push(
+        ['BẢNG CHI TIẾT DOANH THU THEO NHÂN VIÊN'],
+        ['Nhân viên', 'Vai trò', 'Số lượng hóa đơn', 'Tỷ lệ đóng góp (%)', 'Doanh thu (đ)'],
+      );
+      for (const row of data.staffRevenue) {
+        rows.push([
+          row.label,
+          row.roleName ?? 'Nhân viên',
+          row.invoiceCount,
+          `${row.percentage}%`,
+          row.amount,
+        ]);
+      }
+      rows.push([
+        'TỔNG CỘNG',
+        '',
+        data.summary.completedInvoiceCount,
+        '100%',
+        data.summary.netRevenue,
+      ]);
+    } else if (data.reportType === 'CANCELLATIONS') {
+      rows.push(
+        ['BẢNG CHI TIẾT CÁC ĐƠN ĐÃ HỦY'],
+        ['Mã đơn', 'Thời gian hủy', 'Loại hình', 'Người hủy', 'Lý do hủy', 'Số tiền hủy (đ)'],
+      );
+      for (const row of data.cancellations) {
+        rows.push([
+          row.id ? `D-${row.id.slice(0, 8)}` : '',
+          timestamp(row.cancelledAt, data.timezone),
+          row.orderType === 'DINE_IN' ? 'Tại chỗ' : 'Mang về',
+          row.cancelledByName,
+          row.reason,
+          row.amount,
+        ]);
+      }
+      rows.push([
+        'TỔNG CỘNG',
+        '',
+        '',
+        '',
+        `${data.cancellations.length} đơn`,
+        data.summary.cancelledAmount,
+      ]);
+    }
+
+    const worksheet = XLSX.utils.aoa_to_sheet(rows);
+
+    const maxCols = Math.max(...rows.map((r) => r.length), 1);
+    const colWidths = Array.from({ length: maxCols }, (_, colIdx) => {
+      let maxLen = 14;
+      for (const row of rows) {
+        const val = row[colIdx];
+        if (val !== undefined && val !== null) {
+          const str = typeof val === 'number' ? val.toLocaleString('vi-VN') : String(val);
+          if (str.length > maxLen) maxLen = Math.min(str.length + 3, 40);
+        }
+      }
+      return { wch: maxLen };
+    });
+    worksheet['!cols'] = colWidths;
+
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Báo cáo doanh thu');
     XLSX.writeFile(workbook, `BaoCaoDoanhThu_${dayjs().format('YYYYMMDD_HHmm')}.xlsx`);
+    messageApi.success('Đã xuất báo cáo Excel.');
   };
   const print = async () => {
     if (!data || !hasData || !appliedParams) return messageApi.warning('Chưa có dữ liệu để in.');

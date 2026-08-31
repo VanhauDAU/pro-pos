@@ -475,6 +475,9 @@ export function OwnerInvoicesPage({
     }));
     const XLSX = await import('xlsx');
     const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = Object.keys(rows[0] ?? {}).map((key) => ({
+      wch: Math.max(16, key.length + 4),
+    }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Hóa đơn');
     const dateStr = new Date().toLocaleDateString('vi-VN').replaceAll('/', '-');

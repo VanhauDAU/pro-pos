@@ -498,59 +498,163 @@ export function OwnerProductReportPage({
       message.warning('Chưa có dữ liệu để xuất báo cáo.');
       return;
     }
-    let rows: Array<Record<string, string | number>> = [];
+    const workbook = XLSX.utils.book_new();
+
+    const reportTypeName =
+      appliedReportType === 'TOP_SELLING'
+        ? 'MẶT HÀNG BÁN CHẠY'
+        : appliedReportType === 'CANCELLED_ITEMS'
+          ? 'MẶT HÀNG ĐÃ HỦY'
+          : 'DOANH THU THEO DANH MỤC';
+
+    const rows: (string | number)[][] = [
+      ['BÁO CÁO MẶT HÀNG - ' + reportTypeName],
+      ['Thời gian áp dụng:', `${formatDateTime(data.fromMs)} – ${formatDateTime(data.toMs)}`],
+      ['Thời điểm xuất file:', formatDateTime(Date.now())],
+      [],
+      ['TỔNG HỢP CHỈ TIÊU KINH DOANH'],
+      ['Chỉ tiêu', 'Giá trị'],
+      ['Tổng số lượng mặt hàng', data.summary.totalQuantity],
+      ['Tổng tiền hàng (đ)', data.summary.grossAmount],
+      ['Tổng giảm giá (đ)', data.summary.discountAmount],
+      ['Doanh thu thuần (đ)', data.summary.netAmount],
+      [],
+    ];
+
     if (appliedReportType === 'CATEGORY') {
-      rows = data.categoryRows.flatMap((category) => [
-        {
-          'Danh mục / Mặt hàng': `[${category.categoryName}]`,
-          'Mã mặt hàng': '',
-          'Đơn vị': '',
-          'Số lượng': category.quantity,
-          'Tiền hàng': category.grossAmount,
-          'Giảm giá': category.discountAmount,
-          'Doanh thu thuần': category.netAmount,
-        },
-        ...category.products.map((product) => ({
-          'Danh mục / Mặt hàng': product.productName,
-          'Mã mặt hàng': product.productCode,
-          'Đơn vị': product.unitName,
-          'Số lượng': product.quantity,
-          'Tiền hàng': product.grossAmount,
-          'Giảm giá': product.discountAmount,
-          'Doanh thu thuần': product.netAmount,
-        })),
+      rows.push(
+        ['BẢNG CHI TIẾT DOANH THU THEO DANH MỤC VÀ MẶT HÀNG'],
+        [
+          'Danh mục / Tên mặt hàng',
+          'Mã mặt hàng',
+          'Đơn vị tính',
+          'Số lượng',
+          'Tiền hàng (đ)',
+          'Giảm giá (đ)',
+          'Doanh thu thuần (đ)',
+        ],
+      );
+      for (const category of data.categoryRows) {
+        rows.push([
+          `[${category.categoryName}]`,
+          '',
+          category.unitName ?? '',
+          category.quantity,
+          category.grossAmount,
+          category.discountAmount,
+          category.netAmount,
+        ]);
+        for (const product of category.products) {
+          rows.push([
+            '  ' + product.productName,
+            product.productCode,
+            product.unitName,
+            product.quantity,
+            product.grossAmount,
+            product.discountAmount,
+            product.netAmount,
+          ]);
+        }
+      }
+      rows.push([
+        'TỔNG CỘNG',
+        '',
+        '',
+        data.summary.totalQuantity,
+        data.summary.grossAmount,
+        data.summary.discountAmount,
+        data.summary.netAmount,
       ]);
     } else if (appliedReportType === 'TOP_SELLING') {
-      rows = data.topSellingRows.map((row) => ({
-        Hạng: row.rank,
-        'Mã mặt hàng': row.productCode,
-        'Tên mặt hàng': row.productName,
-        'Danh mục': row.categoryName,
-        'Đơn vị': row.unitName,
-        'Số lượng': row.quantity,
-        'Tiền hàng': row.grossAmount,
-        'Giảm giá': row.discountAmount,
-        'Doanh thu thuần': row.netAmount,
-        'Giá bán trung bình': row.averagePrice,
-      }));
+      rows.push(
+        ['BẢNG TOP MẶT HÀNG BÁN CHẠY'],
+        [
+          'Hạng',
+          'Tên mặt hàng',
+          'Mã mặt hàng',
+          'Danh mục',
+          'Đơn vị tính',
+          'Số lượng',
+          'Tiền hàng (đ)',
+          'Giảm giá (đ)',
+          'Doanh thu thuần (đ)',
+          'Giá bán TB (đ)',
+        ],
+      );
+      for (const row of data.topSellingRows) {
+        rows.push([
+          row.rank,
+          row.productName,
+          row.productCode,
+          row.categoryName,
+          row.unitName,
+          row.quantity,
+          row.grossAmount,
+          row.discountAmount,
+          row.netAmount,
+          row.averagePrice,
+        ]);
+      }
+      rows.push([
+        'TỔNG CỘNG',
+        '',
+        '',
+        '',
+        '',
+        data.summary.totalQuantity,
+        data.summary.grossAmount,
+        data.summary.discountAmount,
+        data.summary.netAmount,
+        '',
+      ]);
     } else {
-      rows = data.cancelledRows.map((row) => ({
-        'Tên mặt hàng': row.productName,
-        'Danh mục': row.categoryName,
-        'Đơn vị': row.unitName,
-        'Số lượng hủy': row.quantity,
-        'Giá trị hủy': row.totalAmount,
-        'Lý do': row.cancelReason,
-        'Thời gian': formatDateTime(row.cancelledAt),
-        'Người hủy': row.cancelledByName,
-      }));
+      rows.push(
+        ['BẢNG CHI TIẾT CÁC MẶT HÀNG ĐÃ HỦY'],
+        [
+          'Tên mặt hàng',
+          'Danh mục',
+          'Đơn vị tính',
+          'Số lượng hủy',
+          'Giá trị hủy (đ)',
+          'Lý do hủy',
+          'Thời gian hủy',
+          'Người hủy',
+        ],
+      );
+      for (const row of data.cancelledRows) {
+        rows.push([
+          row.productName,
+          row.categoryName,
+          row.unitName,
+          row.quantity,
+          row.totalAmount,
+          row.cancelReason,
+          formatDateTime(row.cancelledAt),
+          row.cancelledByName,
+        ]);
+      }
+      const totalCancelledQty = data.cancelledRows.reduce((sum, r) => sum + r.quantity, 0);
+      const totalCancelledAmount = data.cancelledRows.reduce((sum, r) => sum + r.totalAmount, 0);
+      rows.push(['TỔNG CỘNG', '', '', totalCancelledQty, totalCancelledAmount, '', '', '']);
     }
-    const workbook = XLSX.utils.book_new();
-    const worksheet = XLSX.utils.json_to_sheet(rows);
-    worksheet['!cols'] = Object.keys(rows[0] ?? {}).map((key) => ({
-      wch: Math.max(14, key.length + 4),
-    }));
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'BaoCaoMatHang');
+
+    const worksheet = XLSX.utils.aoa_to_sheet(rows);
+
+    const maxCols = Math.max(...rows.map((r) => r.length), 1);
+    const colWidths = Array.from({ length: maxCols }, (_, colIdx) => {
+      let maxLen = 14;
+      for (const row of rows) {
+        const val = row[colIdx];
+        if (val !== undefined && val !== null) {
+          const str = typeof val === 'number' ? val.toLocaleString('vi-VN') : String(val);
+          if (str.length > maxLen) maxLen = Math.min(str.length + 3, 40);
+        }
+      }
+      return { wch: maxLen };
+    });
+    worksheet['!cols'] = colWidths;
+
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Báo cáo mặt hàng');
     XLSX.writeFile(workbook, `BaoCaoMatHang_${dayjs().format('YYYYMMDD_HHmm')}.xlsx`);
     message.success('Đã xuất báo cáo Excel.');
   };

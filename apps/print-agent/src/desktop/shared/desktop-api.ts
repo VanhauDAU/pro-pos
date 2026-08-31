@@ -1,4 +1,11 @@
 import type { AgentRuntimeState, PrinterTestResult } from '../../core/agent-runtime';
+import type {
+  DesktopUpdateErrorCode,
+  DesktopUpdateState,
+  DesktopUpdateStatus,
+} from '../main/update-state';
+
+export type { DesktopUpdateErrorCode, DesktopUpdateState, DesktopUpdateStatus };
 
 export interface DesktopAgentConfig {
   serverUrl: string;
@@ -65,8 +72,13 @@ export interface ProPosPrintAgentApi {
   resetPairing(): Promise<void>;
   resetAll(): Promise<void>;
   showWindow(): Promise<void>;
+  getUpdateState(): Promise<DesktopUpdateState>;
+  checkForUpdates(): Promise<DesktopUpdateState>;
+  downloadUpdate(): Promise<DesktopUpdateState>;
+  installUpdate(): Promise<void>;
   onStateChanged(listener: (state: AgentRuntimeState) => void): () => void;
   onJobChanged(listener: (job: DesktopPrintJobState) => void): () => void;
+  onUpdateStateChanged(listener: (state: DesktopUpdateState) => void): () => void;
 }
 
 declare global {

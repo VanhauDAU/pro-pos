@@ -127,6 +127,14 @@ export class AgentRuntime extends EventEmitter {
     this.connectRealtime();
   }
 
+  getPendingPrintJobCount(): number {
+    return this.realtime?.getPendingJobCount?.() ?? 0;
+  }
+
+  isPrintIdle(): boolean {
+    return this.realtime?.isIdle?.() ?? true;
+  }
+
   async stop(): Promise<void> {
     this.pairingAbortController?.abort();
     this.pairingAbortController = null;
@@ -135,6 +143,34 @@ export class AgentRuntime extends EventEmitter {
     this.printCache?.clear();
     this.updatePairing({ code: null, expiresAt: null });
     this.setStatus('STOPPED');
+  }
+
+  async stopGracefully(options: { timeoutMs?: number } = {}): Promise<'SUCCESS' | 'DRAIN_TIMEOUT'> {
+    this.pairingAbortController?.abort();
+    this.pairingAbortController = null;
+    this.updatePairing({ code: null, expiresAt: null });
+
+    if (!this.realtime) {
+      this.printCache?.clear();
+      this.setStatus('STOPPED');
+      return 'SUCCESS';
+    }
+
+    if (typeof this.realtime.quiesceAndDrain === 'function') {
+      const result = await this.realtime.quiesceAndDrain(options.timeoutMs ?? 30_000);
+      if (result === 'DRAIN_TIMEOUT') {
+        // Rollback: abort install and safely resume the realtime client
+        this.realtime.resumeAfterDrainAbort?.();
+        return 'DRAIN_TIMEOUT';
+      }
+    } else {
+      this.realtime.destroy();
+    }
+
+    this.realtime = null;
+    this.printCache?.clear();
+    this.setStatus('STOPPED');
+    return 'SUCCESS';
   }
 
   async startPairing(): Promise<void> {

@@ -6,6 +6,7 @@ import type {
   DesktopPrinterItem,
   DesktopPrintJobState,
   DesktopSettingsInput,
+  DesktopUpdateState,
 } from '../shared/desktop-api';
 import '../shared/desktop-api';
 import {
@@ -15,6 +16,7 @@ import {
   presentOverallStatus,
   presentPrinterErrorDetails,
   presentPrinterStatus,
+  presentUpdateStatus,
   type StatusTone,
 } from './presentation';
 import './styles.css';
@@ -28,7 +30,17 @@ const initialState: AgentRuntimeState = {
   updatedAt: 0,
 };
 
-type Action = 'pair' | 'cancel-pair' | 'test' | 'autostart' | 'save' | 'logs' | 'reset' | null;
+type Action =
+  | 'pair'
+  | 'cancel-pair'
+  | 'test'
+  | 'autostart'
+  | 'save'
+  | 'logs'
+  | 'reset'
+  | 'check-update'
+  | 'install-update'
+  | null;
 type ConfirmAction = 'repair' | 'reset' | null;
 
 interface ToastState {
@@ -780,22 +792,29 @@ function Dashboard({
 /** Settings Dialog: Maximum 3 Clear Groups */
 function SettingsDialog({
   info,
+  updateState,
   action,
   onClose,
   onSave,
   onAutostart,
   onLogs,
   onConfirm,
+  onCheckForUpdates,
+  onInstallUpdate,
 }: {
   info: DesktopAgentInfo;
+  updateState: DesktopUpdateState | null;
   action: Action;
   onClose: () => void;
   onSave: (settings: DesktopSettingsInput) => void;
   onAutostart: (enabled: boolean) => void;
   onLogs: () => void;
   onConfirm: (action: Exclude<ConfirmAction, null>) => void;
+  onCheckForUpdates: () => void;
+  onInstallUpdate: () => void;
 }) {
   const isMac = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
+  const updateInfo = presentUpdateStatus(updateState);
   const [form, setForm] = useState<DesktopSettingsInput>({
     serverUrl: info.config.serverUrl,
     connectionType: info.config.connectionType || (isMac ? 'NETWORK_TCP' : 'WINDOWS_PRINTER'),
@@ -995,9 +1014,79 @@ function SettingsDialog({
               </label>
             </div>
 
-            {/* Nhóm 3: Ứng dụng & Thiết lập lại */}
+            {/* Nhóm 3: Ứng dụng & Cập nhật */}
             <div className="settings-group">
-              <div className="settings-group-title">3. Ứng dụng</div>
+              <div className="settings-group-title">3. Ứng dụng & Cập nhật</div>
+
+              {/* Phiên bản & Cập nhật */}
+              <div className="update-card" style={{ marginBottom: 14 }}>
+                <div className="update-card-header">
+                  <div>
+                    <span style={{ fontWeight: 600, fontSize: 13 }}>v{info.version}</span>
+                    {updateInfo.label && (
+                      <span
+                        className={`update-badge update-badge--${updateInfo.tone}`}
+                        style={{ marginLeft: 8 }}
+                      >
+                        <StatusDot tone={updateInfo.tone} />
+                        {updateInfo.label}
+                      </span>
+                    )}
+                  </div>
+
+                  {updateState?.status === 'DOWNLOADED' ? (
+                    <Button
+                      type="button"
+                      kind="primary"
+                      loading={action === 'install-update'}
+                      onClick={onInstallUpdate}
+                      style={{ fontSize: 12, padding: '4px 10px' }}
+                    >
+                      Cập nhật & khởi động lại
+                    </Button>
+                  ) : updateState?.status === 'ERROR' ? (
+                    <Button
+                      type="button"
+                      kind="secondary"
+                      loading={action === 'check-update'}
+                      onClick={onCheckForUpdates}
+                      style={{ fontSize: 12, padding: '4px 10px' }}
+                    >
+                      Thử lại
+                    </Button>
+                  ) : updateState?.status === 'DISABLED' ? null : (
+                    <Button
+                      type="button"
+                      kind="secondary"
+                      loading={
+                        action === 'check-update' ||
+                        updateState?.status === 'CHECKING' ||
+                        updateState?.status === 'AVAILABLE' ||
+                        updateState?.status === 'DOWNLOADING'
+                      }
+                      onClick={onCheckForUpdates}
+                      style={{ fontSize: 12, padding: '4px 10px' }}
+                    >
+                      {updateState?.status === 'DOWNLOADING'
+                        ? `Đang tải ${updateState.progressPercent ?? 0}%`
+                        : 'Kiểm tra cập nhật'}
+                    </Button>
+                  )}
+                </div>
+
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                  {updateInfo.description}
+                </div>
+
+                {updateState?.status === 'DOWNLOADING' && (
+                  <div className="update-progress-bar">
+                    <div
+                      className="update-progress-fill"
+                      style={{ width: `${updateState.progressPercent ?? 0}%` }}
+                    />
+                  </div>
+                )}
+              </div>
 
               <div
                 style={{
@@ -1112,6 +1201,7 @@ function ConfirmDialog({
 function App() {
   const [state, setState] = useState<AgentRuntimeState>(initialState);
   const [info, setInfo] = useState<DesktopAgentInfo | null>(null);
+  const [updateState, setUpdateState] = useState<DesktopUpdateState | null>(null);
   const [lastJob, setLastJob] = useState<DesktopPrintJobState | null>(null);
   const [action, setAction] = useState<Action>(null);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
@@ -1136,6 +1226,7 @@ function App() {
     api.getState().then((s) => !unmounted && setState(s));
     refreshInfo();
     api.getLastJob().then((j) => !unmounted && setLastJob(j));
+    api.getUpdateState().then((u) => !unmounted && setUpdateState(u));
 
     const unsubscribeState = api.onStateChanged((s) => {
       if (unmounted) return;
@@ -1143,11 +1234,16 @@ function App() {
       refreshInfo();
     });
     const unsubscribeJob = api.onJobChanged((j) => !unmounted && setLastJob(j));
+    const unsubscribeUpdate = api.onUpdateStateChanged((u) => {
+      if (unmounted) return;
+      setUpdateState(u);
+    });
 
     return () => {
       unmounted = true;
       unsubscribeState();
       unsubscribeJob();
+      unsubscribeUpdate();
     };
   }, []);
 
@@ -1318,6 +1414,32 @@ function App() {
     );
   }
 
+  const handleCheckForUpdates = async () => {
+    const api = window.proposPrintAgent;
+    if (!api) return;
+    setAction('check-update');
+    try {
+      const res = await api.checkForUpdates();
+      setUpdateState(res);
+    } catch (err: unknown) {
+      showToast('danger', err instanceof Error ? err.message : 'Không thể kiểm tra cập nhật.');
+    } finally {
+      setAction(null);
+    }
+  };
+
+  const handleInstallUpdate = async () => {
+    const api = window.proposPrintAgent;
+    if (!api) return;
+    setAction('install-update');
+    try {
+      await api.installUpdate();
+    } catch (err: unknown) {
+      showToast('danger', err instanceof Error ? err.message : 'Không thể cài đặt bản cập nhật.');
+      setAction(null);
+    }
+  };
+
   // Paired: Clean Daily Dashboard
   return (
     <>
@@ -1335,12 +1457,15 @@ function App() {
       {settingsOpen && (
         <SettingsDialog
           info={info}
+          updateState={updateState}
           action={action}
           onClose={() => setSettingsOpen(false)}
           onSave={handleSaveSettings}
           onAutostart={handleAutostart}
           onLogs={handleOpenLogs}
           onConfirm={(act) => setConfirmAction(act)}
+          onCheckForUpdates={handleCheckForUpdates}
+          onInstallUpdate={handleInstallUpdate}
         />
       )}
 

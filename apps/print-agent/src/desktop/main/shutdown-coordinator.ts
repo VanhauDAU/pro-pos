@@ -1,0 +1,107 @@
+export type ShutdownReason = 'NORMAL' | 'UPDATE' | 'RESET' | 'SETTINGS_RESTART' | 'SYSTEM';
+
+export type ShutdownState = 'RUNNING' | 'QUIESCING' | 'DRAINING' | 'READY_TO_QUIT' | 'QUITTING';
+
+export interface ShutdownRuntimeTarget {
+  stop(): Promise<void>;
+  stopGracefully(options?: { timeoutMs?: number }): Promise<'SUCCESS' | 'DRAIN_TIMEOUT'>;
+  getPendingPrintJobCount(): number;
+  isPrintIdle(): boolean;
+}
+
+export class ShutdownCoordinator {
+  private state: ShutdownState = 'RUNNING';
+  private permittedToQuit = false;
+  private activeQuitPromise: Promise<boolean> | null = null;
+
+  constructor(
+    private readonly runtime: ShutdownRuntimeTarget,
+    private readonly quitApp: () => void = () => {},
+  ) {}
+
+  getState(): ShutdownState {
+    return this.state;
+  }
+
+  isPermittedToQuit(): boolean {
+    return this.permittedToQuit;
+  }
+
+  async requestQuit(
+    reason: ShutdownReason,
+    onReadyToQuit?: () => Promise<void> | void,
+    timeoutMs = 30_000,
+  ): Promise<boolean> {
+    if (this.state === 'QUITTING') {
+      return true;
+    }
+
+    if (this.activeQuitPromise) {
+      return this.activeQuitPromise;
+    }
+
+    this.activeQuitPromise = this.performQuit(reason, onReadyToQuit, timeoutMs).finally(() => {
+      this.activeQuitPromise = null;
+    });
+
+    return this.activeQuitPromise;
+  }
+
+  private async performQuit(
+    reason: ShutdownReason,
+    onReadyToQuit?: () => Promise<void> | void,
+    timeoutMs = 30_000,
+  ): Promise<boolean> {
+    if (reason === 'UPDATE') {
+      this.state = 'DRAINING';
+      const drainResult = await this.runtime.stopGracefully({ timeoutMs });
+
+      if (drainResult === 'DRAIN_TIMEOUT') {
+        this.state = 'RUNNING';
+        this.permittedToQuit = false;
+        return false;
+      }
+
+      this.state = 'READY_TO_QUIT';
+      this.permittedToQuit = true;
+
+      if (onReadyToQuit) {
+        await onReadyToQuit();
+      } else {
+        this.state = 'QUITTING';
+        this.quitApp();
+      }
+      return true;
+    }
+
+    // For other shutdown reasons (NORMAL, SYSTEM, SETTINGS_RESTART, RESET)
+    this.state = 'DRAINING';
+    try {
+      if (reason === 'NORMAL' || reason === 'SYSTEM') {
+        // Try short graceful drain for normal quit
+        const drainResult = await this.runtime.stopGracefully({
+          timeoutMs: Math.min(timeoutMs, 5_000),
+        });
+        if (drainResult === 'DRAIN_TIMEOUT') {
+          await this.runtime.stop();
+        }
+      } else {
+        await this.runtime.stop();
+      }
+    } catch {
+      await this.runtime.stop().catch(() => {});
+    }
+
+    this.state = 'READY_TO_QUIT';
+    this.permittedToQuit = true;
+
+    if (onReadyToQuit) {
+      await onReadyToQuit();
+    } else {
+      this.state = 'QUITTING';
+      this.quitApp();
+    }
+
+    return true;
+  }
+}

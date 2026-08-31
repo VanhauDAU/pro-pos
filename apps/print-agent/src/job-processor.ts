@@ -10,11 +10,13 @@ import {
 import { buildEscPosTextReceipt } from '@printing/escpos/escpos-text-builder';
 import { createReceiptDocument } from '@domain/receipt/receipt-document';
 import type { PrintJob, PrintJobClaimResponse } from '@contracts/print-job';
+import type { RevenueReportPrintSnapshotDto } from '@contracts/revenue-report';
 import { parsePrinterDeviceConfig, type StorePrintSettings } from '@contracts/store';
 import { getReceiptPrintProfile } from '@contracts/store';
 import { PrinterError, type PrinterFailureStage } from '@printing/printer-errors';
 import type { PrintBootstrap, PrintStoreContext } from '@contracts/print-bootstrap';
 import { AgentPrintCache } from './core/print-cache';
+import { buildEscPosRevenueReport } from '@printing/escpos/revenue-report-builder';
 import type { PrintBootstrapCacheStatus } from './core/print-cache';
 
 type PrintDocumentApi = Pick<AgentApiClient, 'get'>;
@@ -314,9 +316,20 @@ export class JobProcessor {
           { cause: error },
         );
       });
-      const printDataPromise = loadPrintDataForJob(this.apiClient, job);
+      const printDataPromise =
+        job.documentType === 'revenue_report'
+          ? this.apiClient.get<RevenueReportPrintSnapshotDto>(
+              `/api/v1/owner/analytics/reports/revenue/print/${job.documentId}`,
+            )
+          : loadPrintDataForJob(this.apiClient, job);
       const mediaPromise = bootstrapPromise.then((resolution) =>
-        this.preloadConfiguredMedia(resolution.bootstrap),
+        job.documentType === 'revenue_report'
+          ? {
+              paperSize: 'K80' as const,
+              logoRasterBytes: null,
+              bottomRasterBytes: null,
+            }
+          : this.preloadConfiguredMedia(resolution.bootstrap),
       );
       const [bootstrapResolution, printData, preloadedMedia] = await Promise.all([
         bootstrapPromise,
@@ -358,97 +371,110 @@ export class JobProcessor {
         printSettings.paperSize || printerConfig.paperSize || this.config.paperSize || 'K80';
       const autoCut = printerConfig.autoCut ?? this.config.autoCut ?? true;
       const openCashDrawer = printerConfig.openCashDrawer ?? this.config.openCashDrawer ?? false;
-      const copyCount = Math.max(
-        1,
-        printData.receiptType === 'PROVISIONAL'
-          ? (printSettings.provisionalCopyCount ?? 1)
-          : (printSettings.paymentCopyCount ?? 1),
-      );
-      const receiptDocument = createReceiptDocument({
-        data: printData,
-        printSettings,
-        storeInfo: {
-          storeName: storeInfo.name,
-          address: storeInfo.address,
-          phone: storeInfo.phone,
-          bankName: storeInfo.bankName,
-          bankAccountNumber: storeInfo.bankAccountNumber,
-          bankAccountName: storeInfo.bankAccountName,
-        },
-      });
-      const maximumDots = receiptDocument.profile.defaultPrintableDots;
-      const horizontalLogo = Boolean(
-        printSettings.logoHorizontalLayout && receiptDocument.media.logoUrl,
-      );
-      const [logoRasterBytes, bottomRasterBytes] = await Promise.all([
-        receiptDocument.media.logoUrl
-          ? (preloadedMedia.logoRasterBytes ??
-            this.loadOptionalRaster(
-              printSettings.logoMediaId,
-              Math.round(
-                maximumDots * (horizontalLogo ? (receiptDocument.isK58 ? 0.24 : 0.22) : 0.6),
-              ),
-              horizontalLogo ? (receiptDocument.isK58 ? 72 : 96) : 180,
-              'logo',
-              paperSize,
-              configVersion,
-            ))
-          : null,
-        printSettings.bottomImageType === 'UPLOAD' && receiptDocument.media.bottomImageUrl
-          ? (preloadedMedia.bottomRasterBytes ??
-            this.loadOptionalRaster(
-              printSettings.bottomImageMediaId,
-              maximumDots,
-              500,
-              'bottom image',
-              paperSize,
-              configVersion,
-            ))
-          : receiptDocument.media.vietQrPayload
-            ? null
-            : this.loadOptionalVietQrRaster(
-                receiptDocument.media.bottomImageUrl,
-                maximumDots,
-                paperSize,
-                configVersion,
-              ),
-      ]);
-
       let escposBytes: Uint8Array;
+      let renderedCopyCount = 1;
       try {
-        const copies: Uint8Array[] = [];
-        for (let copyIndex = 1; copyIndex <= copyCount; copyIndex += 1) {
-          copies.push(
-            buildEscPosTextReceipt(printData, {
-              paperSize,
-              autoCut,
-              openCashDrawer:
-                openCashDrawer && printData.receiptType === 'PAYMENT' && copyIndex === 1,
-              storeName: storeInfo.name,
-              storeAddress: storeInfo.address,
-              storePhone: storeInfo.phone,
-              printSettings,
-              storeInfo: {
-                storeName: storeInfo.name,
-                address: storeInfo.address,
-                phone: storeInfo.phone,
-                bankName: storeInfo.bankName,
-                bankAccountNumber: storeInfo.bankAccountNumber,
-                bankAccountName: storeInfo.bankAccountName,
-              },
-              copy: { index: copyIndex, total: copyCount },
-              vietnameseMode: resolveAgentVietnameseMode(printerConfig.vietnameseMode),
-              logoRasterBytes,
-              bottomRasterBytes,
-            }),
+        if (job.documentType === 'revenue_report') {
+          escposBytes = buildEscPosRevenueReport(printData as RevenueReportPrintSnapshotDto, {
+            paperSize,
+            autoCut,
+            storeName: storeInfo.name,
+            vietnameseMode: resolveAgentVietnameseMode(printerConfig.vietnameseMode),
+            ...(storeInfo.address ? { storeAddress: storeInfo.address } : {}),
+            ...(storeInfo.phone ? { storePhone: storeInfo.phone } : {}),
+          });
+        } else {
+          const receiptData = printData as PosReceiptPrintData;
+          const copyCount = Math.max(
+            1,
+            receiptData.receiptType === 'PROVISIONAL'
+              ? (printSettings.provisionalCopyCount ?? 1)
+              : (printSettings.paymentCopyCount ?? 1),
           );
-        }
-        const totalLength = copies.reduce((sum, bytes) => sum + bytes.length, 0);
-        escposBytes = new Uint8Array(totalLength);
-        let offset = 0;
-        for (const bytes of copies) {
-          escposBytes.set(bytes, offset);
-          offset += bytes.length;
+          renderedCopyCount = copyCount;
+          const receiptDocument = createReceiptDocument({
+            data: receiptData,
+            printSettings,
+            storeInfo: {
+              storeName: storeInfo.name,
+              address: storeInfo.address,
+              phone: storeInfo.phone,
+              bankName: storeInfo.bankName,
+              bankAccountNumber: storeInfo.bankAccountNumber,
+              bankAccountName: storeInfo.bankAccountName,
+            },
+          });
+          const maximumDots = receiptDocument.profile.defaultPrintableDots;
+          const horizontalLogo = Boolean(
+            printSettings.logoHorizontalLayout && receiptDocument.media.logoUrl,
+          );
+          const [logoRasterBytes, bottomRasterBytes] = await Promise.all([
+            receiptDocument.media.logoUrl
+              ? (preloadedMedia.logoRasterBytes ??
+                this.loadOptionalRaster(
+                  printSettings.logoMediaId,
+                  Math.round(
+                    maximumDots * (horizontalLogo ? (receiptDocument.isK58 ? 0.24 : 0.22) : 0.6),
+                  ),
+                  horizontalLogo ? (receiptDocument.isK58 ? 72 : 96) : 180,
+                  'logo',
+                  paperSize,
+                  configVersion,
+                ))
+              : null,
+            printSettings.bottomImageType === 'UPLOAD' && receiptDocument.media.bottomImageUrl
+              ? (preloadedMedia.bottomRasterBytes ??
+                this.loadOptionalRaster(
+                  printSettings.bottomImageMediaId,
+                  maximumDots,
+                  500,
+                  'bottom image',
+                  paperSize,
+                  configVersion,
+                ))
+              : receiptDocument.media.vietQrPayload
+                ? null
+                : this.loadOptionalVietQrRaster(
+                    receiptDocument.media.bottomImageUrl,
+                    maximumDots,
+                    paperSize,
+                    configVersion,
+                  ),
+          ]);
+          const copies: Uint8Array[] = [];
+          for (let copyIndex = 1; copyIndex <= copyCount; copyIndex += 1) {
+            copies.push(
+              buildEscPosTextReceipt(receiptData, {
+                paperSize,
+                autoCut,
+                openCashDrawer:
+                  openCashDrawer && receiptData.receiptType === 'PAYMENT' && copyIndex === 1,
+                storeName: storeInfo.name,
+                storeAddress: storeInfo.address,
+                storePhone: storeInfo.phone,
+                printSettings,
+                storeInfo: {
+                  storeName: storeInfo.name,
+                  address: storeInfo.address,
+                  phone: storeInfo.phone,
+                  bankName: storeInfo.bankName,
+                  bankAccountNumber: storeInfo.bankAccountNumber,
+                  bankAccountName: storeInfo.bankAccountName,
+                },
+                copy: { index: copyIndex, total: copyCount },
+                vietnameseMode: resolveAgentVietnameseMode(printerConfig.vietnameseMode),
+                logoRasterBytes,
+                bottomRasterBytes,
+              }),
+            );
+          }
+          const totalLength = copies.reduce((sum, bytes) => sum + bytes.length, 0);
+          escposBytes = new Uint8Array(totalLength);
+          let offset = 0;
+          for (const bytes of copies) {
+            escposBytes.set(bytes, offset);
+            offset += bytes.length;
+          }
         }
         stages.renderDone = this.monotonicNow();
       } catch (error) {
@@ -461,8 +487,8 @@ export class JobProcessor {
 
       console.log(
         connectionType === 'WINDOWS_PRINTER'
-          ? `[PrintAgent] Đang gửi ${copyCount} liên tới máy in Windows "${printerName}"...`
-          : `[PrintAgent] Đang gửi ${copyCount} liên tới máy in LAN ${printerIp}:${printerPort}...`,
+          ? `[PrintAgent] Đang gửi ${renderedCopyCount} liên tới máy in Windows "${printerName}"...`
+          : `[PrintAgent] Đang gửi ${renderedCopyCount} liên tới máy in LAN ${printerIp}:${printerPort}...`,
       );
       try {
         await this.apiClient.post(
@@ -531,7 +557,11 @@ export class JobProcessor {
       }
       stages.completeAck = this.monotonicNow();
       console.log(
-        `\x1b[32m✔ [PrintAgent] In thành công job ${job.id} (${printData.orderCode || job.documentId})\x1b[0m`,
+        `\x1b[32m✔ [PrintAgent] In thành công job ${job.id} (${
+          job.documentType === 'revenue_report'
+            ? job.documentId
+            : (printData as PosReceiptPrintData).orderCode || job.documentId
+        })\x1b[0m`,
       );
       success = true;
       return true;

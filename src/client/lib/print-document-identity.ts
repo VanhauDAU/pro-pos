@@ -1,7 +1,5 @@
-import type { PrintJobDocumentType } from '@contracts/print-job';
-
 export interface PrintDocumentIdentity {
-  type: PrintJobDocumentType;
+  type: 'invoice' | 'provisional' | 'debt_payment';
   id: string;
 }
 

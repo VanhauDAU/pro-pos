@@ -447,19 +447,21 @@ export function OwnerProductReportPage({
     compareWith,
     customDates,
   ]);
+  const [appliedQueryParams, setAppliedQueryParams] = useState<string | null>(null);
 
   const canLoad = timeRange !== 'custom' || customDates !== null;
   const reportQuery = useQuery({
-    queryKey: ['owner-product-report', queryParams],
+    queryKey: ['owner-product-report', appliedQueryParams],
     queryFn: () =>
-      apiRequest<ProductReportResponseDto>(`${apiPrefix}/reports/products?${queryParams}`),
-    enabled: canLoad,
+      apiRequest<ProductReportResponseDto>(`${apiPrefix}/reports/products?${appliedQueryParams!}`),
+    enabled: appliedQueryParams !== null,
   });
   const data = reportQuery.data;
+  const appliedReportType = (data?.reportType ?? reportType) as SupportedReportType;
   const hasRows =
-    reportType === 'CATEGORY'
+    appliedReportType === 'CATEGORY'
       ? Boolean(data?.categoryRows.length)
-      : reportType === 'TOP_SELLING'
+      : appliedReportType === 'TOP_SELLING'
         ? Boolean(data?.topSellingRows.length)
         : Boolean(data?.cancelledRows.length);
 
@@ -483,7 +485,7 @@ export function OwnerProductReportPage({
       return;
     }
     let rows: Array<Record<string, string | number>> = [];
-    if (reportType === 'CATEGORY') {
+    if (appliedReportType === 'CATEGORY') {
       rows = data.categoryRows.flatMap((category) => [
         {
           'Danh mục / Mặt hàng': `[${category.categoryName}]`,
@@ -504,7 +506,7 @@ export function OwnerProductReportPage({
           'Doanh thu thuần': product.netAmount,
         })),
       ]);
-    } else if (reportType === 'TOP_SELLING') {
+    } else if (appliedReportType === 'TOP_SELLING') {
       rows = data.topSellingRows.map((row) => ({
         Hạng: row.rank,
         'Mã mặt hàng': row.productCode,
@@ -633,7 +635,7 @@ export function OwnerProductReportPage({
           icon={<ReloadOutlined />}
           loading={reportQuery.isFetching}
           disabled={!canLoad}
-          onClick={() => void reportQuery.refetch()}
+          onClick={() => setAppliedQueryParams(queryParams)}
         >
           Xem báo cáo
         </Button>
@@ -658,7 +660,7 @@ export function OwnerProductReportPage({
           <section className="product-report-context-line">
             <div>
               <h2>
-                {reportTitle(reportType)}
+                {reportTitle(appliedReportType)}
                 <Tooltip title="Số liệu lấy từ các dòng hóa đơn đã hoàn tất; tiền hàng là trước giảm giá.">
                   <InfoCircleOutlined />
                 </Tooltip>
@@ -673,34 +675,40 @@ export function OwnerProductReportPage({
 
           <section className="product-report-summary-grid">
             <SummaryCard
-              label={reportType === 'CANCELLED_ITEMS' ? 'Số lượng đã hủy' : 'Số lượng đã bán'}
+              label={
+                appliedReportType === 'CANCELLED_ITEMS' ? 'Số lượng đã hủy' : 'Số lượng đã bán'
+              }
               value={formatQuantity(data.summary.totalQuantity)}
               growth={data.summary.comparison?.quantityGrowth}
               accent="blue"
             />
             <SummaryCard
-              label={reportType === 'CANCELLED_ITEMS' ? 'Giá trị hủy' : 'Tiền hàng'}
+              label={appliedReportType === 'CANCELLED_ITEMS' ? 'Giá trị hủy' : 'Tiền hàng'}
               value={formatMoney(data.summary.grossAmount)}
               growth={data.summary.comparison?.grossAmountGrowth}
               accent="violet"
             />
             <SummaryCard
-              label={reportType === 'CANCELLED_ITEMS' ? 'Dòng mặt hàng hủy' : 'Tổng giảm giá'}
+              label={
+                appliedReportType === 'CANCELLED_ITEMS' ? 'Dòng mặt hàng hủy' : 'Tổng giảm giá'
+              }
               value={
-                reportType === 'CANCELLED_ITEMS'
+                appliedReportType === 'CANCELLED_ITEMS'
                   ? formatQuantity(data.cancelledRows.length)
                   : formatMoney(data.summary.discountAmount)
               }
               growth={
-                reportType === 'CANCELLED_ITEMS' ? null : data.summary.comparison?.discountGrowth
+                appliedReportType === 'CANCELLED_ITEMS'
+                  ? null
+                  : data.summary.comparison?.discountGrowth
               }
-              helper={reportType === 'CANCELLED_ITEMS' ? 'Trong kỳ đã chọn' : undefined}
+              helper={appliedReportType === 'CANCELLED_ITEMS' ? 'Trong kỳ đã chọn' : undefined}
               accent="orange"
             />
             <SummaryCard
-              label={reportType === 'CANCELLED_ITEMS' ? 'Giá trị hủy TB' : 'Doanh thu thuần'}
+              label={appliedReportType === 'CANCELLED_ITEMS' ? 'Giá trị hủy TB' : 'Doanh thu thuần'}
               value={
-                reportType === 'CANCELLED_ITEMS'
+                appliedReportType === 'CANCELLED_ITEMS'
                   ? formatMoney(
                       data.summary.totalQuantity > 0
                         ? Math.round(data.summary.totalAmount / data.summary.totalQuantity)
@@ -709,9 +717,11 @@ export function OwnerProductReportPage({
                   : formatMoney(data.summary.netAmount)
               }
               growth={
-                reportType === 'CANCELLED_ITEMS' ? null : data.summary.comparison?.netAmountGrowth
+                appliedReportType === 'CANCELLED_ITEMS'
+                  ? null
+                  : data.summary.comparison?.netAmountGrowth
               }
-              helper={reportType === 'CANCELLED_ITEMS' ? 'Trên mỗi đơn vị hủy' : undefined}
+              helper={appliedReportType === 'CANCELLED_ITEMS' ? 'Trên mỗi đơn vị hủy' : undefined}
               accent="green"
             />
           </section>
@@ -748,18 +758,18 @@ export function OwnerProductReportPage({
             <div className="product-report-section-head">
               <div>
                 <span>CHI TIẾT BÁO CÁO</span>
-                <h3>{reportTitle(reportType)}</h3>
+                <h3>{reportTitle(appliedReportType)}</h3>
               </div>
-              {reportType !== 'CANCELLED_ITEMS' && hasRows ? (
+              {appliedReportType !== 'CANCELLED_ITEMS' && hasRows ? (
                 <small>
                   <EyeOutlined /> Chọn mặt hàng để xem từng hóa đơn
                 </small>
               ) : null}
             </div>
             {hasRows ? (
-              reportType === 'CATEGORY' ? (
+              appliedReportType === 'CATEGORY' ? (
                 <CategoryReport data={data} onOpen={setSelectedProduct} />
-              ) : reportType === 'TOP_SELLING' ? (
+              ) : appliedReportType === 'TOP_SELLING' ? (
                 <TopSellingReport rows={data.topSellingRows} onOpen={setSelectedProduct} />
               ) : (
                 <CancelledReport rows={data.cancelledRows} />
@@ -782,7 +792,7 @@ export function OwnerProductReportPage({
       <DetailDrawer
         selected={selectedProduct}
         onClose={() => setSelectedProduct(null)}
-        queryParams={queryParams}
+        queryParams={appliedQueryParams ?? ''}
         apiPrefix={apiPrefix}
       />
 

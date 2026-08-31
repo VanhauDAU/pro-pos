@@ -1250,6 +1250,7 @@ export class PlatformRepository {
       'realtime_event_requests',
       'realtime_batch_contexts',
       'print_jobs',
+      'revenue_report_print_snapshots',
       'print_agent_pairings',
       'print_agents',
       'create_time_session_commands',

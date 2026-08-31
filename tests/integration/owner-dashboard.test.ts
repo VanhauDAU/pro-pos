@@ -5,6 +5,8 @@ import { CatalogService } from '@server/services/catalog-service';
 import { OwnerDashboardService } from '@server/services/owner-dashboard-service';
 import { OwnerInvoiceService } from '@server/services/owner-invoice-service';
 import { OwnerProductReportService } from '@server/services/owner-product-report-service';
+import { OwnerRevenueReportService } from '@server/services/owner-revenue-report-service';
+import { RevenueReportPrintService } from '@server/services/revenue-report-print-service';
 import { PlatformService } from '@server/services/platform-service';
 import { PosService } from '@server/services/pos-service';
 import { StoreService } from '@server/services/store-service';
@@ -320,6 +322,98 @@ describe('Owner Dashboard Real Analytics (Acceptance Test)', () => {
     // Assert Staff Revenue
     expect(data.staffRevenue.length).toBeGreaterThanOrEqual(1);
     expect(data.staffRevenue.some((s) => s.userId === ownerUserId && s.amount > 0)).toBe(true);
+
+    const revenueReport = await new OwnerRevenueReportService(env).getRevenueReport(storeId, {
+      reportType: 'OVERVIEW',
+      timeRange: 'today',
+      dateFrom: null,
+      dateTo: null,
+      hourMode: 'all',
+      fromHour: 0,
+      fromMinute: 0,
+      toHour: 0,
+      toMinute: 0,
+    });
+    expect(revenueReport.summary).toMatchObject({
+      completedInvoiceCount: 2,
+      cancelledOrderCount: 0,
+      productQuantity: 5,
+      netRevenue: data.summary.revenue,
+    });
+    expect(revenueReport.paymentMethods).toEqual([]);
+    expect(revenueReport.orderTypes).toEqual([]);
+    const paymentReport = await new OwnerRevenueReportService(env).getRevenueReport(storeId, {
+      reportType: 'PAYMENT_METHOD',
+      timeRange: 'today',
+      dateFrom: null,
+      dateTo: null,
+      hourMode: 'all',
+      fromHour: 0,
+      fromMinute: 0,
+      toHour: 0,
+      toMinute: 0,
+    });
+    expect(paymentReport.paymentMethods).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'CASH', invoiceCount: 1 }),
+        expect.objectContaining({ key: 'BANK_TRANSFER', invoiceCount: 1 }),
+      ]),
+    );
+    const serviceReport = await new OwnerRevenueReportService(env).getRevenueReport(storeId, {
+      reportType: 'SERVICE_MODE',
+      timeRange: 'today',
+      dateFrom: null,
+      dateTo: null,
+      hourMode: 'all',
+      fromHour: 0,
+      fromMinute: 0,
+      toHour: 0,
+      toMinute: 0,
+    });
+    expect(serviceReport.orderTypes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'DINE_IN', invoiceCount: 1 }),
+        expect.objectContaining({ key: 'TAKEAWAY', invoiceCount: 1 }),
+      ]),
+    );
+  });
+
+  it('queues an immutable revenue report snapshot idempotently', async () => {
+    const service = new RevenueReportPrintService(env);
+    const input = {
+      storeId,
+      actorUserId: ownerUserId,
+      actorName: 'Store Owner',
+      actorKind: 'OWNER' as const,
+      deviceId: null,
+      requestId: 'req-revenue-print',
+      query: {
+        reportType: 'OVERVIEW' as const,
+        timeRange: 'today' as const,
+        dateFrom: null,
+        dateTo: null,
+        hourMode: 'all' as const,
+        fromHour: 0,
+        fromMinute: 0,
+        toHour: 0,
+        toMinute: 0,
+      },
+      idempotencyKey: 'revenue-print-dashboard-test',
+    };
+    const first = await service.queue(input);
+    const duplicate = await service.queue(input);
+    expect(duplicate).toEqual(first);
+
+    const job = await env.DB.prepare(
+      `SELECT document_type AS documentType, document_id AS documentId, status
+       FROM print_jobs WHERE id = ?`,
+    )
+      .bind(first.jobId)
+      .first<{ documentType: string; documentId: string; status: string }>();
+    expect(job).toMatchObject({ documentType: 'revenue_report', status: 'QUEUED' });
+    const snapshot = await service.get(storeId, job!.documentId);
+    expect(snapshot.report.summary.completedInvoiceCount).toBe(2);
+    expect(snapshot.requestedByName).toBe('Store Owner');
   });
 
   it('uses the exact POS quote for unfinished TIME_BLOCK orders', async () => {

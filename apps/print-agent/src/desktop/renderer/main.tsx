@@ -307,203 +307,211 @@ function PrinterSetupView({
     <main className="shell">
       <Header version={info.version} />
 
-      <div className="panel">
-        <div style={{ marginBottom: 16 }}>
-          <h1 style={{ fontSize: 16, fontWeight: 600, margin: '0 0 4px' }}>Kết nối máy in</h1>
-          <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: 0 }}>
-            Chọn cách máy in được kết nối với máy tính này:
-          </p>
-        </div>
-
-        {!isMac && (
-          <div className="connection-choice-grid">
-            <button
-              type="button"
-              className={`connection-choice-card ${form.connectionType === 'WINDOWS_PRINTER' ? 'connection-choice-card--active' : ''}`}
-              onClick={() => {
-                setForm({ ...form, connectionType: 'WINDOWS_PRINTER' });
-                setTestedOk(false);
-              }}
-            >
-              <strong>Máy in trên Windows</strong>
-              <span>Máy in cắm trực tiếp vào máy tính (USB)</span>
-            </button>
-
-            <button
-              type="button"
-              className={`connection-choice-card ${form.connectionType === 'NETWORK_TCP' ? 'connection-choice-card--active' : ''}`}
-              onClick={() => {
-                setForm({ ...form, connectionType: 'NETWORK_TCP' });
-                setTestedOk(false);
-              }}
-            >
-              <strong>Mạng LAN</strong>
-              <span>Máy in kết nối qua router hoặc mạng nội bộ</span>
-            </button>
+      <div
+        className="panel"
+        style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'space-between',
+          margin: 0,
+        }}
+      >
+        <div>
+          <div style={{ marginBottom: 10 }}>
+            <h1 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 2px' }}>Kết nối máy in</h1>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+              Chọn cách máy in nhiệt kết nối với máy tính này:
+            </p>
           </div>
-        )}
 
-        {form.connectionType === 'WINDOWS_PRINTER' && !isMac ? (
-          <div>
-            <label className="field">
-              <span>Chọn máy in</span>
-              <div className="printer-select-row">
-                <select
-                  value={form.printerName}
-                  onChange={(event) => {
-                    setForm({ ...form, printerName: event.target.value });
-                    setTestedOk(false);
-                  }}
-                >
-                  {printers.length === 0 ? (
-                    <option value="">(Chưa tìm thấy máy in)</option>
-                  ) : (
-                    <>
-                      <option value="" disabled>
-                        -- Chọn máy in --
-                      </option>
-                      {printers.map((p) => (
-                        <option key={p.name} value={p.name}>
-                          {p.displayName || p.name} {p.isDefault ? ' (Mặc định)' : ''}
-                        </option>
-                      ))}
-                    </>
-                  )}
-                </select>
-                <Button
-                  type="button"
-                  kind="secondary"
-                  loading={loadingPrinters}
-                  onClick={() => void refreshPrinters()}
-                  title="Làm mới danh sách máy in"
-                >
-                  <Icon name="refresh" size={14} />
-                </Button>
-              </div>
-              <p className="field-help">
-                Dùng khi máy in được cắm USB trực tiếp vào máy tính hoặc đã được cài trong Windows.
-              </p>
-            </label>
+          <div className="setup-grid">
+            {/* Cột trái: Loại kết nối & Tùy chọn */}
+            <div className="setup-col">
+              {!isMac && (
+                <div className="connection-choice-grid" style={{ marginBottom: 8 }}>
+                  <button
+                    type="button"
+                    className={`connection-choice-card ${form.connectionType === 'WINDOWS_PRINTER' ? 'connection-choice-card--active' : ''}`}
+                    onClick={() => {
+                      setForm({ ...form, connectionType: 'WINDOWS_PRINTER' });
+                      setTestedOk(false);
+                    }}
+                  >
+                    <strong>Máy in Windows</strong>
+                    <span>Cắm USB trực tiếp</span>
+                  </button>
 
-            {printers.length === 0 && (
-              <div className="notice notice--warning">
-                <div>
-                  <strong>Chưa tìm thấy máy in.</strong>
-                  <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
-                    <li>Kiểm tra nguồn và cáp USB máy in.</li>
-                    <li>Cài đặt driver máy in nếu cần.</li>
-                    <li>Bấm nút làm mới bên cạnh danh sách.</li>
-                  </ul>
+                  <button
+                    type="button"
+                    className={`connection-choice-card ${form.connectionType === 'NETWORK_TCP' ? 'connection-choice-card--active' : ''}`}
+                    onClick={() => {
+                      setForm({ ...form, connectionType: 'NETWORK_TCP' });
+                      setTestedOk(false);
+                    }}
+                  >
+                    <strong>Mạng LAN</strong>
+                    <span>Cổng TCP 9100</span>
+                  </button>
                 </div>
+              )}
+
+              <label className="field" style={{ marginBottom: 6 }}>
+                <span>Khổ giấy in</span>
+                <select
+                  value={form.paperSize}
+                  onChange={(event) =>
+                    setForm({ ...form, paperSize: event.target.value as 'K58' | 'K80' })
+                  }
+                >
+                  <option value="K80">K80 (80 mm · Tiêu chuẩn)</option>
+                  <option value="K58">K58 (58 mm · Khổ nhỏ)</option>
+                </select>
+              </label>
+
+              <div style={{ display: 'flex', gap: 14, marginTop: 4 }}>
+                <Toggle
+                  checked={Boolean(form.autoCut)}
+                  onChange={(checked) => setForm({ ...form, autoCut: checked })}
+                  label="Tự cắt giấy"
+                />
+                <Toggle
+                  checked={Boolean(form.openCashDrawer)}
+                  onChange={(checked) => setForm({ ...form, openCashDrawer: checked })}
+                  label="Mở két tiền"
+                />
               </div>
-            )}
-          </div>
-        ) : (
-          <div>
-            <div className="field-grid field-grid--wide-left">
-              <label className="field">
-                <span>Địa chỉ IP máy in</span>
-                <input
-                  value={form.printerIp}
-                  onChange={(event) => {
-                    setForm({ ...form, printerIp: event.target.value });
-                    setTestedOk(false);
-                  }}
-                  placeholder="192.168.1.73"
-                />
-              </label>
-              <label className="field">
-                <span>Cổng</span>
-                <input
-                  type="number"
-                  min="1"
-                  max="65535"
-                  value={form.printerPort}
-                  onChange={(event) => {
-                    setForm({ ...form, printerPort: Number(event.target.value) });
-                    setTestedOk(false);
-                  }}
-                />
-              </label>
             </div>
-            <p className="field-help">Kết nối qua mạng LAN nội bộ, cổng 9100</p>
-          </div>
-        )}
 
-        <label className="field" style={{ marginTop: 12 }}>
-          <span>Khổ giấy</span>
-          <select
-            value={form.paperSize}
-            onChange={(event) =>
-              setForm({ ...form, paperSize: event.target.value as 'K58' | 'K80' })
-            }
-          >
-            <option value="K80">K80 (80 mm · Chuẩn hóa đơn phổ biến)</option>
-            <option value="K58">K58 (58 mm · Khổ nhỏ)</option>
-          </select>
-        </label>
+            {/* Cột phải: Chọn máy in hoặc cấu hình IP + Trạng thái */}
+            <div className="setup-col">
+              {form.connectionType === 'WINDOWS_PRINTER' && !isMac ? (
+                <div>
+                  <label className="field" style={{ marginBottom: 6 }}>
+                    <span>Chọn máy in</span>
+                    <div className="printer-select-row">
+                      <select
+                        value={form.printerName}
+                        onChange={(event) => {
+                          setForm({ ...form, printerName: event.target.value });
+                          setTestedOk(false);
+                        }}
+                      >
+                        {printers.length === 0 ? (
+                          <option value="">(Chưa tìm thấy máy in)</option>
+                        ) : (
+                          <>
+                            <option value="" disabled>
+                              -- Chọn máy in --
+                            </option>
+                            {printers.map((p) => (
+                              <option key={p.name} value={p.name}>
+                                {p.displayName || p.name} {p.isDefault ? ' (Mặc định)' : ''}
+                              </option>
+                            ))}
+                          </>
+                        )}
+                      </select>
+                      <Button
+                        type="button"
+                        kind="secondary"
+                        loading={loadingPrinters}
+                        onClick={() => void refreshPrinters()}
+                        title="Làm mới danh sách máy in"
+                      >
+                        <Icon name="refresh" size={14} />
+                      </Button>
+                    </div>
+                  </label>
 
-        {/* Collapsible Advanced Settings */}
-        <details className="collapsible-section">
-          <summary>Cài đặt nâng cao</summary>
-          <div style={{ marginTop: 8 }}>
-            <div style={{ display: 'flex', gap: 16, marginBottom: 8 }}>
-              <Toggle
-                checked={Boolean(form.autoCut)}
-                onChange={(checked) => setForm({ ...form, autoCut: checked })}
-                label="Tự động cắt giấy"
-              />
-              <Toggle
-                checked={Boolean(form.openCashDrawer)}
-                onChange={(checked) => setForm({ ...form, openCashDrawer: checked })}
-                label="Mở két tiền"
-              />
-            </div>
-            <label className="field" style={{ margin: 0 }}>
-              <span style={{ fontSize: 12 }}>Vùng in tùy chỉnh (Printable dots - tùy chọn)</span>
-              <input
-                type="number"
-                placeholder={form.paperSize === 'K58' ? '384' : '576'}
-                value={form.printableDots || ''}
-                onChange={(event) =>
-                  setForm({
-                    ...form,
-                    printableDots: event.target.value ? Number(event.target.value) : undefined,
-                  })
-                }
-              />
-            </label>
-          </div>
-        </details>
+                  {printers.length === 0 && (
+                    <div
+                      className="notice notice--warning"
+                      style={{ margin: '6px 0 0', padding: '8px 10px' }}
+                    >
+                      <div>
+                        <strong>Chưa tìm thấy máy in.</strong> Kiểm tra dây USB và bật nguồn máy in.
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <div className="field-grid field-grid--wide-left" style={{ marginBottom: 6 }}>
+                    <label className="field" style={{ margin: 0 }}>
+                      <span>Địa chỉ IP</span>
+                      <input
+                        value={form.printerIp}
+                        onChange={(event) => {
+                          setForm({ ...form, printerIp: event.target.value });
+                          setTestedOk(false);
+                        }}
+                        placeholder="192.168.1.73"
+                      />
+                    </label>
+                    <label className="field" style={{ margin: 0 }}>
+                      <span>Cổng</span>
+                      <input
+                        type="number"
+                        min="1"
+                        max="65535"
+                        value={form.printerPort}
+                        onChange={(event) => {
+                          setForm({ ...form, printerPort: Number(event.target.value) });
+                          setTestedOk(false);
+                        }}
+                      />
+                    </label>
+                  </div>
+                </div>
+              )}
 
-        {/* Status / Error feedback */}
-        {friendlyError && (
-          <div className="notice notice--danger" style={{ marginTop: 14 }}>
-            <div>
-              <strong>{friendlyError}</strong>
-              {errorDetails && (
-                <details>
-                  <summary>Xem chi tiết</summary>
-                  <code>{errorDetails}</code>
-                </details>
+              {/* Status / Error feedback */}
+              {friendlyError && (
+                <div
+                  className="notice notice--danger"
+                  style={{ margin: '6px 0 0', padding: '8px 10px' }}
+                >
+                  <div>
+                    <strong>{friendlyError}</strong>
+                    {errorDetails && (
+                      <details style={{ marginTop: 4 }}>
+                        <summary>Xem chi tiết</summary>
+                        <code>{errorDetails}</code>
+                      </details>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {testedOk && !friendlyError && (
+                <div
+                  className="notice notice--success"
+                  style={{ margin: '6px 0 0', padding: '8px 10px' }}
+                >
+                  <span>✓ Máy in đã sẵn sàng và in thử thành công</span>
+                </div>
               )}
             </div>
           </div>
-        )}
+        </div>
 
-        {testedOk && !friendlyError && (
-          <div className="notice notice--success" style={{ marginTop: 14 }}>
-            <span>✓ Máy in hoạt động tốt</span>
-          </div>
-        )}
-
-        <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end' }}>
+        <div
+          style={{
+            display: 'flex',
+            gap: 8,
+            marginTop: 10,
+            justifyContent: 'flex-end',
+            paddingTop: 8,
+            borderTop: '1px solid var(--border-subtle)',
+          }}
+        >
           <Button
             type="button"
             kind={testedOk ? 'secondary' : 'primary'}
             loading={action === 'test' || action === 'save'}
             onClick={handleTest}
-            icon={<Icon name="printer" size={15} />}
+            icon={<Icon name="printer" size={14} />}
           >
             {testedOk ? 'In thử lại' : 'Kiểm tra & In thử'}
           </Button>
@@ -513,7 +521,7 @@ function PrinterSetupView({
               type="button"
               kind="primary"
               onClick={onProceedToPairing}
-              icon={<Icon name="arrow-right" size={15} />}
+              icon={<Icon name="arrow-right" size={14} />}
             >
               Tiếp tục kết nối PRO POS
             </Button>
@@ -559,46 +567,73 @@ function PairingView({
     <main className="shell">
       <Header version={version} />
 
-      <div className="panel pairing-box">
-        <h1 className="pairing-title">Kết nối với PRO POS</h1>
-        <p className="pairing-subtitle">Nhập mã 6 chữ số này trên màn hình POS của cửa hàng:</p>
+      <div
+        className="panel pairing-box"
+        style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'space-between',
+          margin: 0,
+          padding: '16px 20px',
+        }}
+      >
+        <div>
+          <h1 className="pairing-title">Kết nối với PRO POS</h1>
+          <p className="pairing-subtitle">Nhập mã 6 chữ số này trên màn hình POS của cửa hàng:</p>
 
-        {code ? (
-          <div>
-            <div className="pairing-code" aria-label={`Mã ghép nối ${code}`}>
-              {formatPairingCode(code)}
-            </div>
-            <div
-              className={`pairing-timer ${remainingSeconds === 0 ? 'pairing-timer--expired' : ''}`}
-            >
-              {remainingSeconds === 0 ? (
-                'Mã đã hết hạn'
-              ) : (
+          <div className="pairing-layout-grid">
+            {/* Cột trái: Mã 6 số to rõ ràng */}
+            <div className="pairing-code-section">
+              {code ? (
                 <>
-                  Mã còn hiệu lực <strong>{remaining}</strong>
+                  <div className="pairing-code" aria-label={`Mã ghép nối ${code}`}>
+                    {formatPairingCode(code)}
+                  </div>
+                  <div
+                    className={`pairing-timer ${remainingSeconds === 0 ? 'pairing-timer--expired' : ''}`}
+                  >
+                    {remainingSeconds === 0 ? (
+                      'Mã đã hết hạn'
+                    ) : (
+                      <>
+                        Mã còn hiệu lực <strong>{remaining}</strong>
+                      </>
+                    )}
+                  </div>
                 </>
+              ) : (
+                <div style={{ padding: '16px 0' }}>
+                  <Spinner />
+                  <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-muted)' }}>
+                    Đang tạo mã ghép nối…
+                  </div>
+                </div>
               )}
             </div>
-          </div>
-        ) : (
-          <div style={{ padding: '24px 0' }}>
-            <Spinner />
-            <div style={{ marginTop: 8, fontSize: 13, color: 'var(--text-muted)' }}>
-              Đang tạo mã ghép nối…
+
+            {/* Cột phải: Hướng dẫn các bước */}
+            <div className="pairing-steps">
+              <ol>
+                <li>
+                  Mở <strong>PRO POS → Cài đặt máy in → Thêm Print Agent</strong>
+                </li>
+                <li>Nhập mã 6 số hiển thị bên cạnh</li>
+                <li>Hệ thống tự động kích hoạt kết nối</li>
+              </ol>
             </div>
           </div>
-        )}
-
-        <div className="pairing-steps">
-          <ol>
-            <li>
-              Mở <strong>PRO POS → Cài đặt máy in → Thêm Print Agent</strong>
-            </li>
-            <li>Nhập mã 6 số đang hiển thị phía trên</li>
-          </ol>
         </div>
 
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            paddingTop: 10,
+            borderTop: '1px solid var(--border-subtle)',
+          }}
+        >
           <button type="button" className="text-button" onClick={onBackToPrinter}>
             <Icon name="arrow-left" size={14} /> Chỉnh sửa máy in
           </button>
@@ -657,81 +692,59 @@ function Dashboard({
         }}
       />
 
-      {/* Main minimal panel */}
-      <div className="panel">
-        {/* Section 1: Cloud Connection */}
-        <div className="panel-row">
+      {/* 2x2 Clean Dashboard Grid */}
+      <div className="dashboard-grid">
+        {/* Card 1: Cloud Connection */}
+        <div className="dash-card">
           <div>
             <div className="section-label">Kết nối PRO POS</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div className="dash-card-main">
               <StatusDot tone={cloud.tone} />
               <span className="section-value">{cloud.label}</span>
             </div>
             <div className="section-desc">{info.config.storeName || 'Cửa hàng PRO POS'}</div>
           </div>
-        </div>
-
-        <div className="panel-divider" />
-
-        {/* Section 2: Physical Printer */}
-        <div className="panel-row">
-          <div>
-            <div className="section-label">Máy in</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <StatusDot tone={printer.tone} />
-              <span className="section-value">{printer.label}</span>
-            </div>
-            <div className="section-desc">
-              {isWindows
-                ? `${info.config.printerName || 'Chưa chọn máy in'} · USB · Windows · ${info.config.paperSize}`
-                : `${info.config.printerIp || '—'}:${info.config.printerPort} · LAN · ${info.config.paperSize}`}
-            </div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>
+            {state.status === 'ONLINE' ? 'WebSocket trực tiếp' : 'Đang kết nối lại…'}
           </div>
-
-          <Button
-            kind="secondary"
-            onClick={onTest}
-            loading={action === 'test'}
-            icon={<Icon name="printer" size={14} />}
-          >
-            In thử
-          </Button>
         </div>
 
-        {/* Error Notice if any */}
-        {friendlyError && (
-          <div className="notice notice--danger" style={{ marginTop: 10 }}>
+        {/* Card 2: Physical Printer */}
+        <div className="dash-card">
+          <div
+            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}
+          >
             <div>
-              <strong>{friendlyError}</strong>
-              <div style={{ marginTop: 6, display: 'flex', gap: 8, alignItems: 'center' }}>
-                <Button
-                  kind="secondary"
-                  onClick={onTest}
-                  loading={action === 'test'}
-                  style={{ fontSize: 11.5, padding: '4px 8px' }}
-                >
-                  Kiểm tra lại
-                </Button>
-                {errorDetails && (
-                  <details>
-                    <summary>Xem chi tiết</summary>
-                    <code>{errorDetails}</code>
-                  </details>
-                )}
+              <div className="section-label">Máy in vật lý</div>
+              <div className="dash-card-main">
+                <StatusDot tone={printer.tone} />
+                <span className="section-value">{printer.label}</span>
+              </div>
+              <div className="section-desc">
+                {isWindows
+                  ? `${info.config.printerName || 'Chưa chọn máy in'} · USB · ${info.config.paperSize}`
+                  : `${info.config.printerIp || '—'}:${info.config.printerPort} · LAN · ${info.config.paperSize}`}
               </div>
             </div>
+            <Button
+              kind="secondary"
+              onClick={onTest}
+              loading={action === 'test'}
+              icon={<Icon name="printer" size={14} />}
+              style={{ fontSize: 12, padding: '4px 10px' }}
+            >
+              In thử
+            </Button>
           </div>
-        )}
+        </div>
 
-        <div className="panel-divider" />
-
-        {/* Section 3: Last Job */}
-        <div className="panel-row">
+        {/* Card 3: Last Job */}
+        <div className="dash-card">
           <div>
             <div className="section-label">Lệnh in gần nhất</div>
             {lastJob ? (
               <div>
-                <div style={{ fontSize: 13, fontWeight: 500 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 600, marginTop: 2 }}>
                   {lastJob.status === 'COMPLETED' ? '✓ ' : '✕ '}
                   {lastJob.documentType === 'invoice'
                     ? 'Hóa đơn'
@@ -755,36 +768,68 @@ function Dashboard({
                 </div>
               </div>
             ) : (
-              <div className="section-desc">Chưa có lệnh in trong phiên này</div>
+              <div className="section-desc" style={{ marginTop: 2 }}>
+                Chưa có lệnh in trong phiên này
+              </div>
             )}
           </div>
         </div>
 
-        <div className="panel-divider" />
-
-        {/* Section 4: System Footer */}
-        <div className="panel-row">
-          <Toggle
-            checked={info.autostart}
-            disabled={action === 'autostart'}
-            onChange={onAutostart}
-            label={
-              typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac')
-                ? 'Khởi động cùng macOS'
-                : 'Khởi động cùng Windows'
-            }
-          />
-
-          <div style={{ display: 'flex', gap: 10 }}>
+        {/* Card 4: System Actions & Autostart */}
+        <div className="dash-card">
+          <div>
+            <div className="section-label">Hệ thống</div>
+            <div style={{ marginTop: 4 }}>
+              <Toggle
+                checked={info.autostart}
+                disabled={action === 'autostart'}
+                onChange={onAutostart}
+                label={
+                  typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac')
+                    ? 'Khởi động cùng macOS'
+                    : 'Khởi động cùng Windows'
+                }
+              />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 12, marginTop: 6 }}>
             <button type="button" className="text-button" onClick={onLogs}>
-              <Icon name="folder" size={14} /> Nhật ký
+              <Icon name="folder" size={13} /> Nhật ký
             </button>
             <button type="button" className="text-button" onClick={onSettings}>
-              <Icon name="settings" size={14} /> Cài đặt
+              <Icon name="settings" size={13} /> Cài đặt
             </button>
           </div>
         </div>
       </div>
+
+      {/* Error notice if any */}
+      {friendlyError && (
+        <div
+          className="notice notice--danger"
+          style={{ marginTop: 8, marginBottom: 0, padding: '8px 12px' }}
+        >
+          <div>
+            <strong>{friendlyError}</strong>
+            <div style={{ marginTop: 4, display: 'flex', gap: 8, alignItems: 'center' }}>
+              <Button
+                kind="secondary"
+                onClick={onTest}
+                loading={action === 'test'}
+                style={{ fontSize: 11, padding: '2px 6px' }}
+              >
+                Kiểm tra lại
+              </Button>
+              {errorDetails && (
+                <details>
+                  <summary>Xem chi tiết</summary>
+                  <code>{errorDetails}</code>
+                </details>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
@@ -880,261 +925,264 @@ function SettingsDialog({
           </button>
         </div>
 
-        <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+        <form
+          onSubmit={submit}
+          style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}
+        >
           <div className="dialog-body">
-            {/* Nhóm 1: Máy in */}
-            <div className="settings-group">
-              <div className="settings-group-title">1. Máy in</div>
+            <div className="settings-columns-grid">
+              {/* Cột trái: Cấu hình máy in & In ấn */}
+              <div className="settings-column">
+                <div className="settings-group-title">1. Cấu hình máy in</div>
 
-              {!isMac && (
-                <div className="connection-choice-grid">
-                  <button
-                    type="button"
-                    className={`connection-choice-card ${form.connectionType === 'WINDOWS_PRINTER' ? 'connection-choice-card--active' : ''}`}
-                    onClick={() => setForm({ ...form, connectionType: 'WINDOWS_PRINTER' })}
-                  >
-                    <strong>Máy in Windows (USB)</strong>
-                    <span>Cắm trực tiếp</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`connection-choice-card ${form.connectionType === 'NETWORK_TCP' ? 'connection-choice-card--active' : ''}`}
-                    onClick={() => setForm({ ...form, connectionType: 'NETWORK_TCP' })}
-                  >
-                    <strong>Mạng LAN</strong>
-                    <span>Qua router/IP</span>
-                  </button>
-                </div>
-              )}
-
-              {form.connectionType === 'WINDOWS_PRINTER' && !isMac ? (
-                <label className="field">
-                  <span>Máy in trên Windows</span>
-                  <div className="printer-select-row">
-                    <select
-                      value={form.printerName}
-                      onChange={(event) => setForm({ ...form, printerName: event.target.value })}
-                    >
-                      {printers.length === 0 ? (
-                        <option value="">(Chưa tìm thấy máy in)</option>
-                      ) : (
-                        <>
-                          <option value="" disabled>
-                            -- Chọn máy in --
-                          </option>
-                          {printers.map((p) => (
-                            <option key={p.name} value={p.name}>
-                              {p.displayName || p.name} {p.isDefault ? ' (Mặc định)' : ''}
-                            </option>
-                          ))}
-                        </>
-                      )}
-                    </select>
-                    <Button
+                {!isMac && (
+                  <div className="connection-choice-grid" style={{ marginBottom: 8 }}>
+                    <button
                       type="button"
-                      kind="secondary"
-                      loading={loadingPrinters}
-                      onClick={() => void refreshPrinters()}
-                      title="Làm mới danh sách máy in"
+                      className={`connection-choice-card ${form.connectionType === 'WINDOWS_PRINTER' ? 'connection-choice-card--active' : ''}`}
+                      onClick={() => setForm({ ...form, connectionType: 'WINDOWS_PRINTER' })}
                     >
-                      <Icon name="refresh" size={14} />
-                    </Button>
+                      <strong>Máy in Windows</strong>
+                      <span>Cắm USB trực tiếp</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`connection-choice-card ${form.connectionType === 'NETWORK_TCP' ? 'connection-choice-card--active' : ''}`}
+                      onClick={() => setForm({ ...form, connectionType: 'NETWORK_TCP' })}
+                    >
+                      <strong>Mạng LAN</strong>
+                      <span>Cổng TCP 9100</span>
+                    </button>
                   </div>
-                </label>
-              ) : (
-                <div className="field-grid field-grid--wide-left">
-                  <label className="field">
-                    <span>Địa chỉ IP</span>
-                    <input
-                      required
-                      value={form.printerIp}
-                      onChange={(event) => setForm({ ...form, printerIp: event.target.value })}
-                      placeholder="192.168.1.73"
-                    />
+                )}
+
+                {form.connectionType === 'WINDOWS_PRINTER' && !isMac ? (
+                  <label className="field" style={{ marginBottom: 8 }}>
+                    <span>Máy in trên Windows</span>
+                    <div className="printer-select-row">
+                      <select
+                        value={form.printerName}
+                        onChange={(event) => setForm({ ...form, printerName: event.target.value })}
+                      >
+                        {printers.length === 0 ? (
+                          <option value="">(Chưa tìm thấy máy in)</option>
+                        ) : (
+                          <>
+                            <option value="" disabled>
+                              -- Chọn máy in --
+                            </option>
+                            {printers.map((p) => (
+                              <option key={p.name} value={p.name}>
+                                {p.displayName || p.name} {p.isDefault ? ' (Mặc định)' : ''}
+                              </option>
+                            ))}
+                          </>
+                        )}
+                      </select>
+                      <Button
+                        type="button"
+                        kind="secondary"
+                        loading={loadingPrinters}
+                        onClick={() => void refreshPrinters()}
+                        title="Làm mới danh sách máy in"
+                      >
+                        <Icon name="refresh" size={14} />
+                      </Button>
+                    </div>
                   </label>
-                  <label className="field">
-                    <span>Cổng</span>
+                ) : (
+                  <div className="field-grid field-grid--wide-left" style={{ marginBottom: 8 }}>
+                    <label className="field" style={{ margin: 0 }}>
+                      <span>Địa chỉ IP</span>
+                      <input
+                        required
+                        value={form.printerIp}
+                        onChange={(event) => setForm({ ...form, printerIp: event.target.value })}
+                        placeholder="192.168.1.73"
+                      />
+                    </label>
+                    <label className="field" style={{ margin: 0 }}>
+                      <span>Cổng</span>
+                      <input
+                        type="number"
+                        min="1"
+                        max="65535"
+                        required
+                        value={form.printerPort}
+                        onChange={(event) =>
+                          setForm({ ...form, printerPort: Number(event.target.value) })
+                        }
+                      />
+                    </label>
+                  </div>
+                )}
+
+                <div className="field-grid" style={{ marginBottom: 8 }}>
+                  <label className="field" style={{ margin: 0 }}>
+                    <span>Khổ giấy</span>
+                    <select
+                      value={form.paperSize}
+                      onChange={(event) =>
+                        setForm({ ...form, paperSize: event.target.value as 'K58' | 'K80' })
+                      }
+                    >
+                      <option value="K80">K80 · 80 mm (Chuẩn)</option>
+                      <option value="K58">K58 · 58 mm (Khổ nhỏ)</option>
+                    </select>
+                  </label>
+
+                  <label className="field" style={{ margin: 0 }}>
+                    <span>Vùng in (Dots)</span>
                     <input
                       type="number"
-                      min="1"
-                      max="65535"
-                      required
-                      value={form.printerPort}
+                      placeholder={form.paperSize === 'K58' ? '384' : '576'}
+                      value={form.printableDots || ''}
                       onChange={(event) =>
-                        setForm({ ...form, printerPort: Number(event.target.value) })
+                        setForm({
+                          ...form,
+                          printableDots: event.target.value
+                            ? Number(event.target.value)
+                            : undefined,
+                        })
                       }
                     />
                   </label>
                 </div>
-              )}
 
-              <label className="field">
-                <span>Khổ giấy</span>
-                <select
-                  value={form.paperSize}
-                  onChange={(event) =>
-                    setForm({ ...form, paperSize: event.target.value as 'K58' | 'K80' })
-                  }
-                >
-                  <option value="K80">K80 · 80 mm</option>
-                  <option value="K58">K58 · 58 mm</option>
-                </select>
-              </label>
-            </div>
-
-            {/* Nhóm 2: Tùy chọn nâng cao */}
-            <div className="settings-group">
-              <div className="settings-group-title">2. Tùy chọn nâng cao</div>
-              <div style={{ display: 'flex', gap: 16, marginBottom: 10 }}>
-                <Toggle
-                  checked={Boolean(form.autoCut)}
-                  onChange={(checked) => setForm({ ...form, autoCut: checked })}
-                  label="Tự động cắt giấy"
-                />
-                <Toggle
-                  checked={Boolean(form.openCashDrawer)}
-                  onChange={(checked) => setForm({ ...form, openCashDrawer: checked })}
-                  label="Mở két tiền"
-                />
+                <div style={{ display: 'flex', gap: 14, marginTop: 4 }}>
+                  <Toggle
+                    checked={Boolean(form.autoCut)}
+                    onChange={(checked) => setForm({ ...form, autoCut: checked })}
+                    label="Tự cắt giấy"
+                  />
+                  <Toggle
+                    checked={Boolean(form.openCashDrawer)}
+                    onChange={(checked) => setForm({ ...form, openCashDrawer: checked })}
+                    label="Mở két tiền"
+                  />
+                </div>
               </div>
 
-              <label className="field">
-                <span>Vùng in (Printable dots - tùy chọn)</span>
-                <input
-                  type="number"
-                  placeholder={form.paperSize === 'K58' ? '384' : '576'}
-                  value={form.printableDots || ''}
-                  onChange={(event) =>
-                    setForm({
-                      ...form,
-                      printableDots: event.target.value ? Number(event.target.value) : undefined,
-                    })
-                  }
-                />
-              </label>
-            </div>
+              {/* Cột phải: Ứng dụng, Cập nhật & Thiết lập lại */}
+              <div className="settings-column">
+                <div className="settings-group-title">2. Ứng dụng & Cập nhật</div>
 
-            {/* Nhóm 3: Ứng dụng & Cập nhật */}
-            <div className="settings-group">
-              <div className="settings-group-title">3. Ứng dụng & Cập nhật</div>
+                {/* Thẻ cập nhật */}
+                <div className="update-card" style={{ marginBottom: 10 }}>
+                  <div className="update-card-header">
+                    <div>
+                      <span style={{ fontWeight: 600, fontSize: 13 }}>v{info.version}</span>
+                      {updateInfo.label && (
+                        <span
+                          className={`update-badge update-badge--${updateInfo.tone}`}
+                          style={{ marginLeft: 6 }}
+                        >
+                          <StatusDot tone={updateInfo.tone} />
+                          {updateInfo.label}
+                        </span>
+                      )}
+                    </div>
 
-              {/* Phiên bản & Cập nhật */}
-              <div className="update-card" style={{ marginBottom: 14 }}>
-                <div className="update-card-header">
-                  <div>
-                    <span style={{ fontWeight: 600, fontSize: 13 }}>v{info.version}</span>
-                    {updateInfo.label && (
-                      <span
-                        className={`update-badge update-badge--${updateInfo.tone}`}
-                        style={{ marginLeft: 8 }}
+                    {updateState?.status === 'DOWNLOADED' ? (
+                      <Button
+                        type="button"
+                        kind="primary"
+                        loading={action === 'install-update'}
+                        onClick={onInstallUpdate}
+                        style={{ fontSize: 11.5, padding: '3px 8px' }}
                       >
-                        <StatusDot tone={updateInfo.tone} />
-                        {updateInfo.label}
-                      </span>
+                        Cập nhật & khởi động
+                      </Button>
+                    ) : updateState?.status === 'ERROR' ? (
+                      <Button
+                        type="button"
+                        kind="secondary"
+                        loading={action === 'check-update'}
+                        onClick={onCheckForUpdates}
+                        style={{ fontSize: 11.5, padding: '3px 8px' }}
+                      >
+                        Thử lại
+                      </Button>
+                    ) : updateState?.status === 'DISABLED' ? null : (
+                      <Button
+                        type="button"
+                        kind="secondary"
+                        loading={
+                          action === 'check-update' ||
+                          updateState?.status === 'CHECKING' ||
+                          updateState?.status === 'AVAILABLE' ||
+                          updateState?.status === 'DOWNLOADING'
+                        }
+                        onClick={onCheckForUpdates}
+                        style={{ fontSize: 11.5, padding: '3px 8px' }}
+                      >
+                        {updateState?.status === 'DOWNLOADING'
+                          ? `Đang tải ${updateState.progressPercent ?? 0}%`
+                          : 'Kiểm tra'}
+                      </Button>
                     )}
                   </div>
 
-                  {updateState?.status === 'DOWNLOADED' ? (
-                    <Button
-                      type="button"
-                      kind="primary"
-                      loading={action === 'install-update'}
-                      onClick={onInstallUpdate}
-                      style={{ fontSize: 12, padding: '4px 10px' }}
-                    >
-                      Cập nhật & khởi động lại
-                    </Button>
-                  ) : updateState?.status === 'ERROR' ? (
-                    <Button
-                      type="button"
-                      kind="secondary"
-                      loading={action === 'check-update'}
-                      onClick={onCheckForUpdates}
-                      style={{ fontSize: 12, padding: '4px 10px' }}
-                    >
-                      Thử lại
-                    </Button>
-                  ) : updateState?.status === 'DISABLED' ? null : (
-                    <Button
-                      type="button"
-                      kind="secondary"
-                      loading={
-                        action === 'check-update' ||
-                        updateState?.status === 'CHECKING' ||
-                        updateState?.status === 'AVAILABLE' ||
-                        updateState?.status === 'DOWNLOADING'
-                      }
-                      onClick={onCheckForUpdates}
-                      style={{ fontSize: 12, padding: '4px 10px' }}
-                    >
-                      {updateState?.status === 'DOWNLOADING'
-                        ? `Đang tải ${updateState.progressPercent ?? 0}%`
-                        : 'Kiểm tra cập nhật'}
-                    </Button>
+                  <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+                    {updateInfo.description}
+                  </div>
+
+                  {updateState?.status === 'DOWNLOADING' && (
+                    <div className="update-progress-bar">
+                      <div
+                        className="update-progress-fill"
+                        style={{ width: `${updateState.progressPercent ?? 0}%` }}
+                      />
+                    </div>
                   )}
                 </div>
 
-                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                  {updateInfo.description}
+                {/* Autostart & Logs */}
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: 10,
+                  }}
+                >
+                  <Toggle
+                    checked={info.autostart}
+                    disabled={action === 'autostart'}
+                    onChange={onAutostart}
+                    label={isMac ? 'Khởi động cùng macOS' : 'Khởi động cùng Windows'}
+                  />
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={onLogs}
+                    disabled={action === 'logs'}
+                  >
+                    <Icon name="folder" size={13} /> Mở nhật ký
+                  </button>
                 </div>
 
-                {updateState?.status === 'DOWNLOADING' && (
-                  <div className="update-progress-bar">
-                    <div
-                      className="update-progress-fill"
-                      style={{ width: `${updateState.progressPercent ?? 0}%` }}
-                    />
+                {/* Danger Box: Reset */}
+                <div className="danger-box">
+                  <p>Thiết lập lại Print Agent:</p>
+                  <div className="danger-actions">
+                    <Button
+                      type="button"
+                      kind="secondary"
+                      onClick={() => onConfirm('repair')}
+                      style={{ fontSize: 11.5, padding: '4px 8px' }}
+                    >
+                      Ghép nối lại
+                    </Button>
+                    <Button
+                      type="button"
+                      kind="danger"
+                      onClick={() => onConfirm('reset')}
+                      style={{ fontSize: 11.5, padding: '4px 8px' }}
+                    >
+                      Xóa cấu hình
+                    </Button>
                   </div>
-                )}
-              </div>
-
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  marginBottom: 12,
-                }}
-              >
-                <Toggle
-                  checked={info.autostart}
-                  disabled={action === 'autostart'}
-                  onChange={onAutostart}
-                  label={
-                    typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac')
-                      ? 'Khởi động cùng macOS'
-                      : 'Khởi động cùng Windows'
-                  }
-                />
-                <button
-                  type="button"
-                  className="text-button"
-                  onClick={onLogs}
-                  disabled={action === 'logs'}
-                >
-                  <Icon name="folder" size={14} /> Mở thư mục nhật ký
-                </button>
-              </div>
-
-              <div className="danger-box">
-                <p>Thiết lập lại Print Agent:</p>
-                <div className="danger-actions">
-                  <Button
-                    type="button"
-                    kind="secondary"
-                    onClick={() => onConfirm('repair')}
-                    style={{ fontSize: 12 }}
-                  >
-                    Ghép nối lại
-                  </Button>
-                  <Button
-                    type="button"
-                    kind="danger"
-                    onClick={() => onConfirm('reset')}
-                    style={{ fontSize: 12 }}
-                  >
-                    Xóa cấu hình
-                  </Button>
                 </div>
               </div>
             </div>

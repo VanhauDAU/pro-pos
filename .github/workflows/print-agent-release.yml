@@ -86,6 +86,17 @@ jobs:
           pattern: print-agent-*-${{ github.run_id }}
           path: apps/print-agent/release
           merge-multiple: true
+      - name: Verify Windows updater artifacts before publish
+        run: node scripts/verify-print-agent-update-artifacts.mjs
+      - name: Publish Windows updater feed to Cloudflare R2
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID || secrets.CLOUDFLARE_R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID || secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY || secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME || 'propos-updates' }}
+          WORKER_URL: 'https://pro-pos-production.vanhau-laravel.workers.dev'
+          CLOUDFLARE_R2_FEED_PREFIX: 'print-agent/windows/stable'
+        run: node scripts/publish-print-agent-r2.mjs
       - run: node scripts/write-print-agent-checksums.mjs
       - uses: actions/upload-artifact@v4
         with:

@@ -210,23 +210,72 @@ export class UpdateManager extends EventEmitter {
 
   private mapError(rawMessage: string): { code: DesktopUpdateErrorCode; message: string } {
     const lower = rawMessage.toLowerCase();
+
+    // 1. Checksum / Hash validation failure
     if (lower.includes('checksum') || lower.includes('sha512') || lower.includes('hash mismatch')) {
       return {
         code: 'UPDATE_CHECKSUM_FAILED',
-        message: 'Xác thực gói cập nhật thất bại (mã băm không khớp).',
+        message: 'Xác thực gói cập nhật thất bại (mã băm SHA512 không khớp).',
       };
     }
+
+    // 2. DNS / Domain not found
+    if (lower.includes('enotfound') || lower.includes('getaddrinfo') || lower.includes('dns')) {
+      return {
+        code: 'UPDATE_SERVER_NOT_FOUND',
+        message: 'Không tìm thấy máy chủ cập nhật (lỗi phân giải tên miền updates.propos.vn).',
+      };
+    }
+
+    // 3. HTTP 404 Feed / Manifest missing
     if (
-      lower.includes('net::') ||
-      lower.includes('enotfound') ||
-      lower.includes('etimedout') ||
-      lower.includes('network')
+      lower.includes('404') ||
+      lower.includes('cannot find') ||
+      lower.includes('not found') ||
+      lower.includes('status code 404')
     ) {
       return {
-        code: 'UPDATE_NETWORK_ERROR',
-        message: 'Không thể kết nối máy chủ cập nhật. Vui lòng kiểm tra kết nối mạng.',
+        code: 'UPDATE_FEED_NOT_FOUND',
+        message: 'Máy chủ cập nhật chưa có file manifest latest.yml (HTTP 404).',
       };
     }
+
+    // 4. HTTP 403 Forbidden / Access denied
+    if (
+      lower.includes('403') ||
+      lower.includes('forbidden') ||
+      lower.includes('access denied') ||
+      lower.includes('status code 403')
+    ) {
+      return {
+        code: 'UPDATE_FORBIDDEN',
+        message: 'Truy cập máy chủ cập nhật bị từ chối (HTTP 403 Forbidden).',
+      };
+    }
+
+    // 5. Connection Timeout
+    if (lower.includes('etimedout') || lower.includes('timeout') || lower.includes('timed out')) {
+      return {
+        code: 'UPDATE_TIMEOUT',
+        message: 'Quá thời gian kết nối tới máy chủ cập nhật (Connection Timeout).',
+      };
+    }
+
+    // 6. TLS / SSL Certificate failure
+    if (
+      lower.includes('cert_') ||
+      lower.includes('tls') ||
+      lower.includes('ssl') ||
+      lower.includes('unable to verify') ||
+      lower.includes('self signed')
+    ) {
+      return {
+        code: 'UPDATE_TLS_ERROR',
+        message: 'Lỗi xác thực chứng chỉ bảo mật SSL/TLS máy chủ cập nhật.',
+      };
+    }
+
+    // 7. Signature / Authenticode failure
     if (
       lower.includes('signature') ||
       lower.includes('certificate') ||
@@ -237,18 +286,31 @@ export class UpdateManager extends EventEmitter {
         message: 'Chữ ký số của bản cập nhật không hợp lệ.',
       };
     }
+
+    // 8. Manifest / YAML parsing error
     if (lower.includes('yaml') || lower.includes('manifest') || lower.includes('parse')) {
       return {
         code: 'UPDATE_MANIFEST_INVALID',
-        message: 'Thông tin bản cập nhật máy chủ không hợp lệ.',
+        message: 'Thông tin bản cập nhật máy chủ (latest.yml) không hợp lệ.',
       };
     }
+
+    // 9. Download stream error
     if (lower.includes('download')) {
       return {
         code: 'UPDATE_DOWNLOAD_FAILED',
         message: 'Tải bản cập nhật thất bại. Vui lòng thử lại.',
       };
     }
+
+    // 10. General network failure
+    if (lower.includes('net::') || lower.includes('network') || lower.includes('econnrefused')) {
+      return {
+        code: 'UPDATE_NETWORK_ERROR',
+        message: 'Không thể kết nối máy chủ cập nhật. Vui lòng kiểm tra kết nối mạng.',
+      };
+    }
+
     return {
       code: 'UPDATE_INSTALL_FAILED',
       message: 'Có lỗi xảy ra trong quá trình cập nhật.',

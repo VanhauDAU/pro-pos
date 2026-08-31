@@ -6,7 +6,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"],
+    "run_worker_first": ["/api/*", "/print-agent/*"],
   },
   "preview_urls": true,
   "secrets": {
@@ -65,6 +65,10 @@
       "binding": "MEDIA",
       "bucket_name": "pro-pos-local-media",
     },
+    {
+      "binding": "PRINT_AGENT_UPDATES",
+      "bucket_name": "pro-pos-local-updates",
+    },
   ],
   "env": {
     "staging": {
@@ -114,6 +118,10 @@
           "binding": "MEDIA",
           "bucket_name": "pro-pos-staging-media",
         },
+        {
+          "binding": "PRINT_AGENT_UPDATES",
+          "bucket_name": "pro-pos-staging-updates",
+        },
       ],
     },
     "production": {
@@ -162,6 +170,10 @@
         {
           "binding": "MEDIA",
           "bucket_name": "pro-pos-production-media",
+        },
+        {
+          "binding": "PRINT_AGENT_UPDATES",
+          "bucket_name": "propos-updates",
         },
       ],
     },

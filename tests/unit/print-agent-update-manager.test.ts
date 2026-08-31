@@ -147,22 +147,36 @@ describe('UpdateManager Unit Tests', () => {
     expect(res2.status).toBe('UP_TO_DATE');
   });
 
-  it('maps checksum mismatch errors correctly', async () => {
-    const mockUpdater = new MockAppUpdater();
-    const manager = new UpdateManager({
-      autoUpdater: mockUpdater as any,
-      isPackaged: true,
-      isPortable: false,
-      currentVersion: '0.5.0',
-    });
+  it('maps specific error codes (ENOTFOUND, 404, 403, timeout, TLS, checksum) correctly', async () => {
+    const errorTestCases = [
+      { raw: 'getaddrinfo ENOTFOUND updates.propos.vn', expectedCode: 'UPDATE_SERVER_NOT_FOUND' },
+      { raw: 'Cannot find latest.yml, status code 404', expectedCode: 'UPDATE_FEED_NOT_FOUND' },
+      { raw: 'HTTP 403 Forbidden on latest.yml', expectedCode: 'UPDATE_FORBIDDEN' },
+      { raw: 'connect ETIMEDOUT 104.21.5.12', expectedCode: 'UPDATE_TIMEOUT' },
+      { raw: 'CERT_HAS_EXPIRED on SSL handshake', expectedCode: 'UPDATE_TLS_ERROR' },
+      {
+        raw: 'SHA512 checksum mismatch for installer binary',
+        expectedCode: 'UPDATE_CHECKSUM_FAILED',
+      },
+    ];
 
-    const checkPromise = manager.checkForUpdates();
-    mockUpdater.emit('error', new Error('SHA512 checksum mismatch for installer binary'));
-    await checkPromise;
+    for (const { raw, expectedCode } of errorTestCases) {
+      const mockUpdater = new MockAppUpdater();
+      const manager = new UpdateManager({
+        autoUpdater: mockUpdater as any,
+        isPackaged: true,
+        isPortable: false,
+        currentVersion: '0.5.1',
+      });
 
-    const state = manager.getState();
-    expect(state.status).toBe('ERROR');
-    expect(state.errorCode).toBe('UPDATE_CHECKSUM_FAILED');
+      const checkPromise = manager.checkForUpdates();
+      mockUpdater.emit('error', new Error(raw));
+      await checkPromise;
+
+      const state = manager.getState();
+      expect(state.status).toBe('ERROR');
+      expect(state.errorCode).toBe(expectedCode);
+    }
   });
 
   it('executes installUpdate via ShutdownCoordinator when queue drains', async () => {

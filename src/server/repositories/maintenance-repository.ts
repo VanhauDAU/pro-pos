@@ -83,6 +83,18 @@ export class MaintenanceRepository {
       cutoff,
       cutoff,
     );
+    await remove(
+      'revenue_report_print_snapshots',
+      'DELETE FROM revenue_report_print_snapshots WHERE expires_at <= ? OR created_at < ?',
+      startedAt,
+      cutoff,
+    );
+    await remove(
+      'product_report_print_snapshots',
+      'DELETE FROM product_report_print_snapshots WHERE expires_at <= ? OR created_at < ?',
+      startedAt,
+      cutoff,
+    );
 
     // Remove terminal QR-order data child-first. Pending requests are always retained.
     const terminalGuestRequests = `

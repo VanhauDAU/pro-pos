@@ -549,9 +549,13 @@ describe('POS Order Detail & Lifecycle Audit (Acceptance Test)', () => {
       page: 1,
       limit: 20,
     });
-    expect(
-      cancelledList.results.some((r) => r.orderId === openRes.orderId && r.status === 'CANCELLED'),
-    ).toBe(true);
+    const cancelledRow = cancelledList.results.find((r) => r.orderId === openRes.orderId);
+    expect(cancelledRow).toBeDefined();
+    expect(cancelledRow?.status).toBe('CANCELLED');
+    const expectedTimeAmount = detail.timeSummary?.totalAmountAfterRoundingVnd ?? 0;
+    const expectedItemGross = detail.items.reduce((s, i) => s + i.grossLineTotalVnd, 0);
+    expect(cancelledRow?.total).toBe(expectedTimeAmount + expectedItemGross);
+    expect(cancelledRow?.subtotal).toBe(expectedTimeAmount + expectedItemGross);
 
     const paidList = await ownerInvoiceService.listInvoices({
       storeId,

@@ -4,6 +4,7 @@ import type {
   PrintJob,
   PrintJobQuery,
 } from '@contracts/print-job';
+import type { PrintJobDocumentType } from '@contracts/print-job';
 import type { PrintJobClaimResponse } from '@contracts/print-job';
 import { AppError } from '@server/lib/app-error';
 import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
@@ -29,6 +30,10 @@ function formatPrintDocumentName(documentType: string, printerRole?: string | nu
       return 'hóa đơn';
     case 'debt_payment':
       return 'phiếu thu nợ';
+    case 'revenue_report':
+      return 'báo cáo doanh thu';
+    case 'product_report':
+      return 'báo cáo mặt hàng';
     case 'kitchen':
       return 'phiếu in bếp';
     case 'bar':
@@ -122,11 +127,46 @@ export class PrintJobService {
       return;
     }
 
+    if (documentType === 'revenue_report') {
+      const row = await this.env.DB.prepare(
+        `SELECT id FROM revenue_report_print_snapshots
+         WHERE store_id = ? AND id = ? AND expires_at > ? LIMIT 1`,
+      )
+        .bind(storeId, documentId, Date.now())
+        .first<{ id: string }>();
+      if (!row) {
+        throw new AppError(
+          'REVENUE_REPORT_SNAPSHOT_NOT_FOUND',
+          'Bản in báo cáo không tồn tại hoặc đã hết hạn.',
+          404,
+        );
+      }
+      return;
+    }
+
+    if (documentType === 'product_report') {
+      const row = await this.env.DB.prepare(
+        `SELECT id FROM product_report_print_snapshots
+         WHERE store_id = ? AND id = ? AND expires_at > ? LIMIT 1`,
+      )
+        .bind(storeId, documentId, Date.now())
+        .first<{ id: string }>();
+      if (!row) {
+        throw new AppError(
+          'PRODUCT_REPORT_SNAPSHOT_NOT_FOUND',
+          'Bản in báo cáo mặt hàng không tồn tại hoặc đã hết hạn.',
+          404,
+        );
+      }
+      return;
+    }
+
     throw new AppError('INVALID_DOCUMENT_TYPE', 'Loại tài liệu in không hợp lệ.', 400);
   }
 
   async createPrintJob(
-    input: CreatePrintJobInput & {
+    input: Omit<CreatePrintJobInput, 'documentType'> & {
+      documentType: PrintJobDocumentType;
       storeId: string;
       auditContext?: PrintJobAuditContext;
     },

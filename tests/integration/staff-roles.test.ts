@@ -47,6 +47,39 @@ describe('Owner staff and role management', () => {
     ]);
   });
 
+  it('grants revenue reporting independently from invoice printing', async () => {
+    const role = await staff.createRole(storeId, 'Xem báo cáo doanh thu', ['report.revenue']);
+    const employee = await staff.createEmployee({
+      storeId,
+      displayName: 'Nhân viên báo cáo',
+      username: `revenue.report.${crypto.randomUUID().slice(0, 8)}`,
+      pin: '2468',
+      roleId: role.id,
+      permissionKeys: [],
+    });
+    const authorization = new AuthorizationRepository(env.DB);
+    expect(await authorization.hasPermission(storeId, employee.userId, 'report.revenue')).toBe(
+      true,
+    );
+    expect(await authorization.hasPermission(storeId, employee.userId, 'invoice.print')).toBe(
+      false,
+    );
+  });
+
+  it('keeps sensitive revenue report slices and actions independently assignable', async () => {
+    const role = await staff.createRole(storeId, 'Báo cáo thanh toán giới hạn', [
+      'report.revenue.payment',
+      'report.revenue.print',
+    ]);
+    const detail = await staff.getRole(storeId, role.id);
+    expect(detail.permissionKeys).toEqual(
+      expect.arrayContaining(['report.revenue.payment', 'report.revenue.print']),
+    );
+    expect(detail.permissionKeys).not.toContain('report.revenue.staff');
+    expect(detail.permissionKeys).not.toContain('report.revenue.cancelled');
+    expect(detail.permissionKeys).not.toContain('report.revenue.export');
+  });
+
   it('creates, updates, disables and deletes an employee without changing username', async () => {
     const employee = await staff.createEmployee({
       storeId,

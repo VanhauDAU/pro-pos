@@ -246,3 +246,22 @@ export interface ProductReportDetailResponseDto {
   summary: ProductReportSummaryDto;
   rows: ProductReportDetailRow[];
 }
+
+export const printProductReportSchema = productReportQuerySchema.and(
+  z.object({
+    targetDeviceId: z.string().uuid().nullable().optional(),
+    idempotencyKey: z.string().trim().min(1).max(200),
+  }),
+);
+
+export type PrintProductReportInput = z.infer<typeof printProductReportSchema>;
+
+export interface ProductReportPrintSnapshotDto {
+  id: string;
+  storeId: string;
+  requestedByUserId: string;
+  requestedByName: string;
+  report: ProductReportResponseDto;
+  createdAt: number;
+  expiresAt: number;
+}

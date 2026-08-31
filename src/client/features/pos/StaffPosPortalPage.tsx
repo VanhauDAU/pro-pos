@@ -160,6 +160,11 @@ const OwnerProductReportPage = lazy(async () => {
   return { default: module.OwnerProductReportPage };
 });
 
+const OwnerRevenueReportPage = lazy(async () => {
+  const module = await import('@client/features/owner/OwnerRevenueReportPage');
+  return { default: module.OwnerRevenueReportPage };
+});
+
 const OwnerCategoryDetailPage = lazy(async () => {
   const module = await import('@client/features/owner/OwnerCatalogPages');
   return { default: module.OwnerCategoryDetailPage };
@@ -3099,6 +3104,55 @@ function MorePage({ auth }: { auth: AuthContextResponse }) {
                   </div>
                   <div style={{ fontSize: 12.5, color: '#64748b', marginTop: 2 }}>
                     Thêm món mới, điều chỉnh giá bán, quản lý danh mục và bảng giá
+                  </div>
+                </div>
+              </div>
+              <RightOutlined style={{ color: '#94a3b8', fontSize: 14 }} />
+            </div>
+          ) : null}
+
+          {hasAnyPermission(
+            'report.revenue',
+            'report.revenue.payment',
+            'report.revenue.service',
+            'report.revenue.cancelled',
+            'report.revenue.staff',
+          ) ? (
+            <div
+              className="staff-more-nav-item"
+              onClick={() => navigate('/pos/reports/revenue')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '16px 18px',
+                cursor: 'pointer',
+                borderBottom: '1px solid #f1f5f9',
+                transition: 'background 0.15s ease',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                <div
+                  style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 10,
+                    background: '#eff6ff',
+                    color: '#0975f7',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 22,
+                  }}
+                >
+                  <BarChartOutlined />
+                </div>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>
+                    Báo cáo doanh thu
+                  </div>
+                  <div style={{ fontSize: 12.5, color: '#64748b', marginTop: 2 }}>
+                    Xem, xuất Excel và in doanh thu theo thời gian
                   </div>
                 </div>
               </div>
@@ -13077,6 +13131,13 @@ export function StaffPosPortalPage() {
   const canHandleQr =
     grantedPermissions.includes('qr_order.handle') || grantedPermissions.includes('order.manage');
   const canViewProductReport = grantedPermissions.includes('report.product');
+  const canViewRevenueReport = [
+    'report.revenue',
+    'report.revenue.payment',
+    'report.revenue.service',
+    'report.revenue.cancelled',
+    'report.revenue.staff',
+  ].some((permission) => grantedPermissions.includes(permission));
 
   const isInvoiceDetail = location.pathname.startsWith('/pos/invoices/');
   const isInvoicesList =
@@ -13101,6 +13162,7 @@ export function StaffPosPortalPage() {
     isCatalogList;
   const isPrinterSettings = location.pathname === '/pos/printers';
   const isProductReport = location.pathname === '/pos/reports/products';
+  const isRevenueReport = location.pathname === '/pos/reports/revenue';
 
   // Customer routes
   const isCustomerNew = location.pathname === '/pos/customers/new';
@@ -13152,6 +13214,7 @@ export function StaffPosPortalPage() {
     isEditor ||
     isDetail ||
     isCatalog ||
+    isRevenueReport ||
     isProductReport ||
     isPrinterSettings ||
     isCustomer ||
@@ -13161,6 +13224,7 @@ export function StaffPosPortalPage() {
     : location.pathname.startsWith('/pos/more') ||
         isInvoicesList ||
         isCatalog ||
+        isRevenueReport ||
         isProductReport ||
         isPrinterSettings ||
         isCustomer ||
@@ -13192,6 +13256,27 @@ export function StaffPosPortalPage() {
                     onBack={() => navigate('/pos/more')}
                   />,
                 )
+              ) : isRevenueReport ? (
+                <div className="staff-invoices-shell">
+                  <div className="staff-invoices-container">
+                    {canViewRevenueReport ? (
+                      renderLazyPosRoute(
+                        <OwnerRevenueReportPage
+                          apiPrefix="/api/v1/owner/analytics"
+                          userPermissions={grantedPermissions}
+                          onBack={() => navigate('/pos/more')}
+                        />,
+                      )
+                    ) : (
+                      <Alert
+                        type="warning"
+                        showIcon
+                        title="Không có quyền xem báo cáo doanh thu"
+                        description="Vai trò hiện tại chưa được cấp quyền báo cáo doanh thu."
+                      />
+                    )}
+                  </div>
+                </div>
               ) : isProductReport ? (
                 <div className="staff-invoices-shell">
                   <div className="staff-invoices-container">

@@ -3,7 +3,8 @@ import { z } from 'zod';
 export type PrintJobStatus =
   'QUEUED' | 'CLAIMED' | 'PRINTING' | 'COMPLETED' | 'FAILED' | 'UNCERTAIN' | 'CANCELLED';
 
-export type PrintJobDocumentType = 'invoice' | 'provisional' | 'debt_payment';
+export type PrintJobDocumentType =
+  'invoice' | 'provisional' | 'debt_payment' | 'revenue_report' | 'product_report';
 
 export type PrintJobRole = 'receipt' | 'temporary_bill' | 'kitchen' | 'bar';
 

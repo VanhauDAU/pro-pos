@@ -146,7 +146,7 @@ export class OwnerInvoiceRepository {
       queries.push({
         sql: `
           SELECT o.id, o.id AS orderId,
-                 COALESCE(o.display_code, 'D' || strftime('%y%m%d', o.opened_at / 1000, 'unixepoch') || '-' || substr(o.id, 1, 4)) AS displayCode,
+                 COALESCE(o.display_code, 'D-' || substr(o.id, 1, 8)) AS displayCode,
                  COALESCE((SELECT SUM(line_total) FROM order_items WHERE store_id = o.store_id AND order_id = o.id), 0) AS subtotal,
                  COALESCE((SELECT SUM(discount_value) FROM order_items WHERE store_id = o.store_id AND order_id = o.id), 0) AS discountTotal,
                  COALESCE((SELECT SUM(line_total) FROM order_items WHERE store_id = o.store_id AND order_id = o.id), 0) AS total,
@@ -192,7 +192,7 @@ export class OwnerInvoiceRepository {
       queries.push({
         sql: `
           SELECT o.id, o.id AS orderId,
-                 COALESCE(o.display_code, 'D' || strftime('%y%m%d', o.opened_at / 1000, 'unixepoch') || '-' || substr(o.id, 1, 4)) AS displayCode,
+                 COALESCE(o.display_code, 'D-' || substr(o.id, 1, 8)) AS displayCode,
                  COALESCE((SELECT SUM(gross_line_total) FROM takeaway_order_items WHERE store_id = o.store_id AND order_id = o.id), 0) AS subtotal,
                  COALESCE((SELECT SUM(discount_amount) FROM takeaway_order_items WHERE store_id = o.store_id AND order_id = o.id), 0) AS discountTotal,
                  COALESCE((SELECT SUM(net_line_total) FROM takeaway_order_items WHERE store_id = o.store_id AND order_id = o.id), 0) AS total,

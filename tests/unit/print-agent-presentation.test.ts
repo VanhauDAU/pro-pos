@@ -7,6 +7,7 @@ import {
   presentOverallStatus,
   presentPrinterErrorDetails,
   presentPrinterStatus,
+  presentUpdateStatus,
 } from '../../apps/print-agent/src/desktop/renderer/presentation';
 import { requestPrinterCheck } from '../../apps/print-agent/src/desktop/renderer/printer-actions';
 import { vi } from 'vitest';
@@ -54,6 +55,55 @@ describe('Print Agent desktop presentation', () => {
     expect(presentFriendlyError(state('OFFLINE', 'UNKNOWN'))).toBe(
       'Print Agent đang mất kết nối máy chủ.',
     );
+  });
+
+  it('maps update states to friendly presentation objects', () => {
+    expect(presentUpdateStatus(null).label).toBe('Không khả dụng');
+    expect(presentUpdateStatus({ status: 'DISABLED', currentVersion: '0.5.0' }).tone).toBe(
+      'neutral',
+    );
+    expect(presentUpdateStatus({ status: 'CHECKING', currentVersion: '0.5.0' }).label).toBe(
+      'Đang kiểm tra...',
+    );
+    expect(
+      presentUpdateStatus({
+        status: 'AVAILABLE',
+        currentVersion: '0.5.0',
+        availableVersion: '0.5.1',
+      }).label,
+    ).toBe('Có bản mới v0.5.1');
+    expect(
+      presentUpdateStatus({
+        status: 'DOWNLOADING',
+        currentVersion: '0.5.0',
+        availableVersion: '0.5.1',
+        progressPercent: 55,
+      }).label,
+    ).toContain('55%');
+    expect(
+      presentUpdateStatus({
+        status: 'DOWNLOADED',
+        currentVersion: '0.5.0',
+        availableVersion: '0.5.1',
+      }).label,
+    ).toContain('sẵn sàng');
+    expect(
+      presentUpdateStatus({
+        status: 'WAITING_FOR_IDLE',
+        currentVersion: '0.5.0',
+        availableVersion: '0.5.1',
+      }).tone,
+    ).toBe('warning');
+    expect(presentUpdateStatus({ status: 'UP_TO_DATE', currentVersion: '0.5.0' }).label).toBe(
+      'Phiên bản mới nhất',
+    );
+    expect(
+      presentUpdateStatus({
+        status: 'ERROR',
+        currentVersion: '0.5.0',
+        errorMessage: 'Network error',
+      }).label,
+    ).toBe('Cập nhật thất bại');
   });
 
   it('formats the six-digit pairing code for quick visual scanning', () => {

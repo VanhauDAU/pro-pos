@@ -1,5 +1,5 @@
 import type { AgentRuntimeState, PrinterTestResult } from '../../core/agent-runtime';
-import type { DesktopAgentConfig } from '../shared/desktop-api';
+import type { DesktopAgentConfig, DesktopUpdateState } from '../shared/desktop-api';
 
 export type StatusTone = 'success' | 'info' | 'warning' | 'danger' | 'neutral';
 
@@ -172,4 +172,68 @@ export function presentPrinterErrorDetails(
 export function formatPairingCode(code: string): string {
   const digits = code.replace(/\D/g, '').slice(0, 6);
   return digits.length > 3 ? `${digits.slice(0, 3)} ${digits.slice(3)}` : digits;
+}
+
+export function presentUpdateStatus(updateState?: DesktopUpdateState | null): PresentedStatus {
+  if (!updateState || updateState.status === 'DISABLED') {
+    return {
+      label: 'Không khả dụng',
+      description: updateState?.errorMessage || 'Bản Portable không hỗ trợ cập nhật tự động.',
+      tone: 'neutral',
+    };
+  }
+  if (updateState.status === 'CHECKING') {
+    return {
+      label: 'Đang kiểm tra...',
+      description: 'Đang kiểm tra phiên bản mới từ máy chủ cập nhật.',
+      tone: 'info',
+    };
+  }
+  if (updateState.status === 'AVAILABLE') {
+    return {
+      label: `Có bản mới v${updateState.availableVersion || ''}`,
+      description: 'Chuẩn bị tải bản cập nhật...',
+      tone: 'info',
+    };
+  }
+  if (updateState.status === 'DOWNLOADING') {
+    return {
+      label: `Đang tải bản v${updateState.availableVersion || ''} (${updateState.progressPercent ?? 0}%)`,
+      description: 'Đang tải bản cập nhật ngầm, Print Agent vẫn in bình thường.',
+      tone: 'info',
+    };
+  }
+  if (updateState.status === 'DOWNLOADED') {
+    return {
+      label: `Bản v${updateState.availableVersion} đã sẵn sàng`,
+      description: 'Nhấn Cập nhật & khởi động lại để hoàn tất nâng cấp.',
+      tone: 'success',
+    };
+  }
+  if (updateState.status === 'WAITING_FOR_IDLE') {
+    return {
+      label: 'Đang đợi lệnh in hoàn tất',
+      description: 'Đang hoàn tất lệnh in trước khi khởi động lại.',
+      tone: 'warning',
+    };
+  }
+  if (updateState.status === 'INSTALLING') {
+    return {
+      label: 'Đang cài đặt',
+      description: 'Đang đóng ứng dụng để nâng cấp phiên bản mới...',
+      tone: 'info',
+    };
+  }
+  if (updateState.status === 'ERROR') {
+    return {
+      label: 'Cập nhật thất bại',
+      description: updateState.errorMessage || 'Không thể tải bản cập nhật.',
+      tone: 'danger',
+    };
+  }
+  return {
+    label: 'Phiên bản mới nhất',
+    description: `Bạn đang sử dụng phiên bản PRO POS Print Agent v${updateState.currentVersion}.`,
+    tone: 'success',
+  };
 }

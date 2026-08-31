@@ -17,6 +17,10 @@ const api: ProPosPrintAgentApi = {
   resetPairing: () => ipcRenderer.invoke('agent:reset-pairing'),
   resetAll: () => ipcRenderer.invoke('agent:reset-all'),
   showWindow: () => ipcRenderer.invoke('agent:show-window'),
+  getUpdateState: () => ipcRenderer.invoke('agent:get-update-state'),
+  checkForUpdates: () => ipcRenderer.invoke('agent:check-for-updates'),
+  downloadUpdate: () => ipcRenderer.invoke('agent:download-update'),
+  installUpdate: () => ipcRenderer.invoke('agent:install-update'),
   onStateChanged: (listener) => {
     const callback = (_event: Electron.IpcRendererEvent, state: Parameters<typeof listener>[0]) =>
       listener(state);
@@ -28,6 +32,12 @@ const api: ProPosPrintAgentApi = {
       listener(job);
     ipcRenderer.on('agent:job-changed', callback);
     return () => ipcRenderer.removeListener('agent:job-changed', callback);
+  },
+  onUpdateStateChanged: (listener) => {
+    const callback = (_event: Electron.IpcRendererEvent, state: Parameters<typeof listener>[0]) =>
+      listener(state);
+    ipcRenderer.on('agent:update-state-changed', callback);
+    return () => ipcRenderer.removeListener('agent:update-state-changed', callback);
   },
 };
 

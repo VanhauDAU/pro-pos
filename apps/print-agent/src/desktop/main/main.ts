@@ -5,9 +5,10 @@ import { createAgentTray } from './tray';
 import { createAgentWindow } from './window';
 import { DesktopConfigStore } from './config-store';
 import { AutostartController } from './autostart';
+import { ShutdownCoordinator } from './shutdown-coordinator';
+import { UpdateManager } from './update-manager';
 
 let mainWindow: BrowserWindow | null = null;
-let isQuitting = false;
 const startHidden = process.argv.includes('--hidden');
 
 if (!app.requestSingleInstanceLock()) {
@@ -26,24 +27,32 @@ if (!app.requestSingleInstanceLock()) {
       configManager: configStore,
     });
     await runtime.start();
+
+    const shutdownCoordinator = new ShutdownCoordinator(runtime, () => app.quit());
+    const updateManager = new UpdateManager({ shutdownCoordinator });
+    updateManager.start();
+
     const autostart = new AutostartController(app);
     mainWindow = createAgentWindow(startHidden);
     mainWindow.on('close', (event) => {
-      if (!isQuitting) {
+      if (!shutdownCoordinator.isPermittedToQuit()) {
         event.preventDefault();
         mainWindow?.hide();
       }
     });
-    registerAgentIpc(runtime, () => mainWindow, autostart, configStore);
-    createAgentTray(runtime, () => mainWindow, autostart);
+
+    registerAgentIpc(runtime, () => mainWindow, autostart, configStore, updateManager);
+    createAgentTray(runtime, () => mainWindow, autostart, updateManager);
 
     app.on('before-quit', (event) => {
-      if (!isQuitting) {
+      if (!shutdownCoordinator.isPermittedToQuit()) {
         event.preventDefault();
-        isQuitting = true;
-        void runtime.stop().finally(() => app.quit());
+        void shutdownCoordinator.requestQuit('NORMAL');
       }
     });
-    process.once('SIGTERM', () => app.quit());
+
+    process.once('SIGTERM', () => {
+      void shutdownCoordinator.requestQuit('SYSTEM');
+    });
   });
 }

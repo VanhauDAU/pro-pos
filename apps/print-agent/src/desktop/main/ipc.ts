@@ -8,6 +8,7 @@ import type {
 } from '../shared/desktop-api';
 import type { AutostartController } from './autostart';
 import type { DesktopConfigStore } from './config-store';
+import type { UpdateManager } from './update-manager';
 
 function normalizeConfig(
   runtime: AgentRuntime,
@@ -87,6 +88,7 @@ export function registerAgentIpc(
   getWindow: () => BrowserWindow | null,
   autostart: AutostartController,
   configStore: DesktopConfigStore,
+  updateManager?: UpdateManager,
 ): void {
   let lastJob: DesktopPrintJobState | null = null;
   const publishJob = (job: DesktopPrintJobState) => {
@@ -169,8 +171,37 @@ export function registerAgentIpc(
   });
   ipcMain.handle('agent:show-window', () => getWindow()?.show());
 
+  // Updater IPC Handlers
+  ipcMain.handle('agent:get-update-state', () => {
+    if (!updateManager) {
+      return { status: 'DISABLED', currentVersion: app.getVersion() };
+    }
+    return updateManager.getState();
+  });
+  ipcMain.handle('agent:check-for-updates', () => {
+    if (!updateManager) {
+      return { status: 'DISABLED', currentVersion: app.getVersion() };
+    }
+    return updateManager.checkForUpdates();
+  });
+  ipcMain.handle('agent:download-update', () => {
+    if (!updateManager) {
+      return { status: 'DISABLED', currentVersion: app.getVersion() };
+    }
+    return updateManager.downloadUpdate();
+  });
+  ipcMain.handle('agent:install-update', () => {
+    if (!updateManager) {
+      throw new Error('Chức năng cập nhật không khả dụng.');
+    }
+    return updateManager.installUpdate();
+  });
+
   runtime.on('stateChanged', (state) => {
     getWindow()?.webContents.send('agent:state-changed', state);
+  });
+  updateManager?.on('stateChanged', (state) => {
+    getWindow()?.webContents.send('agent:update-state-changed', state);
   });
   runtime.on('jobReceived', ({ jobId, type }: { jobId: string; type: string }) => {
     publishJob({ jobId, documentType: type, status: 'SENDING', updatedAt: Date.now() });

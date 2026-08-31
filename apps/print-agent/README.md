@@ -27,15 +27,18 @@ Không yêu cầu cài đặt Node.js hay QZ Tray, không cần mở cổng Inte
 
 ### 2. Tải bản phát hành
 
-Mở trang [PRO POS Print Agent Releases](https://github.com/VanhauDAU/pro-pos/releases), chọn bản `print-agent-v0.4.0` hoặc mới hơn và tải file:
+Mở trang [PRO POS Print Agent Releases](https://github.com/VanhauDAU/pro-pos/releases), chọn bản `print-agent-v0.5.0` hoặc mới hơn và tải file:
 
-- `PRO POS Print Agent Setup 0.4.0.exe`: Bản cài đặt NSIS tự động tạo shortcut Desktop & Start Menu.
-- `PRO POS Print Agent-0.4.0-x64-Portable.exe`: Bản Portable chạy trực tiếp không cần cài đặt.
+- `PRO POS Print Agent Setup 0.5.0.exe`: Bản cài đặt NSIS tự động tạo shortcut Desktop & Start Menu, hỗ trợ **Cập nhật tự động (Auto Update)**.
+- `PRO POS Print Agent-0.5.0-x64-Portable.exe`: Bản Portable chạy trực tiếp không cần cài đặt (không hỗ trợ auto update).
+
+> [!NOTE]
+> **Bản Bootstrap Auto Update:** Phiên bản `0.5.0` là phiên bản đầu tiên tích hợp hệ thống Auto Update cho Windows. Người dùng cần cài đặt file `Setup 0.5.0.exe` thủ công một lần. Các bản cập nhật tiếp theo (0.5.1, 0.6.0...) sẽ được ứng dụng tự động kiểm tra và nâng cấp nền.
 
 Tải thêm `SHA256SUMS.txt` nếu cần xác minh file:
 
 ```powershell
-(Get-FileHash '.\PRO POS Print Agent Setup 0.4.0.exe' -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash '.\PRO POS Print Agent Setup 0.5.0.exe' -Algorithm SHA256).Hash.ToLower()
 ```
 
 ### 3. Cấu hình máy in lần đầu (First-Run Wizard)
@@ -63,8 +66,8 @@ Tải thêm `SHA256SUMS.txt` nếu cần xác minh file:
 
 ### 1. Tải bản phát hành
 
-- `PRO POS Print Agent-0.4.0-arm64.dmg`: Dành cho chip Apple Silicon (M1/M2/M3/M4).
-- `PRO POS Print Agent-0.4.0-x64.dmg`: Dành cho máy Mac dùng chip Intel.
+- `PRO POS Print Agent-0.5.0-arm64.dmg`: Dành cho chip Apple Silicon (M1/M2/M3/M4).
+- `PRO POS Print Agent-0.5.0-x64.dmg`: Dành cho máy Mac dùng chip Intel.
 
 ### 2. Cài đặt và cấp quyền mạng cục bộ
 

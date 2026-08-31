@@ -40,3 +40,6 @@ mac:
 dmg:
   title: ${productName} ${version}
   artifactName: ${productName}-${version}-${arch}.${ext}
+publish:
+  provider: generic
+  url: https://updates.propos.vn/print-agent/windows/stable/

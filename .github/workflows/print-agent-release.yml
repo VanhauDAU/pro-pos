@@ -32,13 +32,18 @@ jobs:
             throw "Tag $env:GITHUB_REF_NAME does not match package version $version"
           }
       - run: pnpm --filter @propos/print-agent typecheck
-      - run: pnpm exec vitest run tests/unit/print-agent.test.ts tests/unit/print-agent-runtime.test.ts tests/unit/print-agent-credential-store.test.ts tests/unit/print-agent-autostart.test.ts tests/unit/print-agent-presentation.test.ts
+      - run: pnpm exec vitest run tests/unit/print-agent-job-queue.test.ts tests/unit/print-agent-shutdown-coordinator.test.ts tests/unit/print-agent-update-manager.test.ts tests/unit/print-agent.test.ts tests/unit/print-agent-runtime.test.ts tests/unit/print-agent-credential-store.test.ts tests/unit/print-agent-autostart.test.ts tests/unit/print-agent-presentation.test.ts
       - run: pnpm benchmark:print-agent
       - run: pnpm --filter @propos/print-agent dist:win
+      - name: Verify Windows updater artifacts and invariants
+        run: node scripts/verify-print-agent-update-artifacts.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: print-agent-windows-${{ github.run_id }}
-          path: apps/print-agent/release/*.exe
+          path: |
+            apps/print-agent/release/*.exe
+            apps/print-agent/release/*.blockmap
+            apps/print-agent/release/latest.yml
           if-no-files-found: error
 
   build-macos:
@@ -59,7 +64,7 @@ jobs:
           version=$(node -p "require('./apps/print-agent/package.json').version")
           test "$GITHUB_REF_NAME" = "print-agent-v$version"
       - run: pnpm --filter @propos/print-agent typecheck
-      - run: pnpm exec vitest run tests/unit/print-agent.test.ts tests/unit/print-agent-runtime.test.ts tests/unit/print-agent-credential-store.test.ts tests/unit/print-agent-autostart.test.ts tests/unit/print-agent-presentation.test.ts
+      - run: pnpm exec vitest run tests/unit/print-agent-job-queue.test.ts tests/unit/print-agent-shutdown-coordinator.test.ts tests/unit/print-agent-update-manager.test.ts tests/unit/print-agent.test.ts tests/unit/print-agent-runtime.test.ts tests/unit/print-agent-credential-store.test.ts tests/unit/print-agent-autostart.test.ts tests/unit/print-agent-presentation.test.ts
       - run: pnpm benchmark:print-agent
       - run: pnpm --filter @propos/print-agent dist:mac
       - uses: actions/upload-artifact@v4
@@ -87,6 +92,8 @@ jobs:
           name: print-agent-release-${{ github.run_id }}
           path: |
             apps/print-agent/release/*.exe
+            apps/print-agent/release/*.blockmap
+            apps/print-agent/release/latest.yml
             apps/print-agent/release/*.dmg
             apps/print-agent/release/*.zip
             apps/print-agent/release/SHA256SUMS.txt
@@ -95,6 +102,8 @@ jobs:
         with:
           files: |
             apps/print-agent/release/*.exe
+            apps/print-agent/release/*.blockmap
+            apps/print-agent/release/latest.yml
             apps/print-agent/release/*.dmg
             apps/print-agent/release/*.zip
             apps/print-agent/release/SHA256SUMS.txt

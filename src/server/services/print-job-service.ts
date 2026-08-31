@@ -32,6 +32,8 @@ function formatPrintDocumentName(documentType: string, printerRole?: string | nu
       return 'phiếu thu nợ';
     case 'revenue_report':
       return 'báo cáo doanh thu';
+    case 'product_report':
+      return 'báo cáo mặt hàng';
     case 'kitchen':
       return 'phiếu in bếp';
     case 'bar':
@@ -136,6 +138,23 @@ export class PrintJobService {
         throw new AppError(
           'REVENUE_REPORT_SNAPSHOT_NOT_FOUND',
           'Bản in báo cáo không tồn tại hoặc đã hết hạn.',
+          404,
+        );
+      }
+      return;
+    }
+
+    if (documentType === 'product_report') {
+      const row = await this.env.DB.prepare(
+        `SELECT id FROM product_report_print_snapshots
+         WHERE store_id = ? AND id = ? AND expires_at > ? LIMIT 1`,
+      )
+        .bind(storeId, documentId, Date.now())
+        .first<{ id: string }>();
+      if (!row) {
+        throw new AppError(
+          'PRODUCT_REPORT_SNAPSHOT_NOT_FOUND',
+          'Bản in báo cáo mặt hàng không tồn tại hoặc đã hết hạn.',
           404,
         );
       }

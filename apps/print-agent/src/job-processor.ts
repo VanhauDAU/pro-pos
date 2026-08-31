@@ -10,12 +10,14 @@ import {
 import { buildEscPosTextReceipt } from '@printing/escpos/escpos-text-builder';
 import { createReceiptDocument } from '@domain/receipt/receipt-document';
 import type { PrintJob, PrintJobClaimResponse } from '@contracts/print-job';
+import type { ProductReportPrintSnapshotDto } from '@contracts/reports';
 import type { RevenueReportPrintSnapshotDto } from '@contracts/revenue-report';
 import { parsePrinterDeviceConfig, type StorePrintSettings } from '@contracts/store';
 import { getReceiptPrintProfile } from '@contracts/store';
 import { PrinterError, type PrinterFailureStage } from '@printing/printer-errors';
 import type { PrintBootstrap, PrintStoreContext } from '@contracts/print-bootstrap';
 import { AgentPrintCache } from './core/print-cache';
+import { buildEscPosProductReport } from '@printing/escpos/product-report-builder';
 import { buildEscPosRevenueReport } from '@printing/escpos/revenue-report-builder';
 import type { PrintBootstrapCacheStatus } from './core/print-cache';
 
@@ -316,14 +318,20 @@ export class JobProcessor {
           { cause: error },
         );
       });
+      const isReport =
+        job.documentType === 'revenue_report' || job.documentType === 'product_report';
       const printDataPromise =
         job.documentType === 'revenue_report'
           ? this.apiClient.get<RevenueReportPrintSnapshotDto>(
               `/api/v1/owner/analytics/reports/revenue/print/${job.documentId}`,
             )
-          : loadPrintDataForJob(this.apiClient, job);
+          : job.documentType === 'product_report'
+            ? this.apiClient.get<ProductReportPrintSnapshotDto>(
+                `/api/v1/owner/analytics/reports/products/print/${job.documentId}`,
+              )
+            : loadPrintDataForJob(this.apiClient, job);
       const mediaPromise = bootstrapPromise.then((resolution) =>
-        job.documentType === 'revenue_report'
+        isReport
           ? {
               paperSize: 'K80' as const,
               logoRasterBytes: null,
@@ -376,6 +384,15 @@ export class JobProcessor {
       try {
         if (job.documentType === 'revenue_report') {
           escposBytes = buildEscPosRevenueReport(printData as RevenueReportPrintSnapshotDto, {
+            paperSize,
+            autoCut,
+            storeName: storeInfo.name,
+            vietnameseMode: resolveAgentVietnameseMode(printerConfig.vietnameseMode),
+            ...(storeInfo.address ? { storeAddress: storeInfo.address } : {}),
+            ...(storeInfo.phone ? { storePhone: storeInfo.phone } : {}),
+          });
+        } else if (job.documentType === 'product_report') {
+          escposBytes = buildEscPosProductReport(printData as ProductReportPrintSnapshotDto, {
             paperSize,
             autoCut,
             storeName: storeInfo.name,
@@ -558,7 +575,7 @@ export class JobProcessor {
       stages.completeAck = this.monotonicNow();
       console.log(
         `\x1b[32m✔ [PrintAgent] In thành công job ${job.id} (${
-          job.documentType === 'revenue_report'
+          job.documentType === 'revenue_report' || job.documentType === 'product_report'
             ? job.documentId
             : (printData as PosReceiptPrintData).orderCode || job.documentId
         })\x1b[0m`,

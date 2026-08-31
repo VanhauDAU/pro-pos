@@ -6,6 +6,7 @@ import { OwnerDashboardService } from '@server/services/owner-dashboard-service'
 import { OwnerInvoiceService } from '@server/services/owner-invoice-service';
 import { OwnerProductReportService } from '@server/services/owner-product-report-service';
 import { OwnerRevenueReportService } from '@server/services/owner-revenue-report-service';
+import { ProductReportPrintService } from '@server/services/product-report-print-service';
 import { RevenueReportPrintService } from '@server/services/revenue-report-print-service';
 import { PlatformService } from '@server/services/platform-service';
 import { PosService } from '@server/services/pos-service';
@@ -414,6 +415,41 @@ describe('Owner Dashboard Real Analytics (Acceptance Test)', () => {
     const snapshot = await service.get(storeId, job!.documentId);
     expect(snapshot.report.summary.completedInvoiceCount).toBe(2);
     expect(snapshot.requestedByName).toBe('Store Owner');
+
+    const productService = new ProductReportPrintService(env);
+    const prodInput = {
+      storeId,
+      actorUserId: ownerUserId,
+      actorName: 'Store Owner',
+      actorKind: 'OWNER' as const,
+      deviceId: null,
+      requestId: 'req-prod-report-print',
+      query: {
+        reportType: 'CATEGORY' as const,
+        timeRange: 'today' as const,
+        hourMode: 'all' as const,
+        fromHour: 0,
+        fromMinute: 0,
+        toHour: 0,
+        toMinute: 0,
+        compareWith: 'previous_period' as const,
+      },
+      idempotencyKey: 'product-print-dashboard-test',
+    };
+    const prodFirst = await productService.queue(prodInput);
+    const prodDup = await productService.queue(prodInput);
+    expect(prodDup).toEqual(prodFirst);
+
+    const prodJob = await env.DB.prepare(
+      `SELECT document_type AS documentType, document_id AS documentId, status
+       FROM print_jobs WHERE id = ?`,
+    )
+      .bind(prodFirst.jobId)
+      .first<{ documentType: string; documentId: string; status: string }>();
+    expect(prodJob).toMatchObject({ documentType: 'product_report', status: 'QUEUED' });
+    const prodSnapshot = await productService.get(storeId, prodJob!.documentId);
+    expect(prodSnapshot.report.summary.totalQuantity).toBeGreaterThanOrEqual(1);
+    expect(prodSnapshot.requestedByName).toBe('Store Owner');
   });
 
   it('uses the exact POS quote for unfinished TIME_BLOCK orders', async () => {

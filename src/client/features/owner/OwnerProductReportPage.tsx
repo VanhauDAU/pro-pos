@@ -6,6 +6,7 @@ import {
   EyeOutlined,
   FileExcelOutlined,
   InfoCircleOutlined,
+  PrinterOutlined,
   ReloadOutlined,
   RightOutlined,
   ShoppingOutlined,
@@ -29,7 +30,8 @@ import dayjs from 'dayjs';
 import { useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 
-import { apiRequest } from '@client/lib/api';
+import { apiRequest, jsonRequest } from '@client/lib/api';
+import type { AuthContextResponse } from '@contracts/auth';
 import type {
   ProductReportCancelledRow,
   ProductReportCategoryProductItem,
@@ -398,9 +400,11 @@ function DetailDrawer({
 export function OwnerProductReportPage({
   apiPrefix = '/api/v1/owner/analytics',
   onBack,
+  userPermissions,
 }: {
   apiPrefix?: string;
   onBack?: (() => void | Promise<void>) | undefined;
+  userPermissions?: readonly string[] | undefined;
 } = {}) {
   const [reportType, setReportType] = useState<SupportedReportType>('CATEGORY');
   const [timeRange, setTimeRange] = useState<ProductReportTimeRange>('this_week');
@@ -419,6 +423,16 @@ export function OwnerProductReportPage({
   const [draftFromMinute, setDraftFromMinute] = useState(0);
   const [draftToHour, setDraftToHour] = useState(0);
   const [draftToMinute, setDraftToMinute] = useState(0);
+  const [printing, setPrinting] = useState(false);
+
+  const auth = useQuery({
+    queryKey: ['auth-context'],
+    queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
+    staleTime: 600_000,
+  });
+  const isOwner = auth.data?.actor?.kind === 'OWNER';
+  const canExport = isOwner || !userPermissions || userPermissions.includes('report.product');
+  const canPrint = isOwner || !userPermissions || userPermissions.includes('report.product');
 
   const queryParams = useMemo(() => {
     const params = new URLSearchParams({
@@ -541,6 +555,32 @@ export function OwnerProductReportPage({
     message.success('Đã xuất báo cáo Excel.');
   };
 
+  const printReport = async () => {
+    if (!data || !hasRows || !appliedQueryParams) {
+      message.warning('Chưa có dữ liệu để in báo cáo.');
+      return;
+    }
+    setPrinting(true);
+    const idempotencyKey = `product-report:${crypto.randomUUID()}`;
+    try {
+      await jsonRequest(
+        `${apiPrefix}/reports/products/print`,
+        { ...Object.fromEntries(new URLSearchParams(appliedQueryParams)), idempotencyKey },
+        {
+          headers: {
+            'X-CSRF-Token': auth.data?.csrfToken ?? '',
+            'Idempotency-Key': idempotencyKey,
+          },
+        },
+      );
+      message.success('Đã gửi báo cáo tới Print Agent.');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'Không thể in báo cáo.');
+    } finally {
+      setPrinting(false);
+    }
+  };
+
   return (
     <div className="owner-product-report-page">
       <section className="product-report-hero">
@@ -561,15 +601,31 @@ export function OwnerProductReportPage({
             <p>Theo dõi số lượng, doanh thu và từng hóa đơn phát sinh của mặt hàng.</p>
           </div>
         </div>
-        <Button
-          className="product-report-hero__export"
-          icon={<FileExcelOutlined />}
-          aria-label="Xuất báo cáo Excel"
-          onClick={exportReport}
-          disabled={!hasRows}
-        >
-          Xuất Excel
-        </Button>
+        <div className="product-report-hero-actions">
+          {canExport && (
+            <Button
+              className="product-report-hero__export"
+              icon={<FileExcelOutlined />}
+              aria-label="Xuất báo cáo Excel"
+              onClick={exportReport}
+              disabled={!hasRows}
+            >
+              Xuất Excel
+            </Button>
+          )}
+          {canPrint && (
+            <Button
+              type="primary"
+              icon={<PrinterOutlined />}
+              aria-label="In Báo Cáo"
+              onClick={() => void printReport()}
+              disabled={!hasRows}
+              loading={printing}
+            >
+              In Báo Cáo
+            </Button>
+          )}
+        </div>
       </section>
 
       <section className="product-report-filter-bar" aria-label="Bộ lọc báo cáo">

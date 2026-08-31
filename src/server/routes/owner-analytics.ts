@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 
 import { dashboardQuerySchema } from '@contracts/dashboard';
-import { productReportQuerySchema } from '@contracts/reports';
+import { printProductReportSchema, productReportQuerySchema } from '@contracts/reports';
 import {
   printRevenueReportSchema,
   revenueReportQuerySchema,
@@ -19,6 +19,7 @@ import {
 import { OwnerDashboardService } from '@server/services/owner-dashboard-service';
 import { OwnerProductReportService } from '@server/services/owner-product-report-service';
 import { OwnerRevenueReportService } from '@server/services/owner-revenue-report-service';
+import { ProductReportPrintService } from '@server/services/product-report-print-service';
 import { RevenueReportPrintService } from '@server/services/revenue-report-print-service';
 import type { AppEnv } from '@server/types';
 
@@ -174,6 +175,55 @@ ownerAnalyticsRoutes.get(
     );
     return success(c, result);
   },
+);
+
+ownerAnalyticsRoutes.post(
+  '/reports/products/print',
+  requireActor('OWNER', 'EMPLOYEE'),
+  async (c) => {
+    const body = await parseJson(c.req.raw, printProductReportSchema);
+    const actor = c.get('actor');
+    await assertPermission(c, 'report.product');
+    if (actor.kind !== 'OWNER' && actor.kind !== 'EMPLOYEE') {
+      throw new AppError(
+        'ACTOR_KIND_UNSUPPORTED',
+        'Loại tài khoản không hỗ trợ in báo cáo mặt hàng.',
+        403,
+      );
+    }
+    const service = new ProductReportPrintService(c.env, (promise) =>
+      c.executionCtx.waitUntil(promise),
+    );
+    return success(
+      c,
+      await service.queue({
+        storeId: actor.storeId!,
+        actorUserId: actor.id,
+        actorName: actor.displayName,
+        actorKind: actor.kind,
+        deviceId: c.get('device')?.id ?? null,
+        requestId: c.get('requestId'),
+        query: body,
+        idempotencyKey: body.idempotencyKey,
+        ...(body.targetDeviceId !== undefined ? { targetDeviceId: body.targetDeviceId } : {}),
+      }),
+      201,
+    );
+  },
+);
+
+ownerAnalyticsRoutes.get(
+  '/reports/products/print/:snapshotId',
+  requireActorOrPrintAgent(),
+  requirePermission('report.product'),
+  async (c) =>
+    success(
+      c,
+      await new ProductReportPrintService(c.env).get(
+        c.get('actor').storeId!,
+        c.req.param('snapshotId'),
+      ),
+    ),
 );
 
 export { ownerAnalyticsRoutes };

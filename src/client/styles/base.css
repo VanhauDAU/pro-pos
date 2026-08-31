@@ -14450,6 +14450,13 @@ body {
   background: #f5fff8;
 }
 
+.product-report-hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .product-report-eyebrow,
 .product-report-section-head > div > span {
   color: #0877ee;

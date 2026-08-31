@@ -1251,6 +1251,7 @@ export class PlatformRepository {
       'realtime_batch_contexts',
       'print_jobs',
       'revenue_report_print_snapshots',
+      'product_report_print_snapshots',
       'print_agent_pairings',
       'print_agents',
       'create_time_session_commands',

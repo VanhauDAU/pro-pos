@@ -6,10 +6,11 @@ export function createAgentWindow(startHidden = false): BrowserWindow {
   const iconPath = join(__dirname, '../renderer/icon.png');
   const hasIcon = existsSync(iconPath);
   const window = new BrowserWindow({
-    width: 540,
-    height: 700,
-    minWidth: 480,
-    minHeight: 600,
+    width: 720,
+    height: 490,
+    minWidth: 640,
+    minHeight: 440,
+    resizable: true,
     backgroundColor: '#f3f5f8',
     show: false,
     title: 'PRO POS Print Agent',

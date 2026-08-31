@@ -33,16 +33,38 @@ test('authenticate a dedicated POS employee and persist browser state', async ({
   await page.getByRole('button', { name: 'Kích hoạt máy POS' }).click();
 
   await expect(page).toHaveURL(/\/?tab=employee/);
+  let employeeLoginCompleted = false;
+  const postLoginRequests: string[] = [];
+  page.on('response', (response) => {
+    if (
+      response.request().method() === 'POST' &&
+      new URL(response.url()).pathname === '/api/v1/auth/employee/login' &&
+      response.ok()
+    ) {
+      employeeLoginCompleted = true;
+    }
+  });
+  page.on('request', (request) => {
+    if (!employeeLoginCompleted || !['fetch', 'xhr'].includes(request.resourceType())) return;
+    postLoginRequests.push(new URL(request.url()).pathname);
+  });
   await page.getByPlaceholder('Tên đăng nhập').fill(employeeUsername);
   await page.getByLabel('Mã PIN 4 số').fill(employeePin);
   await expect(page).toHaveURL(/\/pos(?:\/|$)/, { timeout: 15_000 });
+  expect(postLoginRequests.filter((path) => path === '/api/v1/auth/context')).toEqual([]);
+  expect(
+    postLoginRequests.filter((path) => path === '/api/v1/pos/context').length,
+  ).toBeLessThanOrEqual(1);
+  expect(
+    postLoginRequests.filter((path) => path === '/api/v1/pos/overview').length,
+  ).toBeLessThanOrEqual(1);
+  employeeLoginCompleted = false;
 
   await page.goto('/pos/areas');
   await expect(page).toHaveURL(/\/pos\/areas/);
   await expect(page.getByLabel('Trạng thái kết nối')).toContainText('Trực tiếp', {
     timeout: 20_000,
   });
-
   mkdirSync(dirname(authStatePath), { recursive: true });
   await page.context().storageState({ path: authStatePath });
 });

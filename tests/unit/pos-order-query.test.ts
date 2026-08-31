@@ -6,7 +6,7 @@ import {
   QUOTE_INTERACTION_FRESH_MS,
   QUOTE_REALTIME_INTERACTION_FRESH_MS,
   QUOTE_DISCONNECTED_REFRESH_MS,
-  RUNNING_SERVER_REFRESH_MS,
+  CONNECTED_RUNNING_SAFETY_REFRESH_MS,
   orderQuoteQueryOptions,
   overviewRefreshInterval,
   quoteIsVerifiedForInteraction,
@@ -109,21 +109,29 @@ describe('POS order quote cache policy', () => {
     expect(fetcher.mock.calls[0]?.[0]).toBe('/api/v1/pos/orders/order-1/quote?projection=editor');
   });
 
-  it('polls only running quotes while realtime is connected', () => {
+  it('uses a 120-second safety refresh only for running quotes while connected', () => {
     expect(quoteRefreshInterval(quote(1, 'OPEN', 'RUNNING'), 'CONNECTED')).toBe(
-      RUNNING_SERVER_REFRESH_MS,
+      CONNECTED_RUNNING_SAFETY_REFRESH_MS,
     );
     expect(quoteRefreshInterval(quote(1, 'OPEN', 'PAUSED'), 'CONNECTED')).toBe(false);
     expect(quoteRefreshInterval(quote(1, 'PAYMENT_PENDING', 'RUNNING'), 'RECONNECTING')).toBe(
       false,
     );
-    expect(quoteRefreshInterval(quote(1), 'RECONNECTING')).toBe(QUOTE_DISCONNECTED_REFRESH_MS);
+    for (const status of ['DISABLED', 'CONNECTING', 'RECONNECTING'] as const) {
+      expect(quoteRefreshInterval(quote(1, 'OPEN', 'RUNNING'), status)).toBe(
+        QUOTE_DISCONNECTED_REFRESH_MS,
+      );
+      expect(quoteRefreshInterval(quote(1), status)).toBe(QUOTE_DISCONNECTED_REFRESH_MS);
+    }
   });
 
-  it('polls overview every 15 seconds only for a running table when connected', () => {
-    expect(overviewRefreshInterval(true, 'CONNECTED')).toBe(RUNNING_SERVER_REFRESH_MS);
+  it('uses a 120-second overview safety refresh for a running table when connected', () => {
+    expect(overviewRefreshInterval(true, 'CONNECTED')).toBe(CONNECTED_RUNNING_SAFETY_REFRESH_MS);
     expect(overviewRefreshInterval(false, 'CONNECTED')).toBe(false);
-    expect(overviewRefreshInterval(false, 'RECONNECTING')).toBe(OVERVIEW_DISCONNECTED_REFRESH_MS);
+    for (const status of ['DISABLED', 'CONNECTING', 'RECONNECTING'] as const) {
+      expect(overviewRefreshInterval(true, status)).toBe(OVERVIEW_DISCONNECTED_REFRESH_MS);
+      expect(overviewRefreshInterval(false, status)).toBe(OVERVIEW_DISCONNECTED_REFRESH_MS);
+    }
   });
 
   it('accepts only a fresh, non-stale prefetched quote as interaction-verified', () => {

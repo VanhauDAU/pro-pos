@@ -172,7 +172,12 @@ posRoutes.get('/context', async (c) => {
   if (c.req.header('X-Agent-Id')) {
     return success(c, await service.getPrintContext(actor.storeId!));
   }
-  return success(c, await service.getStaffContext(actor.storeId!, actor.id));
+  return success(
+    c,
+    await service.getStaffContext(actor.storeId!, actor.id, [
+      ...(c.get('principal')?.permissions ?? []),
+    ]),
+  );
 });
 
 posRoutes.get(

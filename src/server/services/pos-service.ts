@@ -27,7 +27,6 @@ import type {
   TimeSessionRow,
 } from '@server/repositories/pos-repository';
 import { AuditRepository } from '@server/repositories/audit-repository';
-import { AuthorizationRepository } from '@server/repositories/authorization-repository';
 import { CustomerService } from '@server/services/customer-service';
 import { PromotionService } from '@server/services/promotion-service';
 import { PromotionRepository } from '@server/repositories/promotion-repository';
@@ -2160,6 +2159,8 @@ export class PosService {
         categoryId: row.categoryId,
         categoryName: row.categoryName,
         unitName: row.unitName,
+        popularityScore: row.popularityScore,
+        paidOrderCount: row.paidOrderCount,
         variants: [],
       };
       product.variants.push({
@@ -2170,16 +2171,19 @@ export class PosService {
       });
       products.set(row.productId, product);
     }
-    return [...products.values()];
+    const productList = [...products.values()];
+    const popularProductLimit = 3;
+    return productList.map(({ popularityScore, paidOrderCount, ...product }, index) => ({
+      ...product,
+      // Keep the signal intentionally scarce: only the three highest-ranked
+      // products with paid-order history receive the visual treatment.
+      isPopular: index < popularProductLimit && popularityScore > 0 && paidOrderCount > 0,
+    }));
   }
 
-  async getStaffContext(storeId: string, actorId: string) {
+  async getStaffContext(storeId: string, actorId: string, permissionKeys: readonly string[]) {
     const context = await this.repository.getStaffContext(storeId, actorId);
     if (!context) return context;
-    const permissions = await new AuthorizationRepository(this.env.DB).listUserPermissions(
-      storeId,
-      actorId,
-    );
     const {
       posRealtimeEnabled,
       posCommandsV2Enabled,
@@ -2189,7 +2193,7 @@ export class PosService {
     } = context;
     return {
       ...staffContext,
-      permissions,
+      permissions: [...permissionKeys],
       capabilities: {
         posRealtime: posRealtimeEnabled === 1,
         posCommandsV2: posCommandsV2Enabled === 1,

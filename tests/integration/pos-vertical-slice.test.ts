@@ -1367,6 +1367,86 @@ describe('online POS vertical slice', () => {
     expect(tables.every((table) => table.status !== 'DISABLED')).toBe(true);
   });
 
+  it('shows recently popular products first while keeping the active catalog shape', async () => {
+    const platform = new PlatformService(env);
+    const popularityStore = await platform.createStore({
+      name: 'POS Popularity Store',
+      ownerDisplayName: 'Popularity Owner',
+      ownerEmail: `pos.popularity.${crypto.randomUUID()}@example.com`,
+    });
+    const catalog = new CatalogService(env);
+    const alphabeticalFirst = await catalog.createProduct(popularityStore.storeId, {
+      name: 'A - Món chưa gọi',
+      productType: 'QUANTITY',
+      variants: [
+        {
+          name: 'Giá mặc định',
+          salePriceVnd: 10_000,
+          costPriceVnd: 0,
+          promptPrice: false,
+        },
+      ],
+    });
+    const popular = await catalog.createProduct(popularityStore.storeId, {
+      name: 'Z - Món vừa gọi',
+      productType: 'QUANTITY',
+      variants: [
+        {
+          name: 'Giá mặc định',
+          salePriceVnd: 20_000,
+          costPriceVnd: 0,
+          promptPrice: false,
+        },
+      ],
+    });
+    const pos = new PosService(env);
+    const initialCatalog = await pos.listCatalog(popularityStore.storeId);
+    expect(initialCatalog.map((product) => product.productId)).toEqual([
+      alphabeticalFirst.id,
+      popular.id,
+    ]);
+    expect(initialCatalog.every((product) => !product.isPopular)).toBe(true);
+
+    const popularVariant = initialCatalog.find((product) => product.productId === popular.id)!
+      .variants[0]!;
+    const opened = await pos.openOrderCommand({
+      storeId: popularityStore.storeId,
+      actorId: popularityStore.ownerUserId,
+      requestId: 'request-popularity-open',
+      idempotencyKey: `popularity-open-${crypto.randomUUID()}`,
+      values: {
+        orderType: 'TAKEAWAY',
+        items: [
+          {
+            productId: popular.id,
+            variantId: popularVariant.id,
+            quantityMilli: 1_000,
+            note: null,
+            discount: null,
+          },
+        ],
+      },
+    });
+    await pos.checkout({
+      storeId: popularityStore.storeId,
+      actorId: popularityStore.ownerUserId,
+      requestId: 'request-popularity-checkout',
+      idempotencyKey: `popularity-checkout-${crypto.randomUUID()}`,
+      orderId: opened.order.id,
+      expectedOrderVersion: opened.order.version,
+      method: 'CASH',
+      cashReceivedVnd: opened.quote.totalVnd,
+    });
+
+    const reorderedCatalog = await pos.listCatalog(popularityStore.storeId);
+    expect(reorderedCatalog.map((product) => product.productId)).toEqual([
+      popular.id,
+      alphabeticalFirst.id,
+    ]);
+    expect(reorderedCatalog.map((product) => product.isPopular)).toEqual([true, false]);
+    expect(reorderedCatalog[0]).not.toHaveProperty('popularityScore');
+  });
+
   it('carries the active price-variant count from quote through order and invoice details', async () => {
     const catalog = new CatalogService(env);
     const multiVariant = await catalog.createProduct(storeId, {

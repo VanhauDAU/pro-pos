@@ -3,7 +3,6 @@ import type { MiddlewareHandler } from 'hono';
 import { AppError } from '@server/lib/app-error';
 import { readCredentialCookie } from '@server/lib/cookies';
 import { assertCsrf } from '@server/lib/security';
-import { AuthorizationRepository } from '@server/repositories/authorization-repository';
 import { AuthService } from '@server/services/auth-service';
 import { PrintAgentService } from '@server/services/print-agent-service';
 import type { AppEnv } from '@server/types';
@@ -18,27 +17,23 @@ export function requireActor(
       throw new AppError('AUTH_REQUIRED', 'Vui lòng đăng nhập.', 401);
     }
     const rawDevice = readCredentialCookie(c, 'device');
-    const context = await measureRequestTiming(c, 'auth', () =>
-      new AuthService(c.env).context(rawSession, rawDevice),
+    const principal = await measureRequestTiming(c, 'auth', () =>
+      new AuthService(c.env).requestPrincipal(rawSession, rawDevice),
     );
-    if (!context.actor || !allowedKinds.includes(context.actor.kind)) {
+    if (!principal || !allowedKinds.includes(principal.actor.kind)) {
       throw new AppError('AUTH_REQUIRED', 'Phiên đăng nhập không hợp lệ.', 401);
     }
-    if (context.actor.storeId) {
-      const store = await measureRequestTiming(c, 'store', () =>
-        new AuthorizationRepository(c.env.DB).getStoreStatus(context.actor!.storeId!),
-      );
-      if (!store || store.status !== 'ACTIVE') {
-        throw new AppError('STORE_LOCKED', 'Cửa hàng đang bị khóa.', 403);
-      }
+    if (principal.actor.storeId && principal.storeStatus !== 'ACTIVE') {
+      throw new AppError('STORE_LOCKED', 'Cửa hàng đang bị khóa.', 403);
     }
     if (!['GET', 'HEAD', 'OPTIONS'].includes(c.req.method)) {
       await assertCsrf(c, rawSession);
     }
-    c.set('actor', context.actor);
-    c.set('device', context.device);
+    c.set('principal', principal);
+    c.set('actor', principal.actor);
+    c.set('device', principal.device);
     c.set('rawSession', rawSession);
-    c.set('sessionId', context.sessionId!);
+    c.set('sessionId', principal.sessionId);
     await next();
   };
 }
@@ -59,6 +54,7 @@ export function requireActorOrPrintAgent(): MiddlewareHandler<AppEnv> {
       });
       c.set('device', { id: agent.id, deviceName: agent.device_name } as any);
       c.set('sessionId', `agent-session-${agent.id}`);
+      c.set('principal', null);
       return next();
     }
 
@@ -90,9 +86,8 @@ export async function assertPermission(
   if (!actor.storeId) {
     throw new AppError('STORE_CONTEXT_REQUIRED', 'Thiếu ngữ cảnh cửa hàng.', 403);
   }
-  const allowed = await measureRequestTiming(c, 'permission', () =>
-    new AuthorizationRepository(c.env.DB).hasPermission(actor.storeId!, actor.id, permissionKeys),
-  );
+  const principal = c.get('principal');
+  const allowed = permissionKeys.some((permissionKey) => principal?.permissions.has(permissionKey));
   if (!allowed) {
     throw new AppError('PERMISSION_DENIED', 'Bạn không có quyền thực hiện thao tác này.', 403);
   }

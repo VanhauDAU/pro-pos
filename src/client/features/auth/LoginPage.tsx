@@ -16,10 +16,12 @@ import { Navigate, useNavigate, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 
 import type { AuthContextResponse, LoginResponse } from '@contracts/auth';
+import type { PosOverviewSnapshot } from '@contracts/pos';
 
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 
 import { AuthLayout } from './AuthLayout';
+import { authContextAfterEmployeeLogin } from './employee-login-cache';
 
 interface EmployeeFormValues {
   username: string;
@@ -408,12 +410,32 @@ export function LoginPage() {
       };
       setRememberedEmployee(savedInfo);
       setRememberedEmployeeState(savedInfo);
-      setLoginSuccess({ name: savedInfo.displayName, role: 'employee' });
+      const seededAuthContext = authContextAfterEmployeeLogin(context.data, response);
+      if (seededAuthContext) {
+        queryClient.setQueryData<AuthContextResponse>(['auth-context'], seededAuthContext);
+      } else {
+        await queryClient.fetchQuery({
+          queryKey: ['auth-context'],
+          queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
+          staleTime: 0,
+        });
+      }
+      void Promise.allSettled([
+        import('@client/features/pos/StaffPosPortalPage'),
+        queryClient.prefetchQuery({
+          queryKey: ['pos-context'],
+          queryFn: () => apiRequest<unknown>('/api/v1/pos/context'),
+          staleTime: Infinity,
+        }),
+        queryClient.prefetchQuery({
+          queryKey: ['pos-overview'],
+          queryFn: ({ signal }) =>
+            apiRequest<PosOverviewSnapshot>('/api/v1/pos/overview', { signal }),
+          staleTime: 5_000,
+        }),
+      ]);
       toast.success(`Xin chào, ${savedInfo.displayName}!`);
-      await queryClient.invalidateQueries({ queryKey: ['auth-context'] });
-      setTimeout(() => {
-        navigate('/pos', { replace: true });
-      }, 450);
+      navigate('/pos', { replace: true });
     } catch (loginError) {
       const retryAfter = retryAfterSeconds(loginError);
       setEmployeeRetryAfterSeconds(retryAfter);

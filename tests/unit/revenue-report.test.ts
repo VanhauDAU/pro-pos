@@ -157,6 +157,8 @@ describe('Revenue report ranges and thermal output', () => {
             completedInvoiceCount: 2,
             cancelledOrderCount: 1,
             productQuantity: 5,
+            goodsRevenue: 65_000,
+            timeRevenue: 35_000,
             grossRevenue: 100_000,
             cancelledAmount: 20_000,
             discountAmount: 10_000,
@@ -199,6 +201,9 @@ describe('Revenue report ranges and thermal output', () => {
     const printable = new TextDecoder().decode(bytes);
     expect(printable).toContain('DOANH THU TONG QUAN');
     expect(printable).toContain('DOANH THU THUAN');
+    expect(printable).toMatch(/Tien hang\s+65\.000d/u);
+    expect(printable).toMatch(/Tien gio\s+35\.000d/u);
+    expect(printable).toMatch(/Tong truoc giam\s+100\.000d/u);
     expect(printable).toContain('90.000d');
     const drawerCommand = [0x1b, 0x70, 0x00, 0x19, 0xfa];
     expect(

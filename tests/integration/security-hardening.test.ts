@@ -193,6 +193,24 @@ describe('PRO-010A API security and tenant boundaries', () => {
     ).orderId;
   });
 
+  it('rejects the next protected request immediately after a store is locked', async () => {
+    const lockedStore = await new PlatformService(env).createStore({
+      name: `Locked request store ${crypto.randomUUID()}`,
+      ownerDisplayName: 'Locked Store Owner',
+      ownerEmail: `locked.${crypto.randomUUID()}@example.com`,
+    });
+    const identity = await ownerIdentity(lockedStore.storeId, lockedStore.ownerUserId);
+    await env.DB.prepare("UPDATE stores SET status = 'LOCKED' WHERE id = ?")
+      .bind(lockedStore.storeId)
+      .run();
+
+    const response = await SELF.fetch(`${ORIGIN}/api/v1/owner/store/settings`, {
+      headers: ownerHeaders(identity),
+    });
+    expect(response.status).toBe(403);
+    expect(await errorCode(response)).toBe('STORE_LOCKED');
+  });
+
   it('revokes the current device only when actor and device belong to the same store', async () => {
     const sameStore = await SELF.fetch(`${ORIGIN}/api/v1/devices/current/revoke`, {
       method: 'POST',
@@ -348,6 +366,29 @@ describe('PRO-010A API security and tenant boundaries', () => {
       }),
     });
     expect(allowed.status).toBe(201);
+    const serverTiming = allowed.headers.get('Server-Timing') ?? '';
+    expect(serverTiming).toMatch(/(?:^|,\s*)auth;dur=/u);
+    expect(serverTiming).not.toMatch(/(?:^|,\s*)(?:store|permission);dur=/u);
+
+    await env.DB.prepare(
+      `DELETE FROM role_permissions
+       WHERE store_id = ? AND role_id = ? AND permission_key = 'discount.item'`,
+    )
+      .bind(storeA.storeId, role!.roleId)
+      .run();
+    const deniedAfterRevocation = await SELF.fetch(`${ORIGIN}/api/v1/pos/orders/${orderId}/items`, {
+      method: 'POST',
+      headers: { ...employeeHeaders, 'Idempotency-Key': 'employee-discount-revoked' },
+      body: JSON.stringify({
+        productId,
+        variantId,
+        quantityMilli: 1000,
+        expectedOrderVersion: 3,
+        discount: { type: 'FIXED', value: 10_000, reason: 'Quyền đã thu hồi' },
+      }),
+    });
+    expect(deniedAfterRevocation.status).toBe(403);
+    expect(await errorCode(deniedAfterRevocation)).toBe('PERMISSION_DENIED');
 
     const ownerAdd = await SELF.fetch(`${ORIGIN}/api/v1/pos/orders/${orderId}/items`, {
       method: 'POST',

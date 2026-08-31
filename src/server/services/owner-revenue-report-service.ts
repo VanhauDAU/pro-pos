@@ -315,9 +315,9 @@ export class OwnerRevenueReportService {
     const timezone = settings.timezone || 'Asia/Ho_Chi_Minh';
     const cutoffMinutes = Math.max(0, Math.min(1_439, settings.businessDayCutoffMinutes ?? 0));
     const range = resolveRevenueReportRange(query, timezone, cutoffMinutes, nowMs);
-    const [rawInvoices, rawProductLines, rawCancelled] = await Promise.all([
+    const [rawInvoices, rawInvoiceLines, rawCancelled] = await Promise.all([
       this.repository.getCompletedInvoices(storeId, range.fromMs, range.toMs),
-      this.repository.getProductLines(storeId, range.fromMs, range.toMs),
+      this.repository.getInvoiceLines(storeId, range.fromMs, range.toMs),
       this.repository.getCancelledOrders(storeId, range.fromMs, range.toMs),
     ]);
     const matchesHour = (timestamp: number) =>
@@ -335,13 +335,21 @@ export class OwnerRevenueReportService {
       ? hourInvoices.filter((row) => row.issuedBy === query.employeeId)
       : hourInvoices;
     const invoiceIds = new Set(invoices.map((row) => row.id));
-    const productLines = rawProductLines.filter(
+    const invoiceLines = rawInvoiceLines.filter(
       (row) => matchesHour(row.issuedAt) && invoiceIds.has(row.invoiceId),
     );
+    const productLines = invoiceLines.filter((row) => row.lineType === 'PRODUCT');
     const cancelled = rawCancelled.filter((row) => matchesHour(row.cancelledAt));
 
     const productQuantity = productLines.reduce((sum, row) => sum + row.quantityMilli / 1_000, 0);
     const grossRevenue = invoices.reduce((sum, row) => sum + row.subtotal, 0);
+    const timeRevenue = Math.min(
+      grossRevenue,
+      invoiceLines
+        .filter((row) => row.lineType === 'TIME')
+        .reduce((sum, row) => sum + row.grossAmount, 0),
+    );
+    const goodsRevenue = Math.max(0, grossRevenue - timeRevenue);
     const discountAmount = invoices.reduce((sum, row) => sum + row.discountTotal, 0);
     const netRevenue = invoices.reduce((sum, row) => sum + row.total, 0);
     const cancelledAmount = cancelled.reduce((sum, row) => sum + row.total, 0);
@@ -392,6 +400,8 @@ export class OwnerRevenueReportService {
       completedInvoiceCount,
       cancelledOrderCount: cancelled.length,
       productQuantity: Number(productQuantity.toFixed(3)),
+      goodsRevenue,
+      timeRevenue,
       grossRevenue,
       cancelledAmount,
       discountAmount,
@@ -421,6 +431,8 @@ export class OwnerRevenueReportService {
             ...rawSummary,
             completedInvoiceCount: 0,
             productQuantity: 0,
+            goodsRevenue: 0,
+            timeRevenue: 0,
             grossRevenue: 0,
             discountAmount: 0,
             netRevenue: 0,

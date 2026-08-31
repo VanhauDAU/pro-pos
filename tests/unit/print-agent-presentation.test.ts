@@ -85,8 +85,18 @@ describe('Print Agent desktop presentation', () => {
         status: 'DOWNLOADED',
         currentVersion: '0.5.0',
         availableVersion: '0.5.1',
+        automaticInstallScheduled: true,
       }).label,
-    ).toContain('sẵn sàng');
+    ).toBe('Bản cập nhật v0.5.1 đã sẵn sàng · sẽ tự cài lúc 00:00');
+    expect(
+      presentUpdateStatus({
+        status: 'DOWNLOADED',
+        currentVersion: '0.5.0',
+        availableVersion: '0.5.1',
+        automaticInstallScheduled: true,
+        maintenanceWindowActive: true,
+      }).label,
+    ).toBe('Đang chờ hoàn tất lệnh in để cập nhật');
     expect(
       presentUpdateStatus({
         status: 'WAITING_FOR_IDLE',

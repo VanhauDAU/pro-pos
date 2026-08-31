@@ -157,7 +157,15 @@ export class AgentRuntime extends EventEmitter {
     }
 
     if (typeof this.realtime.quiesceAndDrain === 'function') {
-      const result = await this.realtime.quiesceAndDrain(options.timeoutMs ?? 30_000);
+      let result: 'DRAINED' | 'DRAIN_TIMEOUT';
+      try {
+        result = await this.realtime.quiesceAndDrain(options.timeoutMs ?? 30_000);
+      } catch {
+        // Treat an unexpected drain failure like a timeout. The update must not
+        // strand the realtime client in a quiesced state.
+        this.realtime.resumeAfterDrainAbort?.();
+        return 'DRAIN_TIMEOUT';
+      }
       if (result === 'DRAIN_TIMEOUT') {
         // Rollback: abort install and safely resume the realtime client
         this.realtime.resumeAfterDrainAbort?.();

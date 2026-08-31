@@ -117,6 +117,8 @@ app.route('/api/v1/owner/qr-order', ownerQrOrderRoutes);
 app.route('/api/v1/print-agent', publicPrintAgentRoutes);
 app.route('/api/v1/pos/print-agent', posPrintAgentRoutes);
 app.route('/api/v1/pos/print-jobs', printJobRoutes);
+// Register /windows/download before the stable generic filename feed route.
+app.route('/api/v1/print-agent-updates/windows', printAgentUpdateRoutes);
 app.route('/api/v1/print-agent-updates/windows/stable', printAgentUpdateRoutes);
 app.route('/api/v1/print-agent/windows/stable', printAgentUpdateRoutes);
 app.route('/api/print-agent-updates/windows/stable', printAgentUpdateRoutes);

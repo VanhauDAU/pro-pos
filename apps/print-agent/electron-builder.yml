@@ -42,4 +42,4 @@ dmg:
   artifactName: ${productName}-${version}-${arch}.${ext}
 publish:
   provider: generic
-  url: https://updates.propos.vn/print-agent/windows/stable/
+  url: https://pro-pos-production.vanhau-laravel.workers.dev/print-agent/windows/stable/

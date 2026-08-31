@@ -135,11 +135,17 @@ class R2S3Client {
 async function main() {
   const isDryRun = process.argv.includes('--dry-run');
 
-  const accountId = process.env.CLOUDFLARE_R2_ACCOUNT_ID;
-  const accessKeyId = process.env.CLOUDFLARE_R2_ACCESS_KEY_ID;
-  const secretAccessKey = process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY;
-  const bucketName = process.env.CLOUDFLARE_R2_BUCKET_NAME || 'propos-updates';
-  const customDomain = process.env.CLOUDFLARE_R2_CUSTOM_DOMAIN || 'updates.propos.vn';
+  const accountId = process.env.R2_ACCOUNT_ID || process.env.CLOUDFLARE_R2_ACCOUNT_ID;
+  const accessKeyId = process.env.R2_ACCESS_KEY_ID || process.env.CLOUDFLARE_R2_ACCESS_KEY_ID;
+  const secretAccessKey =
+    process.env.R2_SECRET_ACCESS_KEY || process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY;
+  const bucketName =
+    process.env.R2_BUCKET_NAME || process.env.CLOUDFLARE_R2_BUCKET_NAME || 'propos-updates';
+  const workerUrl = (
+    process.env.WORKER_URL ||
+    process.env.FEED_BASE_URL ||
+    'https://pro-pos-production.vanhau-laravel.workers.dev'
+  ).replace(/\/$/, '');
   const feedPrefix = process.env.CLOUDFLARE_R2_FEED_PREFIX || 'print-agent/windows/stable';
 
   const pkg = JSON.parse(await readFile(packageJsonPath, 'utf8'));
@@ -150,7 +156,7 @@ async function main() {
   );
   console.log(`  - Target Bucket: ${bucketName}`);
   console.log(`  - Feed Prefix:   ${feedPrefix}`);
-  console.log(`  - Custom Domain: https://${customDomain}/${feedPrefix}/`);
+  console.log(`  - Worker Feed:   ${workerUrl}/${feedPrefix}/`);
 
   if (!accountId || !accessKeyId || !secretAccessKey) {
     if (isDryRun) {
@@ -160,7 +166,7 @@ async function main() {
       return;
     }
     throw new Error(
-      'Missing required Cloudflare R2 secrets: CLOUDFLARE_R2_ACCOUNT_ID, CLOUDFLARE_R2_ACCESS_KEY_ID, CLOUDFLARE_R2_SECRET_ACCESS_KEY.',
+      'Missing required Cloudflare R2 secrets: R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY.',
     );
   }
 
@@ -261,9 +267,9 @@ async function main() {
     `✔ [Step 4/5] latest.yml uploaded with Cache-Control: no-cache, no-store, must-revalidate`,
   );
 
-  // STEP 5: Verify Live Feed URL
-  console.log(`\n🔍 [Step 5/5] Verifying live feed endpoint on custom domain...`);
-  const liveUrl = `https://${customDomain}/${feedPrefix}/latest.yml`;
+  // STEP 5: Verify Live Feed URL via Worker
+  console.log(`\n🔍 [Step 5/5] Verifying live feed endpoint via Worker URL...`);
+  const liveUrl = `${workerUrl}/${feedPrefix}/latest.yml`;
   try {
     const liveRes = await fetch(liveUrl, {
       method: 'GET',
@@ -281,21 +287,21 @@ async function main() {
         liveText.includes(`version: "${version}"`)
       ) {
         console.log(
-          `✔ [Step 5/5] Live feed ${liveUrl} verified: HTTP 200 OK with version ${version}!`,
+          `✔ [Step 5/5] Live Worker feed ${liveUrl} verified: HTTP 200 OK with version ${version}!`,
         );
       } else {
         console.warn(
-          `⚠️ [Step 5/5] Live feed returned HTTP 200 but version mismatch. Cloudflare cache or propagation in progress.`,
+          `⚠️ [Step 5/5] Live feed returned HTTP 200 but content did not match version ${version} yet (CDN edge propagation).`,
         );
       }
     } else {
       console.warn(
-        `⚠️ [Step 5/5] Live feed returned HTTP ${liveRes.status}. If custom domain ${customDomain} is not yet pointed, verify R2 public bucket binding in Cloudflare Dashboard.`,
+        `⚠️ [Step 5/5] Live Worker feed returned HTTP ${liveRes.status}. Ensure Worker with PRINT_AGENT_UPDATES binding is deployed.`,
       );
     }
   } catch (err) {
     console.warn(
-      `⚠️ [Step 5/5] Could not reach https://${customDomain}: ${err.message}. If DNS is not yet configured, configure Custom Domain on R2 bucket "${bucketName}".`,
+      `⚠️ [Step 5/5] Could not reach ${liveUrl}: ${err.message}. Ensure Worker is accessible.`,
     );
   }
 

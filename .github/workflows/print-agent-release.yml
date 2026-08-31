@@ -86,6 +86,17 @@ jobs:
           pattern: print-agent-*-${{ github.run_id }}
           path: apps/print-agent/release
           merge-multiple: true
+      - name: Verify Windows updater artifacts before publish
+        run: node scripts/verify-print-agent-update-artifacts.mjs
+      - name: Publish Windows updater feed to Cloudflare R2
+        env:
+          CLOUDFLARE_R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}
+          CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+          CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+          CLOUDFLARE_R2_BUCKET_NAME: ${{ secrets.CLOUDFLARE_R2_BUCKET_NAME || 'propos-updates' }}
+          CLOUDFLARE_R2_CUSTOM_DOMAIN: 'updates.propos.vn'
+          CLOUDFLARE_R2_FEED_PREFIX: 'print-agent/windows/stable'
+        run: node scripts/publish-print-agent-r2.mjs
       - run: node scripts/write-print-agent-checksums.mjs
       - uses: actions/upload-artifact@v4
         with:

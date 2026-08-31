@@ -6,10 +6,10 @@ export function createAgentWindow(startHidden = false): BrowserWindow {
   const iconPath = join(__dirname, '../renderer/icon.png');
   const hasIcon = existsSync(iconPath);
   const window = new BrowserWindow({
-    width: 720,
-    height: 490,
-    minWidth: 640,
-    minHeight: 440,
+    width: 760,
+    height: 530,
+    minWidth: 680,
+    minHeight: 460,
     resizable: true,
     backgroundColor: '#f3f5f8',
     show: false,

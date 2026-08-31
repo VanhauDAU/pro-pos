@@ -12,6 +12,11 @@ export type DesktopUpdateStatus =
 
 export type DesktopUpdateErrorCode =
   | 'UPDATE_DISABLED'
+  | 'UPDATE_SERVER_NOT_FOUND'
+  | 'UPDATE_FEED_NOT_FOUND'
+  | 'UPDATE_FORBIDDEN'
+  | 'UPDATE_TIMEOUT'
+  | 'UPDATE_TLS_ERROR'
   | 'UPDATE_NETWORK_ERROR'
   | 'UPDATE_MANIFEST_INVALID'
   | 'UPDATE_CHECKSUM_FAILED'

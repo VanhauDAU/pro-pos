@@ -925,36 +925,39 @@ function SettingsDialog({
           </button>
         </div>
 
-        <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+        <form
+          onSubmit={submit}
+          style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}
+        >
           <div className="dialog-body">
-            {/* Nhóm 1: Máy in */}
-            <div className="settings-group">
-              <div className="settings-group-title">1. Máy in</div>
+            <div className="settings-columns-grid">
+              {/* Cột trái: Cấu hình máy in & In ấn */}
+              <div className="settings-column">
+                <div className="settings-group-title">1. Cấu hình máy in</div>
 
-              {!isMac && (
-                <div className="connection-choice-grid" style={{ marginBottom: 10 }}>
-                  <button
-                    type="button"
-                    className={`connection-choice-card ${form.connectionType === 'WINDOWS_PRINTER' ? 'connection-choice-card--active' : ''}`}
-                    onClick={() => setForm({ ...form, connectionType: 'WINDOWS_PRINTER' })}
-                  >
-                    <strong>Máy in Windows (USB)</strong>
-                    <span>Cắm trực tiếp</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`connection-choice-card ${form.connectionType === 'NETWORK_TCP' ? 'connection-choice-card--active' : ''}`}
-                    onClick={() => setForm({ ...form, connectionType: 'NETWORK_TCP' })}
-                  >
-                    <strong>Mạng LAN</strong>
-                    <span>Qua router/IP</span>
-                  </button>
-                </div>
-              )}
+                {!isMac && (
+                  <div className="connection-choice-grid" style={{ marginBottom: 8 }}>
+                    <button
+                      type="button"
+                      className={`connection-choice-card ${form.connectionType === 'WINDOWS_PRINTER' ? 'connection-choice-card--active' : ''}`}
+                      onClick={() => setForm({ ...form, connectionType: 'WINDOWS_PRINTER' })}
+                    >
+                      <strong>Máy in Windows</strong>
+                      <span>Cắm USB trực tiếp</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`connection-choice-card ${form.connectionType === 'NETWORK_TCP' ? 'connection-choice-card--active' : ''}`}
+                      onClick={() => setForm({ ...form, connectionType: 'NETWORK_TCP' })}
+                    >
+                      <strong>Mạng LAN</strong>
+                      <span>Cổng TCP 9100</span>
+                    </button>
+                  </div>
+                )}
 
-              <div className="field-grid">
                 {form.connectionType === 'WINDOWS_PRINTER' && !isMac ? (
-                  <label className="field" style={{ margin: 0 }}>
+                  <label className="field" style={{ marginBottom: 8 }}>
                     <span>Máy in trên Windows</span>
                     <div className="printer-select-row">
                       <select
@@ -988,7 +991,7 @@ function SettingsDialog({
                     </div>
                   </label>
                 ) : (
-                  <div className="field-grid field-grid--wide-left" style={{ margin: 0 }}>
+                  <div className="field-grid field-grid--wide-left" style={{ marginBottom: 8 }}>
                     <label className="field" style={{ margin: 0 }}>
                       <span>Địa chỉ IP</span>
                       <input
@@ -1014,26 +1017,39 @@ function SettingsDialog({
                   </div>
                 )}
 
-                <label className="field" style={{ margin: 0 }}>
-                  <span>Khổ giấy</span>
-                  <select
-                    value={form.paperSize}
-                    onChange={(event) =>
-                      setForm({ ...form, paperSize: event.target.value as 'K58' | 'K80' })
-                    }
-                  >
-                    <option value="K80">K80 · 80 mm (Chuẩn)</option>
-                    <option value="K58">K58 · 58 mm (Khổ nhỏ)</option>
-                  </select>
-                </label>
-              </div>
-            </div>
+                <div className="field-grid" style={{ marginBottom: 8 }}>
+                  <label className="field" style={{ margin: 0 }}>
+                    <span>Khổ giấy</span>
+                    <select
+                      value={form.paperSize}
+                      onChange={(event) =>
+                        setForm({ ...form, paperSize: event.target.value as 'K58' | 'K80' })
+                      }
+                    >
+                      <option value="K80">K80 · 80 mm (Chuẩn)</option>
+                      <option value="K58">K58 · 58 mm (Khổ nhỏ)</option>
+                    </select>
+                  </label>
 
-            {/* Nhóm 2: Tùy chọn nâng cao */}
-            <div className="settings-group">
-              <div className="settings-group-title">2. Tùy chọn nâng cao</div>
-              <div className="field-grid" style={{ alignItems: 'center' }}>
-                <div style={{ display: 'flex', gap: 14 }}>
+                  <label className="field" style={{ margin: 0 }}>
+                    <span>Vùng in (Dots)</span>
+                    <input
+                      type="number"
+                      placeholder={form.paperSize === 'K58' ? '384' : '576'}
+                      value={form.printableDots || ''}
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          printableDots: event.target.value
+                            ? Number(event.target.value)
+                            : undefined,
+                        })
+                      }
+                    />
+                  </label>
+                </div>
+
+                <div style={{ display: 'flex', gap: 14, marginTop: 4 }}>
                   <Toggle
                     checked={Boolean(form.autoCut)}
                     onChange={(checked) => setForm({ ...form, autoCut: checked })}
@@ -1045,145 +1061,128 @@ function SettingsDialog({
                     label="Mở két tiền"
                   />
                 </div>
-
-                <label className="field" style={{ margin: 0 }}>
-                  <span>Vùng in (Printable dots)</span>
-                  <input
-                    type="number"
-                    placeholder={form.paperSize === 'K58' ? '384' : '576'}
-                    value={form.printableDots || ''}
-                    onChange={(event) =>
-                      setForm({
-                        ...form,
-                        printableDots: event.target.value ? Number(event.target.value) : undefined,
-                      })
-                    }
-                  />
-                </label>
               </div>
-            </div>
 
-            {/* Nhóm 3: Ứng dụng & Cập nhật */}
-            <div className="settings-group">
-              <div className="settings-group-title">3. Ứng dụng & Cập nhật</div>
+              {/* Cột phải: Ứng dụng, Cập nhật & Thiết lập lại */}
+              <div className="settings-column">
+                <div className="settings-group-title">2. Ứng dụng & Cập nhật</div>
 
-              {/* Phiên bản & Cập nhật */}
-              <div className="update-card" style={{ marginBottom: 14 }}>
-                <div className="update-card-header">
-                  <div>
-                    <span style={{ fontWeight: 600, fontSize: 13 }}>v{info.version}</span>
-                    {updateInfo.label && (
-                      <span
-                        className={`update-badge update-badge--${updateInfo.tone}`}
-                        style={{ marginLeft: 8 }}
+                {/* Thẻ cập nhật */}
+                <div className="update-card" style={{ marginBottom: 10 }}>
+                  <div className="update-card-header">
+                    <div>
+                      <span style={{ fontWeight: 600, fontSize: 13 }}>v{info.version}</span>
+                      {updateInfo.label && (
+                        <span
+                          className={`update-badge update-badge--${updateInfo.tone}`}
+                          style={{ marginLeft: 6 }}
+                        >
+                          <StatusDot tone={updateInfo.tone} />
+                          {updateInfo.label}
+                        </span>
+                      )}
+                    </div>
+
+                    {updateState?.status === 'DOWNLOADED' ? (
+                      <Button
+                        type="button"
+                        kind="primary"
+                        loading={action === 'install-update'}
+                        onClick={onInstallUpdate}
+                        style={{ fontSize: 11.5, padding: '3px 8px' }}
                       >
-                        <StatusDot tone={updateInfo.tone} />
-                        {updateInfo.label}
-                      </span>
+                        Cập nhật & khởi động
+                      </Button>
+                    ) : updateState?.status === 'ERROR' ? (
+                      <Button
+                        type="button"
+                        kind="secondary"
+                        loading={action === 'check-update'}
+                        onClick={onCheckForUpdates}
+                        style={{ fontSize: 11.5, padding: '3px 8px' }}
+                      >
+                        Thử lại
+                      </Button>
+                    ) : updateState?.status === 'DISABLED' ? null : (
+                      <Button
+                        type="button"
+                        kind="secondary"
+                        loading={
+                          action === 'check-update' ||
+                          updateState?.status === 'CHECKING' ||
+                          updateState?.status === 'AVAILABLE' ||
+                          updateState?.status === 'DOWNLOADING'
+                        }
+                        onClick={onCheckForUpdates}
+                        style={{ fontSize: 11.5, padding: '3px 8px' }}
+                      >
+                        {updateState?.status === 'DOWNLOADING'
+                          ? `Đang tải ${updateState.progressPercent ?? 0}%`
+                          : 'Kiểm tra'}
+                      </Button>
                     )}
                   </div>
 
-                  {updateState?.status === 'DOWNLOADED' ? (
-                    <Button
-                      type="button"
-                      kind="primary"
-                      loading={action === 'install-update'}
-                      onClick={onInstallUpdate}
-                      style={{ fontSize: 12, padding: '4px 10px' }}
-                    >
-                      Cập nhật & khởi động lại
-                    </Button>
-                  ) : updateState?.status === 'ERROR' ? (
-                    <Button
-                      type="button"
-                      kind="secondary"
-                      loading={action === 'check-update'}
-                      onClick={onCheckForUpdates}
-                      style={{ fontSize: 12, padding: '4px 10px' }}
-                    >
-                      Thử lại
-                    </Button>
-                  ) : updateState?.status === 'DISABLED' ? null : (
-                    <Button
-                      type="button"
-                      kind="secondary"
-                      loading={
-                        action === 'check-update' ||
-                        updateState?.status === 'CHECKING' ||
-                        updateState?.status === 'AVAILABLE' ||
-                        updateState?.status === 'DOWNLOADING'
-                      }
-                      onClick={onCheckForUpdates}
-                      style={{ fontSize: 12, padding: '4px 10px' }}
-                    >
-                      {updateState?.status === 'DOWNLOADING'
-                        ? `Đang tải ${updateState.progressPercent ?? 0}%`
-                        : 'Kiểm tra cập nhật'}
-                    </Button>
+                  <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+                    {updateInfo.description}
+                  </div>
+
+                  {updateState?.status === 'DOWNLOADING' && (
+                    <div className="update-progress-bar">
+                      <div
+                        className="update-progress-fill"
+                        style={{ width: `${updateState.progressPercent ?? 0}%` }}
+                      />
+                    </div>
                   )}
                 </div>
 
-                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                  {updateInfo.description}
+                {/* Autostart & Logs */}
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: 10,
+                  }}
+                >
+                  <Toggle
+                    checked={info.autostart}
+                    disabled={action === 'autostart'}
+                    onChange={onAutostart}
+                    label={isMac ? 'Khởi động cùng macOS' : 'Khởi động cùng Windows'}
+                  />
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={onLogs}
+                    disabled={action === 'logs'}
+                  >
+                    <Icon name="folder" size={13} /> Mở nhật ký
+                  </button>
                 </div>
 
-                {updateState?.status === 'DOWNLOADING' && (
-                  <div className="update-progress-bar">
-                    <div
-                      className="update-progress-fill"
-                      style={{ width: `${updateState.progressPercent ?? 0}%` }}
-                    />
+                {/* Danger Box: Reset */}
+                <div className="danger-box">
+                  <p>Thiết lập lại Print Agent:</p>
+                  <div className="danger-actions">
+                    <Button
+                      type="button"
+                      kind="secondary"
+                      onClick={() => onConfirm('repair')}
+                      style={{ fontSize: 11.5, padding: '4px 8px' }}
+                    >
+                      Ghép nối lại
+                    </Button>
+                    <Button
+                      type="button"
+                      kind="danger"
+                      onClick={() => onConfirm('reset')}
+                      style={{ fontSize: 11.5, padding: '4px 8px' }}
+                    >
+                      Xóa cấu hình
+                    </Button>
                   </div>
-                )}
-              </div>
-
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  marginBottom: 12,
-                }}
-              >
-                <Toggle
-                  checked={info.autostart}
-                  disabled={action === 'autostart'}
-                  onChange={onAutostart}
-                  label={
-                    typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac')
-                      ? 'Khởi động cùng macOS'
-                      : 'Khởi động cùng Windows'
-                  }
-                />
-                <button
-                  type="button"
-                  className="text-button"
-                  onClick={onLogs}
-                  disabled={action === 'logs'}
-                >
-                  <Icon name="folder" size={14} /> Mở thư mục nhật ký
-                </button>
-              </div>
-
-              <div className="danger-box">
-                <p>Thiết lập lại Print Agent:</p>
-                <div className="danger-actions">
-                  <Button
-                    type="button"
-                    kind="secondary"
-                    onClick={() => onConfirm('repair')}
-                    style={{ fontSize: 12 }}
-                  >
-                    Ghép nối lại
-                  </Button>
-                  <Button
-                    type="button"
-                    kind="danger"
-                    onClick={() => onConfirm('reset')}
-                    style={{ fontSize: 12 }}
-                  >
-                    Xóa cấu hình
-                  </Button>
                 </div>
               </div>
             </div>

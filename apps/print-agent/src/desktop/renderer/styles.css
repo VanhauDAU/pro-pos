@@ -668,41 +668,47 @@ select:focus-visible {
   position: fixed;
   inset: 0;
   background: rgba(15, 23, 42, 0.45);
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   z-index: 50;
-  padding: 14px;
+  padding: 10px;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .dialog {
-  width: min(100%, 640px);
+  width: min(100%, 700px);
+  max-height: calc(100% - 16px);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
-  overflow: hidden;
-  max-height: 92vh;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .dialog-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
+  padding: 12px 18px;
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
 .dialog-header h2 {
-  font-size: 15px;
+  font-size: 14.5px;
   font-weight: 600;
   margin: 0;
 }
 
 .dialog-body {
-  padding: 16px 20px;
+  padding: 14px 18px;
   overflow-y: auto;
+  flex: 1;
+  min-height: 0;
 }
 
 .dialog-footer {
@@ -710,37 +716,50 @@ select:focus-visible {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  padding: 14px 20px;
+  padding: 10px 18px;
   border-top: 1px solid var(--border);
   background: var(--surface-subtle);
+  flex-shrink: 0;
+}
+
+.settings-columns-grid {
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.settings-column {
+  display: flex;
+  flex-direction: column;
 }
 
 .settings-group {
-  margin-bottom: 18px;
+  margin-bottom: 14px;
 }
 
 .settings-group-title {
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .danger-box {
-  padding: 12px 14px;
+  padding: 10px 12px;
   background: var(--danger-soft);
   border: 1px solid #fecaca;
   border-radius: var(--radius-sm);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .danger-box p {
   margin: 0;
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--danger);
 }
 

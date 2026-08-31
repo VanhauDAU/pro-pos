@@ -7,7 +7,11 @@ import {
   type AgentRealtimeEvents,
   type RealtimeConnection,
 } from '../realtime-client';
-import { AgentTcpTransport } from '../tcp-transport';
+import { CompositePrinterTransport } from '../transports/composite-transport';
+import type {
+  AgentPrinterConnection,
+  AgentPrinterTransport,
+} from '../transports/printer-transport';
 import { buildEscPosTextReceipt } from '@printing/escpos/escpos-text-builder';
 import type {
   AgentRuntimeEvent,
@@ -35,10 +39,6 @@ interface RuntimePairingHandler {
   }): Promise<PrintAgentConfig>;
 }
 
-interface RuntimeTransport {
-  send(data: Uint8Array, options: { host: string; port?: number }): Promise<void>;
-}
-
 export interface AgentRuntimeDependencies {
   configManager?: RuntimeConfigStore;
   createApiClient?: (config: PrintAgentConfig) => AgentApiClient;
@@ -47,12 +47,13 @@ export interface AgentRuntimeDependencies {
     apiClient: AgentApiClient,
     events: AgentRealtimeEvents,
     printCache: AgentPrintCache,
+    transport?: AgentPrinterTransport,
   ) => RealtimeConnection;
   createPairingHandler?: (
     configManager: RuntimeConfigStore,
     config: PrintAgentConfig,
   ) => RuntimePairingHandler;
-  createTransport?: () => RuntimeTransport;
+  createTransport?: () => AgentPrinterTransport;
 }
 
 /**
@@ -90,11 +91,12 @@ export class AgentRuntime extends EventEmitter {
     this.createApiClient = dependencies.createApiClient ?? ((config) => new AgentApiClient(config));
     this.createRealtimeClient =
       dependencies.createRealtimeClient ??
-      ((config, apiClient, events) => new AgentRealtimeClient(config, apiClient, events));
+      ((config, apiClient, events, printCache, transport) =>
+        new AgentRealtimeClient(config, apiClient, events, printCache, transport));
     this.createPairingHandler =
       dependencies.createPairingHandler ??
       ((configManager, config) => new PairingHandler(configManager as ConfigManager, config));
-    this.createTransport = dependencies.createTransport ?? (() => new AgentTcpTransport());
+    this.createTransport = dependencies.createTransport ?? (() => new CompositePrinterTransport());
   }
 
   getConfig(): PrintAgentConfig | null {
@@ -186,24 +188,51 @@ export class AgentRuntime extends EventEmitter {
     this.connectRealtime();
   }
 
-  async testPrinter(): Promise<PrinterTestResult> {
-    const config = this.config;
+  async testPrinter(overrideConfig?: Partial<PrintAgentConfig>): Promise<PrinterTestResult> {
+    const config = overrideConfig ? { ...this.config, ...overrideConfig } : this.config;
+    if (overrideConfig) {
+      this.config = config as PrintAgentConfig;
+    }
+    const connectionType = config?.connectionType || 'NETWORK_TCP';
+    const printerName = config?.printerName?.trim() || '';
     const host = config?.printerIp?.trim() || '';
     const port = config?.printerPort ?? 9100;
-    if (!host || !Number.isInteger(port) || port < 1 || port > 65_535) {
-      const error = !host
-        ? 'Địa chỉ IP máy in không hợp lệ.'
-        : 'Cổng máy in phải nằm trong khoảng 1–65535.';
-      const diagnostics = {
-        errorCode: 'INVALID_PRINTER_CONFIG',
-        printerCode: 'INVALID_PRINTER_CONFIG',
-        host,
-        port,
-        failureStage: 'BEFORE_WRITE' as const,
-      };
-      this.setPrinterStatus('INVALID_CONFIG', error, diagnostics);
-      return { ok: false, host, port, error, diagnostics };
+
+    let connection: AgentPrinterConnection;
+
+    if (connectionType === 'WINDOWS_PRINTER') {
+      if (!printerName) {
+        const error = 'Tên máy in Windows không được để trống.';
+        const diagnostics = {
+          errorCode: 'INVALID_PRINTER_CONFIG',
+          printerCode: 'INVALID_PRINTER_CONFIG',
+          connectionType: 'WINDOWS_PRINTER' as const,
+          printerName,
+          failureStage: 'BEFORE_WRITE' as const,
+        };
+        this.setPrinterStatus('INVALID_CONFIG', error, diagnostics);
+        return { ok: false, connectionType: 'WINDOWS_PRINTER', printerName, error, diagnostics };
+      }
+      connection = { type: 'WINDOWS_PRINTER', printerName };
+    } else {
+      if (!host || !Number.isInteger(port) || port < 1 || port > 65_535) {
+        const error = !host
+          ? 'Địa chỉ IP máy in không hợp lệ.'
+          : 'Cổng máy in phải nằm trong khoảng 1–65535.';
+        const diagnostics = {
+          errorCode: 'INVALID_PRINTER_CONFIG',
+          printerCode: 'INVALID_PRINTER_CONFIG',
+          connectionType: 'NETWORK_TCP' as const,
+          host,
+          port,
+          failureStage: 'BEFORE_WRITE' as const,
+        };
+        this.setPrinterStatus('INVALID_CONFIG', error, diagnostics);
+        return { ok: false, connectionType: 'NETWORK_TCP', host, port, error, diagnostics };
+      }
+      connection = { type: 'NETWORK_TCP', host, port };
     }
+
     const receipt = buildEscPosTextReceipt(
       {
         receiptType: 'PAYMENT',
@@ -228,19 +257,36 @@ export class AgentRuntime extends EventEmitter {
       },
       {
         paperSize: config?.paperSize || 'K80',
-        storeName: 'PRO POS PRINT AGENT TEST',
+        storeName:
+          connectionType === 'WINDOWS_PRINTER'
+            ? `PRO POS TEST · ${printerName}`
+            : 'PRO POS PRINT AGENT TEST',
         autoCut: true,
       },
     );
+
     try {
-      await this.createTransport().send(receipt, { host, port });
+      await this.createTransport().send(receipt, connection);
       this.setPrinterStatus('READY');
-      return { ok: true, host, port };
+      return {
+        ok: true,
+        connectionType,
+        ...(connectionType === 'WINDOWS_PRINTER' ? { printerName } : { host, port }),
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const diagnostics = mapPrinterErrorDiagnostics(error, host, port);
+      const diagnostics = mapPrinterErrorDiagnostics(error, {
+        connectionType,
+        ...(connectionType === 'WINDOWS_PRINTER' ? { printerName } : { host, port }),
+      });
       this.setPrinterStatus('UNREACHABLE', message, diagnostics);
-      return { ok: false, host, port, error: message, diagnostics };
+      return {
+        ok: false,
+        connectionType,
+        ...(connectionType === 'WINDOWS_PRINTER' ? { printerName } : { host, port }),
+        error: message,
+        diagnostics,
+      };
     }
   }
 
@@ -263,7 +309,7 @@ export class AgentRuntime extends EventEmitter {
       onJobFailed: (jobId, code, retryable) => this.emit('jobFailed', { jobId, code, retryable }),
     };
     const apiClient = this.createApiClient(config);
-    this.printCache ??= new AgentPrintCache(apiClient);
+    this.printCache = new AgentPrintCache(apiClient);
     this.realtime = this.createRealtimeClient(config, apiClient, events, this.printCache);
     this.realtime.connect();
   }

@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import React, { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { AgentRuntimeState } from '../../core/agent-runtime';
 import type {
   DesktopAgentInfo,
+  DesktopPrinterItem,
   DesktopPrintJobState,
   DesktopSettingsInput,
 } from '../shared/desktop-api';
@@ -16,7 +17,6 @@ import {
   presentPrinterStatus,
   type StatusTone,
 } from './presentation';
-import { requestPrinterCheck } from './printer-actions';
 import './styles.css';
 
 const initialState: AgentRuntimeState = {
@@ -39,7 +39,7 @@ interface ToastState {
 
 function Icon({
   name,
-  size = 20,
+  size = 18,
 }: {
   name:
     | 'printer'
@@ -50,7 +50,9 @@ function Icon({
     | 'check'
     | 'close'
     | 'folder'
-    | 'shield';
+    | 'shield'
+    | 'arrow-right'
+    | 'arrow-left';
   size?: number;
 }) {
   const paths: Record<typeof name, ReactNode> = {
@@ -95,16 +97,27 @@ function Icon({
         <path d="m9 12 2 2 4-4" />
       </>
     ),
+    'arrow-right': (
+      <>
+        <path d="M5 12h14" />
+        <path d="m12 5 7 7-7 7" />
+      </>
+    ),
+    'arrow-left': (
+      <>
+        <path d="M19 12H5" />
+        <path d="m12 19-7-7 7-7" />
+      </>
+    ),
   };
   return (
     <svg
-      className="icon"
       width={size}
       height={size}
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.8"
+      strokeWidth="2"
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
@@ -122,16 +135,30 @@ function StatusDot({ tone }: { tone: StatusTone }) {
   return <span className={`status-dot status-dot--${tone}`} aria-hidden="true" />;
 }
 
-function Header({ version }: { version: string }) {
+function Header({
+  version,
+  status,
+}: {
+  version: string;
+  status?: { label: string; tone: StatusTone };
+}) {
   return (
     <header className="app-header">
-      <div className="brand-mark">
-        <img src="./icon.png" alt="PRO POS Logo" className="brand-logo-img" />
+      <div className="brand-wrapper">
+        <div className="brand-mark">
+          <img src="./icon.png" alt="PRO POS" className="brand-logo-img" />
+        </div>
+        <div className="brand-copy">
+          <strong>PRO POS Print Agent</strong>
+          <span>v{version}</span>
+        </div>
       </div>
-      <div className="brand-copy">
-        <strong>PRO POS Print Agent</strong>
-        <span>v{version}</span>
-      </div>
+      {status && (
+        <div className="status-pill">
+          <StatusDot tone={status.tone} />
+          <span>{status.label}</span>
+        </div>
+      )}
     </header>
   );
 }
@@ -167,7 +194,7 @@ function Toggle({
   label: string;
 }) {
   return (
-    <label className={`toggle ${disabled ? 'toggle--disabled' : ''}`}>
+    <label className="toggle">
       <input
         type="checkbox"
         checked={checked}
@@ -185,138 +212,400 @@ function Toggle({
 function Toast({ toast, onClose }: { toast: ToastState; onClose: () => void }) {
   return (
     <div className={`toast toast--${toast.tone}`} role="status" aria-live="polite">
-      <div className="toast-icon">
-        {toast.tone === 'success' ? <Icon name="check" size={18} /> : '!'}
-      </div>
-      <div className="toast-copy">
-        <strong>{toast.message}</strong>
-        {toast.detail && (
-          <details>
-            <summary>Xem chi tiết</summary>
-            <code>{toast.detail}</code>
-          </details>
-        )}
-      </div>
+      <span>{toast.message}</span>
       <button className="icon-button" onClick={onClose} aria-label="Đóng thông báo">
-        <Icon name="close" size={17} />
+        <Icon name="close" size={14} />
       </button>
     </div>
   );
 }
 
+/** Step 1: Printer Setup & Test Print */
+function PrinterSetupView({
+  info,
+  state,
+  action,
+  onSaveAndTest,
+  onProceedToPairing,
+}: {
+  info: DesktopAgentInfo;
+  state: AgentRuntimeState;
+  action: Action;
+  onSaveAndTest: (settings: DesktopSettingsInput) => Promise<boolean>;
+  onProceedToPairing: () => void;
+}) {
+  const isMac = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
+  const [form, setForm] = useState<DesktopSettingsInput>({
+    serverUrl: info.config.serverUrl,
+    connectionType: info.config.connectionType || (isMac ? 'NETWORK_TCP' : 'WINDOWS_PRINTER'),
+    printerName: info.config.printerName || '',
+    printerIp: info.config.printerIp || '',
+    printerPort: info.config.printerPort || 9100,
+    paperSize: info.config.paperSize || 'K80',
+    autoCut: info.config.autoCut ?? true,
+    openCashDrawer: info.config.openCashDrawer ?? false,
+    printableDots: info.config.printableDots,
+  });
+
+  const [printers, setPrinters] = useState<DesktopPrinterItem[]>([]);
+  const [loadingPrinters, setLoadingPrinters] = useState(false);
+  const [testedOk, setTestedOk] = useState(state.printer === 'READY');
+
+  const refreshPrinters = async () => {
+    if (!window.proposPrintAgent?.listPrinters) return;
+    setLoadingPrinters(true);
+    try {
+      const list = await window.proposPrintAgent.listPrinters();
+      setPrinters(list);
+      setForm((current) => {
+        if (!current.printerName && list.length > 0) {
+          const virtualPatterns = /pdf|xps|onenote|fax|document writer|root print queue/i;
+          const candidate = list.find((p) => !virtualPatterns.test(p.name)) || list[0];
+          if (candidate?.name) {
+            return { ...current, printerName: candidate.name };
+          }
+        }
+        return current;
+      });
+    } catch {
+      setPrinters([]);
+    } finally {
+      setLoadingPrinters(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isMac) {
+      void refreshPrinters();
+    }
+  }, [isMac]);
+
+  const handleTest = async () => {
+    const success = await onSaveAndTest(form);
+    if (success) setTestedOk(true);
+  };
+
+  const friendlyError = presentFriendlyError(state);
+  const errorDetails = presentPrinterErrorDetails(
+    state.lastError,
+    state.printerDiagnostics ?? undefined,
+  );
+
+  return (
+    <main className="shell">
+      <Header version={info.version} />
+
+      <div className="panel">
+        <div style={{ marginBottom: 16 }}>
+          <h1 style={{ fontSize: 16, fontWeight: 600, margin: '0 0 4px' }}>Kết nối máy in</h1>
+          <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: 0 }}>
+            Chọn cách máy in được kết nối với máy tính này:
+          </p>
+        </div>
+
+        {!isMac && (
+          <div className="connection-choice-grid">
+            <button
+              type="button"
+              className={`connection-choice-card ${form.connectionType === 'WINDOWS_PRINTER' ? 'connection-choice-card--active' : ''}`}
+              onClick={() => {
+                setForm({ ...form, connectionType: 'WINDOWS_PRINTER' });
+                setTestedOk(false);
+              }}
+            >
+              <strong>Máy in trên Windows</strong>
+              <span>Máy in cắm trực tiếp vào máy tính (USB)</span>
+            </button>
+
+            <button
+              type="button"
+              className={`connection-choice-card ${form.connectionType === 'NETWORK_TCP' ? 'connection-choice-card--active' : ''}`}
+              onClick={() => {
+                setForm({ ...form, connectionType: 'NETWORK_TCP' });
+                setTestedOk(false);
+              }}
+            >
+              <strong>Mạng LAN</strong>
+              <span>Máy in kết nối qua router hoặc mạng nội bộ</span>
+            </button>
+          </div>
+        )}
+
+        {form.connectionType === 'WINDOWS_PRINTER' && !isMac ? (
+          <div>
+            <label className="field">
+              <span>Chọn máy in</span>
+              <div className="printer-select-row">
+                <select
+                  value={form.printerName}
+                  onChange={(event) => {
+                    setForm({ ...form, printerName: event.target.value });
+                    setTestedOk(false);
+                  }}
+                >
+                  {printers.length === 0 ? (
+                    <option value="">(Chưa tìm thấy máy in)</option>
+                  ) : (
+                    <>
+                      <option value="" disabled>
+                        -- Chọn máy in --
+                      </option>
+                      {printers.map((p) => (
+                        <option key={p.name} value={p.name}>
+                          {p.displayName || p.name} {p.isDefault ? ' (Mặc định)' : ''}
+                        </option>
+                      ))}
+                    </>
+                  )}
+                </select>
+                <Button
+                  type="button"
+                  kind="secondary"
+                  loading={loadingPrinters}
+                  onClick={() => void refreshPrinters()}
+                  title="Làm mới danh sách máy in"
+                >
+                  <Icon name="refresh" size={14} />
+                </Button>
+              </div>
+              <p className="field-help">
+                Dùng khi máy in được cắm USB trực tiếp vào máy tính hoặc đã được cài trong Windows.
+              </p>
+            </label>
+
+            {printers.length === 0 && (
+              <div className="notice notice--warning">
+                <div>
+                  <strong>Chưa tìm thấy máy in.</strong>
+                  <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+                    <li>Kiểm tra nguồn và cáp USB máy in.</li>
+                    <li>Cài đặt driver máy in nếu cần.</li>
+                    <li>Bấm nút làm mới bên cạnh danh sách.</li>
+                  </ul>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div>
+            <div className="field-grid field-grid--wide-left">
+              <label className="field">
+                <span>Địa chỉ IP máy in</span>
+                <input
+                  value={form.printerIp}
+                  onChange={(event) => {
+                    setForm({ ...form, printerIp: event.target.value });
+                    setTestedOk(false);
+                  }}
+                  placeholder="192.168.1.73"
+                />
+              </label>
+              <label className="field">
+                <span>Cổng</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="65535"
+                  value={form.printerPort}
+                  onChange={(event) => {
+                    setForm({ ...form, printerPort: Number(event.target.value) });
+                    setTestedOk(false);
+                  }}
+                />
+              </label>
+            </div>
+            <p className="field-help">Kết nối qua mạng LAN nội bộ, cổng 9100</p>
+          </div>
+        )}
+
+        <label className="field" style={{ marginTop: 12 }}>
+          <span>Khổ giấy</span>
+          <select
+            value={form.paperSize}
+            onChange={(event) =>
+              setForm({ ...form, paperSize: event.target.value as 'K58' | 'K80' })
+            }
+          >
+            <option value="K80">K80 (80 mm · Chuẩn hóa đơn phổ biến)</option>
+            <option value="K58">K58 (58 mm · Khổ nhỏ)</option>
+          </select>
+        </label>
+
+        {/* Collapsible Advanced Settings */}
+        <details className="collapsible-section">
+          <summary>Cài đặt nâng cao</summary>
+          <div style={{ marginTop: 8 }}>
+            <div style={{ display: 'flex', gap: 16, marginBottom: 8 }}>
+              <Toggle
+                checked={Boolean(form.autoCut)}
+                onChange={(checked) => setForm({ ...form, autoCut: checked })}
+                label="Tự động cắt giấy"
+              />
+              <Toggle
+                checked={Boolean(form.openCashDrawer)}
+                onChange={(checked) => setForm({ ...form, openCashDrawer: checked })}
+                label="Mở két tiền"
+              />
+            </div>
+            <label className="field" style={{ margin: 0 }}>
+              <span style={{ fontSize: 12 }}>Vùng in tùy chỉnh (Printable dots - tùy chọn)</span>
+              <input
+                type="number"
+                placeholder={form.paperSize === 'K58' ? '384' : '576'}
+                value={form.printableDots || ''}
+                onChange={(event) =>
+                  setForm({
+                    ...form,
+                    printableDots: event.target.value ? Number(event.target.value) : undefined,
+                  })
+                }
+              />
+            </label>
+          </div>
+        </details>
+
+        {/* Status / Error feedback */}
+        {friendlyError && (
+          <div className="notice notice--danger" style={{ marginTop: 14 }}>
+            <div>
+              <strong>{friendlyError}</strong>
+              {errorDetails && (
+                <details>
+                  <summary>Xem chi tiết</summary>
+                  <code>{errorDetails}</code>
+                </details>
+              )}
+            </div>
+          </div>
+        )}
+
+        {testedOk && !friendlyError && (
+          <div className="notice notice--success" style={{ marginTop: 14 }}>
+            <span>✓ Máy in hoạt động tốt</span>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end' }}>
+          <Button
+            type="button"
+            kind={testedOk ? 'secondary' : 'primary'}
+            loading={action === 'test' || action === 'save'}
+            onClick={handleTest}
+            icon={<Icon name="printer" size={15} />}
+          >
+            {testedOk ? 'In thử lại' : 'Kiểm tra & In thử'}
+          </Button>
+
+          {testedOk && (
+            <Button
+              type="button"
+              kind="primary"
+              onClick={onProceedToPairing}
+              icon={<Icon name="arrow-right" size={15} />}
+            >
+              Tiếp tục kết nối PRO POS
+            </Button>
+          )}
+        </div>
+      </div>
+    </main>
+  );
+}
+
+/** Step 2: Pairing with PRO POS */
 function PairingView({
   state,
   version,
   action,
   onStart,
-  onCancel,
-  onSettings,
+  onBackToPrinter,
 }: {
   state: AgentRuntimeState;
   version: string;
   action: Action;
   onStart: () => void;
-  onCancel: () => void;
-  onSettings: () => void;
+  onBackToPrinter: () => void;
 }) {
   const [now, setNow] = useState(Date.now());
   const code = state.pairing.code;
   const remainingSeconds = state.pairing.expiresAt
     ? Math.max(0, Math.ceil((state.pairing.expiresAt - now) / 1000))
     : null;
+
   useEffect(() => {
     if (!state.pairing.expiresAt) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [state.pairing.expiresAt]);
+
   const remaining =
     remainingSeconds === null
       ? ''
       : `${Math.floor(remainingSeconds / 60)}:${String(remainingSeconds % 60).padStart(2, '0')}`;
 
   return (
-    <main className="shell shell--pairing">
+    <main className="shell">
       <Header version={version} />
-      <section className="pairing-panel">
-        <div className="pairing-illustration">
-          <Icon name="shield" size={34} />
-        </div>
-        <p className="eyebrow">Thiết lập lần đầu</p>
-        <h1>Kết nối Print Agent với cửa hàng</h1>
-        <p className="lead">
-          Ghép nối một lần để nhận lệnh in an toàn từ PRO POS. Bạn không cần tài khoản hoặc mật
-          khẩu.
-        </p>
-        {state.status === 'PAIRING' ? (
-          <div className="pairing-active">
-            {code ? (
-              <>
-                <span className="pairing-label">Mã ghép nối của bạn</span>
-                <div className="pairing-code" aria-label={`Mã ghép nối ${code}`}>
-                  {formatPairingCode(code)}
-                </div>
-                <div className={`countdown ${remainingSeconds === 0 ? 'countdown--expired' : ''}`}>
-                  {remainingSeconds === 0 ? (
-                    'Mã đã hết hạn'
-                  ) : (
-                    <>
-                      Còn hiệu lực <strong>{remaining}</strong>
-                    </>
-                  )}
-                </div>
-                <div className="instruction">
-                  <span>1</span>
-                  <p>
-                    Mở <strong>PRO POS → Cài đặt máy in → Print Agent</strong>
-                  </p>
-                </div>
-                <div className="instruction">
-                  <span>2</span>
-                  <p>Nhập mã 6 số đang hiển thị phía trên</p>
-                </div>
-                <div className="button-row pairing-actions">
-                  <Button
-                    kind="secondary"
-                    onClick={onStart}
-                    loading={action === 'pair'}
-                    icon={<Icon name="refresh" size={17} />}
-                  >
-                    Tạo mã mới
-                  </Button>
-                  <Button kind="ghost" onClick={onCancel} loading={action === 'cancel-pair'}>
-                    Hủy
-                  </Button>
-                </div>
-              </>
-            ) : (
-              <div className="pairing-loading">
-                <Spinner />
-                <strong>Đang tạo mã ghép nối…</strong>
-                <span>Quá trình này thường chỉ mất vài giây.</span>
-                <Button kind="ghost" onClick={onCancel}>
-                  Hủy
-                </Button>
-              </div>
-            )}
+
+      <div className="panel pairing-box">
+        <h1 className="pairing-title">Kết nối với PRO POS</h1>
+        <p className="pairing-subtitle">Nhập mã 6 chữ số này trên màn hình POS của cửa hàng:</p>
+
+        {code ? (
+          <div>
+            <div className="pairing-code" aria-label={`Mã ghép nối ${code}`}>
+              {formatPairingCode(code)}
+            </div>
+            <div
+              className={`pairing-timer ${remainingSeconds === 0 ? 'pairing-timer--expired' : ''}`}
+            >
+              {remainingSeconds === 0 ? (
+                'Mã đã hết hạn'
+              ) : (
+                <>
+                  Mã còn hiệu lực <strong>{remaining}</strong>
+                </>
+              )}
+            </div>
           </div>
         ) : (
-          <>
-            <Button kind="primary" onClick={onStart} loading={action === 'pair'}>
-              Bắt đầu ghép nối
-            </Button>
-            <button className="text-button" onClick={onSettings}>
-              <Icon name="settings" size={16} /> Cài đặt kết nối
-            </button>
-          </>
+          <div style={{ padding: '24px 0' }}>
+            <Spinner />
+            <div style={{ marginTop: 8, fontSize: 13, color: 'var(--text-muted)' }}>
+              Đang tạo mã ghép nối…
+            </div>
+          </div>
         )}
-      </section>
-      <footer className="security-note">
-        <Icon name="shield" size={16} /> Thông tin ghép nối được mã hóa trên thiết bị này
-      </footer>
+
+        <div className="pairing-steps">
+          <ol>
+            <li>
+              Mở <strong>PRO POS → Cài đặt máy in → Thêm Print Agent</strong>
+            </li>
+            <li>Nhập mã 6 số đang hiển thị phía trên</li>
+          </ol>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <button type="button" className="text-button" onClick={onBackToPrinter}>
+            <Icon name="arrow-left" size={14} /> Chỉnh sửa máy in
+          </button>
+
+          <Button
+            kind="secondary"
+            onClick={onStart}
+            loading={action === 'pair'}
+            icon={<Icon name="refresh" size={14} />}
+          >
+            Tạo mã mới
+          </Button>
+        </div>
+      </div>
     </main>
   );
 }
 
+/** Daily Operational Dashboard */
 function Dashboard({
   state,
   info,
@@ -325,6 +614,7 @@ function Dashboard({
   onTest,
   onAutostart,
   onSettings,
+  onLogs,
 }: {
   state: AgentRuntimeState;
   info: DesktopAgentInfo;
@@ -333,176 +623,161 @@ function Dashboard({
   onTest: () => void;
   onAutostart: (enabled: boolean) => void;
   onSettings: () => void;
+  onLogs: () => void;
 }) {
+  const isWindows = info.config.connectionType === 'WINDOWS_PRINTER';
   const overall = presentOverallStatus(state);
-  const cloud = presentCloudStatus(state);
-  const printer = presentPrinterStatus(state);
+  const cloud = presentCloudStatus(state, info.config.storeName);
+  const printer = presentPrinterStatus(state, info.config);
   const friendlyError = presentFriendlyError(state);
-  const errorDetails =
-    state.printer === 'UNREACHABLE' || state.printer === 'INVALID_CONFIG'
-      ? presentPrinterErrorDetails(state.lastError, state.printerDiagnostics ?? undefined)
-      : state.lastError;
-  const jobLabel =
-    lastJob?.status === 'SENDING'
-      ? 'Đang gửi'
-      : lastJob?.status === 'COMPLETED'
-        ? 'Đã gửi tới máy in'
-        : 'In thất bại';
-  const jobTone: StatusTone =
-    lastJob?.status === 'COMPLETED' ? 'success' : lastJob?.status === 'FAILED' ? 'danger' : 'info';
+  const errorDetails = presentPrinterErrorDetails(
+    state.lastError,
+    state.printerDiagnostics ?? undefined,
+  );
 
   return (
     <main className="shell">
-      <Header version={info.version} />
-      <section className={`hero hero--${overall.tone}`}>
-        <div className="hero-status">
-          <StatusDot tone={overall.tone} />
+      <Header
+        version={info.version}
+        status={{
+          label: state.status === 'ONLINE' ? 'Đang hoạt động' : overall.label,
+          tone: overall.tone,
+        }}
+      />
+
+      {/* Main minimal panel */}
+      <div className="panel">
+        {/* Section 1: Cloud Connection */}
+        <div className="panel-row">
           <div>
-            <h1>{overall.label}</h1>
-            <p>{overall.description}</p>
+            <div className="section-label">Kết nối PRO POS</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <StatusDot tone={cloud.tone} />
+              <span className="section-value">{cloud.label}</span>
+            </div>
+            <div className="section-desc">{info.config.storeName || 'Cửa hàng PRO POS'}</div>
           </div>
         </div>
-      </section>
-      {friendlyError && (
-        <div className="inline-error" role="status">
-          <span>!</span>
+
+        <div className="panel-divider" />
+
+        {/* Section 2: Physical Printer */}
+        <div className="panel-row">
           <div>
-            <strong>{friendlyError}</strong>
-            {errorDetails && (
-              <details>
-                <summary>Xem chi tiết</summary>
-                <code>{errorDetails}</code>
-              </details>
-            )}
-          </div>
-        </div>
-      )}
-      <section className="card connection-card">
-        <div className="card-heading">
-          <h2>Kết nối</h2>
-          <span>Cập nhật tự động</span>
-        </div>
-        <div className="connection-grid">
-          <div className="connection-item">
-            <div className="connection-icon">
-              <Icon name="cloud" />
+            <div className="section-label">Máy in</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <StatusDot tone={printer.tone} />
+              <span className="section-value">{printer.label}</span>
             </div>
-            <div>
-              <span>Cloud</span>
-              <strong>
-                <StatusDot tone={cloud.tone} />
-                {cloud.label}
-              </strong>
-              <small>{cloud.description}</small>
+            <div className="section-desc">
+              {isWindows
+                ? `${info.config.printerName || 'Chưa chọn máy in'} · USB · Windows · ${info.config.paperSize}`
+                : `${info.config.printerIp || '—'}:${info.config.printerPort} · LAN · ${info.config.paperSize}`}
             </div>
           </div>
-          <div className="connection-divider" />
-          <div className="connection-item">
-            <div className="connection-icon">
-              <Icon name="printer" />
-            </div>
-            <div>
-              <span>Máy in</span>
-              <strong>
-                <StatusDot tone={printer.tone} />
-                {printer.label}
-              </strong>
-              <small>{printer.description}</small>
-            </div>
-          </div>
-        </div>
-      </section>
-      <section className="card printer-card">
-        <div className="card-heading">
-          <div>
-            <h2>Máy in hóa đơn</h2>
-            <p>{info.config.printerIp || 'Chưa cấu hình địa chỉ IP'}</p>
-          </div>
-          <span className="paper-badge">{info.config.paperSize}</span>
-        </div>
-        <div className="printer-meta">
-          <span>
-            {info.config.printerIp || '—'}:{info.config.printerPort}
-          </span>
-          <i>•</i>
-          <span>LAN · TCP</span>
-          <i>•</i>
-          <span>ESC/POS</span>
-        </div>
-        <div className="button-row">
-          <Button
-            kind="primary"
-            onClick={onTest}
-            loading={action === 'test'}
-            icon={<Icon name="printer" size={17} />}
-          >
-            In thử
-          </Button>
+
           <Button
             kind="secondary"
             onClick={onTest}
             loading={action === 'test'}
-            icon={<Icon name="refresh" size={17} />}
+            icon={<Icon name="printer" size={14} />}
           >
-            Kiểm tra lại
+            In thử
           </Button>
         </div>
-      </section>
-      <section className="card last-job-card">
-        <div className="card-heading">
-          <h2>Lệnh in gần nhất</h2>
-          {lastJob && (
-            <time>
-              {new Intl.DateTimeFormat('vi-VN', {
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-              }).format(lastJob.updatedAt)}
-            </time>
-          )}
-        </div>
-        {lastJob ? (
-          <div className="job-row">
+
+        {/* Error Notice if any */}
+        {friendlyError && (
+          <div className="notice notice--danger" style={{ marginTop: 10 }}>
             <div>
-              <span>
-                {lastJob.documentType === 'invoice'
-                  ? 'Hóa đơn'
-                  : lastJob.documentType === 'provisional'
-                    ? 'Tạm tính'
-                    : 'Lệnh in'}
-              </span>
-              <strong title={lastJob.jobId}>{lastJob.jobId}</strong>
+              <strong>{friendlyError}</strong>
+              <div style={{ marginTop: 6, display: 'flex', gap: 8, alignItems: 'center' }}>
+                <Button
+                  kind="secondary"
+                  onClick={onTest}
+                  loading={action === 'test'}
+                  style={{ fontSize: 11.5, padding: '4px 8px' }}
+                >
+                  Kiểm tra lại
+                </Button>
+                {errorDetails && (
+                  <details>
+                    <summary>Xem chi tiết</summary>
+                    <code>{errorDetails}</code>
+                  </details>
+                )}
+              </div>
             </div>
-            <span className={`job-status job-status--${jobTone}`}>
-              <StatusDot tone={jobTone} />
-              {jobLabel}
-            </span>
-          </div>
-        ) : (
-          <div className="empty-job">
-            <Icon name="printer" size={19} /> Chưa có lệnh in trong phiên này
           </div>
         )}
-      </section>
-      <section className="system-row">
-        <Toggle
-          checked={info.autostart}
-          disabled={action === 'autostart'}
-          onChange={onAutostart}
-          label={
-            typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac')
-              ? 'Khởi động cùng macOS'
-              : 'Khởi động cùng Windows'
-          }
-        />
-        <button className="text-button" onClick={onSettings}>
-          <Icon name="settings" size={16} /> Cài đặt nâng cao
-        </button>
-      </section>
+
+        <div className="panel-divider" />
+
+        {/* Section 3: Last Job */}
+        <div className="panel-row">
+          <div>
+            <div className="section-label">Lệnh in gần nhất</div>
+            {lastJob ? (
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 500 }}>
+                  {lastJob.status === 'COMPLETED' ? '✓ ' : '✕ '}
+                  {lastJob.documentType === 'invoice'
+                    ? 'Hóa đơn'
+                    : lastJob.documentType === 'provisional'
+                      ? 'Tạm tính'
+                      : 'Lệnh in'}{' '}
+                  #{lastJob.jobId}
+                </div>
+                <div className="section-desc">
+                  {new Intl.DateTimeFormat('vi-VN', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                  }).format(lastJob.updatedAt)}{' '}
+                  ·{' '}
+                  {lastJob.status === 'COMPLETED'
+                    ? 'Đã gửi thành công'
+                    : lastJob.status === 'SENDING'
+                      ? 'Đang gửi...'
+                      : 'In thất bại'}
+                </div>
+              </div>
+            ) : (
+              <div className="section-desc">Chưa có lệnh in trong phiên này</div>
+            )}
+          </div>
+        </div>
+
+        <div className="panel-divider" />
+
+        {/* Section 4: System Footer */}
+        <div className="panel-row">
+          <Toggle
+            checked={info.autostart}
+            disabled={action === 'autostart'}
+            onChange={onAutostart}
+            label={
+              typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac')
+                ? 'Khởi động cùng macOS'
+                : 'Khởi động cùng Windows'
+            }
+          />
+
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button type="button" className="text-button" onClick={onLogs}>
+              <Icon name="folder" size={14} /> Nhật ký
+            </button>
+            <button type="button" className="text-button" onClick={onSettings}>
+              <Icon name="settings" size={14} /> Cài đặt
+            </button>
+          </div>
+        </div>
+      </div>
     </main>
   );
 }
 
+/** Settings Dialog: Maximum 3 Clear Groups */
 function SettingsDialog({
   info,
   action,
@@ -520,16 +795,56 @@ function SettingsDialog({
   onLogs: () => void;
   onConfirm: (action: Exclude<ConfirmAction, null>) => void;
 }) {
+  const isMac = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
   const [form, setForm] = useState<DesktopSettingsInput>({
     serverUrl: info.config.serverUrl,
-    printerIp: info.config.printerIp,
-    printerPort: info.config.printerPort,
-    paperSize: info.config.paperSize,
+    connectionType: info.config.connectionType || (isMac ? 'NETWORK_TCP' : 'WINDOWS_PRINTER'),
+    printerName: info.config.printerName || '',
+    printerIp: info.config.printerIp || '',
+    printerPort: info.config.printerPort || 9100,
+    paperSize: info.config.paperSize || 'K80',
+    autoCut: info.config.autoCut ?? true,
+    openCashDrawer: info.config.openCashDrawer ?? false,
+    printableDots: info.config.printableDots,
   });
+
+  const [printers, setPrinters] = useState<DesktopPrinterItem[]>([]);
+  const [loadingPrinters, setLoadingPrinters] = useState(false);
+
+  const refreshPrinters = async () => {
+    if (!window.proposPrintAgent?.listPrinters) return;
+    setLoadingPrinters(true);
+    try {
+      const list = await window.proposPrintAgent.listPrinters();
+      setPrinters(list);
+      setForm((current) => {
+        if (!current.printerName && list.length > 0) {
+          const virtualPatterns = /pdf|xps|onenote|fax|document writer|root print queue/i;
+          const candidate = list.find((p) => !virtualPatterns.test(p.name)) || list[0];
+          if (candidate?.name) {
+            return { ...current, printerName: candidate.name };
+          }
+        }
+        return current;
+      });
+    } catch {
+      setPrinters([]);
+    } finally {
+      setLoadingPrinters(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isMac) {
+      void refreshPrinters();
+    }
+  }, [isMac]);
+
   const submit = (event: FormEvent) => {
     event.preventDefault();
     onSave(form);
   };
+
   return (
     <div
       className="overlay"
@@ -538,131 +853,207 @@ function SettingsDialog({
         if (event.currentTarget === event.target) onClose();
       }}
     >
-      <section
-        className="dialog settings-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="settings-title"
-      >
+      <section className="dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <div className="dialog-header">
-          <div>
-            <p className="eyebrow">Hệ thống</p>
-            <h2 id="settings-title">Cài đặt nâng cao</h2>
-          </div>
+          <h2 id="settings-title">Cài đặt Print Agent</h2>
           <button className="icon-button" onClick={onClose} aria-label="Đóng cài đặt">
-            <Icon name="close" />
+            <Icon name="close" size={16} />
           </button>
         </div>
-        <form onSubmit={submit}>
-          <div className="settings-content">
-            <div className="settings-section">
-              <h3>Kết nối PRO POS</h3>
+
+        <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+          <div className="dialog-body">
+            {/* Nhóm 1: Máy in */}
+            <div className="settings-group">
+              <div className="settings-group-title">1. Máy in</div>
+
+              {!isMac && (
+                <div className="connection-choice-grid">
+                  <button
+                    type="button"
+                    className={`connection-choice-card ${form.connectionType === 'WINDOWS_PRINTER' ? 'connection-choice-card--active' : ''}`}
+                    onClick={() => setForm({ ...form, connectionType: 'WINDOWS_PRINTER' })}
+                  >
+                    <strong>Máy in Windows (USB)</strong>
+                    <span>Cắm trực tiếp</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`connection-choice-card ${form.connectionType === 'NETWORK_TCP' ? 'connection-choice-card--active' : ''}`}
+                    onClick={() => setForm({ ...form, connectionType: 'NETWORK_TCP' })}
+                  >
+                    <strong>Mạng LAN</strong>
+                    <span>Qua router/IP</span>
+                  </button>
+                </div>
+              )}
+
+              {form.connectionType === 'WINDOWS_PRINTER' && !isMac ? (
+                <label className="field">
+                  <span>Máy in trên Windows</span>
+                  <div className="printer-select-row">
+                    <select
+                      value={form.printerName}
+                      onChange={(event) => setForm({ ...form, printerName: event.target.value })}
+                    >
+                      {printers.length === 0 ? (
+                        <option value="">(Chưa tìm thấy máy in)</option>
+                      ) : (
+                        <>
+                          <option value="" disabled>
+                            -- Chọn máy in --
+                          </option>
+                          {printers.map((p) => (
+                            <option key={p.name} value={p.name}>
+                              {p.displayName || p.name} {p.isDefault ? ' (Mặc định)' : ''}
+                            </option>
+                          ))}
+                        </>
+                      )}
+                    </select>
+                    <Button
+                      type="button"
+                      kind="secondary"
+                      loading={loadingPrinters}
+                      onClick={() => void refreshPrinters()}
+                      title="Làm mới danh sách máy in"
+                    >
+                      <Icon name="refresh" size={14} />
+                    </Button>
+                  </div>
+                </label>
+              ) : (
+                <div className="field-grid field-grid--wide-left">
+                  <label className="field">
+                    <span>Địa chỉ IP</span>
+                    <input
+                      required
+                      value={form.printerIp}
+                      onChange={(event) => setForm({ ...form, printerIp: event.target.value })}
+                      placeholder="192.168.1.73"
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Cổng</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max="65535"
+                      required
+                      value={form.printerPort}
+                      onChange={(event) =>
+                        setForm({ ...form, printerPort: Number(event.target.value) })
+                      }
+                    />
+                  </label>
+                </div>
+              )}
+
               <label className="field">
-                <span>Server URL</span>
+                <span>Khổ giấy</span>
+                <select
+                  value={form.paperSize}
+                  onChange={(event) =>
+                    setForm({ ...form, paperSize: event.target.value as 'K58' | 'K80' })
+                  }
+                >
+                  <option value="K80">K80 · 80 mm</option>
+                  <option value="K58">K58 · 58 mm</option>
+                </select>
+              </label>
+            </div>
+
+            {/* Nhóm 2: Tùy chọn nâng cao */}
+            <div className="settings-group">
+              <div className="settings-group-title">2. Tùy chọn nâng cao</div>
+              <div style={{ display: 'flex', gap: 16, marginBottom: 10 }}>
+                <Toggle
+                  checked={Boolean(form.autoCut)}
+                  onChange={(checked) => setForm({ ...form, autoCut: checked })}
+                  label="Tự động cắt giấy"
+                />
+                <Toggle
+                  checked={Boolean(form.openCashDrawer)}
+                  onChange={(checked) => setForm({ ...form, openCashDrawer: checked })}
+                  label="Mở két tiền"
+                />
+              </div>
+
+              <label className="field">
+                <span>Vùng in (Printable dots - tùy chọn)</span>
                 <input
-                  type="url"
-                  required
-                  readOnly={Boolean(info.config.agentId)}
-                  value={form.serverUrl}
-                  onChange={(event) => setForm({ ...form, serverUrl: event.target.value })}
+                  type="number"
+                  placeholder={form.paperSize === 'K58' ? '384' : '576'}
+                  value={form.printableDots || ''}
+                  onChange={(event) =>
+                    setForm({
+                      ...form,
+                      printableDots: event.target.value ? Number(event.target.value) : undefined,
+                    })
+                  }
                 />
               </label>
-              {info.config.agentId && (
-                <p className="field-help">Ghép nối lại trước nếu cần chuyển sang máy chủ khác.</p>
-              )}
-              <div className="readonly-grid">
-                <div>
-                  <span>Agent ID</span>
-                  <code>{info.config.agentId || 'Chưa ghép nối'}</code>
-                </div>
-                <div>
-                  <span>Store ID</span>
-                  <code>{info.config.storeId || 'Chưa ghép nối'}</code>
-                </div>
-              </div>
             </div>
-            <div className="settings-section">
-              <h3>Máy in hóa đơn</h3>
-              <div className="field-grid">
-                <label className="field field--wide">
-                  <span>Địa chỉ IP / hostname</span>
-                  <input
-                    required
-                    value={form.printerIp}
-                    onChange={(event) => setForm({ ...form, printerIp: event.target.value })}
-                    placeholder="192.168.1.73"
-                  />
-                </label>
-                <label className="field">
-                  <span>Port</span>
-                  <input
-                    type="number"
-                    min="1"
-                    max="65535"
-                    required
-                    value={form.printerPort}
-                    onChange={(event) =>
-                      setForm({ ...form, printerPort: Number(event.target.value) })
-                    }
-                  />
-                </label>
-                <label className="field">
-                  <span>Khổ giấy</span>
-                  <select
-                    value={form.paperSize}
-                    onChange={(event) =>
-                      setForm({ ...form, paperSize: event.target.value as 'K58' | 'K80' })
-                    }
-                  >
-                    <option value="K80">K80 · 80 mm</option>
-                    <option value="K58">K58 · 58 mm</option>
-                  </select>
-                </label>
-              </div>
-              <p className="field-help">Kết nối LAN · TCP, chuẩn lệnh ESC/POS</p>
-            </div>
-            <div className="settings-section settings-section--rows">
-              <div>
-                <div>
-                  <strong>
-                    {typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac')
-                      ? 'Khởi động cùng macOS'
-                      : 'Khởi động cùng Windows'}
-                  </strong>
-                  <p>Chạy ẩn trong khay hệ thống sau khi đăng nhập.</p>
-                </div>
+
+            {/* Nhóm 3: Ứng dụng & Thiết lập lại */}
+            <div className="settings-group">
+              <div className="settings-group-title">3. Ứng dụng</div>
+
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: 12,
+                }}
+              >
                 <Toggle
                   checked={info.autostart}
                   disabled={action === 'autostart'}
                   onChange={onAutostart}
-                  label=""
+                  label={
+                    typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac')
+                      ? 'Khởi động cùng macOS'
+                      : 'Khởi động cùng Windows'
+                  }
                 />
-              </div>
-              <button
-                type="button"
-                className="settings-link"
-                onClick={onLogs}
-                disabled={action === 'logs'}
-              >
-                <Icon name="folder" size={18} /> Mở thư mục nhật ký
-              </button>
-            </div>
-            <div className="settings-section danger-zone">
-              <h3>Thiết lập lại</h3>
-              <div className="danger-actions">
-                <button type="button" onClick={() => onConfirm('repair')}>
-                  Ghép nối lại
-                </button>
-                <button type="button" onClick={() => onConfirm('reset')}>
-                  Xóa cấu hình
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={onLogs}
+                  disabled={action === 'logs'}
+                >
+                  <Icon name="folder" size={14} /> Mở thư mục nhật ký
                 </button>
               </div>
-              <p>Các thao tác này luôn yêu cầu xác nhận.</p>
+
+              <div className="danger-box">
+                <p>Thiết lập lại Print Agent:</p>
+                <div className="danger-actions">
+                  <Button
+                    type="button"
+                    kind="secondary"
+                    onClick={() => onConfirm('repair')}
+                    style={{ fontSize: 12 }}
+                  >
+                    Ghép nối lại
+                  </Button>
+                  <Button
+                    type="button"
+                    kind="danger"
+                    onClick={() => onConfirm('reset')}
+                    style={{ fontSize: 12 }}
+                  >
+                    Xóa cấu hình
+                  </Button>
+                </div>
+              </div>
             </div>
           </div>
+
           <div className="dialog-footer">
             <Button type="button" kind="ghost" onClick={onClose}>
-              Đóng
+              Hủy
             </Button>
             <Button type="submit" kind="primary" loading={action === 'save'}>
               Lưu & khởi động lại
@@ -685,255 +1076,289 @@ function ConfirmDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
-  const repair = action === 'repair';
+  const isReset = action === 'reset';
   return (
-    <div className="overlay overlay--confirm">
-      <section
-        className="dialog confirm-dialog"
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby="confirm-title"
-      >
-        <div className="confirm-icon">
-          <Icon name={repair ? 'refresh' : 'power'} size={25} />
+    <div className="overlay" role="presentation">
+      <div className="dialog" style={{ width: 380 }} role="alertdialog">
+        <div className="dialog-body" style={{ textAlign: 'center', padding: '24px 20px' }}>
+          <h2 style={{ fontSize: 16, fontWeight: 600, margin: '0 0 8px' }}>
+            {isReset ? 'Xác nhận xóa toàn bộ cấu hình?' : 'Xác nhận ghép nối lại?'}
+          </h2>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '0 0 20px' }}>
+            {isReset
+              ? 'Print Agent sẽ xóa toàn bộ cài đặt máy in, thông tin ghép nối và trở về trạng thái ban đầu.'
+              : 'Print Agent sẽ hủy ghép nối với cửa hàng hiện tại và tạo mã ghép nối mới.'}
+          </p>
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 10 }}>
+            <Button type="button" kind="secondary" onClick={onCancel} disabled={loading}>
+              Hủy
+            </Button>
+            <Button
+              type="button"
+              kind={isReset ? 'danger' : 'primary'}
+              loading={loading}
+              onClick={onConfirm}
+            >
+              {isReset ? 'Xóa cấu hình' : 'Ghép nối lại'}
+            </Button>
+          </div>
         </div>
-        <h2 id="confirm-title">{repair ? 'Ghép nối lại Print Agent?' : 'Xóa toàn bộ cấu hình?'}</h2>
-        <p>
-          {repair
-            ? 'Print Agent sẽ xóa liên kết với cửa hàng hiện tại, giữ cài đặt máy in và khởi động lại.'
-            : 'Liên kết cửa hàng và toàn bộ cài đặt máy in trên thiết bị này sẽ bị xóa.'}
-        </p>
-        <div className="button-row">
-          <Button kind="secondary" onClick={onCancel} disabled={loading}>
-            Hủy
-          </Button>
-          <Button kind="danger" onClick={onConfirm} loading={loading}>
-            {repair ? 'Ghép nối lại' : 'Xóa cấu hình'}
-          </Button>
-        </div>
-      </section>
+      </div>
     </div>
   );
 }
 
+/** Root Desktop Application */
 function App() {
-  const [state, setState] = useState(initialState);
+  const [state, setState] = useState<AgentRuntimeState>(initialState);
   const [info, setInfo] = useState<DesktopAgentInfo | null>(null);
   const [lastJob, setLastJob] = useState<DesktopPrintJobState | null>(null);
   const [action, setAction] = useState<Action>(null);
-  const [toast, setToast] = useState<ToastState | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [step, setStep] = useState<'printer' | 'pairing'>('printer');
+  const [toast, setToast] = useState<ToastState | null>(null);
 
-  const refreshInfo = async () => setInfo(await window.proposPrintAgent.getInfo());
+  const showToast = (tone: ToastState['tone'], message: string, detail?: string) => {
+    setToast({ tone, message, detail });
+    window.setTimeout(() => setToast(null), 4000);
+  };
+
   useEffect(() => {
-    void Promise.all([
-      window.proposPrintAgent.getState(),
-      window.proposPrintAgent.getInfo(),
-      window.proposPrintAgent.getLastJob(),
-    ])
-      .then(([nextState, nextInfo, nextJob]) => {
-        setState(nextState);
-        setInfo(nextInfo);
-        setLastJob(nextJob);
-      })
-      .catch((error: unknown) =>
-        setToast({
-          tone: 'danger',
-          message: 'Không thể tải trạng thái Print Agent.',
-          detail: error instanceof Error ? error.message : String(error),
-        }),
-      );
-    const removeStateListener = window.proposPrintAgent.onStateChanged((nextState) => {
-      setState(nextState);
-      if (nextState.pairing.code) setAction((current) => (current === 'pair' ? null : current));
+    let unmounted = false;
+    const api = window.proposPrintAgent;
+    if (!api) return;
+
+    const refreshInfo = () => {
+      api.getInfo().then((i) => !unmounted && setInfo(i));
+    };
+
+    api.getState().then((s) => !unmounted && setState(s));
+    refreshInfo();
+    api.getLastJob().then((j) => !unmounted && setLastJob(j));
+
+    const unsubscribeState = api.onStateChanged((s) => {
+      if (unmounted) return;
+      setState(s);
+      refreshInfo();
     });
-    const removeJobListener = window.proposPrintAgent.onJobChanged(setLastJob);
+    const unsubscribeJob = api.onJobChanged((j) => !unmounted && setLastJob(j));
+
     return () => {
-      removeStateListener();
-      removeJobListener();
+      unmounted = true;
+      unsubscribeState();
+      unsubscribeJob();
     };
   }, []);
-  useEffect(() => {
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      if (confirmAction) setConfirmAction(null);
-      else setSettingsOpen(false);
-    };
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
-  }, [confirmAction]);
-  useEffect(() => {
-    if (!toast) return;
-    const timer = window.setTimeout(() => setToast(null), 6000);
-    return () => window.clearTimeout(timer);
-  }, [toast]);
 
-  const isUnpaired = state.status === 'UNPAIRED' || state.status === 'PAIRING';
-  const startPairing = async () => {
-    setAction('pair');
-    setToast(null);
-    if (state.status === 'PAIRING') await window.proposPrintAgent.cancelPairing();
-    void window.proposPrintAgent
-      .startPairing()
-      .then(refreshInfo)
-      .catch((error: unknown) =>
-        setToast({
-          tone: 'danger',
-          message: 'Không thể tạo mã ghép nối. Kiểm tra kết nối Internet.',
-          detail: error instanceof Error ? error.message : String(error),
-        }),
-      )
-      .finally(() => setAction(null));
-  };
-  const cancelPairing = async () => {
-    setAction('cancel-pair');
-    await window.proposPrintAgent.cancelPairing();
-    setAction(null);
-  };
-  const testPrinter = async () => {
+  const isPaired = Boolean(info?.config.agentId);
+
+  const handleSaveAndTest = async (newSettings: DesktopSettingsInput): Promise<boolean> => {
+    const api = window.proposPrintAgent;
+    if (!api) return false;
     setAction('test');
-    setToast(null);
     try {
-      const [result] = await Promise.all([
-        requestPrinterCheck(window.proposPrintAgent),
-        new Promise((resolve) => setTimeout(resolve, 400)),
-      ]);
-      setToast(
-        result.ok
-          ? { tone: 'success', message: 'Đã gửi lệnh in thử tới máy in' }
-          : {
-              tone: 'danger',
-              message: 'Không thể kết nối máy in. Kiểm tra nguồn, dây mạng hoặc địa chỉ IP.',
-              detail: presentPrinterErrorDetails(result.error, result.diagnostics) ?? undefined,
+      const result = await api.testPrinter(newSettings);
+      if (result.ok) {
+        if (info) {
+          setInfo({
+            ...info,
+            config: {
+              ...info.config,
+              ...newSettings,
+              printerName: newSettings.printerName || '',
+              printerIp: newSettings.printerIp || '',
+              printerPort: newSettings.printerPort || 9100,
             },
-      );
-    } catch (error) {
-      setToast({
-        tone: 'danger',
-        message: 'Không thể gửi lệnh in thử.',
-        detail: error instanceof Error ? error.message : String(error),
-      });
+          });
+        }
+        showToast('success', 'In thử thành công!');
+        return true;
+      } else {
+        showToast('danger', result.error || 'In thử thất bại.');
+        return false;
+      }
+    } catch (err: unknown) {
+      showToast('danger', err instanceof Error ? err.message : 'In thử thất bại.');
+      return false;
     } finally {
       setAction(null);
     }
   };
-  const setAutostart = async (enabled: boolean) => {
-    if (!info) return;
+
+  const handleTestPrint = async () => {
+    const api = window.proposPrintAgent;
+    if (!api) return;
+    setAction('test');
+    try {
+      const result = await api.testPrinter();
+      if (result.ok) {
+        showToast('success', 'In thử thành công!');
+      } else {
+        showToast('danger', result.error || 'In thử thất bại.');
+      }
+    } catch (err: unknown) {
+      showToast('danger', err instanceof Error ? err.message : 'In thử thất bại.');
+    } finally {
+      setAction(null);
+    }
+  };
+
+  const handleStartPairing = async () => {
+    const api = window.proposPrintAgent;
+    if (!api) return;
+    setAction('pair');
+    try {
+      await api.startPairing();
+    } catch (err: unknown) {
+      showToast('danger', err instanceof Error ? err.message : 'Không thể bắt đầu ghép nối.');
+    } finally {
+      setAction(null);
+    }
+  };
+
+  const handleAutostart = async (enabled: boolean) => {
+    const api = window.proposPrintAgent;
+    if (!api || !info) return;
     setAction('autostart');
     try {
-      const confirmed = await window.proposPrintAgent.setAutostart(enabled);
-      setInfo({ ...info, autostart: confirmed });
-    } catch (error) {
-      setToast({
-        tone: 'danger',
-        message: 'Không thể cập nhật khởi động cùng Windows.',
-        detail: error instanceof Error ? error.message : String(error),
-      });
+      const actual = await api.setAutostart(enabled);
+      setInfo({ ...info, autostart: actual });
+      showToast('info', actual ? 'Đã bật tự khởi động' : 'Đã tắt tự khởi động');
+    } catch (err: unknown) {
+      showToast('danger', err instanceof Error ? err.message : 'Thay đổi tự khởi động thất bại.');
     } finally {
       setAction(null);
     }
   };
-  const saveSettings = async (settings: DesktopSettingsInput) => {
+
+  const handleSaveSettings = async (settings: DesktopSettingsInput) => {
+    const api = window.proposPrintAgent;
+    if (!api) return;
     setAction('save');
     try {
-      await window.proposPrintAgent.saveSettings(settings);
-      setToast({ tone: 'info', message: 'Đã lưu. Print Agent đang khởi động lại…' });
-    } catch (error) {
-      setToast({
-        tone: 'danger',
-        message: 'Không thể lưu cài đặt.',
-        detail: error instanceof Error ? error.message : String(error),
-      });
+      await api.saveSettings(settings);
+      setSettingsOpen(false);
+      showToast('success', 'Đã lưu cài đặt và đang khởi động lại...');
+    } catch (err: unknown) {
+      showToast('danger', err instanceof Error ? err.message : 'Lưu cài đặt thất bại.');
       setAction(null);
     }
   };
-  const openLogs = async () => {
+
+  const handleOpenLogs = async () => {
+    const api = window.proposPrintAgent;
+    if (!api) return;
     setAction('logs');
     try {
-      await window.proposPrintAgent.openLogs();
-    } catch (error) {
-      setToast({
-        tone: 'danger',
-        message: 'Không thể mở thư mục nhật ký.',
-        detail: error instanceof Error ? error.message : String(error),
-      });
+      await api.openLogs();
+    } catch (err: unknown) {
+      showToast('danger', err instanceof Error ? err.message : 'Không thể mở thư mục nhật ký.');
     } finally {
       setAction(null);
     }
   };
-  const reset = async () => {
-    if (!confirmAction) return;
+
+  const handleConfirmAction = async () => {
+    const api = window.proposPrintAgent;
+    if (!api || !confirmAction) return;
     setAction('reset');
     try {
-      if (confirmAction === 'repair') await window.proposPrintAgent.resetPairing();
-      else await window.proposPrintAgent.resetAll();
-    } catch (error) {
-      setToast({
-        tone: 'danger',
-        message: 'Không thể thiết lập lại Print Agent.',
-        detail: error instanceof Error ? error.message : String(error),
-      });
+      if (confirmAction === 'reset') {
+        await api.resetAll();
+      } else {
+        await api.resetPairing();
+      }
+    } catch (err: unknown) {
+      showToast('danger', err instanceof Error ? err.message : 'Thao tác thất bại.');
       setAction(null);
       setConfirmAction(null);
     }
   };
 
-  const version = info?.version || '0.3.1';
-  const content = useMemo(
-    () =>
-      isUnpaired ? (
+  if (!info) {
+    return (
+      <div className="shell" style={{ display: 'grid', placeItems: 'center' }}>
+        <Spinner />
+      </div>
+    );
+  }
+
+  // Not Paired: First-Run Wizard
+  if (!isPaired) {
+    if (step === 'printer') {
+      return (
+        <>
+          <PrinterSetupView
+            info={info}
+            state={state}
+            action={action}
+            onSaveAndTest={handleSaveAndTest}
+            onProceedToPairing={() => {
+              setStep('pairing');
+              void handleStartPairing();
+            }}
+          />
+          {toast && <Toast toast={toast} onClose={() => setToast(null)} />}
+        </>
+      );
+    }
+
+    return (
+      <>
         <PairingView
           state={state}
-          version={version}
+          version={info.version}
           action={action}
-          onStart={() => void startPairing()}
-          onCancel={() => void cancelPairing()}
-          onSettings={() => setSettingsOpen(true)}
+          onStart={handleStartPairing}
+          onBackToPrinter={() => setStep('printer')}
         />
-      ) : info ? (
-        <Dashboard
-          state={state}
-          info={info}
-          lastJob={lastJob}
-          action={action}
-          onTest={() => void testPrinter()}
-          onAutostart={(enabled) => void setAutostart(enabled)}
-          onSettings={() => setSettingsOpen(true)}
-        />
-      ) : (
-        <div className="app-loading">
-          <Spinner /> Đang tải Print Agent…
-        </div>
-      ),
-    [action, info, isUnpaired, lastJob, state, version],
-  );
+        {toast && <Toast toast={toast} onClose={() => setToast(null)} />}
+      </>
+    );
+  }
 
+  // Paired: Clean Daily Dashboard
   return (
     <>
-      {content}
-      {toast && <Toast toast={toast} onClose={() => setToast(null)} />}
-      {settingsOpen && info && (
+      <Dashboard
+        state={state}
+        info={info}
+        lastJob={lastJob}
+        action={action}
+        onTest={handleTestPrint}
+        onAutostart={handleAutostart}
+        onSettings={() => setSettingsOpen(true)}
+        onLogs={handleOpenLogs}
+      />
+
+      {settingsOpen && (
         <SettingsDialog
           info={info}
           action={action}
           onClose={() => setSettingsOpen(false)}
-          onSave={(settings) => void saveSettings(settings)}
-          onAutostart={(enabled) => void setAutostart(enabled)}
-          onLogs={() => void openLogs()}
-          onConfirm={setConfirmAction}
+          onSave={handleSaveSettings}
+          onAutostart={handleAutostart}
+          onLogs={handleOpenLogs}
+          onConfirm={(act) => setConfirmAction(act)}
         />
       )}
+
       {confirmAction && (
         <ConfirmDialog
           action={confirmAction}
           loading={action === 'reset'}
           onCancel={() => setConfirmAction(null)}
-          onConfirm={() => void reset()}
+          onConfirm={handleConfirmAction}
         />
       )}
+
+      {toast && <Toast toast={toast} onClose={() => setToast(null)} />}
     </>
   );
 }
 
-createRoot(document.getElementById('root')!).render(<App />);
+const rootElement = document.getElementById('root');
+if (rootElement) {
+  createRoot(rootElement).render(<App />);
+}

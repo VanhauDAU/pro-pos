@@ -341,9 +341,6 @@ export class PosRepository {
   }) {
     return [
       this.db
-        .prepare('DELETE FROM audit_logs WHERE store_id = ? AND request_id = ?')
-        .bind(input.storeId, input.requestId),
-      this.db
         .prepare(
           `INSERT INTO audit_logs (
             id, store_id, actor_user_id, action, entity_type, entity_id,
@@ -376,6 +373,7 @@ export class PosRepository {
     entries: OrderCallBatchEntryInput[];
     now: number;
   }) {
+    if (input.entries.length === 0) return [];
     const statements: D1PreparedStatement[] = [
       this.db
         .prepare(

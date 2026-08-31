@@ -727,7 +727,7 @@ describe('online POS vertical slice', () => {
         updatedItems: [],
       },
     });
-    expect(result.callBatch).toMatchObject({ sequenceNo: 2 });
+    expect(result.callBatch).toMatchObject({ sequenceNo: 1 });
     expect('paymentSnapshot' in result ? result.paymentSnapshot : null).toMatchObject({
       status: 'PAYMENT_PENDING',
     });

@@ -22,7 +22,12 @@ export function createAgentTray(
   const tray = new Tray(trayIcon);
   const statusLabel = () => {
     const state = runtime.getState();
-    if (state.status === 'ONLINE' && state.printer === 'READY') return 'Máy in sẵn sàng';
+    const config = runtime.getConfig();
+    if (state.status === 'ONLINE' && state.printer === 'READY') {
+      return config?.connectionType === 'WINDOWS_PRINTER' && config.printerName
+        ? `Máy in ${config.printerName} sẵn sàng`
+        : 'Máy in sẵn sàng';
+    }
     if (state.status === 'ONLINE') return 'Print Agent đang hoạt động';
     if (state.status === 'CONNECTING') return 'Print Agent đang kết nối';
     if (state.status === 'UNPAIRED' || state.status === 'PAIRING')
@@ -47,7 +52,10 @@ export function createAgentTray(
                 : 'Khởi động cùng hệ thống',
           type: 'checkbox',
           checked: autostart.isEnabled(),
-          click: (item) => autostart.setEnabled(item.checked),
+          click: (item) => {
+            autostart.setEnabled(item.checked);
+            refreshMenu();
+          },
         },
         { type: 'separator' },
         { label: 'Thoát', click: () => process.emit('SIGTERM') },
@@ -55,6 +63,7 @@ export function createAgentTray(
     );
   };
   tray.on('click', () => getWindow()?.show());
+  tray.on('right-click', () => refreshMenu());
   runtime.on('stateChanged', refreshMenu);
   refreshMenu();
   return tray;

@@ -11,3 +11,8 @@ await cp(sourceHtml, targetHtml);
 const sourceIcon = resolve(repositoryRoot, 'apps/print-agent/build/icon.png');
 const targetIcon = resolve(repositoryRoot, 'apps/print-agent/dist/desktop/renderer/icon.png');
 await cp(sourceIcon, targetIcon);
+
+const sourceResources = resolve(repositoryRoot, 'apps/print-agent/src/desktop/resources');
+const targetResources = resolve(repositoryRoot, 'apps/print-agent/dist/desktop/resources');
+await mkdir(targetResources, { recursive: true });
+await cp(sourceResources, targetResources, { recursive: true });

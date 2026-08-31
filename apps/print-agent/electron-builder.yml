@@ -6,6 +6,8 @@ directories:
 files:
   - dist/desktop/**
   - package.json
+asarUnpack:
+  - dist/desktop/resources/**
 artifactBuildStarted: ./scripts/ensure-print-agent-macos-signature.cjs
 win:
   icon: build/icon.ico

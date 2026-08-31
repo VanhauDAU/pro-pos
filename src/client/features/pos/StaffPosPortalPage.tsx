@@ -13197,7 +13197,10 @@ export function StaffPosPortalPage() {
                   <div className="staff-invoices-container">
                     {canViewProductReport ? (
                       renderLazyPosRoute(
-                        <OwnerProductReportPage apiPrefix="/api/v1/owner/analytics" />,
+                        <OwnerProductReportPage
+                          apiPrefix="/api/v1/owner/analytics"
+                          onBack={() => navigate('/pos/more')}
+                        />,
                       )
                     ) : (
                       <Alert

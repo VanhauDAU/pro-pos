@@ -1,6 +1,5 @@
 import { AgentApiClient } from './api-client';
 import type { PrintAgentConfig } from './config';
-import { AgentTcpTransport } from './tcp-transport';
 import { pngBytesToEscPosRaster } from './png-raster';
 import {
   buildPrintDataFromDebtPayment,
@@ -106,9 +105,8 @@ export async function loadPrintDataForJob(
   }
 }
 
-interface AgentPrintTransport {
-  send(data: Uint8Array, options: { host: string; port?: number }): Promise<void>;
-}
+import { CompositePrinterTransport } from './transports/composite-transport';
+import type { AgentPrinterConnection, AgentPrinterTransport } from './transports/printer-transport';
 
 export interface PrintJobTimingContext {
   eventReceivedAt?: number;
@@ -119,20 +117,21 @@ export interface PrintJobTimingSummary {
   message: 'print job timing';
   jobId: string;
   documentType: string;
+  connectionType: 'NETWORK_TCP' | 'WINDOWS_PRINTER';
   success: boolean;
   cacheStatus: PrintBootstrapCacheStatus | 'UNKNOWN';
   apiRetryCount: number;
-  tcpRetryCount: number;
+  transportRetryCount: number;
   queueWaitMs: number;
-  eventToTcpStartMs: number | null;
-  serverCreatedToTcpStartMs: number | null;
+  eventToTransportStartMs: number | null;
+  serverCreatedToTransportStartMs: number | null;
   stages: {
     eventReceived: number;
     claimDone: number | null;
     dataReady: number | null;
     renderDone: number | null;
-    tcpStart: number | null;
-    tcpDone: number | null;
+    transportStart: number | null;
+    transportDone: number | null;
     completeAck: number | null;
   };
 }
@@ -143,7 +142,7 @@ export class JobProcessor {
   constructor(
     private readonly config: PrintAgentConfig,
     private readonly apiClient: AgentApiClient,
-    private readonly transport: AgentPrintTransport = new AgentTcpTransport(),
+    private readonly transport: AgentPrinterTransport = new CompositePrinterTransport(),
     private readonly printCache: AgentPrintCache = new AgentPrintCache(apiClient),
     private readonly monotonicNow: () => number = () => performance.now(),
     private readonly wallNow: () => number = Date.now,
@@ -261,8 +260,8 @@ export class JobProcessor {
     let claimToken: string | null = null;
     let success = false;
     let cacheStatus: PrintBootstrapCacheStatus | 'UNKNOWN' = 'UNKNOWN';
-    let tcpRetryCount = 0;
-    let tcpStartWallMs: number | null = null;
+    let transportRetryCount = 0;
+    let transportStartWallMs: number | null = null;
     const processStartedAt = this.monotonicNow();
     const apiRetryStartedAt = this.apiRetryTotal();
     const stages: PrintJobTimingSummary['stages'] = {
@@ -270,10 +269,20 @@ export class JobProcessor {
       claimDone: null,
       dataReady: null,
       renderDone: null,
-      tcpStart: null,
-      tcpDone: null,
+      transportStart: null,
+      transportDone: null,
       completeAck: null,
     };
+
+    const connectionType = this.config.connectionType || 'NETWORK_TCP';
+    const printerName = (this.config.printerName || '').trim();
+    const printerIp = (this.config.printerIp || '').trim();
+    const printerPort = this.config.printerPort || 9100;
+
+    const connection: AgentPrinterConnection =
+      connectionType === 'WINDOWS_PRINTER'
+        ? { type: 'WINDOWS_PRINTER', printerName }
+        : { type: 'NETWORK_TCP', host: printerIp, port: printerPort };
 
     try {
       console.log(
@@ -450,10 +459,10 @@ export class JobProcessor {
         );
       }
 
-      const printerIp = printerConfig.networkIp || this.config.printerIp || '';
-      const printerPort = printerConfig.networkPort || this.config.printerPort || 9100;
       console.log(
-        `[PrintAgent] Đang gửi ${copyCount} liên tới máy in LAN ${printerIp}:${printerPort}...`,
+        connectionType === 'WINDOWS_PRINTER'
+          ? `[PrintAgent] Đang gửi ${copyCount} liên tới máy in Windows "${printerName}"...`
+          : `[PrintAgent] Đang gửi ${copyCount} liên tới máy in LAN ${printerIp}:${printerPort}...`,
       );
       try {
         await this.apiClient.post(
@@ -467,34 +476,38 @@ export class JobProcessor {
           { cause: error },
         );
       }
-      stages.tcpStart = this.monotonicNow();
-      tcpStartWallMs = this.wallNow();
-      for (let tcpAttempt = 1; tcpAttempt <= 2; tcpAttempt += 1) {
+      stages.transportStart = this.monotonicNow();
+      transportStartWallMs = this.wallNow();
+      for (let transportAttempt = 1; transportAttempt <= 2; transportAttempt += 1) {
         try {
-          await this.transport.send(escposBytes, { host: printerIp, port: printerPort });
+          await this.transport.send(escposBytes, connection);
           break;
         } catch (error) {
           const message = errorMessage(error);
           const printerError = error instanceof PrinterError ? error : null;
           const failureStage = printerError?.failureStage ?? 'BEFORE_WRITE';
-          if (failureStage === 'BEFORE_WRITE' && tcpAttempt === 1) {
-            tcpRetryCount += 1;
+          if (failureStage === 'BEFORE_WRITE' && transportAttempt === 1) {
+            transportRetryCount += 1;
             console.warn(
               JSON.stringify({
                 level: 'warn',
-                message: 'retrying TCP print before first byte',
+                message: 'retrying transport print before first byte',
                 jobId: job.id,
-                printerIp,
-                printerPort,
+                connectionType,
+                printerName: connectionType === 'WINDOWS_PRINTER' ? printerName : undefined,
+                printerIp: connectionType === 'NETWORK_TCP' ? printerIp : undefined,
+                printerPort: connectionType === 'NETWORK_TCP' ? printerPort : undefined,
               }),
             );
             continue;
           }
           const code =
             printerError?.code ??
-            (/connect|kết nối|ECONN|timeout/i.test(message)
-              ? 'NETWORK_PRINTER_UNREACHABLE'
-              : 'SOCKET_WRITE_ERROR');
+            (connectionType === 'WINDOWS_PRINTER'
+              ? 'WINDOWS_SPOOLER_ERROR'
+              : /connect|kết nối|ECONN|timeout/i.test(message)
+                ? 'NETWORK_PRINTER_UNREACHABLE'
+                : 'SOCKET_WRITE_ERROR');
           throw new PrintJobProcessingError(code, message, {
             cause: error,
             failureStage,
@@ -502,7 +515,7 @@ export class JobProcessor {
           });
         }
       }
-      stages.tcpDone = this.monotonicNow();
+      stages.transportDone = this.monotonicNow();
 
       try {
         await this.apiClient.post(
@@ -550,19 +563,22 @@ export class JobProcessor {
         message: 'print job timing',
         jobId: job.id,
         documentType: job.documentType,
+        connectionType,
         success,
         cacheStatus,
         apiRetryCount: Math.max(0, this.apiRetryTotal() - apiRetryStartedAt),
-        tcpRetryCount,
+        transportRetryCount,
         queueWaitMs: Math.max(0, processStartedAt - stages.eventReceived),
-        eventToTcpStartMs:
-          stages.tcpStart === null ? null : Math.max(0, stages.tcpStart - stages.eventReceived),
-        serverCreatedToTcpStartMs:
-          tcpStartWallMs === null
+        eventToTransportStartMs:
+          stages.transportStart === null
+            ? null
+            : Math.max(0, stages.transportStart - stages.eventReceived),
+        serverCreatedToTransportStartMs:
+          transportStartWallMs === null
             ? null
             : Math.max(
                 0,
-                tcpStartWallMs + (timingContext.serverClockOffsetMs ?? 0) - job.createdAt,
+                transportStartWallMs + (timingContext.serverClockOffsetMs ?? 0) - job.createdAt,
               ),
         stages,
       });

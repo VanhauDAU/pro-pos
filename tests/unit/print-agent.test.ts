@@ -656,4 +656,186 @@ describe('Pro POS Print Agent Unit Tests', () => {
       expect(Array.from(bytes.slice(headingIndex - 3, headingIndex))).toEqual(boldOn);
     }
   });
+
+  it('prints to USB Windows Spooler when local config is WINDOWS_PRINTER even if server bootstrap has networkIp', async () => {
+    let capturedConnection: any = null;
+    const mockTransport = {
+      send: vi.fn(async (_data: Uint8Array, connection: any) => {
+        capturedConnection = connection;
+      }),
+    };
+
+    const apiClient = {
+      post: vi.fn(async (url: string) => {
+        if (url.includes('/claim')) return { claimToken: 'claim-tok-1' };
+        return {};
+      }),
+      get: vi.fn(async (url: string) => {
+        if (url.includes('/invoices/INV-1')) {
+          return {
+            invoice: {
+              id: 'INV-1',
+              orderCode: 'HD-USB-1',
+              type: 'PAYMENT',
+              paymentMethod: 'CASH',
+              total: 100000,
+              subtotal: 100000,
+              discountTotal: 0,
+              issuedAt: new Date().toISOString(),
+              items: [],
+            },
+          };
+        }
+        return {};
+      }),
+    } as unknown as AgentApiClient;
+
+    const mockPrintCache = {
+      resolveWithMetadata: vi.fn(async () => ({
+        cacheStatus: 'HIT' as const,
+        bootstrap: {
+          context: { storeName: 'Quán Test' },
+          printSettings: {
+            storeId: 'STORE-1',
+            printersJson: JSON.stringify({
+              connectionType: 'NETWORK_TCP',
+              networkIp: '192.168.1.99', // Server says LAN IP
+              networkPort: 9100,
+            }),
+          },
+          configVersion: 1,
+        },
+      })),
+      getRaster: vi.fn(async () => null),
+    } as unknown as AgentPrintCache;
+
+    const processor = new JobProcessor(
+      {
+        serverUrl: 'https://propos.test',
+        connectionType: 'WINDOWS_PRINTER', // Local config specifies USB
+        printerName: 'POS-80 USB Printer',
+      },
+      apiClient,
+      mockTransport,
+      mockPrintCache,
+    );
+
+    const job = {
+      id: 'JOB-USB-LOCAL',
+      storeId: 'STORE-1',
+      targetDeviceId: null,
+      printerRole: 'receipt',
+      documentType: 'invoice' as const,
+      documentId: 'INV-1',
+      idempotencyKey: 'idem-1',
+      status: 'QUEUED' as const,
+      requestedByUserId: null,
+      requestedByDeviceId: null,
+      claimedByDeviceId: null,
+      createdAt: Date.now(),
+      claimedAt: null,
+      printingAt: null,
+      completedAt: null,
+      failedAt: null,
+      attemptCount: 0,
+      failureCode: null,
+      failureMessage: null,
+      claimLeaseExpiresAt: null,
+      claimGeneration: 0,
+      claimProtocolVersion: 2,
+    };
+
+    const success = await processor.processJob(job);
+    expect(success).toBe(true);
+    expect(mockTransport.send).toHaveBeenCalledTimes(1);
+    expect(capturedConnection).toEqual({
+      type: 'WINDOWS_PRINTER',
+      printerName: 'POS-80 USB Printer',
+    });
+  });
+
+  it('reports uncertain to server when Windows Spooler fails during write', async () => {
+    const mockTransport = {
+      send: vi.fn(async () => {
+        throw new PrinterError('WINDOWS_RAW_WRITE_FAILED', 'WritePrinter failed mid-stream', {
+          failureStage: 'DURING_WRITE',
+        });
+      }),
+    };
+
+    let postedEndpoint = '';
+    const apiClient = {
+      post: vi.fn(async (url: string) => {
+        if (url.includes('/claim')) return { claimToken: 'tok-uncertain' };
+        if (url.includes('/uncertain')) postedEndpoint = 'uncertain';
+        if (url.includes('/fail')) postedEndpoint = 'fail';
+        return {};
+      }),
+      get: vi.fn(async () => ({
+        invoice: {
+          id: 'INV-UNCERTAIN',
+          orderCode: 'HD-UNCERTAIN',
+          type: 'PAYMENT',
+          paymentMethod: 'CASH',
+          total: 50000,
+          subtotal: 50000,
+          discountTotal: 0,
+          issuedAt: new Date().toISOString(),
+          items: [],
+        },
+      })),
+    } as unknown as AgentApiClient;
+
+    const mockPrintCache = {
+      resolveWithMetadata: vi.fn(async () => ({
+        cacheStatus: 'HIT' as const,
+        bootstrap: {
+          context: { storeName: 'Test' },
+          printSettings: { storeId: 'S-1' },
+          configVersion: 1,
+        },
+      })),
+      getRaster: vi.fn(async () => null),
+    } as unknown as AgentPrintCache;
+
+    const processor = new JobProcessor(
+      {
+        serverUrl: 'https://propos.test',
+        connectionType: 'WINDOWS_PRINTER',
+        printerName: 'POS-80 Printer',
+      },
+      apiClient,
+      mockTransport,
+      mockPrintCache,
+    );
+
+    const job = {
+      id: 'JOB-DURING-WRITE-ERR',
+      storeId: 'S-1',
+      targetDeviceId: null,
+      printerRole: 'receipt',
+      documentType: 'invoice' as const,
+      documentId: 'INV-UNCERTAIN',
+      idempotencyKey: 'idem-2',
+      status: 'QUEUED' as const,
+      requestedByUserId: null,
+      requestedByDeviceId: null,
+      claimedByDeviceId: null,
+      createdAt: Date.now(),
+      claimedAt: null,
+      printingAt: null,
+      completedAt: null,
+      failedAt: null,
+      attemptCount: 0,
+      failureCode: null,
+      failureMessage: null,
+      claimLeaseExpiresAt: null,
+      claimGeneration: 0,
+      claimProtocolVersion: 2,
+    };
+
+    const success = await processor.processJob(job);
+    expect(success).toBe(false);
+    expect(postedEndpoint).toBe('uncertain');
+  });
 });

@@ -1,4 +1,4 @@
-import { app, type BrowserWindow } from 'electron';
+import { app, powerMonitor, type BrowserWindow } from 'electron';
 import { AgentRuntime } from '../../core/agent-runtime';
 import { registerAgentIpc } from './ipc';
 import { createAgentTray } from './tray';
@@ -31,6 +31,7 @@ if (!app.requestSingleInstanceLock()) {
     const shutdownCoordinator = new ShutdownCoordinator(runtime, () => app.quit());
     const updateManager = new UpdateManager({ shutdownCoordinator });
     updateManager.start();
+    powerMonitor.on('resume', () => updateManager.handleResume());
 
     const autostart = new AutostartController(app);
     mainWindow = createAgentWindow(startHidden);

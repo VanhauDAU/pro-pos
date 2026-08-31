@@ -31,6 +31,8 @@ export type DesktopUpdateErrorCode =
 export interface DesktopUpdateState {
   status: DesktopUpdateStatus;
   currentVersion: string;
+  automaticInstallScheduled?: boolean;
+  maintenanceWindowActive?: boolean;
   availableVersion?: string | null;
   progressPercent?: number | null;
   downloadedBytes?: number | null;

@@ -1091,7 +1091,7 @@ function SettingsDialog({
                         onClick={onInstallUpdate}
                         style={{ fontSize: 11.5, padding: '3px 8px' }}
                       >
-                        Cập nhật & khởi động
+                        Cập nhật ngay
                       </Button>
                     ) : updateState?.status === 'ERROR' ? (
                       <Button

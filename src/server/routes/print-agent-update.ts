@@ -4,8 +4,85 @@ import type { AppEnv } from '@server/types';
 
 const printAgentUpdateRoutes = new Hono<AppEnv>();
 
+const WINDOWS_STABLE_PREFIX = 'print-agent/windows/stable';
+const WINDOWS_STABLE_MANIFEST_KEY = `${WINDOWS_STABLE_PREFIX}/latest.yml`;
+const WINDOWS_STABLE_DOWNLOAD_PATH = '/api/v1/print-agent-updates/windows/stable';
+
 // Whitelist of valid filename pattern for print agent updater artifacts
 const VALID_FILENAME_PATTERN = /^[a-zA-Z0-9_\-. ]+\.(exe|blockmap|yml|yaml|json|txt)$/i;
+
+function parseInstallerFilename(manifest: string): string | null {
+  const pathLines = [...manifest.matchAll(/^path:[ \t]*(.*?)[ \t]*$/gm)];
+  if (pathLines.length !== 1) return null;
+
+  let filename = pathLines[0]?.[1]?.trim() ?? '';
+  if (
+    filename.length >= 2 &&
+    ((filename.startsWith('"') && filename.endsWith('"')) ||
+      (filename.startsWith("'") && filename.endsWith("'")))
+  ) {
+    filename = filename.slice(1, -1);
+  }
+
+  if (
+    !filename ||
+    filename.includes('..') ||
+    filename.includes('/') ||
+    filename.includes('\\') ||
+    filename.includes('\0') ||
+    !filename.toLowerCase().endsWith('.exe') ||
+    !VALID_FILENAME_PATTERN.test(filename)
+  ) {
+    return null;
+  }
+
+  return filename;
+}
+
+// Keep this route before /:filename so "download" can never be consumed as
+// a generic artifact filename when the router is mounted at /windows.
+printAgentUpdateRoutes.get('/download', async (c) => {
+  c.header('Cache-Control', 'no-store');
+
+  const r2Bucket = c.env.PRINT_AGENT_UPDATES;
+  if (!r2Bucket) {
+    return c.text('Print agent update storage not configured', 503);
+  }
+
+  let manifestObject: R2ObjectBody | null;
+  try {
+    manifestObject = await r2Bucket.get(WINDOWS_STABLE_MANIFEST_KEY);
+  } catch {
+    return c.text('Print agent update storage unavailable', 503);
+  }
+  if (!manifestObject) {
+    return c.text('Not Found', 404);
+  }
+
+  let installerFilename: string | null;
+  try {
+    installerFilename = parseInstallerFilename(await manifestObject.text());
+  } catch {
+    return c.text('Print agent update manifest unavailable', 503);
+  }
+  if (!installerFilename) {
+    return c.text('Invalid print agent update manifest', 500);
+  }
+
+  try {
+    const installer = await r2Bucket.head(`${WINDOWS_STABLE_PREFIX}/${installerFilename}`);
+    if (!installer) {
+      return c.text('Not Found', 404);
+    }
+  } catch {
+    return c.text('Print agent update storage unavailable', 503);
+  }
+
+  return c.redirect(
+    `${WINDOWS_STABLE_DOWNLOAD_PATH}/${encodeURIComponent(installerFilename)}`,
+    302,
+  );
+});
 
 printAgentUpdateRoutes.on(['GET', 'HEAD'], '/:filename', async (c) => {
   const rawFilename = c.req.param('filename');
@@ -36,7 +113,7 @@ printAgentUpdateRoutes.on(['GET', 'HEAD'], '/:filename', async (c) => {
     return c.text('Print agent update storage not configured', 503);
   }
 
-  const key = `print-agent/windows/stable/${decodedFilename}`;
+  const key = `${WINDOWS_STABLE_PREFIX}/${decodedFilename}`;
   const object = await r2Bucket.get(key);
 
   if (!object) {

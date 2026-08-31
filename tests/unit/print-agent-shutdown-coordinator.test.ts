@@ -100,4 +100,54 @@ describe('ShutdownCoordinator Unit Tests', () => {
     expect(res2).toBe(true);
     expect(mockRuntime.stopGracefully).toHaveBeenCalledTimes(1);
   });
+
+  it('restores the runtime when the maintenance window closes during drain', async () => {
+    let maintenanceWindowActive = true;
+    const mockRuntime: ShutdownRuntimeTarget = {
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      stopGracefully: vi.fn().mockImplementation(async () => {
+        maintenanceWindowActive = false;
+        return 'SUCCESS';
+      }),
+      getPendingPrintJobCount: vi.fn().mockReturnValue(0),
+      isPrintIdle: vi.fn().mockReturnValue(true),
+    };
+    const onReadyToQuit = vi.fn();
+    const coordinator = new ShutdownCoordinator(mockRuntime, vi.fn());
+
+    const result = await coordinator.requestQuit(
+      'UPDATE',
+      onReadyToQuit,
+      30_000,
+      () => maintenanceWindowActive,
+    );
+
+    expect(result).toBe(false);
+    expect(mockRuntime.start).toHaveBeenCalledOnce();
+    expect(onReadyToQuit).not.toHaveBeenCalled();
+    expect(coordinator.getState()).toBe('RUNNING');
+    expect(coordinator.isPermittedToQuit()).toBe(false);
+  });
+
+  it('restores the runtime when the updater fails to start installation', async () => {
+    const mockRuntime: ShutdownRuntimeTarget = {
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      stopGracefully: vi.fn().mockResolvedValue('SUCCESS'),
+      getPendingPrintJobCount: vi.fn().mockReturnValue(0),
+      isPrintIdle: vi.fn().mockReturnValue(true),
+    };
+    const coordinator = new ShutdownCoordinator(mockRuntime, vi.fn());
+
+    await expect(
+      coordinator.requestQuit('UPDATE', () => {
+        throw new Error('quitAndInstall failed');
+      }),
+    ).rejects.toThrow('quitAndInstall failed');
+
+    expect(mockRuntime.start).toHaveBeenCalledOnce();
+    expect(coordinator.getState()).toBe('RUNNING');
+    expect(coordinator.isPermittedToQuit()).toBe(false);
+  });
 });

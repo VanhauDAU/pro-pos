@@ -204,15 +204,29 @@ export function presentUpdateStatus(updateState?: DesktopUpdateState | null): Pr
     };
   }
   if (updateState.status === 'DOWNLOADED') {
+    if (updateState.automaticInstallScheduled && updateState.maintenanceWindowActive) {
+      return {
+        label: 'Đang chờ hoàn tất lệnh in để cập nhật',
+        description: 'Bản cập nhật sẽ tự cài ngay khi hàng đợi in an toàn và rảnh.',
+        tone: 'warning',
+      };
+    }
+    if (updateState.automaticInstallScheduled) {
+      return {
+        label: `Bản cập nhật v${updateState.availableVersion} đã sẵn sàng · sẽ tự cài lúc 00:00`,
+        description: 'Print Agent vẫn hoạt động bình thường; bạn cũng có thể cập nhật ngay.',
+        tone: 'success',
+      };
+    }
     return {
       label: `Bản v${updateState.availableVersion} đã sẵn sàng`,
-      description: 'Nhấn Cập nhật & khởi động lại để hoàn tất nâng cấp.',
+      description: 'Nhấn Cập nhật ngay để hoàn tất nâng cấp.',
       tone: 'success',
     };
   }
   if (updateState.status === 'WAITING_FOR_IDLE') {
     return {
-      label: 'Đang đợi lệnh in hoàn tất',
+      label: 'Đang chờ hoàn tất lệnh in để cập nhật',
       description: 'Đang hoàn tất lệnh in trước khi khởi động lại.',
       tone: 'warning',
     };

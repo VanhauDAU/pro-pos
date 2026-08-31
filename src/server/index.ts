@@ -20,6 +20,7 @@ import { ownerQrOrderRoutes } from '@server/routes/owner-qr-order';
 import { guestOrderRoutes } from '@server/routes/guest-order';
 import { printJobRoutes } from '@server/routes/print-jobs';
 import { posPrintAgentRoutes, publicPrintAgentRoutes } from '@server/routes/print-agent';
+import { printAgentUpdateRoutes } from '@server/routes/print-agent-update';
 import type { AppEnv } from '@server/types';
 import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
 import { MaintenanceService } from '@server/services/maintenance-service';
@@ -116,6 +117,7 @@ app.route('/api/v1/owner/qr-order', ownerQrOrderRoutes);
 app.route('/api/v1/print-agent', publicPrintAgentRoutes);
 app.route('/api/v1/pos/print-agent', posPrintAgentRoutes);
 app.route('/api/v1/pos/print-jobs', printJobRoutes);
+app.route('/print-agent/windows/stable', printAgentUpdateRoutes);
 
 app.notFound((c) => failure(c, { code: 'NOT_FOUND', message: 'Không tìm thấy tài nguyên.' }, 404));
 

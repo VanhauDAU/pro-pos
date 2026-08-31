@@ -1,7 +1,8 @@
-import { defineConfig } from '@playwright/test';
+import { defineConfig, devices } from '@playwright/test';
 
 const externalBaseUrl = process.env['E2E_BASE_URL'] ?? process.env['PROPOS_E2E_BASE_URL'];
 const authStatePath = 'playwright/.auth/pos.json';
+const runBrowserMatrix = process.env['E2E_BROWSER_MATRIX'] === 'true';
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -28,6 +29,30 @@ export default defineConfig({
       dependencies: ['setup'],
       use: { browserName: 'chromium', storageState: authStatePath },
     },
+    ...(runBrowserMatrix
+      ? [
+          {
+            name: 'mobile-chromium-authenticated',
+            testMatch: /(?:network-budget|payment-regression|cache-consistency)\.spec\.ts/,
+            dependencies: ['setup'],
+            use: {
+              ...devices['Pixel 7'],
+              browserName: 'chromium' as const,
+              storageState: authStatePath,
+            },
+          },
+          {
+            name: 'mobile-webkit-authenticated',
+            testMatch: /(?:network-budget|payment-regression|cache-consistency)\.spec\.ts/,
+            dependencies: ['setup'],
+            use: {
+              ...devices['iPhone 15'],
+              browserName: 'webkit' as const,
+              storageState: authStatePath,
+            },
+          },
+        ]
+      : []),
   ],
   webServer: externalBaseUrl
     ? undefined

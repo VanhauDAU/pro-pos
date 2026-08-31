@@ -1,4 +1,5 @@
 import type { AgentRuntimeState, PrinterTestResult } from '../../core/agent-runtime';
+import type { DesktopAgentConfig, DesktopUpdateState } from '../shared/desktop-api';
 
 export type StatusTone = 'success' | 'info' | 'warning' | 'danger' | 'neutral';
 
@@ -26,7 +27,7 @@ export function presentOverallStatus(state: AgentRuntimeState): PresentedStatus 
   if (state.status === 'ONLINE' && state.printer === 'INVALID_CONFIG') {
     return {
       label: 'Cần cấu hình máy in',
-      description: 'Kiểm tra lại địa chỉ IP và cổng máy in.',
+      description: 'Kiểm tra lại cấu hình kết nối máy in.',
       tone: 'danger',
     };
   }
@@ -82,11 +83,14 @@ export function presentOverallStatus(state: AgentRuntimeState): PresentedStatus 
   return { label: 'Đang khởi động', description: 'Vui lòng đợi trong giây lát.', tone: 'neutral' };
 }
 
-export function presentCloudStatus(state: AgentRuntimeState): PresentedStatus {
+export function presentCloudStatus(
+  state: AgentRuntimeState,
+  storeName?: string | null,
+): PresentedStatus {
   if (state.status === 'ONLINE')
-    return { label: 'Đã kết nối', description: 'Máy chủ PRO POS', tone: 'success' };
+    return { label: 'Đã kết nối', description: storeName || 'Máy chủ PRO POS', tone: 'success' };
   if (state.status === 'CONNECTING')
-    return { label: 'Đang kết nối', description: 'Máy chủ PRO POS', tone: 'info' };
+    return { label: 'Đang kết nối', description: storeName || 'Máy chủ PRO POS', tone: 'info' };
   if (['AUTHENTICATING', 'REGISTERED', 'SUBSCRIBED', 'SYNCING'].includes(state.status))
     return {
       label: 'Đang chuẩn bị',
@@ -95,25 +99,45 @@ export function presentCloudStatus(state: AgentRuntimeState): PresentedStatus {
     };
   if (state.status === 'DEGRADED')
     return { label: 'Không ổn định', description: 'Đang tự khôi phục', tone: 'warning' };
-  return { label: 'Mất kết nối', description: 'Máy chủ PRO POS', tone: 'danger' };
+  return { label: 'Mất kết nối', description: storeName || 'Máy chủ PRO POS', tone: 'danger' };
 }
 
-export function presentPrinterStatus(state: AgentRuntimeState): PresentedStatus {
-  if (state.printer === 'READY')
-    return { label: 'Sẵn sàng', description: 'Kết nối LAN · TCP', tone: 'success' };
-  if (state.printer === 'UNREACHABLE')
+export function presentPrinterStatus(
+  state: AgentRuntimeState,
+  config?: DesktopAgentConfig,
+): PresentedStatus {
+  const isWindows = config?.connectionType === 'WINDOWS_PRINTER';
+  const paperSize = config?.paperSize || 'K80';
+  const connectionDesc = isWindows
+    ? `${config?.printerName || 'Chưa chọn máy in'} · USB · Windows · ${paperSize}`
+    : `${config?.printerIp || '192.168.1.73'}:${config?.printerPort || 9100} · LAN · ${paperSize}`;
+
+  if (state.printer === 'READY') {
+    return { label: 'Sẵn sàng', description: connectionDesc, tone: 'success' };
+  }
+  if (state.printer === 'UNREACHABLE') {
     return {
       label: 'Không thể kết nối',
-      description: 'Kiểm tra máy in và mạng LAN',
+      description: isWindows ? 'Kiểm tra cáp USB và nguồn máy in' : 'Kiểm tra máy in và mạng LAN',
       tone: 'danger',
     };
-  if (state.printer === 'INVALID_CONFIG')
-    return { label: 'Cấu hình chưa hợp lệ', description: 'Kiểm tra IP và cổng', tone: 'danger' };
-  return { label: 'Chưa kiểm tra', description: 'Kết nối LAN · TCP', tone: 'neutral' };
+  }
+  if (state.printer === 'INVALID_CONFIG') {
+    return {
+      label: 'Cấu hình chưa hợp lệ',
+      description: isWindows ? 'Vui lòng chọn máy in' : 'Kiểm tra IP và cổng',
+      tone: 'danger',
+    };
+  }
+  return { label: 'Chưa kiểm tra', description: connectionDesc, tone: 'neutral' };
 }
 
 export function presentFriendlyError(state: AgentRuntimeState): string | null {
   if (state.printer === 'UNREACHABLE') {
+    const diag = state.printerDiagnostics;
+    if (diag?.connectionType === 'WINDOWS_PRINTER') {
+      return 'Không tìm thấy máy in đã chọn. Kiểm tra nguồn, dây USB hoặc chọn lại máy in.';
+    }
     return 'Không thể kết nối máy in. Kiểm tra nguồn, dây mạng hoặc địa chỉ IP.';
   }
   if (state.printer === 'INVALID_CONFIG') return 'Cấu hình máy in chưa hợp lệ.';
@@ -134,8 +158,10 @@ export function presentPrinterErrorDetails(
     if (diagnostics.printerCode && diagnostics.printerCode !== diagnostics.errorCode) {
       lines.push(`printerCode: ${diagnostics.printerCode}`);
     }
-    lines.push(`host: ${diagnostics.host}`);
-    lines.push(`port: ${diagnostics.port}`);
+    if (diagnostics.connectionType) lines.push(`connectionType: ${diagnostics.connectionType}`);
+    if (diagnostics.printerName) lines.push(`printerName: ${diagnostics.printerName}`);
+    if (diagnostics.host) lines.push(`host: ${diagnostics.host}`);
+    if (diagnostics.port) lines.push(`port: ${diagnostics.port}`);
     lines.push(`failureStage: ${diagnostics.failureStage}`);
     if (diagnostics.localAddress) lines.push(`localAddress: ${diagnostics.localAddress}`);
     if (diagnostics.localPort) lines.push(`localPort: ${diagnostics.localPort}`);
@@ -146,4 +172,68 @@ export function presentPrinterErrorDetails(
 export function formatPairingCode(code: string): string {
   const digits = code.replace(/\D/g, '').slice(0, 6);
   return digits.length > 3 ? `${digits.slice(0, 3)} ${digits.slice(3)}` : digits;
+}
+
+export function presentUpdateStatus(updateState?: DesktopUpdateState | null): PresentedStatus {
+  if (!updateState || updateState.status === 'DISABLED') {
+    return {
+      label: 'Không khả dụng',
+      description: updateState?.errorMessage || 'Bản Portable không hỗ trợ cập nhật tự động.',
+      tone: 'neutral',
+    };
+  }
+  if (updateState.status === 'CHECKING') {
+    return {
+      label: 'Đang kiểm tra...',
+      description: 'Đang kiểm tra phiên bản mới từ máy chủ cập nhật.',
+      tone: 'info',
+    };
+  }
+  if (updateState.status === 'AVAILABLE') {
+    return {
+      label: `Có bản mới v${updateState.availableVersion || ''}`,
+      description: 'Chuẩn bị tải bản cập nhật...',
+      tone: 'info',
+    };
+  }
+  if (updateState.status === 'DOWNLOADING') {
+    return {
+      label: `Đang tải bản v${updateState.availableVersion || ''} (${updateState.progressPercent ?? 0}%)`,
+      description: 'Đang tải bản cập nhật ngầm, Print Agent vẫn in bình thường.',
+      tone: 'info',
+    };
+  }
+  if (updateState.status === 'DOWNLOADED') {
+    return {
+      label: `Bản v${updateState.availableVersion} đã sẵn sàng`,
+      description: 'Nhấn Cập nhật & khởi động lại để hoàn tất nâng cấp.',
+      tone: 'success',
+    };
+  }
+  if (updateState.status === 'WAITING_FOR_IDLE') {
+    return {
+      label: 'Đang đợi lệnh in hoàn tất',
+      description: 'Đang hoàn tất lệnh in trước khi khởi động lại.',
+      tone: 'warning',
+    };
+  }
+  if (updateState.status === 'INSTALLING') {
+    return {
+      label: 'Đang cài đặt',
+      description: 'Đang đóng ứng dụng để nâng cấp phiên bản mới...',
+      tone: 'info',
+    };
+  }
+  if (updateState.status === 'ERROR') {
+    return {
+      label: 'Cập nhật thất bại',
+      description: updateState.errorMessage || 'Không thể tải bản cập nhật.',
+      tone: 'danger',
+    };
+  }
+  return {
+    label: 'Phiên bản mới nhất',
+    description: `Bạn đang sử dụng phiên bản PRO POS Print Agent v${updateState.currentVersion}.`,
+    tone: 'success',
+  };
 }

@@ -341,9 +341,6 @@ export class PosRepository {
   }) {
     return [
       this.db
-        .prepare('DELETE FROM audit_logs WHERE store_id = ? AND request_id = ?')
-        .bind(input.storeId, input.requestId),
-      this.db
         .prepare(
           `INSERT INTO audit_logs (
             id, store_id, actor_user_id, action, entity_type, entity_id,
@@ -376,6 +373,7 @@ export class PosRepository {
     entries: OrderCallBatchEntryInput[];
     now: number;
   }) {
+    if (input.entries.length === 0) return [];
     const statements: D1PreparedStatement[] = [
       this.db
         .prepare(
@@ -2570,21 +2568,35 @@ export class PosRepository {
   findCancelCommand(storeId: string, commandId: string) {
     return this.db
       .prepare(
-        `SELECT order_id AS orderId FROM cancel_order_commands
+        `SELECT order_id AS orderId, response_json AS responseJson FROM cancel_order_commands
          WHERE store_id = ? AND id = ? LIMIT 1`,
       )
       .bind(storeId, commandId)
-      .first<{ orderId: string }>();
+      .first<{ orderId: string; responseJson: string | null }>();
   }
 
   findCancelTakeawayCommand(storeId: string, commandId: string) {
     return this.db
       .prepare(
-        `SELECT order_id AS orderId FROM cancel_takeaway_order_commands
+        `SELECT order_id AS orderId, response_json AS responseJson
+         FROM cancel_takeaway_order_commands
          WHERE store_id = ? AND id = ? LIMIT 1`,
       )
       .bind(storeId, commandId)
-      .first<{ orderId: string }>();
+      .first<{ orderId: string; responseJson: string | null }>();
+  }
+
+  completeCancelCommand(
+    storeId: string,
+    commandId: string,
+    responseJson: string,
+    takeaway: boolean,
+  ) {
+    const table = takeaway ? 'cancel_takeaway_order_commands' : 'cancel_order_commands';
+    return this.db
+      .prepare(`UPDATE ${table} SET response_json = ? WHERE store_id = ? AND id = ?`)
+      .bind(responseJson, storeId, commandId)
+      .run();
   }
 
   executeCancelTakeaway(input: {

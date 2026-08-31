@@ -3,6 +3,7 @@ import { AgentApiClient, AgentApiError } from './api-client';
 import type { PrintAgentConfig } from './config';
 import { JobQueue } from './job-queue';
 import { JobProcessor } from './job-processor';
+import type { AgentPrinterTransport } from './transports/printer-transport';
 import type { PendingPrintJobPage, PrintJob } from '@contracts/print-job';
 import { AgentPrintCache } from './core/print-cache';
 import {
@@ -26,6 +27,10 @@ export interface AgentRealtimeEvents {
 export interface RealtimeConnection {
   connect(): void;
   destroy(): void;
+  quiesceAndDrain?(timeoutMs?: number): Promise<'DRAINED' | 'DRAIN_TIMEOUT'>;
+  resumeAfterDrainAbort?(): void;
+  getPendingJobCount?(): number;
+  isIdle?(): boolean;
 }
 
 type PendingScanReason =
@@ -65,8 +70,10 @@ export class AgentRealtimeClient implements RealtimeConnection {
     private readonly apiClient: AgentApiClient,
     private readonly events: AgentRealtimeEvents = {},
     private readonly printCache: AgentPrintCache = new AgentPrintCache(apiClient),
+    transport?: AgentPrinterTransport,
+    processor?: JobProcessor,
   ) {
-    this.processor = new JobProcessor(config, apiClient, undefined, printCache);
+    this.processor = processor ?? new JobProcessor(config, apiClient, transport, printCache);
   }
 
   connect(): void {
@@ -306,6 +313,9 @@ export class AgentRealtimeClient implements RealtimeConnection {
     printerKey = this.config.printerIp || 'default',
     eventReceivedAt = performance.now(),
   ): boolean {
+    if (!this.jobQueue.isAccepting()) {
+      return false;
+    }
     this.pruneRecentJobs();
     if (this.processingJobs.has(job.id) || this.recentJobs.has(job.id)) {
       console.info(`[Realtime] Bỏ qua print job trùng lặp: ${job.id}`);
@@ -313,7 +323,7 @@ export class AgentRealtimeClient implements RealtimeConnection {
     }
     this.processingJobs.add(job.id);
     this.events.onJobReceived?.(job.id, job.documentType);
-    this.jobQueue.enqueue(printerKey, async () => {
+    const enqueued = this.jobQueue.enqueue(printerKey, async () => {
       try {
         this.events.onJobStarted?.(job.id);
         const completed = await this.processor.processJob(job, {
@@ -328,6 +338,10 @@ export class AgentRealtimeClient implements RealtimeConnection {
         this.pruneRecentJobs();
       }
     });
+    if (!enqueued) {
+      this.processingJobs.delete(job.id);
+      return false;
+    }
     return true;
   }
 
@@ -425,8 +439,65 @@ export class AgentRealtimeClient implements RealtimeConnection {
     }, delay);
   }
 
+  async quiesceAndDrain(timeoutMs = 30_000): Promise<'DRAINED' | 'DRAIN_TIMEOUT'> {
+    // 1. Stop accepting new jobs
+    this.jobQueue.stopAccepting();
+
+    // 2. Abort active recovery
+    this.recoveryAbortController?.abort();
+    this.recoveryAbortController = null;
+
+    // 3. Stop heartbeat and polling fallback
+    this.stopHeartbeat();
+    this.stopPollingFallback();
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    // 4. Close WebSocket
+    this.isReady = false;
+    this.handshakeAcknowledged = false;
+    this.adaptiveSafetyUntil = 0;
+    if (this.ws) {
+      try {
+        this.ws.close();
+      } catch {
+        // ignore
+      }
+      this.ws = null;
+    }
+
+    // 5. Await JobQueue to reach 0 pending
+    const isDrained = await this.jobQueue.waitForIdle(timeoutMs);
+    if (!isDrained) {
+      return 'DRAIN_TIMEOUT';
+    }
+
+    this.isDestroyed = true;
+    return 'DRAINED';
+  }
+
+  resumeAfterDrainAbort(): void {
+    this.isDestroyed = false;
+    this.jobQueue.resumeAccepting();
+    this.reconnectAttempt = 0;
+    this.isReady = false;
+    this.handshakeAcknowledged = false;
+    this.connect();
+  }
+
+  getPendingJobCount(): number {
+    return this.jobQueue.getPendingCount();
+  }
+
+  isIdle(): boolean {
+    return this.jobQueue.isIdle();
+  }
+
   destroy(): void {
     this.isDestroyed = true;
+    this.jobQueue.stopAccepting();
     this.recoveryAbortController?.abort();
     this.recoveryAbortController = null;
     this.stopHeartbeat();

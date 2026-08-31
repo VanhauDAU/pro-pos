@@ -137,7 +137,35 @@ describe('AgentRuntime', () => {
     });
 
     const result = await runtime.testPrinter();
-    expect(result).toEqual({ ok: true, host: '192.168.1.73', port: 9100 });
+    expect(result).toEqual({
+      ok: true,
+      connectionType: 'NETWORK_TCP',
+      host: '192.168.1.73',
+      port: 9100,
+    });
+    expect(send).toHaveBeenCalledOnce();
+    expect(runtime.getState().printer).toBe('READY');
+    expect(runtime.getState().printerDiagnostics).toBeNull();
+  });
+
+  it('reports printer readiness for Windows USB printer through runtime state', async () => {
+    const send = vi.fn(async () => undefined);
+    const usbConfig: PrintAgentConfig = {
+      ...pairedConfig,
+      connectionType: 'WINDOWS_PRINTER',
+      printerName: 'POS-80 USB Printer',
+    };
+    const runtime = new AgentRuntime(usbConfig, {
+      configManager: makeConfigStore(usbConfig),
+      createTransport: () => ({ send }),
+    });
+
+    const result = await runtime.testPrinter();
+    expect(result).toEqual({
+      ok: true,
+      connectionType: 'WINDOWS_PRINTER',
+      printerName: 'POS-80 USB Printer',
+    });
     expect(send).toHaveBeenCalledOnce();
     expect(runtime.getState().printer).toBe('READY');
     expect(runtime.getState().printerDiagnostics).toBeNull();

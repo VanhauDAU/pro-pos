@@ -193,6 +193,20 @@ export interface PosOverviewSnapshot {
   serverNowMs: number;
 }
 
+export interface PosOverviewDelta {
+  order?: PosOverviewOrder;
+  tables?: PosOverviewTable[];
+  closedOrderId?: string;
+  serverNowMs: number;
+}
+
+export interface OrderClosureSnapshot {
+  orderId: string;
+  status: 'CANCELLED';
+  tableSummaries: PosOverviewTable[];
+  serverNowMs: number;
+}
+
 export const updateOrderItemSchema = z.object({
   expectedOrderVersion: z.number().int().positive(),
   quantityMilli: z.number().int().positive().max(1_000_000_000),

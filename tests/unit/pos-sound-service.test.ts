@@ -165,10 +165,10 @@ afterEach(() => {
 });
 
 describe('POS Web Audio sound service', () => {
-  it('initializes and preloads without playing any real notification sound', () => {
+  it('initializes without putting notification audio on the critical path', () => {
     const { context } = createManager();
 
-    expect(fetchMock).toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(context.sources).toHaveLength(0);
     expect(audioElementConstructor).not.toHaveBeenCalled();
     expect(audioElementPlay).not.toHaveBeenCalled();
@@ -284,7 +284,9 @@ describe('POS Web Audio sound service', () => {
 
   it('fetches and decodes each unique sound path only once', async () => {
     const { manager } = createManager();
-    manager.initialize();
+    const soundTypes = Object.keys(SOUND_FILES) as Array<keyof typeof SOUND_FILES>;
+    manager.warm(soundTypes);
+    manager.warm(soundTypes);
     const uniquePaths = new Set(Object.values(SOUND_FILES));
 
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(uniquePaths.size));

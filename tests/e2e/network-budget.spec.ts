@@ -73,3 +73,65 @@ test('connected POS refreshes overview every 15 seconds only while a table is ru
     await cancelOrder(page, fixture.orderId);
   }
 });
+
+test('opening an occupied table uses one editor quote and does not load print settings', async ({
+  page,
+}) => {
+  const fixture = await createTimedDineInOrder(page);
+  try {
+    await page.goto('/pos/areas');
+    await expect(page.getByLabel('Trạng thái kết nối')).toContainText('Trực tiếp');
+    const paths: string[] = [];
+    page.on('request', (request) => {
+      if (['fetch', 'xhr'].includes(request.resourceType())) {
+        paths.push(new URL(request.url()).pathname + new URL(request.url()).search);
+      }
+    });
+
+    await page.getByRole('button', { name: new RegExp(fixture.tableName) }).click();
+    await expect(page).toHaveURL(new RegExp(`/pos/orders/${fixture.orderId}$`));
+    await expect(page.getByText('Đang xác minh dữ liệu mới nhất của đơn...')).toBeHidden();
+
+    expect(
+      paths.filter((path) => path.startsWith(`/api/v1/pos/orders/${fixture.orderId}/quote`)),
+    ).toHaveLength(1);
+    expect(paths.filter((path) => path === '/api/v1/pos/print-settings')).toEqual([]);
+  } finally {
+    await cancelOrder(page, fixture.orderId);
+  }
+});
+
+test('opening an available table and warm catalog picker performs no API request', async ({
+  page,
+}) => {
+  const catalogResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'GET' &&
+      new URL(response.url()).pathname === '/api/v1/pos/catalog',
+  );
+  await page.goto('/pos/areas');
+  await expect(page.getByLabel('Trạng thái kết nối')).toContainText('Trực tiếp');
+  await catalogResponse;
+  const paths: string[] = [];
+  page.on('request', (request) => {
+    if (['fetch', 'xhr'].includes(request.resourceType())) {
+      paths.push(new URL(request.url()).pathname);
+    }
+  });
+
+  const available = page.locator('.staff-table-card--available').first();
+  await expect(available).toBeVisible();
+  await available.click();
+  await expect(page).toHaveURL(/\/pos\/orders\/new\?tableId=/u);
+  await page.getByRole('button', { name: 'Thêm món' }).click();
+  await expect(page.getByPlaceholder('Tìm kiếm mặt hàng...')).toBeVisible();
+
+  const criticalPaths = paths.filter(
+    (path) =>
+      path === '/api/v1/pos/catalog' ||
+      path === '/api/v1/pos/tables' ||
+      path === '/api/v1/pos/print-settings' ||
+      /\/api\/v1\/pos\/orders\/[^/]+\/quote$/u.test(path),
+  );
+  expect(criticalPaths).toEqual([]);
+});

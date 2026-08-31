@@ -3,11 +3,13 @@ import { join } from 'node:path';
 import { Menu, Tray, nativeImage, type BrowserWindow } from 'electron';
 import type { AgentRuntime } from '../../core/agent-runtime';
 import type { AutostartController } from './autostart';
+import type { UpdateManager } from './update-manager';
 
 export function createAgentTray(
   runtime: AgentRuntime,
   getWindow: () => BrowserWindow | null,
   autostart: AutostartController,
+  updateManager?: UpdateManager,
 ): Tray {
   const iconPath = join(__dirname, '../renderer/icon.png');
   const trayIcon = existsSync(iconPath)
@@ -22,7 +24,12 @@ export function createAgentTray(
   const tray = new Tray(trayIcon);
   const statusLabel = () => {
     const state = runtime.getState();
-    if (state.status === 'ONLINE' && state.printer === 'READY') return 'Máy in sẵn sàng';
+    const config = runtime.getConfig();
+    if (state.status === 'ONLINE' && state.printer === 'READY') {
+      return config?.connectionType === 'WINDOWS_PRINTER' && config.printerName
+        ? `Máy in ${config.printerName} sẵn sàng`
+        : 'Máy in sẵn sàng';
+    }
     if (state.status === 'ONLINE') return 'Print Agent đang hoạt động';
     if (state.status === 'CONNECTING') return 'Print Agent đang kết nối';
     if (state.status === 'UNPAIRED' || state.status === 'PAIRING')
@@ -30,6 +37,35 @@ export function createAgentTray(
     return 'Print Agent đang mất kết nối';
   };
   const refreshMenu = () => {
+    const updateState = updateManager?.getState();
+    const updateMenuItems = [];
+    if (updateState && updateState.status === 'DOWNLOADED') {
+      updateMenuItems.push(
+        {
+          label: `Cập nhật lên v${updateState.availableVersion || ''} & khởi động lại`,
+          click: () => void updateManager?.installUpdate(),
+        },
+        { type: 'separator' as const },
+      );
+    } else if (updateState && updateState.status !== 'DISABLED') {
+      updateMenuItems.push(
+        {
+          label:
+            updateState.status === 'CHECKING'
+              ? 'Đang kiểm tra cập nhật...'
+              : updateState.status === 'DOWNLOADING'
+                ? `Đang tải bản cập nhật (${updateState.progressPercent ?? 0}%)...`
+                : 'Kiểm tra cập nhật',
+          enabled:
+            updateState.status === 'IDLE' ||
+            updateState.status === 'UP_TO_DATE' ||
+            updateState.status === 'ERROR',
+          click: () => void updateManager?.checkForUpdates(),
+        },
+        { type: 'separator' as const },
+      );
+    }
+
     tray.setToolTip(`PRO POS Print Agent · ${statusLabel()}`);
     tray.setContextMenu(
       Menu.buildFromTemplate([
@@ -38,6 +74,8 @@ export function createAgentTray(
         { label: 'Mở Print Agent', click: () => getWindow()?.show() },
         { label: 'In thử', click: () => void runtime.testPrinter() },
         { label: 'Kết nối lại', click: () => void runtime.reconnect() },
+        { type: 'separator' },
+        ...updateMenuItems,
         {
           label:
             process.platform === 'darwin'
@@ -47,7 +85,10 @@ export function createAgentTray(
                 : 'Khởi động cùng hệ thống',
           type: 'checkbox',
           checked: autostart.isEnabled(),
-          click: (item) => autostart.setEnabled(item.checked),
+          click: (item) => {
+            autostart.setEnabled(item.checked);
+            refreshMenu();
+          },
         },
         { type: 'separator' },
         { label: 'Thoát', click: () => process.emit('SIGTERM') },
@@ -55,7 +96,9 @@ export function createAgentTray(
     );
   };
   tray.on('click', () => getWindow()?.show());
+  tray.on('right-click', () => refreshMenu());
   runtime.on('stateChanged', refreshMenu);
+  updateManager?.on('stateChanged', refreshMenu);
   refreshMenu();
   return tray;
 }

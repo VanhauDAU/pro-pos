@@ -6,6 +6,8 @@ directories:
 files:
   - dist/desktop/**
   - package.json
+asarUnpack:
+  - dist/desktop/resources/**
 artifactBuildStarted: ./scripts/ensure-print-agent-macos-signature.cjs
 win:
   icon: build/icon.ico
@@ -38,3 +40,6 @@ mac:
 dmg:
   title: ${productName} ${version}
   artifactName: ${productName}-${version}-${arch}.${ext}
+publish:
+  provider: generic
+  url: https://pro-pos-production.vanhau-laravel.workers.dev/print-agent/windows/stable/

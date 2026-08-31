@@ -8,6 +8,7 @@ import type {
 } from '../shared/desktop-api';
 import type { AutostartController } from './autostart';
 import type { DesktopConfigStore } from './config-store';
+import type { UpdateManager } from './update-manager';
 
 function normalizeConfig(
   runtime: AgentRuntime,
@@ -19,9 +20,14 @@ function normalizeConfig(
     storeId: config.storeId ?? null,
     storeName: config.storeName ?? null,
     agentId: config.agentId ?? null,
+    connectionType: config.connectionType || 'NETWORK_TCP',
+    printerName: config.printerName?.trim() || '',
     printerIp: config.printerIp?.trim() || '',
     printerPort: config.printerPort || 9100,
     paperSize: config.paperSize || 'K80',
+    autoCut: config.autoCut ?? true,
+    openCashDrawer: config.openCashDrawer ?? false,
+    printableDots: config.printableDots,
   };
 }
 
@@ -29,27 +35,44 @@ function validateSettings(value: unknown): DesktopSettingsInput {
   if (!value || typeof value !== 'object') throw new Error('Cài đặt không hợp lệ.');
   const settings = value as Partial<DesktopSettingsInput>;
   const serverUrl = settings.serverUrl?.trim();
-  const printerIp = settings.printerIp?.trim();
-  const printerPort = Number(settings.printerPort);
   if (!serverUrl) throw new Error('Địa chỉ máy chủ không được để trống.');
   const url = new URL(serverUrl);
   if (!['http:', 'https:'].includes(url.protocol)) {
     throw new Error('Địa chỉ máy chủ phải bắt đầu bằng http:// hoặc https://.');
   }
-  if (!printerIp || printerIp.length > 253 || !/^[a-zA-Z0-9.-]+$/.test(printerIp)) {
-    throw new Error('Địa chỉ IP hoặc tên máy in không hợp lệ.');
+
+  const connectionType =
+    settings.connectionType === 'WINDOWS_PRINTER' ? 'WINDOWS_PRINTER' : 'NETWORK_TCP';
+  const printerIp = settings.printerIp?.trim() || '';
+  const printerPort = Number(settings.printerPort) || 9100;
+  const printerName = settings.printerName?.trim() || '';
+
+  if (connectionType === 'WINDOWS_PRINTER') {
+    if (!printerName) {
+      throw new Error('Vui lòng chọn máy in trên Windows.');
+    }
+  } else {
+    if (!printerIp || printerIp.length > 253 || !/^[a-zA-Z0-9.-]+$/.test(printerIp)) {
+      throw new Error('Địa chỉ IP máy in LAN không hợp lệ.');
+    }
+    if (!Number.isInteger(printerPort) || printerPort < 1 || printerPort > 65_535) {
+      throw new Error('Cổng máy in phải nằm trong khoảng 1–65535.');
+    }
   }
-  if (!Number.isInteger(printerPort) || printerPort < 1 || printerPort > 65_535) {
-    throw new Error('Cổng máy in phải nằm trong khoảng 1–65535.');
-  }
+
   if (settings.paperSize !== 'K58' && settings.paperSize !== 'K80') {
     throw new Error('Khổ giấy không hợp lệ.');
   }
   return {
     serverUrl: url.toString().replace(/\/$/, ''),
+    connectionType,
+    printerName,
     printerIp,
     printerPort,
     paperSize: settings.paperSize,
+    autoCut: settings.autoCut ?? true,
+    openCashDrawer: settings.openCashDrawer ?? false,
+    printableDots: settings.printableDots ? Number(settings.printableDots) : undefined,
   };
 }
 
@@ -65,6 +88,7 @@ export function registerAgentIpc(
   getWindow: () => BrowserWindow | null,
   autostart: AutostartController,
   configStore: DesktopConfigStore,
+  updateManager?: UpdateManager,
 ): void {
   let lastJob: DesktopPrintJobState | null = null;
   const publishJob = (job: DesktopPrintJobState) => {
@@ -79,7 +103,38 @@ export function registerAgentIpc(
     config: normalizeConfig(runtime, configStore),
   }));
   ipcMain.handle('agent:get-last-job', () => lastJob);
-  ipcMain.handle('agent:test-printer', () => runtime.testPrinter());
+  ipcMain.handle('agent:test-printer', async (_event, candidateSettings?: unknown) => {
+    if (candidateSettings && typeof candidateSettings === 'object') {
+      const settings = validateSettings(candidateSettings);
+      const current = runtime.getConfig() ?? configStore.loadConfig();
+      configStore.saveConfig({ ...current, ...settings });
+      return runtime.testPrinter(settings);
+    }
+    return runtime.testPrinter();
+  });
+  ipcMain.handle('agent:list-printers', async () => {
+    const win = getWindow();
+    if (!win) return [];
+    try {
+      const printers = await win.webContents.getPrintersAsync();
+      return printers.map((p) => {
+        const item = p as {
+          name: string;
+          displayName?: string;
+          isDefault?: boolean;
+          status?: number;
+        };
+        return {
+          name: item.name,
+          displayName: item.displayName || item.name,
+          isDefault: Boolean(item.isDefault),
+          status: item.status ?? 0,
+        };
+      });
+    } catch {
+      return [];
+    }
+  });
   ipcMain.handle('agent:reconnect', () => runtime.reconnect());
   ipcMain.handle('agent:start-pairing', () => runtime.startPairing());
   ipcMain.handle('agent:cancel-pairing', () => runtime.cancelPairing());
@@ -116,8 +171,37 @@ export function registerAgentIpc(
   });
   ipcMain.handle('agent:show-window', () => getWindow()?.show());
 
+  // Updater IPC Handlers
+  ipcMain.handle('agent:get-update-state', () => {
+    if (!updateManager) {
+      return { status: 'DISABLED', currentVersion: app.getVersion() };
+    }
+    return updateManager.getState();
+  });
+  ipcMain.handle('agent:check-for-updates', () => {
+    if (!updateManager) {
+      return { status: 'DISABLED', currentVersion: app.getVersion() };
+    }
+    return updateManager.checkForUpdates();
+  });
+  ipcMain.handle('agent:download-update', () => {
+    if (!updateManager) {
+      return { status: 'DISABLED', currentVersion: app.getVersion() };
+    }
+    return updateManager.downloadUpdate();
+  });
+  ipcMain.handle('agent:install-update', () => {
+    if (!updateManager) {
+      throw new Error('Chức năng cập nhật không khả dụng.');
+    }
+    return updateManager.installUpdate();
+  });
+
   runtime.on('stateChanged', (state) => {
     getWindow()?.webContents.send('agent:state-changed', state);
+  });
+  updateManager?.on('stateChanged', (state) => {
+    getWindow()?.webContents.send('agent:update-state-changed', state);
   });
   runtime.on('jobReceived', ({ jobId, type }: { jobId: string; type: string }) => {
     publishJob({ jobId, documentType: type, status: 'SENDING', updatedAt: Date.now() });

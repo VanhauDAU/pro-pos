@@ -1,4 +1,6 @@
 import { RealtimeRepository } from '@server/repositories/realtime-repository';
+import { PosService } from '@server/services/pos-service';
+import type { RealtimeEventV1 } from '@contracts/realtime';
 
 const PUBLISHED_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -15,8 +17,11 @@ export class RealtimeDispatcher {
 
   async dispatchStore(storeId: string) {
     if (!(await this.repository.isEnabled(storeId))) return { published: 0, disabled: true };
-    const events = await this.repository.listPendingForStore(storeId);
+    let events = await this.repository.listPendingForStore(storeId);
     if (events.length === 0) return { published: 0, disabled: false };
+    if (await this.repository.deltasEnabled(storeId)) {
+      events = await this.attachOverviewDeltas(storeId, events);
+    }
     const eventIds = events.map((event) => event.eventId);
     const startedAt = Date.now();
     try {
@@ -51,6 +56,33 @@ export class RealtimeDispatcher {
       );
       throw error;
     }
+  }
+
+  private async attachOverviewDeltas(storeId: string, events: RealtimeEventV1[]) {
+    const service = new PosService(this.env);
+    const byOrder = new Map<string, Promise<RealtimeEventV1['data']['overviewDelta']>>();
+    const deltaFor = (event: RealtimeEventV1) => {
+      let pending = byOrder.get(event.aggregate.id);
+      if (!pending) {
+        pending = service
+          .realtimeOverviewDelta(
+            storeId,
+            event.aggregate.id,
+            event.type === 'pos.order.closed',
+            Date.now(),
+          )
+          .catch(() => undefined);
+        byOrder.set(event.aggregate.id, pending);
+      }
+      return pending;
+    };
+    return Promise.all(
+      events.map(async (event) => {
+        if (!event.type.startsWith('pos.order.')) return event;
+        const overviewDelta = await deltaFor(event);
+        return overviewDelta ? { ...event, data: { ...event.data, overviewDelta } } : event;
+      }),
+    );
   }
 
   async dispatchPendingStores() {

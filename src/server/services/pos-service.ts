@@ -9,6 +9,8 @@ import type {
   OrderAuditEventDetail,
 } from '@contracts/order-detail';
 import type { OrderCallBatchDto, OrderCallBatchPageDto } from '@contracts/pos';
+import type { OrderClosureSnapshot } from '@contracts/pos';
+import type { PosOverviewDelta, PosOverviewOrder } from '@contracts/pos';
 import type { PosPromotionOption } from '@contracts/promotion';
 import type { BankAccountDto } from '@contracts/store';
 import { calculateTimePrice } from '@domain/pricing/engine';
@@ -595,6 +597,52 @@ export class PosService {
     );
   }
 
+  async realtimeOverviewDelta(
+    storeId: string,
+    orderId: string,
+    closed: boolean,
+    now = Date.now(),
+  ): Promise<PosOverviewDelta> {
+    const table = await this.repository.findTableByOrderId(storeId, orderId);
+    const tables = table ? [{ ...table, totalVnd: 0, itemCount: 0 }] : [];
+    if (closed) return { closedOrderId: orderId, tables, serverNowMs: now };
+
+    const quote = await this.quote(storeId, orderId, now, { projection: 'EDITOR' });
+    const order: PosOverviewOrder = {
+      id: quote.order.id,
+      displayCode: quote.order.displayCode ?? '',
+      orderType: quote.order.orderType,
+      status: quote.order.status,
+      version: quote.order.version,
+      openedAt: quote.order.openedAt,
+      itemCount: quote.items.reduce((sum, item) => sum + Number(item.quantityMilli) / 1000, 0),
+      totalVnd: quote.totalVnd,
+      tableId: quote.order.tableId,
+      tableName: quote.order.tableName,
+      areaName: quote.order.areaName,
+      timeStatus: quote.time?.status ?? null,
+    };
+    return {
+      order,
+      tables: table
+        ? [
+            {
+              ...table,
+              totalVnd: quote.totalVnd,
+              itemCount: quote.items.reduce(
+                (sum, item) =>
+                  sum + (item.productType === 'TIME' ? 0 : Number(item.quantityMilli) / 1000),
+                0,
+              ),
+              guestCount: quote.order.guestCount,
+              timeSessionStatus: quote.time?.status ?? null,
+            },
+          ]
+        : [],
+      serverNowMs: now,
+    };
+  }
+
   private async buildOverviewQuoteSummaries(
     storeId: string,
     orders: OrderRow[],
@@ -959,8 +1007,14 @@ export class PosService {
     expectedVersion: number;
     actorId: string;
     now: number;
-  }) {
-    if (input.promotionIds === undefined) return [];
+  }): Promise<{
+    statements: D1PreparedStatement[];
+    changed: boolean;
+    versionDelta: number;
+  }> {
+    if (input.promotionIds === undefined) {
+      return { statements: [], changed: false, versionDelta: 0 };
+    }
     const preview = await this.promotions.previewForOrder({
       storeId: input.storeId,
       orderId: input.orderId,
@@ -984,10 +1038,35 @@ export class PosService {
       }
     }
     const selected = new Set(input.promotionIds);
+    const desiredPromotionIds = [...selected].toSorted();
     const suppressedPromotionIds = preview.options
       .filter((item) => item.autoApply && item.eligible && !selected.has(item.id))
-      .map((item) => item.id);
-    return new PromotionRepository(this.env.DB).buildSetOrderPromotionStatements({
+      .map((item) => item.id)
+      .toSorted();
+
+    if (input.orderId) {
+      const promoRepo = new PromotionRepository(this.env.DB);
+      const [currentSelectedRows, currentSuppressedRows] = await Promise.all([
+        promoRepo.listSelected(input.storeId, input.orderId),
+        promoRepo.listSuppressed(input.storeId, input.orderId),
+      ]);
+      const currentAppliedIds = currentSelectedRows.results.map((r) => r.promotionId).toSorted();
+      const currentSuppressedIds = currentSuppressedRows.results
+        .map((r) => r.promotionId)
+        .toSorted();
+      const isSameApplied =
+        desiredPromotionIds.length === currentAppliedIds.length &&
+        desiredPromotionIds.every((id, idx) => id === currentAppliedIds[idx]);
+      const isSameSuppressed =
+        suppressedPromotionIds.length === currentSuppressedIds.length &&
+        suppressedPromotionIds.every((id, idx) => id === currentSuppressedIds[idx]);
+
+      if (isSameApplied && isSameSuppressed) {
+        return { statements: [], changed: false, versionDelta: 0 };
+      }
+    }
+
+    const statements = new PromotionRepository(this.env.DB).buildSetOrderPromotionStatements({
       storeId: input.storeId,
       orderId: input.orderId!,
       orderType: input.orderType,
@@ -997,6 +1076,7 @@ export class PosService {
       expectedVersion: input.expectedVersion,
       now: input.now,
     });
+    return { statements, changed: true, versionDelta: 1 };
   }
 
   private async orderMutationSnapshot(
@@ -1249,17 +1329,21 @@ export class PosService {
         takeaway
           ? this.repository.buildAddTakeawayItemStatement(command)
           : this.repository.buildAddItemStatement(command),
-        this.repository.buildSetOrderItemDiscountReasonStatement({
-          storeId: input.storeId,
-          orderType: input.values.orderType,
-          orderId,
-          itemId: item.itemId,
-          reason: item.discountReason,
-        }),
       );
+      if (item.discountReason) {
+        statements.push(
+          this.repository.buildSetOrderItemDiscountReasonStatement({
+            storeId: input.storeId,
+            orderType: input.values.orderType,
+            orderId,
+            itemId: item.itemId,
+            reason: item.discountReason,
+          }),
+        );
+      }
       version += 1;
     }
-    if (!takeaway && input.values.note !== undefined) {
+    if (!takeaway && input.values.note?.trim()) {
       statements.push(
         this.repository.buildUpdateNoteStatement({
           commandId: `${input.idempotencyKey}:note`,
@@ -1267,7 +1351,7 @@ export class PosService {
           orderType: input.values.orderType,
           orderId,
           expectedOrderVersion: version,
-          note: input.values.note?.trim() || null,
+          note: input.values.note.trim(),
           actorId: input.actorId,
           requestId: input.requestId,
           issuedAt: now,
@@ -1325,31 +1409,39 @@ export class PosService {
       }),
       removalReason: null,
     }));
-    statements.push(
-      ...(await measurePhase(input.timing, 'cmd_promotion', () =>
-        this.promotionStatements({
-          storeId: input.storeId,
-          orderId,
-          orderType: input.values.orderType,
-          promotionIds: input.values.promotionIds,
-          customerId: guest?.customerId ?? null,
-          items: promotionItems,
-          subtotalVnd: promotionItems.reduce((sum, item) => sum + item.netLineTotalVnd, 0),
-          expectedVersion: version,
-          actorId: input.actorId,
-          now,
-        }),
-      )),
-      ...this.repository.buildOrderCallBatchStatements({
-        batchId: crypto.randomUUID(),
+    const promotionResult = await measurePhase(input.timing, 'cmd_promotion', () =>
+      this.promotionStatements({
         storeId: input.storeId,
         orderId,
         orderType: input.values.orderType,
+        promotionIds: input.values.promotionIds,
+        customerId: guest?.customerId ?? null,
+        items: promotionItems,
+        subtotalVnd: promotionItems.reduce((sum, item) => sum + item.netLineTotalVnd, 0),
+        expectedVersion: version,
         actorId: input.actorId,
-        requestId: input.requestId,
-        entries: initialBatchEntries,
         now,
       }),
+    );
+    if (promotionResult.statements.length > 0) {
+      statements.push(...promotionResult.statements);
+      version += promotionResult.versionDelta;
+    }
+    if (initialBatchEntries.length > 0) {
+      statements.push(
+        ...this.repository.buildOrderCallBatchStatements({
+          batchId: crypto.randomUUID(),
+          storeId: input.storeId,
+          orderId,
+          orderType: input.values.orderType,
+          actorId: input.actorId,
+          requestId: input.requestId,
+          entries: initialBatchEntries,
+          now,
+        }),
+      );
+    }
+    statements.push(
       ...this.repository.buildConsolidateSaveAuditStatements({
         storeId: input.storeId,
         orderId,
@@ -1363,7 +1455,7 @@ export class PosService {
         storeId: input.storeId,
         commandId: input.idempotencyKey,
         orderId,
-        orderVersion: version + (input.values.promotionIds === undefined ? 0 : 1),
+        orderVersion: version,
         actorId: input.actorId,
         requestId: input.requestId,
         created: true,
@@ -1440,7 +1532,7 @@ export class PosService {
       );
     }
     const takeaway = current.order.orderType === 'TAKEAWAY';
-    const recordCallHistory = current.order.hasCallHistory;
+    const recordCallHistory = current.order.orderType === 'DINE_IN' || current.order.hasCallHistory;
     const [preparedItems, guest] = await measurePhase(input.timing, 'cmd_prepare', () =>
       Promise.all([
         this.prepareSaveItems(
@@ -1491,6 +1583,7 @@ export class PosService {
       }),
     ];
     let version = input.values.expectedOrderVersion;
+    let genuinelyChangedUpdatedCount = 0;
     const batchEntries: OrderCallBatchEntryInput[] = [];
     const updatedPromotionItems = new Map<string, PromotionPreviewItem | null>();
     for (const [index, update] of input.values.updatedItems.entries()) {
@@ -1504,6 +1597,7 @@ export class PosService {
         if (!update.removalReason?.trim()) {
           throw new AppError('REMOVAL_REASON_REQUIRED', 'Vui lòng nhập lý do xóa món.', 422);
         }
+        genuinelyChangedUpdatedCount += 1;
         statements.push(
           this.repository.buildRemoveOrderItemStatement({
             commandId: `${input.idempotencyKey}:remove:${index}`,
@@ -1584,12 +1678,35 @@ export class PosService {
           : discountType === 'FIXED'
             ? Math.min(gross, discountInputValue ?? 0)
             : 0;
-      const metadataChanged =
-        variantId !== item.variantId ||
-        note !== item.note ||
-        discountType !== item.discountType ||
-        discountInputValue !== item.discountInputValue ||
-        discountReason !== item.discountReason;
+
+      const quantityChanged = update.quantityMilli !== item.quantityMilli;
+      const variantChanged = variantId !== item.variantId;
+      const priceChanged = unitPriceVnd !== item.unitPriceVnd;
+      const noteChanged = note !== item.note;
+      const discountTypeChanged = discountType !== item.discountType;
+      const discountInputChanged = discountInputValue !== item.discountInputValue;
+      const discountReasonChanged = discountReason !== item.discountReason;
+      const discountChanged = discountTypeChanged || discountInputChanged || discountReasonChanged;
+      const itemChanged =
+        quantityChanged || variantChanged || priceChanged || noteChanged || discountChanged;
+
+      if (!itemChanged) {
+        updatedPromotionItems.set(item.id, {
+          productId: item.productId,
+          variantId: item.variantId,
+          productType: item.productType,
+          productName: item.productName,
+          variantName: item.variantName,
+          unitPriceVnd: item.unitPriceVnd,
+          quantityMilli: item.quantityMilli,
+          grossLineTotalVnd: item.grossLineTotalVnd,
+          netLineTotalVnd: item.netLineTotalVnd,
+        });
+        continue;
+      }
+
+      genuinelyChangedUpdatedCount += 1;
+      const metadataChanged = variantChanged || noteChanged || discountChanged;
       const commandDiscountType = update.discount === null ? 'NONE' : discountType;
       const commandDiscountInputValue = update.discount === null ? -1 : discountInputValue;
       statements.push(
@@ -1616,14 +1733,18 @@ export class PosService {
           requestId: input.requestId,
           issuedAt: now,
         }),
-        this.repository.buildSetOrderItemDiscountReasonStatement({
-          storeId: input.storeId,
-          orderType: current.order.orderType,
-          orderId: input.orderId,
-          itemId: item.id,
-          reason: discountReason,
-        }),
       );
+      if (discountReasonChanged) {
+        statements.push(
+          this.repository.buildSetOrderItemDiscountReasonStatement({
+            storeId: input.storeId,
+            orderType: current.order.orderType,
+            orderId: input.orderId,
+            itemId: item.id,
+            reason: discountReason,
+          }),
+        );
+      }
       batchEntries.push({
         itemId: item.id,
         changeType: metadataChanged ? 'EDIT' : 'ADJUST',
@@ -1702,14 +1823,18 @@ export class PosService {
         takeaway
           ? this.repository.buildAddTakeawayItemStatement(command)
           : this.repository.buildAddItemStatement(command),
-        this.repository.buildSetOrderItemDiscountReasonStatement({
-          storeId: input.storeId,
-          orderType: current.order.orderType,
-          orderId: input.orderId,
-          itemId: effectiveItemId,
-          reason: item.discountReason,
-        }),
       );
+      if (item.discountReason) {
+        statements.push(
+          this.repository.buildSetOrderItemDiscountReasonStatement({
+            storeId: input.storeId,
+            orderType: current.order.orderType,
+            orderId: input.orderId,
+            itemId: effectiveItemId,
+            reason: item.discountReason,
+          }),
+        );
+      }
       const beforeQuantityMilli = matchingCurrentItem ? matchingCurrentItem.quantityMilli : 0;
       const currentRunningQuantity = mergedCurrentQuantities.get(effectiveItemId) ?? 0;
       const afterQuantityMilli = currentRunningQuantity + item.quantityMilli;
@@ -1753,37 +1878,60 @@ export class PosService {
       }
       version += 1;
     }
+    let noteChanged = false;
     if (input.values.note !== undefined) {
-      statements.push(
-        this.repository.buildUpdateNoteStatement({
-          commandId: `${input.idempotencyKey}:note`,
-          storeId: input.storeId,
-          orderType: current.order.orderType,
-          orderId: input.orderId,
-          expectedOrderVersion: version,
-          note: input.values.note?.trim() || null,
-          actorId: input.actorId,
-          requestId: input.requestId,
-          issuedAt: now,
-        }),
-      );
-      version += 1;
+      const normalizedTargetNote = input.values.note?.trim() || null;
+      const currentNote = current.order.note ?? null;
+      if (normalizedTargetNote !== currentNote) {
+        noteChanged = true;
+        statements.push(
+          this.repository.buildUpdateNoteStatement({
+            commandId: `${input.idempotencyKey}:note`,
+            storeId: input.storeId,
+            orderType: current.order.orderType,
+            orderId: input.orderId,
+            expectedOrderVersion: version,
+            note: normalizedTargetNote,
+            actorId: input.actorId,
+            requestId: input.requestId,
+            issuedAt: now,
+          }),
+        );
+        version += 1;
+      }
     }
+    let guestChanged = false;
     if (guest) {
-      statements.push(
-        this.repository.buildUpdateGuestStatement({
-          commandId: `${input.idempotencyKey}:guest`,
-          storeId: input.storeId,
-          orderType: current.order.orderType,
-          orderId: input.orderId,
-          expectedOrderVersion: version,
-          ...guest,
-          actorId: input.actorId,
-          requestId: input.requestId,
-          issuedAt: now,
-        }),
-      );
-      version += 1;
+      const targetGuestCount = guest.guestCount ?? 1;
+      const targetCustomerId = guest.customerId ?? null;
+      const targetCustomerName = guest.customerName ?? null;
+      const targetCustomerPhone = guest.customerPhone ?? null;
+      const currentGuestCount = current.order.guestCount ?? 1;
+      const currentCustomerId = current.order.customerId ?? null;
+      const currentCustomerName = current.order.customerName ?? null;
+      const currentCustomerPhone = current.order.customerPhone ?? null;
+      if (
+        targetGuestCount !== currentGuestCount ||
+        targetCustomerId !== currentCustomerId ||
+        targetCustomerName !== currentCustomerName ||
+        targetCustomerPhone !== currentCustomerPhone
+      ) {
+        guestChanged = true;
+        statements.push(
+          this.repository.buildUpdateGuestStatement({
+            commandId: `${input.idempotencyKey}:guest`,
+            storeId: input.storeId,
+            orderType: current.order.orderType,
+            orderId: input.orderId,
+            expectedOrderVersion: version,
+            ...guest,
+            actorId: input.actorId,
+            requestId: input.requestId,
+            issuedAt: now,
+          }),
+        );
+        version += 1;
+      }
     }
     const finalItems: PromotionPreviewItem[] = current.items
       .filter((item) => !('promotionGift' in item && item.promotionGift))
@@ -1828,23 +1976,88 @@ export class PosService {
         });
       }
     }
-    statements.push(
-      ...(await measurePhase(input.timing, 'cmd_promotion', () =>
-        this.promotionStatements({
+    const promotionResult = await measurePhase(input.timing, 'cmd_promotion', () =>
+      this.promotionStatements({
+        storeId: input.storeId,
+        orderId: input.orderId,
+        orderType: current.order.orderType,
+        promotionIds: input.values.promotionIds,
+        customerId: guest?.customerId ?? current.order.customerId,
+        items: finalItems,
+        subtotalVnd:
+          finalItems.reduce((sum, item) => sum + item.netLineTotalVnd, 0) +
+          (current.time?.amountAfterRoundingVnd ?? 0),
+        expectedVersion: version,
+        actorId: input.actorId,
+        now,
+      }),
+    );
+    const promotionChanged = promotionResult.changed;
+    if (promotionResult.statements.length > 0) {
+      statements.push(...promotionResult.statements);
+      version += promotionResult.versionDelta;
+    }
+
+    const hasBusinessMutation =
+      preparedItems.length > 0 ||
+      genuinelyChangedUpdatedCount > 0 ||
+      noteChanged ||
+      guestChanged ||
+      promotionChanged;
+
+    if (!hasBusinessMutation) {
+      const noopStatements = [
+        this.repository.prepareSaveCommand({
+          commandId: input.idempotencyKey,
           storeId: input.storeId,
           orderId: input.orderId,
-          orderType: current.order.orderType,
-          promotionIds: input.values.promotionIds,
-          customerId: guest?.customerId ?? current.order.customerId,
-          items: finalItems,
-          subtotalVnd:
-            finalItems.reduce((sum, item) => sum + item.netLineTotalVnd, 0) +
-            (current.time?.amountAfterRoundingVnd ?? 0),
-          expectedVersion: version,
-          actorId: input.actorId,
+          payloadHash,
           now,
         }),
-      )),
+      ];
+      try {
+        await measurePhase(input.timing, 'cmd_atomic', () =>
+          this.repository.executeAtomic(noopStatements),
+        );
+      } catch (error) {
+        const concurrent = await this.replaySaveCommand(
+          input.storeId,
+          input.idempotencyKey,
+          payloadHash,
+        );
+        if (concurrent) {
+          return this.finishSaveNextAction(concurrent, {
+            ...input,
+            nextAction: input.values.nextAction,
+          });
+        }
+        mapDatabaseError(error);
+      }
+      const snapshot = await measurePhase(input.timing, 'cmd_snapshot', () =>
+        this.orderMutationSnapshot(
+          input.storeId,
+          input.orderId,
+          input.idempotencyKey,
+          now,
+          false,
+          input.timing,
+        ),
+      );
+      await measurePhase(input.timing, 'cmd_complete', () =>
+        this.repository.completeSaveCommand(
+          input.storeId,
+          input.idempotencyKey,
+          JSON.stringify(snapshot),
+          Date.now(),
+        ),
+      );
+      return this.finishSaveNextAction(snapshot, {
+        ...input,
+        nextAction: input.values.nextAction,
+      });
+    }
+
+    statements.push(
       ...(recordCallHistory && batchEntries.length > 0
         ? this.repository.buildOrderCallBatchStatements({
             batchId: crypto.randomUUID(),
@@ -1863,14 +2076,14 @@ export class PosService {
         actorId: input.actorId,
         requestId: input.requestId,
         addedCount: preparedItems.length,
-        updatedCount: input.values.updatedItems.length,
+        updatedCount: genuinelyChangedUpdatedCount,
         now,
       }),
       ...this.repository.buildCompleteRealtimeBatchStatements({
         storeId: input.storeId,
         commandId: input.idempotencyKey,
         orderId: input.orderId,
-        orderVersion: version + (input.values.promotionIds === undefined ? 0 : 1),
+        orderVersion: version,
         actorId: input.actorId,
         requestId: input.requestId,
         created: false,
@@ -1902,7 +2115,7 @@ export class PosService {
         input.orderId,
         input.idempotencyKey,
         now,
-        recordCallHistory && batchEntries.length > 0,
+        true,
         input.timing,
       ),
     );
@@ -2268,13 +2481,16 @@ export class PosService {
     try {
       if (takeawayOrder) await this.repository.executeAddTakeawayItem(command);
       else await this.repository.executeAddItem(command);
-      await this.repository.setOrderItemDiscountReason({
-        storeId: input.storeId,
-        orderType: takeawayOrder ? 'TAKEAWAY' : 'DINE_IN',
-        orderId: input.orderId,
-        itemId,
-        reason: input.discount?.reason.trim() || null,
-      });
+      const discountReason = input.discount?.reason.trim() || null;
+      if (discountReason) {
+        await this.repository.setOrderItemDiscountReason({
+          storeId: input.storeId,
+          orderType: takeawayOrder ? 'TAKEAWAY' : 'DINE_IN',
+          orderId: input.orderId,
+          itemId,
+          reason: discountReason,
+        });
+      }
     } catch (error) {
       mapDatabaseError(error);
     }
@@ -2498,13 +2714,15 @@ export class PosService {
         requestId: input.requestId,
         issuedAt: now,
       });
-      await this.repository.setOrderItemDiscountReason({
-        storeId: input.storeId,
-        orderType: order.order_type,
-        orderId: input.orderId,
-        itemId: input.itemId,
-        reason: discountReason,
-      });
+      if (discountReason !== (item.discountReason ?? null)) {
+        await this.repository.setOrderItemDiscountReason({
+          storeId: input.storeId,
+          orderType: order.order_type,
+          orderId: input.orderId,
+          itemId: input.itemId,
+          reason: discountReason,
+        });
+      }
     } catch (error) {
       mapDatabaseError(error);
     }
@@ -2748,16 +2966,22 @@ export class PosService {
     storeId: string,
     orderId: string,
     now = Date.now(),
-    context?: { requestId?: string },
+    context?: {
+      requestId?: string;
+      projection?: 'FULL' | 'EDITOR';
+      timing?: TimingCallback;
+    },
   ) {
     const quote = await readStableVersionedSnapshot({
-      build: () => this.buildQuote(storeId, orderId, now),
-      latestVersion: async () => {
-        const latest =
-          (await this.repository.findOrder(storeId, orderId)) ??
-          (await this.repository.findTakeawayOrder(storeId, orderId));
-        return latest?.version ?? null;
-      },
+      build: () =>
+        this.buildQuote(storeId, orderId, now, context?.projection ?? 'FULL', context?.timing),
+      latestVersion: () =>
+        measurePhase(context?.timing, 'quote_verify', async () => {
+          const latest =
+            (await this.repository.findOrder(storeId, orderId)) ??
+            (await this.repository.findTakeawayOrder(storeId, orderId));
+          return latest?.version ?? null;
+        }),
       onVersionChange: ({ attempt, quotedVersion, latestVersion }) =>
         console.warn(
           JSON.stringify({
@@ -2781,20 +3005,39 @@ export class PosService {
     );
   }
 
-  private async buildQuote(storeId: string, orderId: string, now: number) {
-    const order =
-      (await this.repository.findOrder(storeId, orderId)) ??
-      (await this.repository.findTakeawayOrder(storeId, orderId));
+  private async buildQuote(
+    storeId: string,
+    orderId: string,
+    now: number,
+    projection: 'FULL' | 'EDITOR',
+    timing?: TimingCallback,
+  ) {
+    const order = await measurePhase(
+      timing,
+      'quote_load',
+      async () =>
+        (await this.repository.findOrder(storeId, orderId)) ??
+        (await this.repository.findTakeawayOrder(storeId, orderId)),
+    );
     if (!order) throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn.', 404);
 
-    const [session, items, bankSettings, bankAccountRows] = await Promise.all([
-      this.repository.findTimeSession(storeId, orderId),
-      order.order_type === 'TAKEAWAY'
-        ? this.repository.listTakeawayOrderItems(storeId, orderId)
-        : this.repository.listOrderItems(storeId, orderId),
-      this.repository.findStoreBankSettings(storeId),
-      this.repository.listStoreBankAccounts(storeId),
-    ]);
+    const [session, items, bankSettings, bankAccountRows] = await measurePhase(
+      timing,
+      'quote_load',
+      () =>
+        Promise.all([
+          this.repository.findTimeSession(storeId, orderId),
+          order.order_type === 'TAKEAWAY'
+            ? this.repository.listTakeawayOrderItems(storeId, orderId)
+            : this.repository.listOrderItems(storeId, orderId),
+          projection === 'FULL'
+            ? this.repository.findStoreBankSettings(storeId)
+            : Promise.resolve(null),
+          projection === 'FULL'
+            ? this.repository.listStoreBankAccounts(storeId)
+            : Promise.resolve({ results: [] }),
+        ]),
+    );
     const timeProductIds = [
       ...new Set(
         items.results.flatMap((item) =>
@@ -2802,45 +3045,54 @@ export class PosService {
         ),
       ),
     ];
-    const [tableSegments, pauses, productPricingRows] = await Promise.all([
-      session
-        ? this.repository.listTableTimeSegments(storeId, session.id)
-        : Promise.resolve({ results: [] as TableTimeSegmentRow[] }),
-      session
-        ? this.repository.listPauses(storeId, session.id)
-        : Promise.resolve({ results: [] as OverviewPauseRow[] }),
-      this.repository.listProductPricingSnapshots(storeId, timeProductIds),
-    ]);
-    const pricing = calculateSessionPricing({
-      session,
-      tableSegments: tableSegments.results,
-      pauses: pauses.results,
-      now,
-    });
-    const processedItems = priceOrderItems(
-      items.results,
-      now,
-      pricingSnapshotsFromRows(productPricingRows.results, this.env.STORE_TIMEZONE),
+    const [tableSegments, pauses, productPricingRows] = await measurePhase(
+      timing,
+      'quote_load',
+      () =>
+        Promise.all([
+          session
+            ? this.repository.listTableTimeSegments(storeId, session.id)
+            : Promise.resolve({ results: [] as TableTimeSegmentRow[] }),
+          session
+            ? this.repository.listPauses(storeId, session.id)
+            : Promise.resolve({ results: [] as OverviewPauseRow[] }),
+          this.repository.listProductPricingSnapshots(storeId, timeProductIds),
+        ]),
     );
+    const { pricing, processedItems } = await measurePhase(timing, 'quote_pricing', async () => ({
+      pricing: calculateSessionPricing({
+        session,
+        tableSegments: tableSegments.results,
+        pauses: pauses.results,
+        now,
+      }),
+      processedItems: priceOrderItems(
+        items.results,
+        now,
+        pricingSnapshotsFromRows(productPricingRows.results, this.env.STORE_TIMEZONE),
+      ),
+    }));
     const preliminaryTotals = calculateQuoteTotals(processedItems, pricing, []);
-    const promotions = await this.promotions.optionsForOrder({
-      storeId,
-      orderId,
-      subtotalVnd: Math.max(0, preliminaryTotals.subtotalVnd - preliminaryTotals.itemDiscountVnd),
-      customerId: order.customer_id ?? null,
-      items: processedItems.map((item) => ({
-        productId: item.productId,
-        variantId: item.variantId,
-        productType: item.productType,
-        productName: item.productName,
-        variantName: item.variantName,
-        unitPriceVnd: Number(item.unitPriceVnd),
-        quantityMilli: Number(item.quantityMilli),
-        grossLineTotalVnd: Number(item.grossLineTotalVnd),
-        netLineTotalVnd: Number(item.netLineTotalVnd),
-      })),
-      now,
-    });
+    const promotions = await measurePhase(timing, 'quote_promotions', () =>
+      this.promotions.optionsForOrder({
+        storeId,
+        orderId,
+        subtotalVnd: Math.max(0, preliminaryTotals.subtotalVnd - preliminaryTotals.itemDiscountVnd),
+        customerId: order.customer_id ?? null,
+        items: processedItems.map((item) => ({
+          productId: item.productId,
+          variantId: item.variantId,
+          productType: item.productType,
+          productName: item.productName,
+          variantName: item.variantName,
+          unitPriceVnd: Number(item.unitPriceVnd),
+          quantityMilli: Number(item.quantityMilli),
+          grossLineTotalVnd: Number(item.grossLineTotalVnd),
+          netLineTotalVnd: Number(item.netLineTotalVnd),
+        })),
+        now,
+      }),
+    );
     const totals = calculateQuoteTotals(processedItems, pricing, promotions.applied);
     const bankAccounts: BankAccountDto[] = bankAccountRows.results.map((account) =>
       Object.assign({}, account, { isDefault: account.isDefault === 1 }),
@@ -2916,8 +3168,7 @@ export class PosService {
       promotion: promotions.applied[0] ?? null,
       promotionOptions: promotions.options,
       totalVnd: totals.totalVnd,
-      bankSettings: bankSettings ?? null,
-      bankAccounts,
+      ...(projection === 'FULL' ? { bankSettings: bankSettings ?? null, bankAccounts } : {}),
     };
   }
 
@@ -3916,14 +4167,30 @@ export class PosService {
     actorSessionId?: string | null;
     deviceId?: string | null;
   }) {
-    const replay =
-      (await this.repository.findCancelCommand(input.storeId, input.idempotencyKey)) ??
-      (await this.repository.findCancelTakeawayCommand(input.storeId, input.idempotencyKey));
-    if (replay) return { ...replay, cancelled: true };
+    const dineInReplay = await this.repository.findCancelCommand(
+      input.storeId,
+      input.idempotencyKey,
+    );
+    const takeawayReplay = dineInReplay
+      ? null
+      : await this.repository.findCancelTakeawayCommand(input.storeId, input.idempotencyKey);
+    const replay = dineInReplay ?? takeawayReplay;
+    if (replay) {
+      if (replay.responseJson) return JSON.parse(replay.responseJson) as OrderClosureSnapshot;
+      const snapshot = await this.cancelClosureSnapshot(input.storeId, replay.orderId, Date.now());
+      await this.repository.completeCancelCommand(
+        input.storeId,
+        input.idempotencyKey,
+        JSON.stringify(snapshot),
+        Boolean(takeawayReplay),
+      );
+      return snapshot;
+    }
     const order =
       (await this.repository.findOrder(input.storeId, input.orderId)) ??
       (await this.repository.findTakeawayOrder(input.storeId, input.orderId));
     if (!order) throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn.', 404);
+    const now = Date.now();
     try {
       if (order.order_type === 'TAKEAWAY') {
         await this.repository.executeCancelTakeaway({
@@ -3934,7 +4201,7 @@ export class PosService {
           reason: input.reason.trim(),
           actorId: input.actorId,
           requestId: input.requestId,
-          now: Date.now(),
+          now,
         });
       } else {
         await this.repository.executeCancel({
@@ -3946,7 +4213,7 @@ export class PosService {
           reason: input.reason.trim(),
           actorId: input.actorId,
           requestId: input.requestId,
-          now: Date.now(),
+          now,
         });
       }
     } catch (error) {
@@ -3958,7 +4225,28 @@ export class PosService {
       deviceId: input.deviceId ?? null,
       requestId: input.requestId,
     });
-    return { orderId: input.orderId, cancelled: true };
+    const snapshot = await this.cancelClosureSnapshot(input.storeId, input.orderId, now);
+    await this.repository.completeCancelCommand(
+      input.storeId,
+      input.idempotencyKey,
+      JSON.stringify(snapshot),
+      order.order_type === 'TAKEAWAY',
+    );
+    return snapshot;
+  }
+
+  private async cancelClosureSnapshot(
+    storeId: string,
+    orderId: string,
+    serverNowMs: number,
+  ): Promise<OrderClosureSnapshot> {
+    const table = await this.repository.findTableByOrderId(storeId, orderId);
+    return {
+      orderId,
+      status: 'CANCELLED',
+      tableSummaries: table ? [{ ...table, totalVnd: 0, itemCount: 0 }] : [],
+      serverNowMs,
+    };
   }
 
   async listInvoices(storeId: string) {

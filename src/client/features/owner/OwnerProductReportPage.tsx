@@ -1,5 +1,6 @@
 import {
   ArrowDownOutlined,
+  ArrowLeftOutlined,
   ArrowUpOutlined,
   ClockCircleOutlined,
   EyeOutlined,
@@ -317,7 +318,7 @@ function DetailDrawer({
     <Drawer
       open={selected !== null}
       onClose={onClose}
-      size={760}
+      width="min(760px, 100vw)"
       rootClassName="product-report-detail-drawer"
       title={
         <span className="product-report-detail-title">
@@ -396,8 +397,10 @@ function DetailDrawer({
 
 export function OwnerProductReportPage({
   apiPrefix = '/api/v1/owner/analytics',
+  onBack,
 }: {
   apiPrefix?: string;
+  onBack?: (() => void | Promise<void>) | undefined;
 } = {}) {
   const [reportType, setReportType] = useState<SupportedReportType>('CATEGORY');
   const [timeRange, setTimeRange] = useState<ProductReportTimeRange>('this_week');
@@ -539,10 +542,22 @@ export function OwnerProductReportPage({
   return (
     <div className="owner-product-report-page">
       <section className="product-report-hero">
-        <div>
-          <span className="product-report-eyebrow">BÁO CÁO KINH DOANH</span>
-          <h1>Báo cáo mặt hàng</h1>
-          <p>Theo dõi số lượng, doanh thu và từng hóa đơn phát sinh của mặt hàng.</p>
+        <div className="product-report-hero-main">
+          {onBack ? (
+            <Button
+              icon={<ArrowLeftOutlined />}
+              onClick={onBack}
+              size="middle"
+              className="product-report-back-btn"
+            >
+              Quay lại
+            </Button>
+          ) : null}
+          <div className="product-report-hero-titles">
+            <span className="product-report-eyebrow">BÁO CÁO KINH DOANH</span>
+            <h1>Báo cáo mặt hàng</h1>
+            <p>Theo dõi số lượng, doanh thu và từng hóa đơn phát sinh của mặt hàng.</p>
+          </div>
         </div>
         <Button
           className="product-report-hero__export"

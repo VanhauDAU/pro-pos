@@ -256,6 +256,65 @@ describe('online POS vertical slice', () => {
     });
   });
 
+  it('keeps editor quote authoritative while omitting payment-only bank data', async () => {
+    const pos = new PosService(env);
+    const created = await pos.createTakeaway({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-editor-quote-create',
+      idempotencyKey: 'editor-quote-create-001',
+      note: null,
+    });
+    const full = await pos.quote(storeId, created.orderId, Date.now(), { projection: 'FULL' });
+    const editor = await pos.quote(storeId, created.orderId, Date.now(), {
+      projection: 'EDITOR',
+    });
+
+    expect(editor.order).toMatchObject({ id: full.order.id, version: full.order.version });
+    expect(editor.totalVnd).toBe(full.totalVnd);
+    expect('bankAccounts' in editor).toBe(false);
+    expect('bankSettings' in editor).toBe(false);
+    expect('bankAccounts' in full).toBe(true);
+
+    await pos.cancel({
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-editor-quote-cancel',
+      idempotencyKey: 'editor-quote-cancel-001',
+      orderId: created.orderId,
+      expectedOrderVersion: full.order.version,
+      reason: 'Dọn dữ liệu test editor quote',
+    });
+  });
+
+  it('returns and replays the same authoritative table closure snapshot', async () => {
+    const pos = new PosService(env);
+    const opened = await openFreshTable('Bàn cancel snapshot', 'cancel-snapshot-open-001');
+    const quote = await pos.quote(storeId, opened.orderId);
+    const input = {
+      storeId,
+      actorId: ownerUserId,
+      requestId: 'request-cancel-snapshot',
+      idempotencyKey: 'cancel-snapshot-command-001',
+      orderId: opened.orderId,
+      expectedOrderVersion: quote.order.version,
+      reason: 'Kiểm tra closure snapshot',
+    };
+
+    const first = await pos.cancel(input);
+    const replay = await pos.cancel(input);
+    expect(first).toEqual(replay);
+    expect(first).toMatchObject({ orderId: opened.orderId, status: 'CANCELLED' });
+    expect(first.tableSummaries).toHaveLength(1);
+    expect(first.tableSummaries[0]).toMatchObject({
+      id: quote.order.tableId,
+      status: 'AVAILABLE',
+      activeOrderId: null,
+      totalVnd: 0,
+      itemCount: 0,
+    });
+  });
+
   it('keeps batched overview consistent with quotes across pricing scenarios', async () => {
     const pos = new PosService(env);
     const activeOrderIds: string[] = [];
@@ -668,7 +727,7 @@ describe('online POS vertical slice', () => {
         updatedItems: [],
       },
     });
-    expect(result.callBatch).toMatchObject({ sequenceNo: 2 });
+    expect(result.callBatch).toMatchObject({ sequenceNo: 1 });
     expect('paymentSnapshot' in result ? result.paymentSnapshot : null).toMatchObject({
       status: 'PAYMENT_PENDING',
     });

@@ -2,7 +2,7 @@ import type { Context } from 'hono';
 
 import type { AppEnv } from '@server/types';
 
-export function success<T>(c: Context<AppEnv>, data: T, status: 200 | 201 = 200) {
+export function success<T>(c: Context<AppEnv>, data: T, status: 200 | 201 | 202 = 200) {
   return c.json({ data }, status);
 }
 

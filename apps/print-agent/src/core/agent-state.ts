@@ -30,8 +30,10 @@ export interface AgentRuntimeState {
 export interface PrinterErrorDiagnostics {
   errorCode: string;
   printerCode?: string;
-  host: string;
-  port: number;
+  connectionType?: 'NETWORK_TCP' | 'WINDOWS_PRINTER';
+  host?: string;
+  port?: number;
+  printerName?: string;
   failureStage: 'BEFORE_WRITE' | 'DURING_WRITE';
   localAddress?: string;
   localPort?: number;
@@ -48,8 +50,10 @@ export type AgentRuntimeEvent =
 
 export interface PrinterTestResult {
   ok: boolean;
-  host: string;
-  port: number;
+  connectionType?: 'NETWORK_TCP' | 'WINDOWS_PRINTER';
+  host?: string;
+  port?: number;
+  printerName?: string;
   error?: string;
   diagnostics?: PrinterErrorDiagnostics;
 }

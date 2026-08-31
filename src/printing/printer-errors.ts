@@ -6,7 +6,10 @@ export type PrinterErrorCode =
   | 'RENDER_FAILED'
   | 'INVALID_PRINTER_CONFIG'
   | 'CONNECTION_TIMEOUT'
-  | 'SOCKET_WRITE_ERROR';
+  | 'SOCKET_WRITE_ERROR'
+  | 'WINDOWS_PRINTER_NOT_FOUND'
+  | 'WINDOWS_SPOOLER_ERROR'
+  | 'WINDOWS_RAW_WRITE_FAILED';
 
 export type PrinterFailureStage = 'BEFORE_WRITE' | 'DURING_WRITE';
 
@@ -25,6 +28,10 @@ export const DEFAULT_MESSAGES: Record<PrinterErrorCode, string> = {
   INVALID_PRINTER_CONFIG: 'Cấu hình máy in không hợp lệ.',
   CONNECTION_TIMEOUT: 'Quá thời gian kết nối tới máy in (Timeout).',
   SOCKET_WRITE_ERROR: 'Lỗi gửi dữ liệu ESC/POS tới socket máy in.',
+  WINDOWS_PRINTER_NOT_FOUND:
+    'Không tìm thấy máy in đã chọn trên Windows. Vui lòng kiểm tra kết nối USB hoặc driver.',
+  WINDOWS_SPOOLER_ERROR: 'Lỗi khởi tạo dịch vụ Windows Print Spooler.',
+  WINDOWS_RAW_WRITE_FAILED: 'Lỗi gửi dữ liệu ESC/POS tới Windows Print Spooler.',
 };
 
 export class PrinterError extends Error {

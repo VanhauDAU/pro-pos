@@ -62,6 +62,7 @@ import {
 } from './OwnerCatalogPages';
 import { OwnerInvoicesPage } from './OwnerInvoicesPage';
 import { OwnerProductReportPage } from './OwnerProductReportPage';
+import { OwnerRevenueReportPage } from './OwnerRevenueReportPage';
 import { OwnerDashboardPage } from './OwnerDashboardPage';
 import {
   OwnerCustomerDetailPage,
@@ -788,6 +789,8 @@ export function OwnerPortalPage() {
               <OwnerCategoryDetailPage categoryId={location.pathname.split('/').at(-1)!} />
             ) : location.pathname === '/owner/invoices' ? (
               <OwnerInvoicesPage />
+            ) : location.pathname === '/owner/reports/revenue' ? (
+              <OwnerRevenueReportPage />
             ) : location.pathname === '/owner/reports/products' ? (
               <OwnerProductReportPage />
             ) : location.pathname === '/owner/promotions' ? (

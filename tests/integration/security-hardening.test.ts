@@ -363,6 +363,101 @@ describe('PRO-010A API security and tenant boundaries', () => {
     expect(ownerAdd.status).toBe(201);
   });
 
+  it('enforces report.revenue on the revenue report API', async () => {
+    const headers = {
+      Origin: ORIGIN,
+      Cookie: `__Host-propos-session=${employeeSession}; __Host-propos-device=${deviceA.rawSecret}`,
+    };
+    const denied = await SELF.fetch(
+      `${ORIGIN}/api/v1/owner/analytics/reports/revenue?timeRange=today`,
+      { headers },
+    );
+    expect(denied.status).toBe(403);
+    expect(await errorCode(denied)).toBe('PERMISSION_DENIED');
+
+    const role = await env.DB.prepare(
+      'SELECT role_id AS roleId FROM store_memberships WHERE store_id = ? AND user_id = ?',
+    )
+      .bind(storeA.storeId, employeeId)
+      .first<{ roleId: string }>();
+    await env.DB.prepare(
+      `INSERT INTO role_permissions (store_id, role_id, permission_key, created_at)
+       VALUES (?, ?, 'report.revenue', ?), (?, ?, 'report.revenue.print', ?)`,
+    )
+      .bind(storeA.storeId, role!.roleId, Date.now(), storeA.storeId, role!.roleId, Date.now())
+      .run();
+
+    const allowed = await SELF.fetch(
+      `${ORIGIN}/api/v1/owner/analytics/reports/revenue?timeRange=today`,
+      { headers },
+    );
+    expect(allowed.status).toBe(200);
+    const payload = (await allowed.json()) as {
+      data: {
+        summary: { netRevenue: number };
+        paymentMethods: unknown[];
+        orderTypes: unknown[];
+        staffRevenue: unknown[];
+        staffOptions: unknown[];
+        cancellations: unknown[];
+      };
+    };
+    expect(payload.data.summary.netRevenue).toBeGreaterThanOrEqual(0);
+    expect(payload.data).toMatchObject({
+      paymentMethods: [],
+      orderTypes: [],
+      staffRevenue: [],
+      staffOptions: [],
+      cancellations: [],
+    });
+    const paymentDenied = await SELF.fetch(
+      `${ORIGIN}/api/v1/owner/analytics/reports/revenue?reportType=PAYMENT_METHOD&timeRange=today`,
+      { headers },
+    );
+    expect(paymentDenied.status).toBe(403);
+    expect(await errorCode(paymentDenied)).toBe('PERMISSION_DENIED');
+
+    const printIdempotencyKey = `security-revenue-report:${crypto.randomUUID()}`;
+    const queued = await SELF.fetch(`${ORIGIN}/api/v1/owner/analytics/reports/revenue/print`, {
+      method: 'POST',
+      headers: {
+        ...headers,
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': employeeCsrf,
+        'Idempotency-Key': printIdempotencyKey,
+      },
+      body: JSON.stringify({
+        timeRange: 'today',
+        hourMode: 'all',
+        fromHour: 0,
+        fromMinute: 0,
+        toHour: 0,
+        toMinute: 0,
+        idempotencyKey: printIdempotencyKey,
+      }),
+    });
+    expect(queued.status).toBe(201);
+    const queuedPayload = (await queued.json()) as { data: { jobId: string } };
+    expect(queuedPayload.data.jobId).toEqual(expect.any(String));
+
+    const bypass = await SELF.fetch(`${ORIGIN}/api/v1/pos/print-jobs`, {
+      method: 'POST',
+      headers: {
+        ...headers,
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': employeeCsrf,
+        'Idempotency-Key': `direct-revenue-report:${crypto.randomUUID()}`,
+      },
+      body: JSON.stringify({
+        documentType: 'revenue_report',
+        documentId: 'not-a-public-print-document',
+        printerRole: 'receipt',
+        idempotencyKey: `direct-revenue-report:${crypto.randomUUID()}`,
+      }),
+    });
+    expect(bypass.status).toBe(422);
+  });
+
   it('rejects cross-store catalog, bank QR and table references without fake 201 responses', async () => {
     const catalog = new CatalogService(env);
     const categoryB = await catalog.createNamed(storeB.storeId, 'categories', 'Category B');

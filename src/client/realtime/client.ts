@@ -31,6 +31,10 @@ function formatPrintDocumentName(documentType?: string, printerRole?: string | n
       return 'hóa đơn';
     case 'debt_payment':
       return 'phiếu thu nợ';
+    case 'revenue_report':
+      return 'báo cáo doanh thu';
+    case 'product_report':
+      return 'báo cáo mặt hàng';
     case 'kitchen':
       return 'phiếu in bếp';
     case 'bar':

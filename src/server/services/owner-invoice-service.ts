@@ -1,4 +1,5 @@
 import { OwnerInvoiceRepository } from '@server/repositories/owner-invoice-repository';
+import { PosService } from '@server/services/pos-service';
 import { AppError } from '@server/lib/app-error';
 import type { AppEnv } from '@server/types';
 
@@ -16,17 +17,41 @@ interface ListInvoicesInput {
 
 export class OwnerInvoiceService {
   private repository: OwnerInvoiceRepository;
+  private posService: PosService;
   private db: D1Database;
 
   constructor(env: AppEnv['Bindings']) {
     this.repository = new OwnerInvoiceRepository(env.DB);
+    this.posService = new PosService(env);
     this.db = env.DB;
   }
 
   async listInvoices(input: ListInvoicesInput) {
     const { results, total } = await this.repository.listInvoices(input);
+
+    const enrichedResults = await Promise.all(
+      results.map(async (row) => {
+        if (row.status === 'CANCELLED') {
+          try {
+            const detail = await this.posService.getOrderDetail(input.storeId, row.orderId);
+            return {
+              ...row,
+              displayCode:
+                row.displayCode || detail.order.displayCode || `D-${row.orderId.slice(0, 8)}`,
+              subtotal: detail.totals.subtotalVnd,
+              discountTotal: detail.totals.totalDiscountVnd,
+              total: detail.totals.totalVnd,
+            };
+          } catch {
+            return row;
+          }
+        }
+        return row;
+      }),
+    );
+
     return {
-      results,
+      results: enrichedResults,
       total,
       page: input.page,
       limit: input.limit,

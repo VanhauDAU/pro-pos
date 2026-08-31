@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { productReportQuerySchema } from '../../src/contracts/reports';
+import { buildEscPosProductReport } from '../../src/printing/escpos/product-report-builder';
+import { JobProcessor } from '../../apps/print-agent/src/job-processor';
+import { AgentApiClient } from '../../apps/print-agent/src/api-client';
+import type { PrintJob } from '../../src/contracts/print-job';
 import {
   allocateProductReportInvoiceDiscounts,
   buildProductReportSummary,
@@ -232,5 +236,212 @@ describe('Product Report Query Schema & Calculations', () => {
       expect.objectContaining({ lineId: 'time-line', discountValue: 8_000, lineTotal: 32_000 }),
     ]);
     expect(allocated.reduce((sum, line) => sum + line.discountValue, 0)).toBe(20_000);
+  });
+
+  it('builds ESC/POS product report bytes with categories and summaries', () => {
+    const bytes = buildEscPosProductReport(
+      {
+        id: 'snapshot-1',
+        storeId: 'store-1',
+        requestedByUserId: 'user-1',
+        requestedByName: 'Thu ngân',
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+        report: {
+          reportType: 'CATEGORY',
+          timeRange: 'today',
+          fromMs: Date.now() - 3_600_000,
+          toMs: Date.now(),
+          compareFromMs: null,
+          compareToMs: null,
+          generatedAt: Date.now(),
+          summary: {
+            totalQuantity: 5,
+            grossAmount: 100_000,
+            discountAmount: 10_000,
+            netAmount: 90_000,
+            taxAmount: 0,
+            totalAmount: 90_000,
+            comparison: null,
+          },
+          chart: [],
+          quantityChart: [],
+          categoryRows: [
+            {
+              categoryId: 'cat-1',
+              categoryName: 'Đồ uống',
+              unitName: 'Ly',
+              quantity: 5,
+              quantityRatio: 100,
+              grossAmount: 100_000,
+              grossAmountRatio: 100,
+              discountAmount: 10_000,
+              netAmount: 90_000,
+              taxAmount: 0,
+              totalAmount: 90_000,
+              products: [
+                {
+                  productId: 'prod-1',
+                  productCode: 'CF01',
+                  productName: 'Cà phê sữa',
+                  unitName: 'Ly',
+                  quantity: 5,
+                  grossAmount: 100_000,
+                  discountAmount: 10_000,
+                  netAmount: 90_000,
+                  taxAmount: 0,
+                  totalAmount: 90_000,
+                },
+              ],
+            },
+          ],
+          topSellingRows: [],
+          modifierRows: [],
+          comboRows: [],
+          cancelledRows: [],
+        },
+      },
+      { paperSize: 'K80', autoCut: true, storeName: 'PRO POS BIDA' },
+    );
+
+    const text = new TextDecoder().decode(bytes);
+    expect(text).toContain('PRO POS BIDA');
+    expect(text).toContain('BAO CAO THEO DANH MUC');
+    expect(text).toContain('DOANH THU THUAN');
+    expect(text).toContain('90.000d');
+    expect(text).toContain('[Do uong]');
+    expect(text).toContain('Ca phe sua (Ly)');
+  });
+
+  it('loads, prints and completes product_report jobs through the Print Agent lifecycle', async () => {
+    const postCalls: string[] = [];
+    class ProductReportAgentApiClient extends AgentApiClient {
+      override async get<T>(path: string): Promise<T> {
+        if (path === '/api/v1/pos/print-bootstrap') {
+          return {
+            context: { storeName: 'PRO POS BIDA' },
+            configVersion: 1,
+            printSettings: {
+              storeId: 'store-1',
+              paperSize: 'K80',
+              printersJson: JSON.stringify({
+                networkIp: '192.168.1.73',
+                networkPort: 9100,
+                autoCut: true,
+                vietnameseMode: 'UNACCENTED',
+              }),
+            },
+          } as T;
+        }
+        if (path === '/api/v1/owner/analytics/reports/products/print/snapshot-prod-1') {
+          return {
+            id: 'snapshot-prod-1',
+            storeId: 'store-1',
+            requestedByName: 'Thu ngân',
+            createdAt: Date.now(),
+            expiresAt: Date.now() + 60_000,
+            report: {
+              reportType: 'TOP_SELLING',
+              timeRange: 'today',
+              fromMs: Date.now() - 3_600_000,
+              toMs: Date.now(),
+              compareFromMs: null,
+              compareToMs: null,
+              generatedAt: Date.now(),
+              summary: {
+                totalQuantity: 10,
+                grossAmount: 200_000,
+                discountAmount: 0,
+                netAmount: 200_000,
+                taxAmount: 0,
+                totalAmount: 200_000,
+                comparison: null,
+              },
+              chart: [],
+              quantityChart: [],
+              categoryRows: [],
+              topSellingRows: [
+                {
+                  rank: 1,
+                  productId: 'prod-1',
+                  productCode: 'CF01',
+                  productName: 'Cà phê đá',
+                  categoryName: 'Đồ uống',
+                  unitName: 'Ly',
+                  quantity: 10,
+                  grossAmount: 200_000,
+                  discountAmount: 0,
+                  netAmount: 200_000,
+                  averagePrice: 20_000,
+                },
+              ],
+              modifierRows: [],
+              comboRows: [],
+              cancelledRows: [],
+            },
+          } as T;
+        }
+        throw new Error(`Unexpected GET ${path}`);
+      }
+
+      override async getBytes() {
+        return { bytes: new Uint8Array(), contentType: 'image/png' };
+      }
+
+      override async getPublicPng() {
+        return new Uint8Array();
+      }
+
+      override async post<T>(path: string): Promise<T> {
+        postCalls.push(path);
+        return (path.endsWith('/claim') ? { claimToken: null } : {}) as T;
+      }
+    }
+
+    const api = new ProductReportAgentApiClient({ serverUrl: 'https://pos.example' });
+    let sent: Uint8Array | null = null;
+    const processor = new JobProcessor(
+      { serverUrl: 'https://pos.example', printerIp: '192.168.1.73', printerPort: 9100 },
+      api,
+      {
+        send: async (bytes) => {
+          sent = bytes;
+        },
+      },
+    );
+    const result = await processor.processJob({
+      id: 'job-prod-1',
+      storeId: 'store-1',
+      targetDeviceId: null,
+      printerRole: 'receipt',
+      documentType: 'product_report',
+      documentId: 'snapshot-prod-1',
+      idempotencyKey: 'product-report-job-1',
+      status: 'QUEUED',
+      requestedByUserId: 'user-1',
+      requestedByDeviceId: null,
+      claimedByDeviceId: null,
+      createdAt: Date.now(),
+      claimedAt: null,
+      printingAt: null,
+      completedAt: null,
+      failedAt: null,
+      attemptCount: 0,
+      failureCode: null,
+      failureMessage: null,
+      claimLeaseExpiresAt: null,
+      claimGeneration: 0,
+      claimProtocolVersion: 1,
+    } satisfies PrintJob);
+
+    expect(result).toBe(true);
+    expect(sent).not.toBeNull();
+    expect(new TextDecoder().decode(sent!)).toContain('MAT HANG BAN CHAY');
+    expect(new TextDecoder().decode(sent!)).toContain('#1. Ca phe da (Ly)');
+    expect(postCalls).toEqual([
+      '/api/v1/pos/print-jobs/job-prod-1/claim',
+      '/api/v1/pos/print-jobs/job-prod-1/start',
+      '/api/v1/pos/print-jobs/job-prod-1/complete',
+    ]);
   });
 });

@@ -6,6 +6,7 @@ import {
   EyeOutlined,
   FileExcelOutlined,
   InfoCircleOutlined,
+  PrinterOutlined,
   ReloadOutlined,
   RightOutlined,
   ShoppingOutlined,
@@ -29,7 +30,8 @@ import dayjs from 'dayjs';
 import { useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 
-import { apiRequest } from '@client/lib/api';
+import { apiRequest, jsonRequest } from '@client/lib/api';
+import type { AuthContextResponse } from '@contracts/auth';
 import type {
   ProductReportCancelledRow,
   ProductReportCategoryProductItem,
@@ -398,9 +400,11 @@ function DetailDrawer({
 export function OwnerProductReportPage({
   apiPrefix = '/api/v1/owner/analytics',
   onBack,
+  userPermissions,
 }: {
   apiPrefix?: string;
   onBack?: (() => void | Promise<void>) | undefined;
+  userPermissions?: readonly string[] | undefined;
 } = {}) {
   const [reportType, setReportType] = useState<SupportedReportType>('CATEGORY');
   const [timeRange, setTimeRange] = useState<ProductReportTimeRange>('this_week');
@@ -419,6 +423,16 @@ export function OwnerProductReportPage({
   const [draftFromMinute, setDraftFromMinute] = useState(0);
   const [draftToHour, setDraftToHour] = useState(0);
   const [draftToMinute, setDraftToMinute] = useState(0);
+  const [printing, setPrinting] = useState(false);
+
+  const auth = useQuery({
+    queryKey: ['auth-context'],
+    queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
+    staleTime: 600_000,
+  });
+  const isOwner = auth.data?.actor?.kind === 'OWNER';
+  const canExport = isOwner || !userPermissions || userPermissions.includes('report.product');
+  const canPrint = isOwner || !userPermissions || userPermissions.includes('report.product');
 
   const queryParams = useMemo(() => {
     const params = new URLSearchParams({
@@ -447,19 +461,21 @@ export function OwnerProductReportPage({
     compareWith,
     customDates,
   ]);
+  const [appliedQueryParams, setAppliedQueryParams] = useState<string | null>(null);
 
   const canLoad = timeRange !== 'custom' || customDates !== null;
   const reportQuery = useQuery({
-    queryKey: ['owner-product-report', queryParams],
+    queryKey: ['owner-product-report', appliedQueryParams],
     queryFn: () =>
-      apiRequest<ProductReportResponseDto>(`${apiPrefix}/reports/products?${queryParams}`),
-    enabled: canLoad,
+      apiRequest<ProductReportResponseDto>(`${apiPrefix}/reports/products?${appliedQueryParams!}`),
+    enabled: appliedQueryParams !== null,
   });
   const data = reportQuery.data;
+  const appliedReportType = (data?.reportType ?? reportType) as SupportedReportType;
   const hasRows =
-    reportType === 'CATEGORY'
+    appliedReportType === 'CATEGORY'
       ? Boolean(data?.categoryRows.length)
-      : reportType === 'TOP_SELLING'
+      : appliedReportType === 'TOP_SELLING'
         ? Boolean(data?.topSellingRows.length)
         : Boolean(data?.cancelledRows.length);
 
@@ -482,61 +498,191 @@ export function OwnerProductReportPage({
       message.warning('Chưa có dữ liệu để xuất báo cáo.');
       return;
     }
-    let rows: Array<Record<string, string | number>> = [];
-    if (reportType === 'CATEGORY') {
-      rows = data.categoryRows.flatMap((category) => [
-        {
-          'Danh mục / Mặt hàng': `[${category.categoryName}]`,
-          'Mã mặt hàng': '',
-          'Đơn vị': '',
-          'Số lượng': category.quantity,
-          'Tiền hàng': category.grossAmount,
-          'Giảm giá': category.discountAmount,
-          'Doanh thu thuần': category.netAmount,
-        },
-        ...category.products.map((product) => ({
-          'Danh mục / Mặt hàng': product.productName,
-          'Mã mặt hàng': product.productCode,
-          'Đơn vị': product.unitName,
-          'Số lượng': product.quantity,
-          'Tiền hàng': product.grossAmount,
-          'Giảm giá': product.discountAmount,
-          'Doanh thu thuần': product.netAmount,
-        })),
-      ]);
-    } else if (reportType === 'TOP_SELLING') {
-      rows = data.topSellingRows.map((row) => ({
-        Hạng: row.rank,
-        'Mã mặt hàng': row.productCode,
-        'Tên mặt hàng': row.productName,
-        'Danh mục': row.categoryName,
-        'Đơn vị': row.unitName,
-        'Số lượng': row.quantity,
-        'Tiền hàng': row.grossAmount,
-        'Giảm giá': row.discountAmount,
-        'Doanh thu thuần': row.netAmount,
-        'Giá bán trung bình': row.averagePrice,
-      }));
-    } else {
-      rows = data.cancelledRows.map((row) => ({
-        'Tên mặt hàng': row.productName,
-        'Danh mục': row.categoryName,
-        'Đơn vị': row.unitName,
-        'Số lượng hủy': row.quantity,
-        'Giá trị hủy': row.totalAmount,
-        'Lý do': row.cancelReason,
-        'Thời gian': formatDateTime(row.cancelledAt),
-        'Người hủy': row.cancelledByName,
-      }));
-    }
     const workbook = XLSX.utils.book_new();
-    const worksheet = XLSX.utils.json_to_sheet(rows);
-    worksheet['!cols'] = Object.keys(rows[0] ?? {}).map((key) => ({
-      wch: Math.max(14, key.length + 4),
-    }));
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'BaoCaoMatHang');
+
+    const reportTypeName =
+      appliedReportType === 'TOP_SELLING'
+        ? 'MẶT HÀNG BÁN CHẠY'
+        : appliedReportType === 'CANCELLED_ITEMS'
+          ? 'MẶT HÀNG ĐÃ HỦY'
+          : 'DOANH THU THEO DANH MỤC';
+
+    const rows: (string | number)[][] = [
+      ['BÁO CÁO MẶT HÀNG - ' + reportTypeName],
+      ['Thời gian áp dụng:', `${formatDateTime(data.fromMs)} – ${formatDateTime(data.toMs)}`],
+      ['Thời điểm xuất file:', formatDateTime(Date.now())],
+      [],
+      ['TỔNG HỢP CHỈ TIÊU KINH DOANH'],
+      ['Chỉ tiêu', 'Giá trị'],
+      ['Tổng số lượng mặt hàng', data.summary.totalQuantity],
+      ['Tổng tiền hàng (đ)', data.summary.grossAmount],
+      ['Tổng giảm giá (đ)', data.summary.discountAmount],
+      ['Doanh thu thuần (đ)', data.summary.netAmount],
+      [],
+    ];
+
+    if (appliedReportType === 'CATEGORY') {
+      rows.push(
+        ['BẢNG CHI TIẾT DOANH THU THEO DANH MỤC VÀ MẶT HÀNG'],
+        [
+          'Danh mục / Tên mặt hàng',
+          'Mã mặt hàng',
+          'Đơn vị tính',
+          'Số lượng',
+          'Tiền hàng (đ)',
+          'Giảm giá (đ)',
+          'Doanh thu thuần (đ)',
+        ],
+      );
+      for (const category of data.categoryRows) {
+        rows.push([
+          `[${category.categoryName}]`,
+          '',
+          category.unitName ?? '',
+          category.quantity,
+          category.grossAmount,
+          category.discountAmount,
+          category.netAmount,
+        ]);
+        for (const product of category.products) {
+          rows.push([
+            '  ' + product.productName,
+            product.productCode,
+            product.unitName,
+            product.quantity,
+            product.grossAmount,
+            product.discountAmount,
+            product.netAmount,
+          ]);
+        }
+      }
+      rows.push([
+        'TỔNG CỘNG',
+        '',
+        '',
+        data.summary.totalQuantity,
+        data.summary.grossAmount,
+        data.summary.discountAmount,
+        data.summary.netAmount,
+      ]);
+    } else if (appliedReportType === 'TOP_SELLING') {
+      rows.push(
+        ['BẢNG TOP MẶT HÀNG BÁN CHẠY'],
+        [
+          'Hạng',
+          'Tên mặt hàng',
+          'Mã mặt hàng',
+          'Danh mục',
+          'Đơn vị tính',
+          'Số lượng',
+          'Tiền hàng (đ)',
+          'Giảm giá (đ)',
+          'Doanh thu thuần (đ)',
+          'Giá bán TB (đ)',
+        ],
+      );
+      for (const row of data.topSellingRows) {
+        rows.push([
+          row.rank,
+          row.productName,
+          row.productCode,
+          row.categoryName,
+          row.unitName,
+          row.quantity,
+          row.grossAmount,
+          row.discountAmount,
+          row.netAmount,
+          row.averagePrice,
+        ]);
+      }
+      rows.push([
+        'TỔNG CỘNG',
+        '',
+        '',
+        '',
+        '',
+        data.summary.totalQuantity,
+        data.summary.grossAmount,
+        data.summary.discountAmount,
+        data.summary.netAmount,
+        '',
+      ]);
+    } else {
+      rows.push(
+        ['BẢNG CHI TIẾT CÁC MẶT HÀNG ĐÃ HỦY'],
+        [
+          'Tên mặt hàng',
+          'Danh mục',
+          'Đơn vị tính',
+          'Số lượng hủy',
+          'Giá trị hủy (đ)',
+          'Lý do hủy',
+          'Thời gian hủy',
+          'Người hủy',
+        ],
+      );
+      for (const row of data.cancelledRows) {
+        rows.push([
+          row.productName,
+          row.categoryName,
+          row.unitName,
+          row.quantity,
+          row.totalAmount,
+          row.cancelReason,
+          formatDateTime(row.cancelledAt),
+          row.cancelledByName,
+        ]);
+      }
+      const totalCancelledQty = data.cancelledRows.reduce((sum, r) => sum + r.quantity, 0);
+      const totalCancelledAmount = data.cancelledRows.reduce((sum, r) => sum + r.totalAmount, 0);
+      rows.push(['TỔNG CỘNG', '', '', totalCancelledQty, totalCancelledAmount, '', '', '']);
+    }
+
+    const worksheet = XLSX.utils.aoa_to_sheet(rows);
+
+    const maxCols = Math.max(...rows.map((r) => r.length), 1);
+    const colWidths = Array.from({ length: maxCols }, (_, colIdx) => {
+      let maxLen = 14;
+      for (const row of rows) {
+        const val = row[colIdx];
+        if (val !== undefined && val !== null) {
+          const str = typeof val === 'number' ? val.toLocaleString('vi-VN') : String(val);
+          if (str.length > maxLen) maxLen = Math.min(str.length + 3, 40);
+        }
+      }
+      return { wch: maxLen };
+    });
+    worksheet['!cols'] = colWidths;
+
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Báo cáo mặt hàng');
     XLSX.writeFile(workbook, `BaoCaoMatHang_${dayjs().format('YYYYMMDD_HHmm')}.xlsx`);
     message.success('Đã xuất báo cáo Excel.');
+  };
+
+  const printReport = async () => {
+    if (!data || !hasRows || !appliedQueryParams) {
+      message.warning('Chưa có dữ liệu để in báo cáo.');
+      return;
+    }
+    setPrinting(true);
+    const idempotencyKey = `product-report:${crypto.randomUUID()}`;
+    try {
+      await jsonRequest(
+        `${apiPrefix}/reports/products/print`,
+        { ...Object.fromEntries(new URLSearchParams(appliedQueryParams)), idempotencyKey },
+        {
+          headers: {
+            'X-CSRF-Token': auth.data?.csrfToken ?? '',
+            'Idempotency-Key': idempotencyKey,
+          },
+        },
+      );
+      message.success('Đã gửi báo cáo tới Print Agent.');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'Không thể in báo cáo.');
+    } finally {
+      setPrinting(false);
+    }
   };
 
   return (
@@ -559,15 +705,31 @@ export function OwnerProductReportPage({
             <p>Theo dõi số lượng, doanh thu và từng hóa đơn phát sinh của mặt hàng.</p>
           </div>
         </div>
-        <Button
-          className="product-report-hero__export"
-          icon={<FileExcelOutlined />}
-          aria-label="Xuất báo cáo Excel"
-          onClick={exportReport}
-          disabled={!hasRows}
-        >
-          Xuất Excel
-        </Button>
+        <div className="product-report-hero-actions">
+          {canExport && (
+            <Button
+              className="product-report-hero__export"
+              icon={<FileExcelOutlined />}
+              aria-label="Xuất báo cáo Excel"
+              onClick={exportReport}
+              disabled={!hasRows}
+            >
+              Xuất Excel
+            </Button>
+          )}
+          {canPrint && (
+            <Button
+              type="primary"
+              icon={<PrinterOutlined />}
+              aria-label="In Báo Cáo"
+              onClick={() => void printReport()}
+              disabled={!hasRows}
+              loading={printing}
+            >
+              In Báo Cáo
+            </Button>
+          )}
+        </div>
       </section>
 
       <section className="product-report-filter-bar" aria-label="Bộ lọc báo cáo">
@@ -633,7 +795,7 @@ export function OwnerProductReportPage({
           icon={<ReloadOutlined />}
           loading={reportQuery.isFetching}
           disabled={!canLoad}
-          onClick={() => void reportQuery.refetch()}
+          onClick={() => setAppliedQueryParams(queryParams)}
         >
           Xem báo cáo
         </Button>
@@ -658,7 +820,7 @@ export function OwnerProductReportPage({
           <section className="product-report-context-line">
             <div>
               <h2>
-                {reportTitle(reportType)}
+                {reportTitle(appliedReportType)}
                 <Tooltip title="Số liệu lấy từ các dòng hóa đơn đã hoàn tất; tiền hàng là trước giảm giá.">
                   <InfoCircleOutlined />
                 </Tooltip>
@@ -673,34 +835,40 @@ export function OwnerProductReportPage({
 
           <section className="product-report-summary-grid">
             <SummaryCard
-              label={reportType === 'CANCELLED_ITEMS' ? 'Số lượng đã hủy' : 'Số lượng đã bán'}
+              label={
+                appliedReportType === 'CANCELLED_ITEMS' ? 'Số lượng đã hủy' : 'Số lượng đã bán'
+              }
               value={formatQuantity(data.summary.totalQuantity)}
               growth={data.summary.comparison?.quantityGrowth}
               accent="blue"
             />
             <SummaryCard
-              label={reportType === 'CANCELLED_ITEMS' ? 'Giá trị hủy' : 'Tiền hàng'}
+              label={appliedReportType === 'CANCELLED_ITEMS' ? 'Giá trị hủy' : 'Tiền hàng'}
               value={formatMoney(data.summary.grossAmount)}
               growth={data.summary.comparison?.grossAmountGrowth}
               accent="violet"
             />
             <SummaryCard
-              label={reportType === 'CANCELLED_ITEMS' ? 'Dòng mặt hàng hủy' : 'Tổng giảm giá'}
+              label={
+                appliedReportType === 'CANCELLED_ITEMS' ? 'Dòng mặt hàng hủy' : 'Tổng giảm giá'
+              }
               value={
-                reportType === 'CANCELLED_ITEMS'
+                appliedReportType === 'CANCELLED_ITEMS'
                   ? formatQuantity(data.cancelledRows.length)
                   : formatMoney(data.summary.discountAmount)
               }
               growth={
-                reportType === 'CANCELLED_ITEMS' ? null : data.summary.comparison?.discountGrowth
+                appliedReportType === 'CANCELLED_ITEMS'
+                  ? null
+                  : data.summary.comparison?.discountGrowth
               }
-              helper={reportType === 'CANCELLED_ITEMS' ? 'Trong kỳ đã chọn' : undefined}
+              helper={appliedReportType === 'CANCELLED_ITEMS' ? 'Trong kỳ đã chọn' : undefined}
               accent="orange"
             />
             <SummaryCard
-              label={reportType === 'CANCELLED_ITEMS' ? 'Giá trị hủy TB' : 'Doanh thu thuần'}
+              label={appliedReportType === 'CANCELLED_ITEMS' ? 'Giá trị hủy TB' : 'Doanh thu thuần'}
               value={
-                reportType === 'CANCELLED_ITEMS'
+                appliedReportType === 'CANCELLED_ITEMS'
                   ? formatMoney(
                       data.summary.totalQuantity > 0
                         ? Math.round(data.summary.totalAmount / data.summary.totalQuantity)
@@ -709,9 +877,11 @@ export function OwnerProductReportPage({
                   : formatMoney(data.summary.netAmount)
               }
               growth={
-                reportType === 'CANCELLED_ITEMS' ? null : data.summary.comparison?.netAmountGrowth
+                appliedReportType === 'CANCELLED_ITEMS'
+                  ? null
+                  : data.summary.comparison?.netAmountGrowth
               }
-              helper={reportType === 'CANCELLED_ITEMS' ? 'Trên mỗi đơn vị hủy' : undefined}
+              helper={appliedReportType === 'CANCELLED_ITEMS' ? 'Trên mỗi đơn vị hủy' : undefined}
               accent="green"
             />
           </section>
@@ -748,18 +918,18 @@ export function OwnerProductReportPage({
             <div className="product-report-section-head">
               <div>
                 <span>CHI TIẾT BÁO CÁO</span>
-                <h3>{reportTitle(reportType)}</h3>
+                <h3>{reportTitle(appliedReportType)}</h3>
               </div>
-              {reportType !== 'CANCELLED_ITEMS' && hasRows ? (
+              {appliedReportType !== 'CANCELLED_ITEMS' && hasRows ? (
                 <small>
                   <EyeOutlined /> Chọn mặt hàng để xem từng hóa đơn
                 </small>
               ) : null}
             </div>
             {hasRows ? (
-              reportType === 'CATEGORY' ? (
+              appliedReportType === 'CATEGORY' ? (
                 <CategoryReport data={data} onOpen={setSelectedProduct} />
-              ) : reportType === 'TOP_SELLING' ? (
+              ) : appliedReportType === 'TOP_SELLING' ? (
                 <TopSellingReport rows={data.topSellingRows} onOpen={setSelectedProduct} />
               ) : (
                 <CancelledReport rows={data.cancelledRows} />
@@ -782,7 +952,7 @@ export function OwnerProductReportPage({
       <DetailDrawer
         selected={selectedProduct}
         onClose={() => setSelectedProduct(null)}
-        queryParams={queryParams}
+        queryParams={appliedQueryParams ?? ''}
         apiPrefix={apiPrefix}
       />
 

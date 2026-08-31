@@ -11,7 +11,42 @@ export interface UpdateManagerDependencies {
   currentVersion?: string | undefined;
   isPackaged?: boolean | undefined;
   isPortable?: boolean | undefined;
+  platform?: NodeJS.Platform | undefined;
   shutdownCoordinator?: ShutdownCoordinator | undefined;
+}
+
+export const UPDATE_MAINTENANCE_START_HOUR = 0;
+export const UPDATE_MAINTENANCE_END_HOUR = 2;
+export const UPDATE_PREFLIGHT_HOUR = 23;
+export const UPDATE_PREFLIGHT_MINUTE = 45;
+export const UPDATE_INSTALL_RETRY_MS = 5 * 60_000;
+
+export function isUpdateMaintenanceWindow(now: Date): boolean {
+  const hour = now.getHours();
+  return hour >= UPDATE_MAINTENANCE_START_HOUR && hour < UPDATE_MAINTENANCE_END_HOUR;
+}
+
+export function nextLocalOccurrence(now: Date, hour: number, minute = 0): Date {
+  const next = new Date(now.getTime());
+  next.setHours(hour, minute, 0, 0);
+  if (next.getTime() <= now.getTime()) {
+    next.setDate(next.getDate() + 1);
+  }
+  return next;
+}
+
+function maintenanceWindowEnd(now: Date): Date {
+  const end = new Date(now.getTime());
+  end.setHours(UPDATE_MAINTENANCE_END_HOUR, 0, 0, 0);
+  return end;
+}
+
+function nextAutomaticRetry(now: Date): Date {
+  const windowStart = new Date(now.getTime());
+  windowStart.setHours(UPDATE_MAINTENANCE_START_HOUR, 0, 0, 0);
+  const elapsedMs = Math.max(0, now.getTime() - windowStart.getTime());
+  const nextSlot = Math.floor(elapsedMs / UPDATE_INSTALL_RETRY_MS) + 1;
+  return new Date(windowStart.getTime() + nextSlot * UPDATE_INSTALL_RETRY_MS);
 }
 
 export class UpdateManager extends EventEmitter {
@@ -20,6 +55,7 @@ export class UpdateManager extends EventEmitter {
   private readonly currentVersion: string;
   private readonly isPackaged: boolean;
   private readonly isPortable: boolean;
+  private readonly automaticMaintenanceEnabled: boolean;
   private readonly shutdownCoordinator?: ShutdownCoordinator | undefined;
 
   private state: DesktopUpdateState;
@@ -28,6 +64,10 @@ export class UpdateManager extends EventEmitter {
   private installPromise: Promise<void> | null = null;
   private startupCheckTimer: NodeJS.Timeout | null = null;
   private periodicCheckTimer: NodeJS.Timeout | null = null;
+  private preflightCheckTimer: NodeJS.Timeout | null = null;
+  private maintenanceBoundaryTimer: NodeJS.Timeout | null = null;
+  private automaticInstallRetryTimer: NodeJS.Timeout | null = null;
+  private started = false;
 
   constructor(dependencies: UpdateManagerDependencies = {}) {
     super();
@@ -35,6 +75,7 @@ export class UpdateManager extends EventEmitter {
       dependencies.currentVersion ?? (app?.getVersion ? app.getVersion() : '0.5.0');
     this.isPackaged = dependencies.isPackaged ?? app?.isPackaged ?? false;
     this.isPortable = dependencies.isPortable ?? Boolean(process.env.PORTABLE_EXECUTABLE_FILE);
+    this.automaticMaintenanceEnabled = (dependencies.platform ?? process.platform) === 'win32';
     this.shutdownCoordinator = dependencies.shutdownCoordinator;
     this.logger = dependencies.logger ?? log;
     this.autoUpdater = dependencies.autoUpdater ?? electronAutoUpdater;
@@ -44,6 +85,9 @@ export class UpdateManager extends EventEmitter {
     this.state = {
       status: isDisabled ? 'DISABLED' : 'IDLE',
       currentVersion: this.currentVersion,
+      automaticInstallScheduled: !isDisabled && this.automaticMaintenanceEnabled,
+      maintenanceWindowActive:
+        !isDisabled && this.automaticMaintenanceEnabled && isUpdateMaintenanceWindow(new Date()),
       availableVersion: null,
       progressPercent: null,
       downloadedBytes: null,
@@ -178,10 +222,16 @@ export class UpdateManager extends EventEmitter {
       this.setState({
         status: 'DOWNLOADED',
         availableVersion: version,
+        maintenanceWindowActive:
+          this.automaticMaintenanceEnabled && isUpdateMaintenanceWindow(new Date()),
         progressPercent: 100,
         errorCode: null,
         errorMessage: null,
       });
+
+      if (this.automaticMaintenanceEnabled && isUpdateMaintenanceWindow(new Date())) {
+        void this.requestAutomaticInstall();
+      }
     });
 
     this.autoUpdater.on('error', (err) => {
@@ -322,9 +372,11 @@ export class UpdateManager extends EventEmitter {
   }
 
   start(): void {
-    if (this.state.status === 'DISABLED') {
+    if (this.state.status === 'DISABLED' || this.started) {
       return;
     }
+
+    this.started = true;
 
     // Schedule initial check after 45s, regardless of realtime online/offline status
     this.startupCheckTimer = setTimeout(() => {
@@ -332,9 +384,15 @@ export class UpdateManager extends EventEmitter {
       void this.checkForUpdates();
       this.schedulePeriodicCheck();
     }, 45_000);
+
+    if (this.automaticMaintenanceEnabled) {
+      this.schedulePreflightCheck();
+      this.refreshMaintenanceSchedule(true);
+    }
   }
 
   stop(): void {
+    this.started = false;
     if (this.startupCheckTimer) {
       clearTimeout(this.startupCheckTimer);
       this.startupCheckTimer = null;
@@ -343,6 +401,24 @@ export class UpdateManager extends EventEmitter {
       clearTimeout(this.periodicCheckTimer);
       this.periodicCheckTimer = null;
     }
+    if (this.preflightCheckTimer) {
+      clearTimeout(this.preflightCheckTimer);
+      this.preflightCheckTimer = null;
+    }
+    if (this.maintenanceBoundaryTimer) {
+      clearTimeout(this.maintenanceBoundaryTimer);
+      this.maintenanceBoundaryTimer = null;
+    }
+    this.clearAutomaticInstallRetry();
+  }
+
+  /** Recalculate local wall-clock timers after Windows wakes from sleep. */
+  handleResume(): void {
+    if (!this.started || this.state.status === 'DISABLED' || !this.automaticMaintenanceEnabled) {
+      return;
+    }
+    this.schedulePreflightCheck();
+    this.refreshMaintenanceSchedule(true);
   }
 
   private schedulePeriodicCheck(): void {
@@ -360,6 +436,75 @@ export class UpdateManager extends EventEmitter {
     }, intervalMs);
   }
 
+  private schedulePreflightCheck(): void {
+    if (this.preflightCheckTimer) {
+      clearTimeout(this.preflightCheckTimer);
+    }
+
+    const now = new Date();
+    const next = nextLocalOccurrence(now, UPDATE_PREFLIGHT_HOUR, UPDATE_PREFLIGHT_MINUTE);
+    this.preflightCheckTimer = setTimeout(() => {
+      this.preflightCheckTimer = null;
+      void this.checkForUpdates();
+      this.schedulePreflightCheck();
+    }, next.getTime() - now.getTime());
+  }
+
+  private refreshMaintenanceSchedule(checkImmediately: boolean): void {
+    if (this.maintenanceBoundaryTimer) {
+      clearTimeout(this.maintenanceBoundaryTimer);
+      this.maintenanceBoundaryTimer = null;
+    }
+
+    const now = new Date();
+    const maintenanceWindowActive = isUpdateMaintenanceWindow(now);
+    if (this.state.maintenanceWindowActive !== maintenanceWindowActive) {
+      this.setState({ maintenanceWindowActive });
+    }
+
+    if (!maintenanceWindowActive) {
+      this.clearAutomaticInstallRetry();
+    } else if (this.state.status === 'DOWNLOADED') {
+      void this.requestAutomaticInstall();
+    } else if (checkImmediately) {
+      void this.checkForUpdates();
+    }
+
+    const boundary = maintenanceWindowActive
+      ? maintenanceWindowEnd(now)
+      : nextLocalOccurrence(now, UPDATE_MAINTENANCE_START_HOUR);
+    this.maintenanceBoundaryTimer = setTimeout(
+      () => {
+        this.maintenanceBoundaryTimer = null;
+        this.refreshMaintenanceSchedule(true);
+      },
+      Math.max(1, boundary.getTime() - now.getTime()),
+    );
+  }
+
+  private clearAutomaticInstallRetry(): void {
+    if (this.automaticInstallRetryTimer) {
+      clearTimeout(this.automaticInstallRetryTimer);
+      this.automaticInstallRetryTimer = null;
+    }
+  }
+
+  private scheduleAutomaticInstallRetry(): void {
+    this.clearAutomaticInstallRetry();
+    const now = new Date();
+    if (!isUpdateMaintenanceWindow(now)) return;
+
+    const retryAt = nextAutomaticRetry(now);
+    if (retryAt.getTime() >= maintenanceWindowEnd(now).getTime()) return;
+
+    this.automaticInstallRetryTimer = setTimeout(() => {
+      this.automaticInstallRetryTimer = null;
+      if (isUpdateMaintenanceWindow(new Date()) && this.state.status === 'DOWNLOADED') {
+        void this.requestAutomaticInstall();
+      }
+    }, retryAt.getTime() - now.getTime());
+  }
+
   async checkForUpdates(): Promise<DesktopUpdateState> {
     if (this.state.status === 'DISABLED') {
       return this.getState();
@@ -367,6 +512,18 @@ export class UpdateManager extends EventEmitter {
 
     if (this.checkPromise) {
       return this.checkPromise;
+    }
+
+    // Never disturb a downloaded package or an active download/install with a
+    // second feed check. The daily preflight becomes a no-op in these states.
+    if (
+      this.state.status === 'AVAILABLE' ||
+      this.state.status === 'DOWNLOADING' ||
+      this.state.status === 'DOWNLOADED' ||
+      this.state.status === 'WAITING_FOR_IDLE' ||
+      this.state.status === 'INSTALLING'
+    ) {
+      return this.getState();
     }
 
     this.checkPromise = (async () => {
@@ -454,17 +611,35 @@ export class UpdateManager extends EventEmitter {
       return this.installPromise;
     }
 
-    this.installPromise = this.performInstall().finally(() => {
+    this.clearAutomaticInstallRetry();
+    const scheduledInstall =
+      this.automaticMaintenanceEnabled && isUpdateMaintenanceWindow(new Date());
+    this.installPromise = this.performInstall(scheduledInstall).finally(() => {
       this.installPromise = null;
     });
 
     return this.installPromise;
   }
 
-  private async performInstall(): Promise<void> {
+  private requestAutomaticInstall(): Promise<void> {
+    if (!isUpdateMaintenanceWindow(new Date()) || this.state.status !== 'DOWNLOADED') {
+      return Promise.resolve();
+    }
+    if (this.installPromise) return this.installPromise;
+
+    this.installPromise = this.performInstall(true).finally(() => {
+      this.installPromise = null;
+    });
+    return this.installPromise;
+  }
+
+  private async performInstall(automatic: boolean): Promise<void> {
+    if (automatic && !isUpdateMaintenanceWindow(new Date())) return;
+
     this.logger.info(
       JSON.stringify({
         event: 'update_install_requested',
+        mode: automatic ? 'AUTOMATIC' : 'MANUAL',
         currentVersion: this.currentVersion,
         targetVersion: this.state.availableVersion,
         timestamp: Date.now(),
@@ -474,27 +649,67 @@ export class UpdateManager extends EventEmitter {
     this.setState({ status: 'WAITING_FOR_IDLE' });
 
     if (!this.shutdownCoordinator) {
+      if (automatic && !isUpdateMaintenanceWindow(new Date())) {
+        this.setState({ status: 'DOWNLOADED', maintenanceWindowActive: false });
+        return;
+      }
       this.setState({ status: 'INSTALLING' });
       this.autoUpdater.quitAndInstall(false, true);
       return;
     }
 
-    const permitted = await this.shutdownCoordinator.requestQuit(
-      'UPDATE',
-      () => {
-        this.logger.info(
-          JSON.stringify({
-            event: 'update_install_started',
-            currentVersion: this.currentVersion,
-            targetVersion: this.state.availableVersion,
-            timestamp: Date.now(),
-          }),
-        );
-        this.setState({ status: 'INSTALLING' });
-        this.autoUpdater.quitAndInstall(false, true);
-      },
-      30_000,
-    );
+    const now = new Date();
+    const timeoutMs = automatic
+      ? Math.max(1, Math.min(30_000, maintenanceWindowEnd(now).getTime() - now.getTime()))
+      : 30_000;
+
+    const onReadyToQuit = () => {
+      this.logger.info(
+        JSON.stringify({
+          event: 'update_install_started',
+          currentVersion: this.currentVersion,
+          targetVersion: this.state.availableVersion,
+          timestamp: Date.now(),
+        }),
+      );
+      this.setState({ status: 'INSTALLING' });
+      this.autoUpdater.quitAndInstall(false, true);
+    };
+    let permitted: boolean;
+    try {
+      permitted = automatic
+        ? await this.shutdownCoordinator.requestQuit('UPDATE', onReadyToQuit, timeoutMs, () =>
+            isUpdateMaintenanceWindow(new Date()),
+          )
+        : await this.shutdownCoordinator.requestQuit('UPDATE', onReadyToQuit, timeoutMs);
+    } catch (error) {
+      this.logger.error(
+        JSON.stringify({
+          event: 'update_install_failed',
+          currentVersion: this.currentVersion,
+          targetVersion: this.state.availableVersion,
+          errorMessage: error instanceof Error ? error.message : String(error),
+          timestamp: Date.now(),
+        }),
+      );
+      if (automatic) {
+        const maintenanceWindowActive = isUpdateMaintenanceWindow(new Date());
+        this.setState({
+          status: 'DOWNLOADED',
+          maintenanceWindowActive,
+          errorCode: null,
+          errorMessage: null,
+        });
+        if (maintenanceWindowActive) this.scheduleAutomaticInstallRetry();
+      } else {
+        this.setState({
+          status: 'ERROR',
+          errorCode: 'UPDATE_INSTALL_FAILED',
+          errorMessage: 'Không thể bắt đầu cài đặt bản cập nhật. Print Agent đã hoạt động lại.',
+        });
+      }
+      return;
+    }
 
     if (!permitted) {
       this.logger.warn(
@@ -505,11 +720,22 @@ export class UpdateManager extends EventEmitter {
           timestamp: Date.now(),
         }),
       );
-      this.setState({
-        status: 'ERROR',
-        errorCode: 'UPDATE_DRAIN_TIMEOUT',
-        errorMessage: 'Chưa thể cập nhật vì Print Agent vẫn đang xử lý lệnh in.',
-      });
+      if (automatic) {
+        const maintenanceWindowActive = isUpdateMaintenanceWindow(new Date());
+        this.setState({
+          status: 'DOWNLOADED',
+          maintenanceWindowActive,
+          errorCode: null,
+          errorMessage: null,
+        });
+        if (maintenanceWindowActive) this.scheduleAutomaticInstallRetry();
+      } else {
+        this.setState({
+          status: 'ERROR',
+          errorCode: 'UPDATE_DRAIN_TIMEOUT',
+          errorMessage: 'Chưa thể cập nhật vì Print Agent vẫn đang xử lý lệnh in.',
+        });
+      }
     }
   }
 

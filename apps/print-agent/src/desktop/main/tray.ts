@@ -42,7 +42,7 @@ export function createAgentTray(
     if (updateState && updateState.status === 'DOWNLOADED') {
       updateMenuItems.push(
         {
-          label: `Cập nhật lên v${updateState.availableVersion || ''} & khởi động lại`,
+          label: `Cập nhật ngay lên v${updateState.availableVersion || ''}`,
           click: () => void updateManager?.installUpdate(),
         },
         { type: 'separator' as const },

@@ -114,4 +114,31 @@ describe('JobQueue Graceful Drain and Idle Tests', () => {
     });
     expect(accepted3).toBe(true);
   });
+
+  it('does not execute a print job twice across repeated drain retries', async () => {
+    const queue = new JobQueue();
+    let releaseJob: () => void = noop;
+    const blocked = new Promise<void>((resolve) => {
+      releaseJob = resolve;
+    });
+    let executions = 0;
+    queue.enqueue('printer-1', async () => {
+      executions += 1;
+      await blocked;
+    });
+
+    queue.stopAccepting();
+    expect(await queue.waitForIdle(5)).toBe(false);
+    queue.resumeAccepting();
+    expect(executions).toBe(1);
+
+    queue.stopAccepting();
+    expect(await queue.waitForIdle(5)).toBe(false);
+    queue.resumeAccepting();
+    expect(executions).toBe(1);
+
+    releaseJob();
+    expect(await queue.waitForIdle(100)).toBe(true);
+    expect(executions).toBe(1);
+  });
 });

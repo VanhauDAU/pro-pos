@@ -72,6 +72,52 @@ describe('AgentRuntime', () => {
     expect(states).toEqual(['CONNECTING', 'STOPPED']);
   });
 
+  it('resumes the same realtime pipeline after a graceful drain timeout', async () => {
+    const realtime = {
+      connect: vi.fn(),
+      destroy: vi.fn(),
+      quiesceAndDrain: vi.fn().mockResolvedValue('DRAIN_TIMEOUT'),
+      resumeAfterDrainAbort: vi.fn(),
+      getPendingJobCount: vi.fn().mockReturnValue(1),
+      isIdle: vi.fn().mockReturnValue(false),
+    };
+    const createRealtimeClient = vi.fn(() => realtime);
+    const runtime = new AgentRuntime(pairedConfig, {
+      configManager: makeConfigStore(pairedConfig),
+      createApiClient: () => ({}) as never,
+      createRealtimeClient,
+    });
+    await runtime.start();
+
+    const result = await runtime.stopGracefully({ timeoutMs: 30_000 });
+
+    expect(result).toBe('DRAIN_TIMEOUT');
+    expect(realtime.quiesceAndDrain).toHaveBeenCalledWith(30_000);
+    expect(realtime.resumeAfterDrainAbort).toHaveBeenCalledOnce();
+    expect(realtime.destroy).not.toHaveBeenCalled();
+    expect(createRealtimeClient).toHaveBeenCalledOnce();
+    expect(runtime.getPendingPrintJobCount()).toBe(1);
+  });
+
+  it('resumes realtime when graceful drain throws unexpectedly', async () => {
+    const realtime = {
+      connect: vi.fn(),
+      destroy: vi.fn(),
+      quiesceAndDrain: vi.fn().mockRejectedValue(new Error('drain failed')),
+      resumeAfterDrainAbort: vi.fn(),
+    };
+    const runtime = new AgentRuntime(pairedConfig, {
+      configManager: makeConfigStore(pairedConfig),
+      createApiClient: () => ({}) as never,
+      createRealtimeClient: () => realtime,
+    });
+    await runtime.start();
+
+    await expect(runtime.stopGracefully({ timeoutMs: 30_000 })).resolves.toBe('DRAIN_TIMEOUT');
+    expect(realtime.resumeAfterDrainAbort).toHaveBeenCalledOnce();
+    expect(realtime.destroy).not.toHaveBeenCalled();
+  });
+
   it('publishes pairing state, then starts realtime through the same runtime', async () => {
     const unpaired: PrintAgentConfig = { serverUrl: 'https://pos.example' };
     const realtime = { connect: vi.fn(), destroy: vi.fn() };

@@ -3,6 +3,7 @@ export type ShutdownReason = 'NORMAL' | 'UPDATE' | 'RESET' | 'SETTINGS_RESTART' 
 export type ShutdownState = 'RUNNING' | 'QUIESCING' | 'DRAINING' | 'READY_TO_QUIT' | 'QUITTING';
 
 export interface ShutdownRuntimeTarget {
+  start?(): Promise<void>;
   stop(): Promise<void>;
   stopGracefully(options?: { timeoutMs?: number }): Promise<'SUCCESS' | 'DRAIN_TIMEOUT'>;
   getPendingPrintJobCount(): number;
@@ -31,6 +32,7 @@ export class ShutdownCoordinator {
     reason: ShutdownReason,
     onReadyToQuit?: () => Promise<void> | void,
     timeoutMs = 30_000,
+    canProceed?: () => boolean,
   ): Promise<boolean> {
     if (this.state === 'QUITTING') {
       return true;
@@ -40,9 +42,11 @@ export class ShutdownCoordinator {
       return this.activeQuitPromise;
     }
 
-    this.activeQuitPromise = this.performQuit(reason, onReadyToQuit, timeoutMs).finally(() => {
-      this.activeQuitPromise = null;
-    });
+    this.activeQuitPromise = this.performQuit(reason, onReadyToQuit, timeoutMs, canProceed).finally(
+      () => {
+        this.activeQuitPromise = null;
+      },
+    );
 
     return this.activeQuitPromise;
   }
@@ -51,8 +55,13 @@ export class ShutdownCoordinator {
     reason: ShutdownReason,
     onReadyToQuit?: () => Promise<void> | void,
     timeoutMs = 30_000,
+    canProceed?: () => boolean,
   ): Promise<boolean> {
     if (reason === 'UPDATE') {
+      if (canProceed && !canProceed()) {
+        return false;
+      }
+
       this.state = 'DRAINING';
       const drainResult = await this.runtime.stopGracefully({ timeoutMs });
 
@@ -62,11 +71,28 @@ export class ShutdownCoordinator {
         return false;
       }
 
+      // A scheduled install may finish draining after its maintenance window
+      // closed (for example when Windows slept during the drain). Restore the
+      // runtime instead of restarting outside the approved window.
+      if (canProceed && !canProceed()) {
+        await this.runtime.start?.();
+        this.state = 'RUNNING';
+        this.permittedToQuit = false;
+        return false;
+      }
+
       this.state = 'READY_TO_QUIT';
       this.permittedToQuit = true;
 
       if (onReadyToQuit) {
-        await onReadyToQuit();
+        try {
+          await onReadyToQuit();
+        } catch (error) {
+          this.permittedToQuit = false;
+          await this.runtime.start?.();
+          this.state = 'RUNNING';
+          throw error;
+        }
       } else {
         this.state = 'QUITTING';
         this.quitApp();

@@ -52,12 +52,9 @@ test('authenticate a dedicated POS employee and persist browser state', async ({
   await page.getByLabel('Mã PIN 4 số').fill(employeePin);
   await expect(page).toHaveURL(/\/pos(?:\/|$)/, { timeout: 15_000 });
   expect(postLoginRequests.filter((path) => path === '/api/v1/auth/context')).toEqual([]);
-  expect(
-    postLoginRequests.filter((path) => path === '/api/v1/pos/context').length,
-  ).toBeLessThanOrEqual(1);
-  expect(
-    postLoginRequests.filter((path) => path === '/api/v1/pos/overview').length,
-  ).toBeLessThanOrEqual(1);
+  expect(postLoginRequests.filter((path) => path === '/api/v1/pos/context')).toEqual([]);
+  expect(postLoginRequests.filter((path) => path === '/api/v1/pos/overview')).toEqual([]);
+  expect(postLoginRequests.filter((path) => path === '/api/v1/app/bootstrap')).toHaveLength(1);
   employeeLoginCompleted = false;
 
   await page.goto('/pos/areas');

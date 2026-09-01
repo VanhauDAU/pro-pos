@@ -27,6 +27,8 @@ let sessionId: string | null = null;
 let maxInp = 0;
 let cumulativeLayoutShift = 0;
 let csrfToken: string | null = null;
+let startupShellRecorded = false;
+let startupReadyRecorded = false;
 
 function randomSample() {
   const value = new Uint32Array(1);
@@ -105,6 +107,18 @@ export function finishPosInteraction(
   if (startedAt === undefined) return;
   interactions.delete(name);
   queueMetric(metric, performance.now() - startedAt, context);
+}
+
+export function recordPosStartupShell() {
+  if (startupShellRecorded) return;
+  startupShellRecorded = true;
+  queueMetric('STARTUP_SHELL', performance.now(), 'AREAS');
+}
+
+export function recordPosStartupReady() {
+  if (startupReadyRecorded) return;
+  startupReadyRecorded = true;
+  queueMetric('STARTUP_READY', performance.now(), 'AREAS');
 }
 
 export function recordPosApiMetric(input: {
@@ -202,6 +216,7 @@ export function flushPosPerformance() {
 }
 
 export function posApiContext(path: string): PosPerformanceContext {
+  if (path.includes('/app/bootstrap')) return 'OVERVIEW';
   if (path.endsWith('/overview')) return 'OVERVIEW';
   if (path.includes('/quote')) return 'QUOTE';
   if (path.endsWith('/orders/open') || path.endsWith('/tables/open')) return 'OPEN';

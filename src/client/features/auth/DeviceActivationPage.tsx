@@ -7,6 +7,7 @@ import { useNavigate } from 'react-router';
 import type { ActivationConfirmationResponse } from '@contracts/auth';
 
 import { ApiError, jsonRequest } from '@client/lib/api';
+import { resetAppBootstrap } from '@client/features/bootstrap/app-bootstrap';
 
 import { AuthLayout } from './AuthLayout';
 
@@ -53,6 +54,7 @@ export function DeviceActivationPage() {
         password: values.password,
         deviceName: values.deviceName.trim() || 'Máy thu ngân chính',
       });
+      resetAppBootstrap(queryClient);
       await queryClient.invalidateQueries({ queryKey: ['auth-context'] });
       navigate('/?tab=employee', { replace: true });
     } catch (activateError) {
@@ -156,3 +158,5 @@ export function DeviceActivationPage() {
     </AuthLayout>
   );
 }
+import 'antd/dist/reset.css';
+import '@client/styles/base.css';

@@ -562,7 +562,7 @@ export class PosService {
         if (!summary) throw new Error(`Missing overview summary for active order ${order.id}`);
         return {
           id: order.id,
-          displayCode: order.display_code,
+          displayCode: order.display_code ?? '',
           orderType: order.order_type,
           status: order.status,
           version: order.version,

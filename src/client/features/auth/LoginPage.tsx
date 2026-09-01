@@ -1,3 +1,6 @@
+import 'antd/dist/reset.css';
+import '@client/styles/base.css';
+
 import {
   ArrowLeftOutlined,
   DesktopOutlined,
@@ -10,15 +13,18 @@ import {
   UserOutlined,
 } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Avatar, Button, Checkbox, Form, Input, Popconfirm, Spin } from 'antd';
+import { Alert, Avatar, Button, Checkbox, Form, Input, Popconfirm, Result, Spin } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 
 import type { AuthContextResponse, LoginResponse } from '@contracts/auth';
-import type { PosOverviewSnapshot } from '@contracts/pos';
 
-import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
+import { ApiError, jsonRequest } from '@client/lib/api';
+import {
+  appBootstrapQueryOptions,
+  resetAppBootstrap,
+} from '@client/features/bootstrap/app-bootstrap';
 
 import { AuthLayout } from './AuthLayout';
 import { authContextAfterEmployeeLogin } from './employee-login-cache';
@@ -26,6 +32,10 @@ import { authContextAfterEmployeeLogin } from './employee-login-cache';
 interface EmployeeFormValues {
   username: string;
   pin: string;
+}
+
+export function NotFoundPage() {
+  return <Result status="404" title="Không tìm thấy trang" />;
 }
 
 interface RememberedEmployee {
@@ -299,10 +309,12 @@ export function LoginPage() {
   const [ownerPassword, setOwnerPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
 
-  const context = useQuery({
-    queryKey: ['auth-context'],
-    queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
-  });
+  const bootstrap = useQuery(appBootstrapQueryOptions(queryClient, 'areas'));
+  const context = {
+    data: bootstrap.data?.auth,
+    isLoading: bootstrap.isLoading,
+    isError: bootstrap.isError,
+  };
 
   const deviceIsActive = context.data?.device?.status === 'ACTIVE';
 
@@ -413,26 +425,11 @@ export function LoginPage() {
       const seededAuthContext = authContextAfterEmployeeLogin(context.data, response);
       if (seededAuthContext) {
         queryClient.setQueryData<AuthContextResponse>(['auth-context'], seededAuthContext);
-      } else {
-        await queryClient.fetchQuery({
-          queryKey: ['auth-context'],
-          queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
-          staleTime: 0,
-        });
       }
-      void Promise.allSettled([
+      resetAppBootstrap(queryClient);
+      await Promise.all([
         import('@client/features/pos/StaffPosPortalPage'),
-        queryClient.prefetchQuery({
-          queryKey: ['pos-context'],
-          queryFn: () => apiRequest<unknown>('/api/v1/pos/context'),
-          staleTime: Infinity,
-        }),
-        queryClient.prefetchQuery({
-          queryKey: ['pos-overview'],
-          queryFn: ({ signal }) =>
-            apiRequest<PosOverviewSnapshot>('/api/v1/pos/overview', { signal }),
-          staleTime: 5_000,
-        }),
+        queryClient.fetchQuery(appBootstrapQueryOptions(queryClient, 'areas')),
       ]);
       toast.success(`Xin chào, ${savedInfo.displayName}!`);
       navigate('/pos', { replace: true });

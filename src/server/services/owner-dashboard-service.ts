@@ -15,6 +15,12 @@ import {
 import { PosService } from '@server/services/pos-service';
 import type { AppEnv } from '@server/types';
 
+import {
+  addDateOnlyDays,
+  getZonedParts,
+  zonedDateTimeToTimestamp,
+} from '@server/services/owner-revenue-report-service';
+
 const PALETTE = [
   '#0975F7',
   '#10B981',
@@ -28,6 +34,36 @@ const PALETTE = [
   '#64748B',
 ];
 
+interface LocalParts {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+}
+
+function dateParts(dateOnly: string) {
+  const [year, month, day] = dateOnly.split('-').map(Number);
+  return { year: year!, month: month!, day: day! };
+}
+
+function dateOnlyFromParts(parts: Pick<LocalParts, 'year' | 'month' | 'day'>) {
+  return `${String(parts.year).padStart(4, '0')}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
+}
+
+function dateOnlyDayOfWeek(dateOnly: string) {
+  const parts = dateParts(dateOnly);
+  return new Date(Date.UTC(parts.year, parts.month - 1, parts.day)).getUTCDay();
+}
+
+function businessDateForTimestamp(timestamp: number, timezone: string, cutoffMinutes: number) {
+  const parts = getZonedParts(timestamp, timezone);
+  const localDate = dateOnlyFromParts(parts);
+  return parts.hour * 60 + parts.minute < cutoffMinutes
+    ? addDateOnlyDays(localDate, -1)
+    : localDate;
+}
+
 export class OwnerDashboardService {
   private repository: OwnerDashboardRepository;
   private posService: PosService;
@@ -38,8 +74,17 @@ export class OwnerDashboardService {
   }
 
   async getDashboardData(storeId: string, query: DashboardQueryInput): Promise<DashboardDataDto> {
-    const { fromMs, toMs, range } = this.calculateDateRange(query);
     const now = Date.now();
+    const settings = await this.repository.getStoreSettings(storeId);
+    const timezone = settings?.timezone || 'Asia/Ho_Chi_Minh';
+    const cutoffMinutes = Math.max(0, Math.min(1_439, settings?.businessDayCutoffMinutes ?? 0));
+
+    const { fromMs, toMs, range, dateFrom, dateTo } = this.calculateDateRange(
+      query,
+      timezone,
+      cutoffMinutes,
+      now,
+    );
 
     const [invoices, lines, activeOrders, staffList, customerCount] = await Promise.all([
       this.repository.getCompletedInvoices(storeId, fromMs, toMs),
@@ -87,10 +132,17 @@ export class OwnerDashboardService {
     };
 
     // 3. Revenue Timeline Chart
-    const revenueTimelineChart = this.buildTimelineChart(invoices, range, fromMs, toMs);
+    const revenueTimelineChart = this.buildTimelineChart(
+      invoices,
+      range,
+      dateFrom,
+      dateTo,
+      timezone,
+      cutoffMinutes,
+    );
 
-    // 4. Payment Time Chart (Hourly distribution 0..23)
-    const paymentTimeChart = this.buildPaymentTimeChart(invoices);
+    // 4. Payment Time Chart (Hourly distribution 0..23 in store timezone)
+    const paymentTimeChart = this.buildPaymentTimeChart(invoices, timezone);
 
     // 5. Staff Revenue
     const staffRevenue = this.buildStaffRevenue(invoices, staffList);
@@ -131,70 +183,57 @@ export class OwnerDashboardService {
     };
   }
 
-  private calculateDateRange(query: DashboardQueryInput): {
+  private calculateDateRange(
+    query: DashboardQueryInput,
+    timezone: string,
+    cutoffMinutes: number,
+    nowMs: number,
+  ): {
     fromMs: number;
     toMs: number;
     range: 'today' | 'yesterday' | 'week' | 'month' | 'year' | 'custom';
+    dateFrom: string;
+    dateTo: string;
   } {
     const range = query.range;
-    const now = new Date();
+    const businessToday = businessDateForTimestamp(nowMs, timezone, cutoffMinutes);
+    let dateFrom = businessToday;
+    let dateTo = businessToday;
 
     if (range === 'custom' && query.dateFrom && query.dateTo) {
-      const from = new Date(query.dateFrom);
-      from.setHours(0, 0, 0, 0);
-      const to = new Date(query.dateTo);
-      to.setHours(23, 59, 59, 999);
-      return { fromMs: from.getTime(), toMs: to.getTime(), range: 'custom' };
+      dateFrom = query.dateFrom;
+      dateTo = query.dateTo;
+    } else if (range === 'yesterday') {
+      dateFrom = addDateOnlyDays(businessToday, -1);
+      dateTo = dateFrom;
+    } else if (range === 'week') {
+      // Monday of current business week
+      const daysFromMonday = (dateOnlyDayOfWeek(businessToday) + 6) % 7;
+      dateFrom = addDateOnlyDays(businessToday, -daysFromMonday);
+      dateTo = addDateOnlyDays(dateFrom, 6);
+    } else if (range === 'month') {
+      const parts = dateParts(businessToday);
+      const lastDayOfMonth = new Date(Date.UTC(parts.year, parts.month, 0)).getUTCDate();
+      dateFrom = `${businessToday.slice(0, 7)}-01`;
+      dateTo = `${businessToday.slice(0, 7)}-${String(lastDayOfMonth).padStart(2, '0')}`;
+    } else if (range === 'year') {
+      dateFrom = `${businessToday.slice(0, 4)}-01-01`;
+      dateTo = `${businessToday.slice(0, 4)}-12-31`;
     }
 
-    if (range === 'yesterday') {
-      const start = new Date(now);
-      start.setDate(start.getDate() - 1);
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(start);
-      end.setHours(23, 59, 59, 999);
-      return { fromMs: start.getTime(), toMs: end.getTime(), range: 'yesterday' };
-    }
+    const fromMs = zonedDateTimeToTimestamp(dateFrom, cutoffMinutes, timezone);
+    const toMs = zonedDateTimeToTimestamp(addDateOnlyDays(dateTo, 1), cutoffMinutes, timezone) - 1;
 
-    if (range === 'week') {
-      // Monday of current week
-      const start = new Date(now);
-      const day = start.getDay();
-      const diff = start.getDate() - day + (day === 0 ? -6 : 1);
-      start.setDate(diff);
-      start.setHours(0, 0, 0, 0);
-
-      const end = new Date(start);
-      end.setDate(start.getDate() + 6);
-      end.setHours(23, 59, 59, 999);
-      return { fromMs: start.getTime(), toMs: end.getTime(), range: 'week' };
-    }
-
-    if (range === 'month') {
-      const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-      const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-      return { fromMs: start.getTime(), toMs: end.getTime(), range: 'month' };
-    }
-
-    if (range === 'year') {
-      const start = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0);
-      const end = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
-      return { fromMs: start.getTime(), toMs: end.getTime(), range: 'year' };
-    }
-
-    // Default: 'today'
-    const start = new Date(now);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(now);
-    end.setHours(23, 59, 59, 999);
-    return { fromMs: start.getTime(), toMs: end.getTime(), range: 'today' };
+    return { fromMs, toMs, range, dateFrom, dateTo };
   }
 
   private buildTimelineChart(
     invoices: RawInvoiceRow[],
     range: string,
-    fromMs: number,
-    toMs: number,
+    dateFrom: string,
+    dateTo: string,
+    timezone: string,
+    cutoffMinutes: number,
   ): DashboardTimelinePoint[] {
     if (range === 'today' || range === 'yesterday') {
       // 24-hour buckets
@@ -205,7 +244,7 @@ export class OwnerDashboardService {
       }));
 
       for (const inv of invoices) {
-        const hour = new Date(inv.issuedAt).getHours();
+        const hour = getZonedParts(inv.issuedAt, timezone).hour;
         if (points[hour]) {
           points[hour]!.revenue += inv.total;
           points[hour]!.invoiceCount += 1;
@@ -214,30 +253,18 @@ export class OwnerDashboardService {
       return points;
     }
 
-    // Multi-day buckets
-    const start = new Date(fromMs);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(toMs);
-
+    // Multi-day buckets from dateFrom to dateTo
     const bucketMap = new Map<string, { label: string; revenue: number; invoiceCount: number }>();
-    const curr = new Date(start);
-
-    while (curr.getTime() <= end.getTime()) {
-      const key = `${curr.getFullYear()}-${String(curr.getMonth() + 1).padStart(2, '0')}-${String(
-        curr.getDate(),
-      ).padStart(2, '0')}`;
-      const label = `${String(curr.getDate()).padStart(2, '0')}/${String(
-        curr.getMonth() + 1,
-      ).padStart(2, '0')}`;
-      bucketMap.set(key, { label, revenue: 0, invoiceCount: 0 });
-      curr.setDate(curr.getDate() + 1);
+    let curr = dateFrom;
+    while (curr <= dateTo) {
+      const parts = dateParts(curr);
+      const label = `${String(parts.day).padStart(2, '0')}/${String(parts.month).padStart(2, '0')}`;
+      bucketMap.set(curr, { label, revenue: 0, invoiceCount: 0 });
+      curr = addDateOnlyDays(curr, 1);
     }
 
     for (const inv of invoices) {
-      const d = new Date(inv.issuedAt);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
-        d.getDate(),
-      ).padStart(2, '0')}`;
+      const key = businessDateForTimestamp(inv.issuedAt, timezone, cutoffMinutes);
       const bucket = bucketMap.get(key);
       if (bucket) {
         bucket.revenue += inv.total;
@@ -248,7 +275,10 @@ export class OwnerDashboardService {
     return Array.from(bucketMap.values());
   }
 
-  private buildPaymentTimeChart(invoices: RawInvoiceRow[]): DashboardPaymentTimePoint[] {
+  private buildPaymentTimeChart(
+    invoices: RawInvoiceRow[],
+    timezone: string,
+  ): DashboardPaymentTimePoint[] {
     const points: DashboardPaymentTimePoint[] = Array.from({ length: 24 }, (_, h) => ({
       hour: h,
       hourLabel: `${String(h).padStart(2, '0')}:00 - ${String(h).padStart(2, '0')}:59`,
@@ -257,7 +287,7 @@ export class OwnerDashboardService {
     }));
 
     for (const inv of invoices) {
-      const hour = new Date(inv.issuedAt).getHours();
+      const hour = getZonedParts(inv.issuedAt, timezone).hour;
       if (points[hour]) {
         points[hour]!.revenue += inv.total;
         points[hour]!.invoiceCount += 1;

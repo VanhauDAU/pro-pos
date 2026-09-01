@@ -2160,7 +2160,10 @@ export class PosService {
         categoryName: row.categoryName,
         unitName: row.unitName,
         popularityScore: row.popularityScore,
+        soldLast7Days: row.soldLast7Days,
+        soldLast30Days: row.soldLast30Days,
         paidOrderCount: row.paidOrderCount,
+        lastSoldAt: row.lastSoldAt,
         variants: [],
       };
       product.variants.push({
@@ -2172,13 +2175,48 @@ export class PosService {
       products.set(row.productId, product);
     }
     const productList = [...products.values()];
-    const popularProductLimit = 3;
-    return productList.map(({ popularityScore, paidOrderCount, ...product }, index) => ({
-      ...product,
-      // Keep the signal intentionally scarce: only the three highest-ranked
-      // products with paid-order history receive the visual treatment.
-      isPopular: index < popularProductLimit && popularityScore > 0 && paidOrderCount > 0,
-    }));
+
+    const productsByCategory = new Map<string, typeof productList>();
+    for (const product of productList) {
+      const catKey = product.categoryId ?? '__UNCATEGORIZED__';
+      const list = productsByCategory.get(catKey) ?? [];
+      list.push(product);
+      productsByCategory.set(catKey, list);
+    }
+
+    const popularProductIds = new Set<string>();
+    for (const [, catProducts] of productsByCategory) {
+      const popularLimit = catProducts.length < 5 ? 1 : catProducts.length < 10 ? 2 : 3;
+      const eligible = catProducts
+        .filter((p) => p.soldLast7Days >= 3)
+        .toSorted((a, b) => {
+          if (b.soldLast7Days !== a.soldLast7Days) {
+            return b.soldLast7Days - a.soldLast7Days;
+          }
+          if (b.lastSoldAt !== a.lastSoldAt) {
+            return b.lastSoldAt - a.lastSoldAt;
+          }
+          return a.productName.localeCompare(b.productName);
+        })
+        .slice(0, popularLimit);
+      for (const p of eligible) {
+        popularProductIds.add(p.productId);
+      }
+    }
+
+    return productList.map(
+      ({
+        popularityScore: _popularityScore,
+        soldLast7Days: _soldLast7Days,
+        soldLast30Days: _soldLast30Days,
+        paidOrderCount: _paidOrderCount,
+        lastSoldAt: _lastSoldAt,
+        ...product
+      }) => ({
+        ...product,
+        isPopular: popularProductIds.has(product.productId),
+      }),
+    );
   }
 
   async getStaffContext(storeId: string, actorId: string, permissionKeys: readonly string[]) {

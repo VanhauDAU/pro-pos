@@ -6345,6 +6345,33 @@ function OrderEditor({
     const matchesSearch = haystack.includes(normalizedCatalogSearch);
     return matchesSearch && (selectedCategory === 'ALL' || product.categoryId === selectedCategory);
   });
+  const visibleCatalogGroups = useMemo(() => {
+    const groups: Array<{
+      categoryId: string | null;
+      categoryName: string;
+      products: CatalogProduct[];
+    }> = [];
+    const groupMap = new Map<
+      string,
+      { categoryId: string | null; categoryName: string; products: CatalogProduct[] }
+    >();
+
+    for (const product of visibleCatalog) {
+      const key = product.categoryId ?? '__UNCATEGORIZED__';
+      let group = groupMap.get(key);
+      if (!group) {
+        group = {
+          categoryId: product.categoryId,
+          categoryName: product.categoryName || 'Chưa phân loại',
+          products: [],
+        };
+        groupMap.set(key, group);
+        groups.push(group);
+      }
+      group.products.push(product);
+    }
+    return groups;
+  }, [visibleCatalog]);
   const isPaymentPending = !isNew && quote.data?.order.status === 'PAYMENT_PENDING';
   const desktopCheckoutOpen =
     !isNew && Boolean(orderId) && isDesktopPayment && searchParams.get('checkout') === '1';
@@ -9343,6 +9370,34 @@ function OrderEditor({
                     </Button>
                   )}
                 </Empty>
+              ) : selectedCategory === 'ALL' ? (
+                <div className="staff-product-picker__grouped-list">
+                  {visibleCatalogGroups.map((group) => (
+                    <section
+                      key={group.categoryId ?? '__UNCATEGORIZED__'}
+                      className="staff-product-category-section"
+                    >
+                      <div className="staff-product-category-section__header">
+                        <span className="staff-product-category-section__title">
+                          {group.categoryName}
+                        </span>
+                        <span className="staff-product-category-section__count">
+                          {group.products.length}
+                        </span>
+                      </div>
+                      <div className="staff-product-grid">
+                        {group.products.map((product, index) => (
+                          <PosProductCard
+                            key={product.productId}
+                            product={product}
+                            isPriority={index < 12}
+                            onSelect={chooseProduct}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  ))}
+                </div>
               ) : (
                 <div className="staff-product-grid">
                   {visibleCatalog.map((product, index) => (

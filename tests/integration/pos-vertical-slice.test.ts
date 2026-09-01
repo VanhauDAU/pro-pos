@@ -1443,8 +1443,53 @@ describe('online POS vertical slice', () => {
       popular.id,
       alphabeticalFirst.id,
     ]);
-    expect(reorderedCatalog.map((product) => product.isPopular)).toEqual([true, false]);
+    // 1 sale is not enough for isPopular (minimum 3 sales in 7 days)
+    expect(reorderedCatalog.map((product) => product.isPopular)).toEqual([false, false]);
     expect(reorderedCatalog[0]).not.toHaveProperty('popularityScore');
+
+    // Add 2 more checkouts for popular product to reach 3 sales in 7 days
+    for (let i = 2; i <= 3; i++) {
+      const additionalOrder = await pos.openOrderCommand({
+        storeId: popularityStore.storeId,
+        actorId: popularityStore.ownerUserId,
+        requestId: `request-popularity-open-${i}`,
+        idempotencyKey: `popularity-open-${i}-${crypto.randomUUID()}`,
+        values: {
+          orderType: 'TAKEAWAY',
+          items: [
+            {
+              productId: popular.id,
+              variantId: popularVariant.id,
+              quantityMilli: 1_000,
+              note: null,
+              discount: null,
+            },
+          ],
+        },
+      });
+      await pos.checkout({
+        storeId: popularityStore.storeId,
+        actorId: popularityStore.ownerUserId,
+        requestId: `request-popularity-checkout-${i}`,
+        idempotencyKey: `popularity-checkout-${i}-${crypto.randomUUID()}`,
+        orderId: additionalOrder.order.id,
+        expectedOrderVersion: additionalOrder.order.version,
+        method: 'CASH',
+        cashReceivedVnd: additionalOrder.quote.totalVnd,
+      });
+    }
+
+    const popularCatalog = await pos.listCatalog(popularityStore.storeId);
+    expect(popularCatalog.map((product) => product.isPopular)).toEqual([true, false]);
+
+    // Verify orders older than 7 days fall out of 7-day isPopular ranking
+    const eightDaysAgo = Date.now() - 8 * 24 * 60 * 60 * 1000;
+    await env.DB.prepare('UPDATE takeaway_orders SET opened_at = ?, closed_at = ?')
+      .bind(eightDaysAgo, eightDaysAgo)
+      .run();
+
+    const expiredCatalog = await pos.listCatalog(popularityStore.storeId);
+    expect(expiredCatalog.every((product) => !product.isPopular)).toBe(true);
   });
 
   it('carries the active price-variant count from quote through order and invoice details', async () => {

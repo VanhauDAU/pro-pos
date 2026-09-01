@@ -53,14 +53,52 @@ function StaffPosRoute() {
   const hasWarmAreasBootstrap = Boolean(queryClient.getQueryData(['app-bootstrap', 'areas']));
   const querySurface = surface === 'shell' && hasWarmAreasBootstrap ? 'areas' : surface;
   const bootstrap = useQuery(appBootstrapQueryOptions(queryClient, querySurface));
+
+  if (bootstrap.isLoading || !bootstrap.data) {
+    if (bootstrap.error) {
+      return (
+        <div className="pos-app-splash" role="alert">
+          <div className="pos-app-splash__content">
+            <strong>Chưa thể tải dữ liệu POS</strong>
+            <div className="pos-app-splash__message">
+              {bootstrap.error instanceof Error ? bootstrap.error.message : 'Không thể kết nối máy chủ.'}
+            </div>
+            <button
+              type="button"
+              onClick={() => void bootstrap.refetch()}
+              style={{
+                marginTop: 16,
+                padding: '8px 20px',
+                borderRadius: 8,
+                background: '#0975f7',
+                color: '#fff',
+                border: 'none',
+                cursor: 'pointer',
+                fontWeight: 600,
+              }}
+            >
+              Thử lại
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return <PosAppSplash message="Đang nạp dữ liệu POS..." />;
+  }
+
+  if (bootstrap.data.auth.actor?.kind !== 'EMPLOYEE' || !bootstrap.data.pos) {
+    return <Navigate to="/?tab=employee&authError=SESSION_EXPIRED" replace />;
+  }
+
   const startupProps = {
     bootstrap: bootstrap.data,
-    bootstrapError: bootstrap.error,
-    bootstrapLoading: bootstrap.isLoading,
+    bootstrapError: null,
+    bootstrapLoading: false,
     retryBootstrap: () => void bootstrap.refetch(),
   };
+
   return (
-    <Suspense fallback={<PosAppSplash />}>
+    <Suspense fallback={<PosAppSplash message="Đang nạp dữ liệu POS..." />}>
       {surface === 'areas' ? (
         <StaffPosAreasPage {...startupProps} />
       ) : (

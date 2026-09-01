@@ -12396,13 +12396,13 @@ function StaffPosPortalReady({ bootstrap }: { bootstrap: AppBootstrapResponse })
 export function StaffPosPortalPage({
   bootstrap,
   bootstrapError,
-  bootstrapLoading,
+  bootstrapLoading = false,
   retryBootstrap,
 }: {
-  bootstrap: AppBootstrapResponse | undefined;
-  bootstrapError: Error | null;
-  bootstrapLoading: boolean;
-  retryBootstrap: () => void;
+  bootstrap?: AppBootstrapResponse;
+  bootstrapError?: Error | null;
+  bootstrapLoading?: boolean;
+  retryBootstrap?: () => void;
 }) {
   if (bootstrapLoading || !bootstrap) {
     return bootstrapError ? (

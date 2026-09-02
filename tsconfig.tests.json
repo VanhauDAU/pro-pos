@@ -34,6 +34,7 @@
     "src/printing",
     "src/client/features/guest/guest-assistant.ts",
     "src/client/features/auth/employee-login-cache.ts",
+    "src/client/features/auth/owner-login-cache.ts",
     "src/client/features/pos/payment-return-state.ts",
     "src/client/features/pos/payment-navigation.ts",
     "src/client/features/pos/pos-customer-access.ts",

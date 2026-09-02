@@ -2922,3 +2922,5 @@ export function SuperAdminPage() {
     </Layout>
   );
 }
+import 'antd/dist/reset.css';
+import '@client/styles/base.css';

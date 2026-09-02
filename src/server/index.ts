@@ -4,6 +4,7 @@ import { AppError } from '@server/lib/app-error';
 import { failure, success } from '@server/lib/response';
 import { clearCredentialCookie } from '@server/lib/cookies';
 import { activationRoutes, authRoutes } from '@server/routes/auth';
+import { appBootstrapRoutes } from '@server/routes/app-bootstrap';
 import { platformRoutes } from '@server/routes/platform';
 import { ownerStaffRoutes } from '@server/routes/owner-staff';
 import { ownerCatalogRoutes } from '@server/routes/owner-catalog';
@@ -98,6 +99,7 @@ app.get('/api/version', (c) =>
 );
 
 app.route('/api/v1/auth', authRoutes);
+app.route('/api/v1/app', appBootstrapRoutes);
 app.route('/api/v1/device-activations', activationRoutes);
 app.route('/api/v1/platform', platformRoutes);
 app.route('/api/v1/owner/staff', ownerStaffRoutes);

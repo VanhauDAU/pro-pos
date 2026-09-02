@@ -2,6 +2,29 @@ import { expect, test } from '@playwright/test';
 
 import { cancelOrder, createTimedDineInOrder } from './pos-fixtures';
 
+test('cold POS startup uses one bootstrap and one visible loading state', async ({ page }) => {
+  const startupRequests: string[] = [];
+  page.on('request', (request) => {
+    if (['fetch', 'xhr'].includes(request.resourceType())) {
+      startupRequests.push(new URL(request.url()).pathname);
+    }
+  });
+  await page.route('**/api/v1/app/bootstrap?surface=areas', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    await route.continue();
+  });
+
+  await page.goto('/pos/areas');
+  await expect(page.locator('.pos-app-splash')).toHaveCount(1);
+  await expect(page.locator('.staff-table-card--available').first()).toBeVisible();
+  await expect(page.locator('.pos-app-splash')).toHaveCount(0);
+
+  expect(startupRequests.filter((path) => path === '/api/v1/app/bootstrap')).toHaveLength(1);
+  expect(startupRequests.filter((path) => path === '/api/v1/auth/context')).toEqual([]);
+  expect(startupRequests.filter((path) => path === '/api/v1/pos/context')).toEqual([]);
+  expect(startupRequests.filter((path) => path === '/api/v1/pos/overview')).toEqual([]);
+});
+
 test('connected POS is idle without full QR-order or overview polling', async ({ page }) => {
   const apiRequests: string[] = [];
   page.on('request', (request) => {

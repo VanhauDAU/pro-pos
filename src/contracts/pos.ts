@@ -193,6 +193,25 @@ export interface PosOverviewSnapshot {
   serverNowMs: number;
 }
 
+export interface PosStaffContext {
+  storeId: string;
+  storeName: string;
+  employeeId: string;
+  employeeName: string;
+  storePhone?: string | null;
+  storeAddress?: string | null;
+  bankName?: string | null;
+  bankAccountNumber?: string | null;
+  bankAccountName?: string | null;
+  permissions: string[];
+  capabilities: {
+    posRealtime: boolean;
+    posCommandsV2: boolean;
+    posPaymentSnapshotV2: boolean;
+    posRealtimeDeltasV2: boolean;
+  };
+}
+
 export interface PosOverviewDelta {
   order?: PosOverviewOrder;
   tables?: PosOverviewTable[];

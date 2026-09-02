@@ -165,3 +165,5 @@ export function PlatformAccessPage() {
     </AuthLayout>
   );
 }
+import 'antd/dist/reset.css';
+import '@client/styles/base.css';

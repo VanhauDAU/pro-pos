@@ -837,3 +837,5 @@ export function OwnerPortalPage() {
     </ConfigProvider>
   );
 }
+import 'antd/dist/reset.css';
+import '@client/styles/base.css';

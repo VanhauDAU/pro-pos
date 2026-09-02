@@ -584,10 +584,13 @@ export class AuthService {
     return (await this.resolvePrincipalContext(rawSession, rawDevice)).principal;
   }
 
-  async context(
+  async applicationContext(
     rawSession?: string,
     rawDevice?: string,
-  ): Promise<AuthContextResponse & { sessionId: string | null }> {
+  ): Promise<{
+    context: AuthContextResponse & { sessionId: string | null };
+    principal: RequestPrincipal | null;
+  }> {
     const resolved = await this.resolvePrincipalContext(rawSession, rawDevice);
     const actor = resolved.principal?.actor ?? null;
     const csrfToken =
@@ -601,12 +604,22 @@ export class AuthService {
     if (device?.status === 'ACTIVE') allowedEntrypoints.push('EMPLOYEE');
 
     return {
-      actor,
-      device,
-      allowedEntrypoints,
-      csrfToken,
-      sessionId,
+      context: {
+        actor,
+        device,
+        allowedEntrypoints,
+        csrfToken,
+        sessionId,
+      },
+      principal: resolved.principal,
     };
+  }
+
+  async context(
+    rawSession?: string,
+    rawDevice?: string,
+  ): Promise<AuthContextResponse & { sessionId: string | null }> {
+    return (await this.applicationContext(rawSession, rawDevice)).context;
   }
 
   async logout(rawSession: string) {

@@ -61,7 +61,9 @@ function StaffPosRoute() {
           <div className="pos-app-splash__content">
             <strong>Chưa thể tải dữ liệu POS</strong>
             <div className="pos-app-splash__message">
-              {bootstrap.error instanceof Error ? bootstrap.error.message : 'Không thể kết nối máy chủ.'}
+              {bootstrap.error instanceof Error
+                ? bootstrap.error.message
+                : 'Không thể kết nối máy chủ.'}
             </div>
             <button
               type="button"

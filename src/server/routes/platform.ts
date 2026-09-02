@@ -127,11 +127,7 @@ platformRoutes.delete('/stores/:storeId/devices/:deviceId', async (c) => {
 });
 
 platformRoutes.post('/maintenance/cleanup', async (c) => {
-  const body = await parseJson(
-    c.req.raw,
-    z.object({ retentionDays: z.number().int().min(1).max(365).optional() }),
-  ).catch(() => ({ retentionDays: 7 }));
-  const result = await new MaintenanceService(c.env).runRetentionCleanup(body?.retentionDays ?? 7);
+  const result = await new MaintenanceService(c.env).runRetentionCleanup();
   return success(c, result);
 });
 

@@ -3,9 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { MaintenanceService } from '@server/services/maintenance-service';
 import { RETENTION_COMMAND_TABLES } from '@server/repositories/maintenance-repository';
 
-describe('7-Day Database Retention Cleanup Maintenance', () => {
-  it('cleans up logs, sessions, and events older than 7 days while keeping active data', async () => {
+describe('Database Retention Cleanup Maintenance', () => {
+  it('applies per-data retention while preserving permanent and active data', async () => {
     const now = Date.now();
+    const twentyDaysAgo = now - 20 * 24 * 60 * 60 * 1000;
     const tenDaysAgo = now - 10 * 24 * 60 * 60 * 1000;
     const twoDaysAgo = now - 2 * 24 * 60 * 60 * 1000;
     const inTwoDays = now + 2 * 24 * 60 * 60 * 1000;
@@ -28,22 +29,30 @@ describe('7-Day Database Retention Cleanup Maintenance', () => {
       .bind(userId, `user_${Math.random().toString(36).slice(2, 6)}`, now, now)
       .run();
 
-    // 1. Audit logs: 1 old (10 days), 1 fresh (2 days)
+    // 1. Operational audit expires after 7 days; security audit is permanent.
     const oldAuditId = `audit-old-${Math.random().toString(36).slice(2, 8)}`;
     const newAuditId = `audit-new-${Math.random().toString(36).slice(2, 8)}`;
+    const permanentAuditId = `audit-permanent-${Math.random().toString(36).slice(2, 8)}`;
 
     await env.DB.prepare(
       `INSERT INTO audit_logs (id, store_id, actor_user_id, action, entity_type, entity_id, request_id, created_at)
-       VALUES (?, ?, ?, 'USER_LOGIN', 'USER', ?, 'req-1', ?)`,
+       VALUES (?, ?, ?, 'ORDER_ITEM_UPDATED', 'ORDER', ?, 'req-1', ?)`,
     )
       .bind(oldAuditId, storeId, userId, userId, tenDaysAgo)
       .run();
 
     await env.DB.prepare(
       `INSERT INTO audit_logs (id, store_id, actor_user_id, action, entity_type, entity_id, request_id, created_at)
-       VALUES (?, ?, ?, 'USER_LOGIN', 'USER', ?, 'req-2', ?)`,
+       VALUES (?, ?, ?, 'ORDER_ITEM_UPDATED', 'ORDER', ?, 'req-2', ?)`,
     )
       .bind(newAuditId, storeId, userId, userId, twoDaysAgo)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO audit_logs (id, store_id, actor_user_id, action, entity_type, entity_id, request_id, created_at)
+       VALUES (?, ?, ?, 'ROLE_PERMISSIONS_UPDATED', 'ROLE', ?, 'req-permanent', ?)`,
+    )
+      .bind(permanentAuditId, storeId, userId, userId, twentyDaysAgo)
       .run();
 
     // 2. Staff notification events: 1 expired old, 1 active
@@ -70,9 +79,10 @@ describe('7-Day Database Retention Cleanup Maintenance', () => {
       .bind(newNotifId, storeId, `src-new-${Math.random()}`, twoDaysAgo, inTwoDays)
       .run();
 
-    // 3. Realtime events: 1 published 10 days ago, 1 published 2 days ago
+    // 3. Published realtime expires after 7 days; unpublished events never do.
     const oldRtId = `rt-old-${Math.random().toString(36).slice(2, 8)}`;
     const newRtId = `rt-new-${Math.random().toString(36).slice(2, 8)}`;
+    const pendingRtId = `rt-pending-${Math.random().toString(36).slice(2, 8)}`;
 
     await env.DB.prepare(
       `INSERT INTO realtime_events (
@@ -92,6 +102,16 @@ describe('7-Day Database Retention Cleanup Maintenance', () => {
        ) VALUES (?, ?, 1002, 1, 'pos.order.created', 'ORDER', 'ord-2', 1, 'req-2', '[]', '{}', ?, ?)`,
     )
       .bind(newRtId, storeId, twoDaysAgo, twoDaysAgo)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO realtime_events (
+         event_id, store_id, sequence, schema_version, event_type,
+         aggregate_type, aggregate_id, aggregate_version, request_id,
+         topics_json, data_json, occurred_at, published_at
+       ) VALUES (?, ?, 1003, 1, 'pos.order.changed', 'ORDER', 'ord-pending', 1, 'req-pending', '[]', '{}', ?, NULL)`,
+    )
+      .bind(pendingRtId, storeId, twentyDaysAgo)
       .run();
 
     // 4. Auth sessions: 1 revoked old (10 days), 1 active
@@ -412,6 +432,9 @@ describe('7-Day Database Retention Cleanup Maintenance', () => {
       freshTakeawayOrder: crypto.randomUUID(),
       oldPrintJob: crypto.randomUUID(),
       freshPrintJob: crypto.randomUUID(),
+      oldQueuedPrintJob: crypto.randomUUID(),
+      oldClaimedPrintJob: crypto.randomUUID(),
+      oldPrintingPrintJob: crypto.randomUUID(),
       activeAgent: crypto.randomUUID(),
       oldPairing: crypto.randomUUID(),
       freshPairing: crypto.randomUUID(),
@@ -446,7 +469,7 @@ describe('7-Day Database Retention Cleanup Maintenance', () => {
          status, attempt_count, created_at, completed_at
        ) VALUES (?, ?, 'idemp-old-pj', 'order', ?, 'receipt', 'COMPLETED', 1, ?, ?)`,
     )
-      .bind(cleanupIds.oldPrintJob, storeId, paidOrderId, tenDaysAgo, tenDaysAgo)
+      .bind(cleanupIds.oldPrintJob, storeId, paidOrderId, twentyDaysAgo, twentyDaysAgo)
       .run();
 
     await env.DB.prepare(
@@ -457,6 +480,46 @@ describe('7-Day Database Retention Cleanup Maintenance', () => {
     )
       .bind(cleanupIds.freshPrintJob, storeId, openOrderId, twoDaysAgo)
       .run();
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO print_jobs (
+           id, store_id, idempotency_key, document_type, document_id, printer_role,
+           status, attempt_count, created_at
+         ) VALUES (?, ?, ?, 'order', ?, 'receipt', 'QUEUED', 0, ?)`,
+      ).bind(
+        cleanupIds.oldQueuedPrintJob,
+        storeId,
+        `idemp-${cleanupIds.oldQueuedPrintJob}`,
+        openOrderId,
+        twentyDaysAgo,
+      ),
+      env.DB.prepare(
+        `INSERT INTO print_jobs (
+           id, store_id, idempotency_key, document_type, document_id, printer_role,
+           status, attempt_count, created_at, claimed_at
+         ) VALUES (?, ?, ?, 'order', ?, 'receipt', 'CLAIMED', 0, ?, ?)`,
+      ).bind(
+        cleanupIds.oldClaimedPrintJob,
+        storeId,
+        `idemp-${cleanupIds.oldClaimedPrintJob}`,
+        openOrderId,
+        twentyDaysAgo,
+        twentyDaysAgo,
+      ),
+      env.DB.prepare(
+        `INSERT INTO print_jobs (
+           id, store_id, idempotency_key, document_type, document_id, printer_role,
+           status, attempt_count, created_at, printing_at
+         ) VALUES (?, ?, ?, 'order', ?, 'receipt', 'PRINTING', 1, ?, ?)`,
+      ).bind(
+        cleanupIds.oldPrintingPrintJob,
+        storeId,
+        `idemp-${cleanupIds.oldPrintingPrintJob}`,
+        openOrderId,
+        twentyDaysAgo,
+        twentyDaysAgo,
+      ),
+    ]);
     await env.DB.batch([
       env.DB.prepare(
         `INSERT INTO pos_save_commands
@@ -496,8 +559,8 @@ describe('7-Day Database Retention Cleanup Maintenance', () => {
         storeId,
         paidOrderId,
         cleanupIds.oldSnapshot,
-        tenDaysAgo,
-        tenDaysAgo,
+        twentyDaysAgo,
+        twentyDaysAgo,
       ),
       env.DB.prepare(
         `INSERT INTO payment_snapshots
@@ -614,11 +677,18 @@ describe('7-Day Database Retention Cleanup Maintenance', () => {
       ),
     ]);
 
-    // Execute 7-day retention cleanup
+    // Execute the canonical retention policy.
     const service = new MaintenanceService(env);
-    const result = await service.runRetentionCleanup(7);
+    const result = await service.runRetentionCleanup();
 
-    expect(result.retentionDays).toBe(7);
+    expect(result.policy).toMatchObject({
+      operationalAuditDays: 7,
+      posSaveCommandDays: 7,
+      publishedRealtimeDays: 7,
+      staffNotificationDays: 3,
+      terminalPrintJobDays: 14,
+      paymentSnapshotDays: 14,
+    });
     expect(result.totalDeleted).toBeGreaterThanOrEqual(7);
     expect(result.tables['audit_logs']).toBeGreaterThanOrEqual(1);
     expect(result.tables['staff_notification_events']).toBeGreaterThanOrEqual(1);
@@ -646,6 +716,11 @@ describe('7-Day Database Retention Cleanup Maintenance', () => {
       .first();
     expect(oldAudit).toBeNull();
 
+    const permanentAudit = await env.DB.prepare('SELECT id FROM audit_logs WHERE id = ?')
+      .bind(permanentAuditId)
+      .first();
+    expect(permanentAudit).not.toBeNull();
+
     const oldNotif = await env.DB.prepare('SELECT id FROM staff_notification_events WHERE id = ?')
       .bind(oldNotifId)
       .first();
@@ -655,6 +730,13 @@ describe('7-Day Database Retention Cleanup Maintenance', () => {
       .bind(oldRtId)
       .first();
     expect(oldRt).toBeNull();
+
+    const pendingRt = await env.DB.prepare(
+      'SELECT event_id FROM realtime_events WHERE event_id = ?',
+    )
+      .bind(pendingRtId)
+      .first();
+    expect(pendingRt).not.toBeNull();
 
     const oldSess = await env.DB.prepare('SELECT id FROM auth_sessions WHERE id = ?')
       .bind(oldSessionId)
@@ -787,6 +869,9 @@ describe('7-Day Database Retention Cleanup Maintenance', () => {
           ['order_call_batches', cleanupIds.activeCallBatch],
           ['create_takeaway_order_commands', cleanupIds.freshTakeawayCommand],
           ['print_jobs', cleanupIds.freshPrintJob],
+          ['print_jobs', cleanupIds.oldQueuedPrintJob],
+          ['print_jobs', cleanupIds.oldClaimedPrintJob],
+          ['print_jobs', cleanupIds.oldPrintingPrintJob],
         ] as const
       ).map(async ([table, id]) => {
         const retained = await env.DB.prepare(`SELECT 1 AS found FROM ${table} WHERE id = ?`)
@@ -812,5 +897,29 @@ describe('7-Day Database Retention Cleanup Maintenance', () => {
         .bind(cleanupIds.activeAgent)
         .first(),
     ).not.toBeNull();
+  });
+
+  it('uses the UNIQUE autoindex for cursor replay after dropping the duplicate index', async () => {
+    const indexes = await env.DB.prepare('PRAGMA index_list(realtime_events)').all<{
+      name: string;
+      origin: string;
+    }>();
+    expect(indexes.results.map((index) => index.name)).not.toContain(
+      'idx_realtime_events_store_sequence',
+    );
+
+    const plan = await env.DB.prepare(
+      `EXPLAIN QUERY PLAN
+       SELECT event_id, sequence
+       FROM realtime_events
+       WHERE store_id = ? AND sequence > ?
+       ORDER BY sequence ASC
+       LIMIT ?`,
+    )
+      .bind('query-plan-store', 0, 500)
+      .all<{ detail: string }>();
+    expect(plan.results.map((row) => row.detail).join('\n')).toMatch(
+      /sqlite_autoindex_realtime_events_\d+/,
+    );
   });
 });

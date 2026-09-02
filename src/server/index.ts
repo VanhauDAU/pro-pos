@@ -182,11 +182,18 @@ export default {
   async scheduled(controller: ScheduledController, env: CloudflareBindings) {
     const dispatcher = new RealtimeDispatcher(env);
     if (controller.cron === '17 18 * * *') {
-      await Promise.all([
-        dispatcher.dispatchPendingStores(),
-        dispatcher.cleanupPublished(),
-        new MaintenanceService(env).runRetentionCleanup(7),
-      ]);
+      await dispatcher.dispatchPendingStores();
+      const cleanup = await new MaintenanceService(env).runRetentionCleanup();
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          message: 'database retention cleanup completed',
+          durationMs: cleanup.durationMs,
+          totalDeleted: cleanup.totalDeleted,
+          tables: cleanup.tables,
+          cutoffs: cleanup.cutoffs,
+        }),
+      );
       return;
     }
     return;

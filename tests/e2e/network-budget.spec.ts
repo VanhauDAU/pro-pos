@@ -2,6 +2,29 @@ import { expect, test } from '@playwright/test';
 
 import { cancelOrder, createTimedDineInOrder } from './pos-fixtures';
 
+test('cold POS startup uses one bootstrap and one visible loading state', async ({ page }) => {
+  const startupRequests: string[] = [];
+  page.on('request', (request) => {
+    if (['fetch', 'xhr'].includes(request.resourceType())) {
+      startupRequests.push(new URL(request.url()).pathname);
+    }
+  });
+  await page.route('**/api/v1/app/bootstrap?surface=areas', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    await route.continue();
+  });
+
+  await page.goto('/pos/areas');
+  await expect(page.locator('.pos-app-splash')).toHaveCount(1);
+  await expect(page.locator('.staff-table-card--available').first()).toBeVisible();
+  await expect(page.locator('.pos-app-splash')).toHaveCount(0);
+
+  expect(startupRequests.filter((path) => path === '/api/v1/app/bootstrap')).toHaveLength(1);
+  expect(startupRequests.filter((path) => path === '/api/v1/auth/context')).toEqual([]);
+  expect(startupRequests.filter((path) => path === '/api/v1/pos/context')).toEqual([]);
+  expect(startupRequests.filter((path) => path === '/api/v1/pos/overview')).toEqual([]);
+});
+
 test('connected POS is idle without full QR-order or overview polling', async ({ page }) => {
   const apiRequests: string[] = [];
   page.on('request', (request) => {
@@ -45,7 +68,7 @@ test('connected QR confirmation modal fetches once without five-second polling',
   expect(qrOrderRequests).toEqual([]);
 });
 
-test('connected POS refreshes overview every 15 seconds only while a table is running', async ({
+test('connected POS does not poll a running table within the first 30 seconds', async ({
   page,
 }) => {
   const fixture = await createTimedDineInOrder(page);
@@ -64,11 +87,33 @@ test('connected POS refreshes overview every 15 seconds only while a table is ru
     overviewRequests.length = 0;
     await page.waitForTimeout(32_000);
 
-    expect(overviewRequests.length).toBeGreaterThanOrEqual(2);
-    expect(overviewRequests.length).toBeLessThanOrEqual(3);
-    if (overviewRequests.length >= 2) {
-      expect(overviewRequests[1]! - overviewRequests[0]!).toBeGreaterThanOrEqual(13_500);
-    }
+    expect(overviewRequests).toEqual([]);
+  } finally {
+    await cancelOrder(page, fixture.orderId);
+  }
+});
+
+test('connected POS does not poll a running quote within the first 30 seconds', async ({
+  page,
+}) => {
+  const fixture = await createTimedDineInOrder(page);
+  try {
+    const quoteRequests: number[] = [];
+    page.on('request', (request) => {
+      if (
+        request.method() === 'GET' &&
+        new URL(request.url()).pathname === `/api/v1/pos/orders/${fixture.orderId}/quote`
+      ) {
+        quoteRequests.push(Date.now());
+      }
+    });
+    await page.goto(`/pos/orders/${fixture.orderId}`);
+    await expect(page.getByLabel('Trạng thái kết nối')).toContainText('Trực tiếp');
+    await expect(page.getByText('Đang xác minh dữ liệu mới nhất của đơn...')).toBeHidden();
+    quoteRequests.length = 0;
+    await page.waitForTimeout(32_000);
+
+    expect(quoteRequests).toEqual([]);
   } finally {
     await cancelOrder(page, fixture.orderId);
   }

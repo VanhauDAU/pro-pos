@@ -8,6 +8,8 @@ export const posPerformanceMetricNameSchema = z.enum([
   'TAP_TO_VERIFIED',
   'MUTATION_ACK',
   'API_REQUEST',
+  'STARTUP_SHELL',
+  'STARTUP_READY',
 ]);
 
 export const posPerformanceContextSchema = z.enum([

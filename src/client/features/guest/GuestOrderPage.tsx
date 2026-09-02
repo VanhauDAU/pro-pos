@@ -2071,3 +2071,5 @@ export function GuestOrderPage() {
     </div>
   );
 }
+import 'antd/dist/reset.css';
+import '@client/styles/base.css';

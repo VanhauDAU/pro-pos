@@ -1,3 +1,6 @@
+import 'antd/dist/reset.css';
+import '@client/styles/base.css';
+
 import {
   ArrowLeftOutlined,
   DesktopOutlined,
@@ -10,20 +13,31 @@ import {
   UserOutlined,
 } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Avatar, Button, Checkbox, Form, Input, Popconfirm, Spin } from 'antd';
+import { Alert, Avatar, Button, Checkbox, Form, Input, Popconfirm, Result } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 
 import type { AuthContextResponse, LoginResponse } from '@contracts/auth';
 
-import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
+import { ApiError, jsonRequest } from '@client/lib/api';
+import {
+  appBootstrapQueryOptions,
+  resetAppBootstrap,
+} from '@client/features/bootstrap/app-bootstrap';
+import { PosAppSplash } from '@client/features/pos/PosAppSplash';
 
 import { AuthLayout } from './AuthLayout';
+import { authContextAfterEmployeeLogin } from './employee-login-cache';
+import { authContextAfterOwnerLogin } from './owner-login-cache';
 
 interface EmployeeFormValues {
   username: string;
   pin: string;
+}
+
+export function NotFoundPage() {
+  return <Result status="404" title="Không tìm thấy trang" />;
 }
 
 interface RememberedEmployee {
@@ -286,6 +300,7 @@ export function LoginPage() {
     getRememberedEmployee(),
   );
   const [isSwitchingAccount, setIsSwitchingAccount] = useState(false);
+  const [isRedirectingToPos, setIsRedirectingToPos] = useState(false);
 
   const [ownerUsername, setOwnerUsername] = useState(() => {
     try {
@@ -297,12 +312,34 @@ export function LoginPage() {
   const [ownerPassword, setOwnerPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
 
-  const context = useQuery({
-    queryKey: ['auth-context'],
-    queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
-  });
+  const bootstrap = useQuery(appBootstrapQueryOptions(queryClient, 'areas'));
+  const context = {
+    data: bootstrap.data?.auth,
+    isLoading: bootstrap.isLoading,
+    isError: bootstrap.isError,
+  };
 
   const deviceIsActive = context.data?.device?.status === 'ACTIVE';
+
+  useEffect(() => {
+    if (activeTab === 'employee' || rememberedEmployee) {
+      const idleWindow = window as Window & {
+        requestIdleCallback?: (callback: () => void) => number;
+      };
+      if (idleWindow.requestIdleCallback) {
+        idleWindow.requestIdleCallback(() => {
+          void import('@client/features/pos/StaffPosAreasPage');
+          void import('@client/features/pos/StaffPosPortalPage');
+        });
+      } else {
+        const timer = setTimeout(() => {
+          void import('@client/features/pos/StaffPosAreasPage');
+          void import('@client/features/pos/StaffPosPortalPage');
+        }, 300);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [activeTab, rememberedEmployee]);
 
   useEffect(() => {
     const authErrorParam = searchParams.get('authError');
@@ -352,7 +389,7 @@ export function LoginPage() {
     loginInFlightRef.current = true;
     setSubmitting(true);
     try {
-      await jsonRequest<LoginResponse>('/api/v1/auth/owner/login', {
+      const response = await jsonRequest<LoginResponse>('/api/v1/auth/owner/login', {
         username: ownerUsername.trim(),
         password: ownerPassword,
         rememberMe,
@@ -366,9 +403,13 @@ export function LoginPage() {
       } catch {
         // ignore
       }
+      queryClient.setQueryData<AuthContextResponse>(
+        ['auth-context'],
+        authContextAfterOwnerLogin(context.data, response),
+      );
+      resetAppBootstrap(queryClient);
       setLoginSuccess({ name: ownerUsername.trim(), role: 'owner' });
       toast.success('Đăng nhập Chủ cửa hàng thành công!');
-      await queryClient.invalidateQueries({ queryKey: ['auth-context'] });
       setTimeout(() => {
         navigate('/owner', { replace: true });
       }, 450);
@@ -408,13 +449,20 @@ export function LoginPage() {
       };
       setRememberedEmployee(savedInfo);
       setRememberedEmployeeState(savedInfo);
-      setLoginSuccess({ name: savedInfo.displayName, role: 'employee' });
+      setIsRedirectingToPos(true);
+      const seededAuthContext = authContextAfterEmployeeLogin(context.data, response);
+      await Promise.all([
+        import('@client/features/pos/StaffPosAreasPage'),
+        import('@client/features/pos/StaffPosPortalPage'),
+        queryClient.fetchQuery(appBootstrapQueryOptions(queryClient, 'areas')),
+      ]);
+      if (seededAuthContext) {
+        queryClient.setQueryData<AuthContextResponse>(['auth-context'], seededAuthContext);
+      }
       toast.success(`Xin chào, ${savedInfo.displayName}!`);
-      await queryClient.invalidateQueries({ queryKey: ['auth-context'] });
-      setTimeout(() => {
-        navigate('/pos', { replace: true });
-      }, 450);
+      navigate('/pos', { replace: true });
     } catch (loginError) {
+      setIsRedirectingToPos(false);
       const retryAfter = retryAfterSeconds(loginError);
       setEmployeeRetryAfterSeconds(retryAfter);
       const msg =
@@ -502,8 +550,8 @@ export function LoginPage() {
     void executeEmployeeLogin(values.username, pinValue || values.pin);
   };
 
-  if (context.isLoading) {
-    return <Spin fullscreen description="Đang kiểm tra phiên đăng nhập và thiết bị" />;
+  if (context.isLoading || isRedirectingToPos) {
+    return <PosAppSplash message="Đang nạp dữ liệu POS..." />;
   }
   if (context.isError || !context.data) {
     return (

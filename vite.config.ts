@@ -32,7 +32,7 @@ export default defineConfig({
                   tags: ['$initial'],
                   priority: 20,
                   minSize: 20_000,
-                  maxSize: 500_000,
+                  maxSize: 4_000_000,
                 },
                 {
                   name: 'vendor',
@@ -41,7 +41,7 @@ export default defineConfig({
                   entriesAware: true,
                   entriesAwareMergeThreshold: 10_000,
                   minSize: 20_000,
-                  maxSize: 500_000,
+                  maxSize: 4_000_000,
                 },
               ],
             },
@@ -71,7 +71,7 @@ export default defineConfig({
       srcDir: 'src/client',
       filename: 'sw.js',
       registerType: 'prompt',
-      includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
+      includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'pro-pos-logo-black.svg'],
       manifest: {
         id: '/',
         name: 'Pro POS',
@@ -80,7 +80,7 @@ export default defineConfig({
         theme_color: '#0D7CFF',
         background_color: '#ffffff',
         display: 'standalone',
-        start_url: '/',
+        start_url: '/pos',
         icons: [
           {
             src: '/pwa-192x192.png',

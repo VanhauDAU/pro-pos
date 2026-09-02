@@ -86,6 +86,19 @@ describe('Owner and POS activation invariants', () => {
     await seedStore();
   });
 
+  it('returns one anonymous app bootstrap without POS data', async () => {
+    const response = await SELF.fetch(`${ORIGIN}/api/v1/app/bootstrap?surface=areas`);
+    expect(response.status).toBe(200);
+    const data = await jsonData<{
+      auth: { actor: null; device: null };
+      pos: null;
+    }>(response);
+    expect(data.auth.actor).toBeNull();
+    expect(data.auth.device).toBeNull();
+    expect(data.pos).toBeNull();
+    expect(response.headers.get('Server-Timing')).toContain('auth;dur=');
+  });
+
   it('logs in Owner using username and password', async () => {
     const login = await SELF.fetch(`${ORIGIN}/api/v1/auth/owner/login`, {
       method: 'POST',
@@ -107,6 +120,17 @@ describe('Owner and POS activation invariants', () => {
     expect(data.actor.kind).toBe('OWNER');
     expect(data.actor.displayName).toBe('Pilot Owner');
     expect(data.csrfToken).toBeTruthy();
+
+    const sessionCookie = cookieValue(login, '__Host-propos-session')!;
+    const bootstrap = await SELF.fetch(`${ORIGIN}/api/v1/app/bootstrap?surface=areas`, {
+      headers: { Cookie: sessionCookie },
+    });
+    const bootstrapData = await jsonData<{
+      auth: { actor: { kind: string } };
+      pos: null;
+    }>(bootstrap);
+    expect(bootstrapData.auth.actor.kind).toBe('OWNER');
+    expect(bootstrapData.pos).toBeNull();
   });
 
   it('rejects Owner login with incorrect password', async () => {
@@ -700,6 +724,56 @@ describe('Owner and POS activation invariants', () => {
       kind: 'EMPLOYEE',
       displayName: 'Nhân viên thử nghiệm',
     });
+
+    const sessionCookie = cookieValue(login, '__Host-propos-session')!;
+    const bootstrap = await SELF.fetch(`${ORIGIN}/api/v1/app/bootstrap?surface=areas`, {
+      headers: { Cookie: `${deviceCookie}; ${sessionCookie}` },
+    });
+    expect(bootstrap.status).toBe(200);
+    const bootstrapData = await jsonData<{
+      auth: { actor: { kind: string }; csrfToken: string };
+      pos: {
+        context: { employeeName: string; permissions: string[] };
+        overview: { tables: unknown[]; orders: unknown[]; serverNowMs: number };
+      };
+    }>(bootstrap);
+    expect(bootstrapData.auth.actor.kind).toBe('EMPLOYEE');
+    expect(bootstrapData.auth.csrfToken).toBeTruthy();
+    expect(bootstrapData.pos.context.employeeName).toBe('Nhân viên thử nghiệm');
+    expect(bootstrapData.pos.context.permissions).toContain('table.view');
+    expect(bootstrapData.pos.overview.tables).toEqual([]);
+    expect(bootstrapData.pos.overview.orders).toEqual([]);
+    expect(bootstrap.headers.get('Server-Timing')).toContain('pos_context;dur=');
+    expect(bootstrap.headers.get('Server-Timing')).toContain('overview;dur=');
+
+    const emptyRole = await new StaffService(env).createRole(store!.id, 'Không xem khu vực', []);
+    await new StaffService(env).createEmployee({
+      storeId: store!.id,
+      displayName: 'Nhân viên không có quyền',
+      username: 'employee.no-area',
+      pin: '5678',
+      roleId: emptyRole.id,
+      permissionKeys: [],
+    });
+    const restrictedLogin = await SELF.fetch(`${ORIGIN}/api/v1/auth/employee/login`, {
+      method: 'POST',
+      headers: {
+        Origin: ORIGIN,
+        'Content-Type': 'application/json',
+        Cookie: deviceCookie!,
+      },
+      body: JSON.stringify({ username: 'employee.no-area', pin: '5678' }),
+    });
+    const restrictedSession = cookieValue(restrictedLogin, '__Host-propos-session')!;
+    const restrictedBootstrap = await SELF.fetch(`${ORIGIN}/api/v1/app/bootstrap?surface=areas`, {
+      headers: { Cookie: `${deviceCookie}; ${restrictedSession}` },
+    });
+    const restrictedData = await jsonData<{
+      pos: { context: { permissions: string[] }; overview: null };
+    }>(restrictedBootstrap);
+    expect(restrictedData.pos.context.permissions).toEqual([]);
+    expect(restrictedData.pos.overview).toBeNull();
+    expect(restrictedBootstrap.headers.get('Server-Timing')).not.toContain('overview;dur=');
   });
 
   it('handles GET /api/v1/auth/access/logout by clearing session and redirecting to Access bridge', async () => {

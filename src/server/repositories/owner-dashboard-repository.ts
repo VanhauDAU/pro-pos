@@ -30,6 +30,20 @@ export interface RawLineItemRow {
 export class OwnerDashboardRepository {
   constructor(private readonly db: D1Database) {}
 
+  async getStoreSettings(storeId: string) {
+    return this.db
+      .prepare(
+        `SELECT
+           s.timezone,
+           COALESCE(ss.business_day_cutoff_minutes, 0) AS businessDayCutoffMinutes
+         FROM stores s
+         LEFT JOIN store_settings ss ON ss.store_id = s.id
+         WHERE s.id = ?`,
+      )
+      .bind(storeId)
+      .first<{ timezone: string; businessDayCutoffMinutes: number }>();
+  }
+
   async countActiveCustomers(storeId: string) {
     const row = await this.db
       .prepare("SELECT COUNT(*) AS count FROM customers WHERE store_id = ? AND status = 'ACTIVE'")

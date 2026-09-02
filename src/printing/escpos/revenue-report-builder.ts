@@ -54,6 +54,9 @@ export function buildEscPosRevenueReport(
     line(padRow(sanitize(left), sanitize(right), width));
   const wrapped = (value: string) => wrapTextToWidth(sanitize(value), width).forEach(line);
   const report = snapshot.report;
+  const timeRevenue = report.summary.timeRevenue ?? 0;
+  const goodsRevenue =
+    report.summary.goodsRevenue ?? Math.max(0, report.summary.grossRevenue - timeRevenue);
   const currency = mode === 'UNACCENTED' ? 'd' : 'đ';
   const reportTitle = {
     OVERVIEW: 'DOANH THU TONG QUAN',
@@ -95,7 +98,9 @@ export function buildEscPosRevenueReport(
   }
   pair('TB doanh thu/HD', formatMoney(report.summary.averageRevenuePerInvoice, currency));
   line(divider);
-  pair('Tien hang', formatMoney(report.summary.grossRevenue, currency));
+  pair('Tien hang', formatMoney(goodsRevenue, currency));
+  pair('Tien gio', formatMoney(timeRevenue, currency));
+  pair('Tong truoc giam', formatMoney(report.summary.grossRevenue, currency));
   pair('Tien huy', formatMoney(report.summary.cancelledAmount, currency));
   pair('Giam gia', formatMoney(report.summary.discountAmount, currency));
   parts.push(ESC_POS.boldOn);

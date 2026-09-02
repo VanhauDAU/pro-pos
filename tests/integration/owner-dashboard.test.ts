@@ -154,6 +154,19 @@ describe('Owner Dashboard Real Analytics (Acceptance Test)', () => {
       expectedOrderVersion: 1,
     });
 
+    const checkout1At = Date.now();
+    const checkout1StartedAt = checkout1At - 60 * 60_000;
+    await env.DB.batch([
+      env.DB.prepare('UPDATE time_sessions SET started_at = ? WHERE order_id = ?').bind(
+        checkout1StartedAt,
+        open1.orderId,
+      ),
+      env.DB.prepare('UPDATE table_time_segments SET started_at = ? WHERE order_id = ?').bind(
+        checkout1StartedAt,
+        open1.orderId,
+      ),
+    ]);
+
     const checkout1 = await pos.checkout({
       storeId,
       actorId: ownerUserId,
@@ -162,7 +175,8 @@ describe('Owner Dashboard Real Analytics (Acceptance Test)', () => {
       orderId: open1.orderId,
       expectedOrderVersion: 2,
       method: 'CASH',
-      cashReceivedVnd: 100_000,
+      cashReceivedVnd: 200_000,
+      now: checkout1At,
     });
     expect(checkout1.invoiceId).toBeDefined();
 
@@ -339,8 +353,14 @@ describe('Owner Dashboard Real Analytics (Acceptance Test)', () => {
       completedInvoiceCount: 2,
       cancelledOrderCount: 0,
       productQuantity: 5,
+      goodsRevenue: 80_000,
+      timeRevenue: 60_000,
+      grossRevenue: 140_000,
       netRevenue: data.summary.revenue,
     });
+    expect(revenueReport.summary.goodsRevenue! + revenueReport.summary.timeRevenue!).toBe(
+      revenueReport.summary.grossRevenue,
+    );
     expect(revenueReport.paymentMethods).toEqual([]);
     expect(revenueReport.orderTypes).toEqual([]);
     const paymentReport = await new OwnerRevenueReportService(env).getRevenueReport(storeId, {
@@ -414,6 +434,11 @@ describe('Owner Dashboard Real Analytics (Acceptance Test)', () => {
     expect(job).toMatchObject({ documentType: 'revenue_report', status: 'QUEUED' });
     const snapshot = await service.get(storeId, job!.documentId);
     expect(snapshot.report.summary.completedInvoiceCount).toBe(2);
+    expect(snapshot.report.summary.goodsRevenue).toBe(80_000);
+    expect(snapshot.report.summary.timeRevenue).toBe(60_000);
+    expect(snapshot.report.summary.goodsRevenue! + snapshot.report.summary.timeRevenue!).toBe(
+      snapshot.report.summary.grossRevenue,
+    );
     expect(snapshot.requestedByName).toBe('Store Owner');
 
     const productService = new ProductReportPrintService(env);
@@ -568,5 +593,128 @@ describe('Owner Dashboard Real Analytics (Acceptance Test)', () => {
     // Verify dashboard report reflects the deletion
     const dataAfter = await dashboardService.getDashboardData(storeId, { range: 'today' });
     expect(dataAfter.summary.invoiceCount).toBe(1);
+  });
+
+  it('correctly calculates today range and hourly timeline in store timezone (Asia/Ho_Chi_Minh) across midnight', async () => {
+    const platform = new PlatformService(env);
+    const tzStore = await platform.createStore({
+      name: 'Timezone Dashboard Test Store',
+      ownerDisplayName: 'Tz Owner',
+      ownerEmail: `tz.owner.${crypto.randomUUID()}@example.com`,
+    });
+    const catalog = new CatalogService(env);
+    const prod = await catalog.createProduct(tzStore.storeId, {
+      name: 'Test Drink',
+      productType: 'QUANTITY',
+      variants: [{ name: 'Default', salePriceVnd: 50_000, costPriceVnd: 0, promptPrice: false }],
+    });
+
+    const pos = new PosService(env);
+    const dashboard = new OwnerDashboardService(env);
+
+    // Case: At 02:34 AM ICT on Sep 1, 2026 (which is 19:34 UTC on Aug 31, 2026):
+    // 1. Invoice created on Aug 31 at 15:00 ICT (08:00 UTC) - yesterday
+    // 2. Invoice created on Sep 1 at 01:00 ICT (18:00 UTC on Aug 31) - today
+    const aug31_15h_ICT = Date.UTC(2026, 7, 31, 8, 0, 0); // 15:00 ICT
+    const sep1_01h_ICT = Date.UTC(2026, 7, 31, 18, 0, 0); // 01:00 ICT Sep 1
+
+    const variants = await env.DB.prepare('SELECT id FROM product_variants WHERE product_id = ?')
+      .bind(prod.id)
+      .all<{ id: string }>();
+    const variantId = variants.results[0]!.id;
+
+    // Checkout #1 on Aug 31
+    const order1 = await pos.openOrderCommand({
+      storeId: tzStore.storeId,
+      actorId: tzStore.ownerUserId,
+      requestId: 'tz-req-1',
+      idempotencyKey: 'tz-key-1',
+      values: {
+        orderType: 'TAKEAWAY',
+        items: [
+          {
+            productId: prod.id,
+            variantId,
+            quantityMilli: 1000,
+            note: null,
+            discount: null,
+          },
+        ],
+      },
+    });
+    await pos.checkout({
+      storeId: tzStore.storeId,
+      actorId: tzStore.ownerUserId,
+      requestId: 'tz-pay-1',
+      idempotencyKey: 'tz-pay-key-1',
+      orderId: order1.order.id,
+      expectedOrderVersion: order1.order.version,
+      method: 'CASH',
+      cashReceivedVnd: 50_000,
+    });
+    await env.DB.prepare('UPDATE takeaway_invoices SET issued_at = ? WHERE order_id = ?')
+      .bind(aug31_15h_ICT, order1.order.id)
+      .run();
+
+    // Checkout #2 on Sep 1
+    const order2 = await pos.openOrderCommand({
+      storeId: tzStore.storeId,
+      actorId: tzStore.ownerUserId,
+      requestId: 'tz-req-2',
+      idempotencyKey: 'tz-key-2',
+      values: {
+        orderType: 'TAKEAWAY',
+        items: [
+          {
+            productId: prod.id,
+            variantId,
+            quantityMilli: 1000,
+            note: null,
+            discount: null,
+          },
+        ],
+      },
+    });
+    await pos.checkout({
+      storeId: tzStore.storeId,
+      actorId: tzStore.ownerUserId,
+      requestId: 'tz-pay-2',
+      idempotencyKey: 'tz-pay-key-2',
+      orderId: order2.order.id,
+      expectedOrderVersion: order2.order.version,
+      method: 'CASH',
+      cashReceivedVnd: 50_000,
+    });
+    await env.DB.prepare('UPDATE takeaway_invoices SET issued_at = ? WHERE order_id = ?')
+      .bind(sep1_01h_ICT, order2.order.id)
+      .run();
+
+    // When querying custom range for Sep 1 in ICT:
+    const sep1Dashboard = await dashboard.getDashboardData(tzStore.storeId, {
+      range: 'custom',
+      dateFrom: '2026-09-01',
+      dateTo: '2026-09-01',
+    });
+
+    // Only order #2 should be in Sep 1 dashboard
+    expect(sep1Dashboard.summary.invoiceCount).toBe(1);
+    expect(sep1Dashboard.summary.revenue).toBe(50_000);
+    // Order #2 was at 01:00 ICT, so hour 1 in paymentTimeChart has 50k
+    expect(sep1Dashboard.paymentTimeChart[1]!.revenue).toBe(50_000);
+    expect(sep1Dashboard.paymentTimeChart[1]!.invoiceCount).toBe(1);
+    // Other hours should have 0
+    expect(sep1Dashboard.paymentTimeChart[15]!.revenue).toBe(0);
+
+    // Querying custom range for Aug 31 in ICT:
+    const aug31Dashboard = await dashboard.getDashboardData(tzStore.storeId, {
+      range: 'custom',
+      dateFrom: '2026-08-31',
+      dateTo: '2026-08-31',
+    });
+    expect(aug31Dashboard.summary.invoiceCount).toBe(1);
+    expect(aug31Dashboard.summary.revenue).toBe(50_000);
+    // Order #1 was at 15:00 ICT, so hour 15 in paymentTimeChart has 50k
+    expect(aug31Dashboard.paymentTimeChart[15]!.revenue).toBe(50_000);
+    expect(aug31Dashboard.paymentTimeChart[1]!.revenue).toBe(0);
   });
 });

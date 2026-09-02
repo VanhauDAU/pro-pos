@@ -21,7 +21,7 @@ const regressionCeilings = {
 const budgets = process.env.PERF_BUDGET_STRICT === 'true' ? targets : regressionCeilings;
 
 const entryKey = Object.keys(manifest).find((key) => manifest[key].isEntry);
-const posKey = Object.keys(manifest).find((key) => key.endsWith('/StaffPosPortalPage.tsx'));
+const posKey = Object.keys(manifest).find((key) => key.endsWith('/StaffPosAreasPage.tsx'));
 if (!entryKey || !posKey) throw new Error('Could not resolve entry/POS chunks from Vite manifest.');
 
 function collectImports(key, output = new Set()) {

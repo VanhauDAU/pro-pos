@@ -27,7 +27,6 @@ import type {
   TimeSessionRow,
 } from '@server/repositories/pos-repository';
 import { AuditRepository } from '@server/repositories/audit-repository';
-import { AuthorizationRepository } from '@server/repositories/authorization-repository';
 import { CustomerService } from '@server/services/customer-service';
 import { PromotionService } from '@server/services/promotion-service';
 import { PromotionRepository } from '@server/repositories/promotion-repository';
@@ -563,7 +562,7 @@ export class PosService {
         if (!summary) throw new Error(`Missing overview summary for active order ${order.id}`);
         return {
           id: order.id,
-          displayCode: order.display_code,
+          displayCode: order.display_code ?? '',
           orderType: order.order_type,
           status: order.status,
           version: order.version,
@@ -2160,6 +2159,11 @@ export class PosService {
         categoryId: row.categoryId,
         categoryName: row.categoryName,
         unitName: row.unitName,
+        popularityScore: row.popularityScore,
+        soldLast7Days: row.soldLast7Days,
+        soldLast30Days: row.soldLast30Days,
+        paidOrderCount: row.paidOrderCount,
+        lastSoldAt: row.lastSoldAt,
         variants: [],
       };
       product.variants.push({
@@ -2170,16 +2174,54 @@ export class PosService {
       });
       products.set(row.productId, product);
     }
-    return [...products.values()];
+    const productList = [...products.values()];
+
+    const productsByCategory = new Map<string, typeof productList>();
+    for (const product of productList) {
+      const catKey = product.categoryId ?? '__UNCATEGORIZED__';
+      const list = productsByCategory.get(catKey) ?? [];
+      list.push(product);
+      productsByCategory.set(catKey, list);
+    }
+
+    const popularProductIds = new Set<string>();
+    for (const [, catProducts] of productsByCategory) {
+      const popularLimit = catProducts.length < 5 ? 1 : catProducts.length < 10 ? 2 : 3;
+      const eligible = catProducts
+        .filter((p) => p.soldLast7Days >= 3)
+        .toSorted((a, b) => {
+          if (b.soldLast7Days !== a.soldLast7Days) {
+            return b.soldLast7Days - a.soldLast7Days;
+          }
+          if (b.lastSoldAt !== a.lastSoldAt) {
+            return b.lastSoldAt - a.lastSoldAt;
+          }
+          return a.productName.localeCompare(b.productName);
+        })
+        .slice(0, popularLimit);
+      for (const p of eligible) {
+        popularProductIds.add(p.productId);
+      }
+    }
+
+    return productList.map(
+      ({
+        popularityScore: _popularityScore,
+        soldLast7Days: _soldLast7Days,
+        soldLast30Days: _soldLast30Days,
+        paidOrderCount: _paidOrderCount,
+        lastSoldAt: _lastSoldAt,
+        ...product
+      }) => ({
+        ...product,
+        isPopular: popularProductIds.has(product.productId),
+      }),
+    );
   }
 
-  async getStaffContext(storeId: string, actorId: string) {
+  async getStaffContext(storeId: string, actorId: string, permissionKeys: readonly string[]) {
     const context = await this.repository.getStaffContext(storeId, actorId);
     if (!context) return context;
-    const permissions = await new AuthorizationRepository(this.env.DB).listUserPermissions(
-      storeId,
-      actorId,
-    );
     const {
       posRealtimeEnabled,
       posCommandsV2Enabled,
@@ -2189,7 +2231,7 @@ export class PosService {
     } = context;
     return {
       ...staffContext,
-      permissions,
+      permissions: [...permissionKeys],
       capabilities: {
         posRealtime: posRealtimeEnabled === 1,
         posCommandsV2: posCommandsV2Enabled === 1,

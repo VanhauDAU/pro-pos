@@ -66,6 +66,16 @@ export interface SessionContextRow {
   current_credential_version: number | null;
 }
 
+export interface PrincipalContextRow extends SessionContextRow {
+  store_status: 'ACTIVE' | 'LOCKED' | null;
+  permission_keys: string | null;
+  device_id: string | null;
+  device_name: string | null;
+  device_status: 'ACTIVE' | 'REVOKED' | null;
+  device_store_id: string | null;
+  device_store_name: string | null;
+}
+
 export interface ActivationGrantRow {
   id: string;
   store_id: string;
@@ -252,6 +262,71 @@ export class AuthRepository {
       )
       .bind(tokenHash)
       .first<SessionContextRow>();
+  }
+
+  findPrincipalContext(input: {
+    sessionHash: string | null;
+    deviceHash: string | null;
+    now: number;
+  }) {
+    return this.db
+      .prepare(
+        `WITH resolved_session AS (
+           SELECT
+             s.id AS session_id, s.user_id, u.display_name, u.status AS user_status,
+             s.store_id, s.device_id AS session_device_id, s.session_kind,
+             ss.employee_remember_session_hours,
+             s.status AS session_status, s.expires_at, s.idle_expires_at, s.last_seen_at,
+             s.credential_version AS session_credential_version,
+             CASE
+               WHEN s.session_kind = 'EMPLOYEE' THEN pv.credential_version
+               WHEN s.session_kind = 'OWNER' THEN COALESCE(pc.credential_version, ai.credential_version, s.credential_version)
+               WHEN s.session_kind = 'SUPER_ADMIN' THEN COALESCE(pc.credential_version, ai.credential_version, s.credential_version)
+               ELSE s.credential_version
+             END AS current_credential_version
+           FROM auth_sessions s
+           JOIN users u ON u.id = s.user_id
+           LEFT JOIN store_settings ss ON ss.store_id = s.store_id
+           LEFT JOIN password_credentials pc ON pc.user_id = s.user_id
+           LEFT JOIN access_identities ai ON ai.user_id = s.user_id
+           LEFT JOIN pin_verifiers pv ON pv.user_id = s.user_id
+           WHERE s.token_hash = ?
+           LIMIT 1
+         ),
+         resolved_device AS (
+           SELECT
+             d.id AS device_id, d.name AS device_name, d.status AS device_status,
+             d.store_id AS device_store_id, stores.name AS device_store_name
+           FROM device_credentials dc
+           JOIN devices d ON d.id = dc.device_id
+           JOIN stores ON stores.id = d.store_id
+           WHERE dc.secret_hash = ? AND dc.expires_at > ?
+           LIMIT 1
+         )
+         SELECT
+           rs.*,
+           stores.status AS store_status,
+           (
+             SELECT group_concat(permission.permission_key, char(31))
+             FROM (
+               SELECT rp.permission_key
+               FROM store_memberships sm
+               JOIN role_permissions rp
+                 ON rp.store_id = sm.store_id AND rp.role_id = sm.role_id
+               WHERE sm.store_id = rs.store_id AND sm.user_id = rs.user_id
+                 AND sm.status = 'ACTIVE'
+               ORDER BY rp.permission_key
+             ) permission
+           ) AS permission_keys,
+           rd.device_id, rd.device_name, rd.device_status, rd.device_store_id,
+           rd.device_store_name
+         FROM (SELECT 1) anchor
+         LEFT JOIN resolved_session rs ON 1 = 1
+         LEFT JOIN stores ON stores.id = rs.store_id
+         LEFT JOIN resolved_device rd ON 1 = 1`,
+      )
+      .bind(input.sessionHash, input.deviceHash, input.now)
+      .first<PrincipalContextRow>();
   }
 
   async touchSession(sessionId: string, lastSeenAt: number, idleExpiresAt: number) {

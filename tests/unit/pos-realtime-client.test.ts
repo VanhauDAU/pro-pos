@@ -3,6 +3,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PosRealtimeClient } from '@client/realtime/client';
 
+const notificationMocks = vi.hoisted(() => ({
+  success: vi.fn(),
+  error: vi.fn(),
+  warning: vi.fn(),
+  playPosSound: vi.fn(),
+}));
+
+vi.mock('sonner', () => ({
+  toast: {
+    success: notificationMocks.success,
+    error: notificationMocks.error,
+    warning: notificationMocks.warning,
+  },
+}));
+
+vi.mock('@client/lib/sound', () => ({
+  playPosSound: notificationMocks.playPosSound,
+}));
+
 function createSessionStorage() {
   const values = new Map<string, string>();
   return {
@@ -94,6 +113,10 @@ describe('PosRealtimeClient connection lifecycle', () => {
       setInterval: globalThis.setInterval,
       clearInterval: globalThis.clearInterval,
     });
+    notificationMocks.success.mockClear();
+    notificationMocks.error.mockClear();
+    notificationMocks.warning.mockClear();
+    notificationMocks.playPosSound.mockClear();
   });
 
   afterEach(() => {
@@ -255,5 +278,59 @@ describe('PosRealtimeClient connection lifecycle', () => {
     await vi.advanceTimersByTimeAsync(30_000);
 
     expect(MockWebSocket.instances).toHaveLength(2);
+  });
+
+  it.each([
+    {
+      reason: 'PRINT_JOB_COMPLETED' as const,
+      status: 'COMPLETED' as const,
+      notify: notificationMocks.success,
+      message: 'In thành công hóa đơn',
+      failureMessage: null,
+    },
+    {
+      reason: 'PRINT_JOB_FAILED' as const,
+      status: 'FAILED' as const,
+      notify: notificationMocks.error,
+      message: 'In hóa đơn thất bại: Máy in hết giấy',
+      failureMessage: 'Máy in hết giấy',
+    },
+    {
+      reason: 'PRINT_JOB_UNCERTAIN' as const,
+      status: 'UNCERTAIN' as const,
+      notify: notificationMocks.warning,
+      message: 'Không thể xác nhận in hóa đơn: Mất kết nối',
+      failureMessage: 'Mất kết nối',
+    },
+  ])('shows the POS print toast for $status without a full job snapshot', async (testCase) => {
+    const client = createClient();
+    client.receiveBroadcastEvents([
+      {
+        schemaVersion: 1,
+        eventId: `event-${testCase.status}`,
+        sequence: 1,
+        type: 'pos.print_job.updated',
+        storeId: 'store-1',
+        aggregate: { type: 'PRINT_JOB', id: 'job-1', version: 1 },
+        occurredAtMs: Date.now(),
+        actor: null,
+        deviceId: null,
+        clientMutationId: null,
+        topics: ['pos.print_jobs', 'pos.print_job:job-1'],
+        data: {
+          reason: testCase.reason,
+          printJobId: 'job-1',
+          printJobStatus: testCase.status,
+          printerRole: 'receipt',
+          documentType: 'invoice',
+          failureCode: testCase.status === 'FAILED' ? 'OUT_OF_PAPER' : null,
+          failureMessage: testCase.failureMessage,
+        },
+      },
+    ]);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(testCase.notify).toHaveBeenCalledWith(expect.stringContaining(testCase.message));
+    expect(notificationMocks.playPosSound).toHaveBeenCalledOnce();
   });
 });

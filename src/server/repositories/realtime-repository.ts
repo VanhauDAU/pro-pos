@@ -201,11 +201,4 @@ export class RealtimeRepository {
       .bind(error.slice(0, 500), storeId, ...eventIds)
       .run();
   }
-
-  async cleanupPublished(beforeMs: number) {
-    await this.db
-      .prepare(`DELETE FROM realtime_events WHERE published_at IS NOT NULL AND published_at < ?`)
-      .bind(beforeMs)
-      .run();
-  }
 }

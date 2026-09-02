@@ -256,7 +256,18 @@ export class MediaService {
       throw new AppError('MEDIA_NOT_FOUND', 'Không tìm thấy ảnh.', 404);
     }
     await this.repository.markDeleted(storeId, mediaId, Date.now());
-    await this.env.MEDIA.delete(media.object_key).catch(() => {});
+    await this.env.MEDIA.delete(media.object_key).catch((error) => {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          message: 'media object delete deferred to maintenance',
+          storeId,
+          mediaId,
+          objectKey: media.object_key,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    });
     const result = { mediaId, deleted: true };
     if (auditContext) {
       await new AuditRepository(this.env.DB).record({

@@ -2,8 +2,6 @@ import { RealtimeRepository } from '@server/repositories/realtime-repository';
 import { PosService } from '@server/services/pos-service';
 import type { RealtimeEventV1 } from '@contracts/realtime';
 
-const PUBLISHED_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
-
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -88,9 +86,5 @@ export class RealtimeDispatcher {
   async dispatchPendingStores() {
     const stores = await this.repository.listPendingStores();
     return Promise.allSettled(stores.map((store) => this.dispatchStore(store.storeId)));
-  }
-
-  cleanupPublished(now = Date.now()) {
-    return this.repository.cleanupPublished(now - PUBLISHED_RETENTION_MS);
   }
 }

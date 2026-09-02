@@ -997,18 +997,18 @@ export function SuperAdminPage() {
     try {
       const res = await jsonRequest<{
         totalDeleted: number;
-        retentionDays: number;
+        policy: Record<string, number>;
         tables: Record<string, number>;
       }>(
         '/api/v1/platform/maintenance/cleanup',
-        { retentionDays: 7 },
+        {},
         {
           method: 'POST',
           headers: csrfHeaders(),
         },
       );
       message.success(
-        `Đã dọn dẹp ${res.totalDeleted.toLocaleString('vi-VN')} bản ghi vận hành quá hạn 7 ngày.`,
+        `Đã dọn dẹp ${res.totalDeleted.toLocaleString('vi-VN')} bản ghi theo chính sách lưu trữ.`,
         5,
       );
       void queryClient.invalidateQueries({ queryKey: ['platform-analytics'] });

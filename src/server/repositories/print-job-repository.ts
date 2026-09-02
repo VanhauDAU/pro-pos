@@ -481,14 +481,19 @@ export class PrintJobRepository {
       reason: params.reason,
       printJobId: params.job.id,
       printJobStatus: params.job.status,
-      targetDeviceId: params.job.targetDeviceId,
       printerRole: params.job.printerRole,
       documentType: params.job.documentType,
-      documentId: params.job.documentId,
-      claimedByDeviceId: params.job.claimedByDeviceId,
       failureCode: params.job.failureCode,
       failureMessage: params.job.failureMessage,
-      printJob: params.job,
+      ...(params.eventType === 'pos.print_job.created'
+        ? {
+            targetDeviceId: params.job.targetDeviceId,
+            documentId: params.job.documentId,
+            claimedByDeviceId: params.job.claimedByDeviceId,
+            // Print Agent consumes this snapshot directly; do not replace it with a detail GET.
+            printJob: params.job,
+          }
+        : {}),
     };
 
     await this.db.batch([

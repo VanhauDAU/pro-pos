@@ -208,6 +208,25 @@ describe('Remote Print & Print Agent Lifecycle (Integration Test)', () => {
         .bind(storeId, jobId)
         .first<{ total: number }>();
       expect(afterRetry?.total).toBe(beforeRetry?.total);
+
+      const updateEvent = await env.DB.prepare(
+        `SELECT data_json AS dataJson
+         FROM realtime_events
+         WHERE store_id = ? AND json_extract(data_json, '$.printJobId') = ?
+           AND json_extract(data_json, '$.reason') = 'PRINT_JOB_COMPLETED'
+         ORDER BY sequence DESC LIMIT 1`,
+      )
+        .bind(storeId, jobId)
+        .first<{ dataJson: string }>();
+      expect(JSON.parse(updateEvent!.dataJson)).toEqual({
+        reason: 'PRINT_JOB_COMPLETED',
+        printJobId: jobId,
+        printJobStatus: 'COMPLETED',
+        printerRole: 'receipt',
+        documentType: 'provisional',
+        failureCode: null,
+        failureMessage: null,
+      });
     });
 
     it('fences an expired claim so the previous Agent cannot start printing', async () => {

@@ -65,7 +65,6 @@ import {
   Card,
   Checkbox,
   ConfigProvider,
-  DatePicker,
   Divider,
   Drawer,
   Dropdown,
@@ -126,6 +125,7 @@ import { buildFixedVietQrImageUrl } from '@domain/receipt/receipt-document';
 import { PosCustomerSelector } from './PosCustomerSelector';
 import { getPosCustomerAccess } from './pos-customer-access';
 import { PosAppSplash } from './PosAppSplash';
+import { StaffDateTimeInput } from './StaffDateTimeInput';
 import { toast } from 'sonner';
 import type { CustomerSummary } from '@contracts/customer';
 import type { PosPromotionOption, PromotionPreviewResult } from '@contracts/promotion';
@@ -6832,6 +6832,19 @@ function OrderEditor({
         : 0)
     : 0;
 
+  const draftElapsedSeconds = useMemo(() => {
+    if (!timeRangeDraft.startedAt || !timeRangeDraft.startedAt.isValid()) {
+      return liveElapsedSeconds;
+    }
+    const startMs = timeRangeDraft.startedAt.valueOf();
+    const endMs =
+      timeRangeDraft.endedAt && timeRangeDraft.endedAt.isValid()
+        ? timeRangeDraft.endedAt.valueOf()
+        : clockNow;
+    if (endMs <= startMs) return 0;
+    return Math.max(0, Math.floor((endMs - startMs) / 1000));
+  }, [timeRangeDraft.startedAt, timeRangeDraft.endedAt, clockNow, liveElapsedSeconds]);
+
   const applyPromotion = async (promotionIds: string[]) => {
     setManualPromotionIds(promotionIds);
     if (!isNew && quote.data && draftLines.length === 0 && !hasPendingSavedItemChanges()) {
@@ -9176,19 +9189,27 @@ function OrderEditor({
               </Typography.Title>
               <div className="staff-time-range-fields">
                 <div className="staff-time-field">
-                  <span className="staff-time-field__label">Giờ vào</span>
-                  <DatePicker
-                    id="staff-time-started-at"
-                    showTime
-                    format="HH:mm:ss DD/MM/YYYY"
-                    placeholder="Chọn giờ vào (24h)"
+                  <div className="staff-time-field__header">
+                    <span className="staff-time-field__label">Giờ vào</span>
+                    <button
+                      type="button"
+                      className="staff-time-now-btn"
+                      onClick={() =>
+                        setTimeRangeDraft((prev) => ({
+                          ...prev,
+                          startedAt: dayjs(),
+                        }))
+                      }
+                      disabled={!canAdjustTime}
+                    >
+                      Lấy giờ hiện tại
+                    </button>
+                  </div>
+                  <StaffDateTimeInput
+                    idPrefix="staff-time-started-at"
                     value={timeRangeDraft.startedAt}
                     onChange={(val) => setTimeRangeDraft((prev) => ({ ...prev, startedAt: val }))}
                     disabled={!canAdjustTime}
-                    className="staff-time-field__datepicker"
-                    popupClassName="staff-time-picker-popup"
-                    style={{ width: '100%' }}
-                    needConfirm={false}
                   />
                 </div>
                 <div className="staff-time-field">
@@ -9208,28 +9229,35 @@ function OrderEditor({
                       Lấy giờ hiện tại
                     </button>
                   </div>
-                  <DatePicker
-                    id="staff-time-ended-at"
-                    showTime
-                    format="HH:mm:ss DD/MM/YYYY"
-                    placeholder="Chọn giờ ra (24h)"
+                  <StaffDateTimeInput
+                    idPrefix="staff-time-ended-at"
                     value={timeRangeDraft.endedAt}
                     onChange={(val) => setTimeRangeDraft((prev) => ({ ...prev, endedAt: val }))}
                     disabled={!canAdjustTime}
-                    className="staff-time-field__datepicker"
-                    popupClassName="staff-time-picker-popup"
-                    style={{ width: '100%' }}
-                    needConfirm={false}
                     allowClear
+                    placeholderDate="Để trống (Hiện tại)"
+                    placeholderTime="--:--"
                   />
-                  <small className="staff-time-field__hint">
-                    Điền giờ ra và bấm Lưu thay đổi để chốt/dừng giờ. Để trống để tính đến hiện tại.
-                  </small>
+                  {timeRangeDraft.startedAt &&
+                  timeRangeDraft.endedAt &&
+                  timeRangeDraft.endedAt.valueOf() <= timeRangeDraft.startedAt.valueOf() ? (
+                    <small
+                      className="staff-time-field__hint"
+                      style={{ color: '#ef4444', fontWeight: 600 }}
+                    >
+                      ⚠️ Giờ ra phải sau giờ vào.
+                    </small>
+                  ) : (
+                    <small className="staff-time-field__hint">
+                      Điền giờ ra và bấm Lưu thay đổi để chốt/dừng giờ. Để trống để tính đến hiện
+                      tại.
+                    </small>
+                  )}
                 </div>
               </div>
               <div className="staff-time-detail-row staff-time-detail-row--highlight">
                 <span>Tổng thời gian tính tiền</span>
-                <b>{formatElapsed(liveElapsedSeconds)}</b>
+                <b>{formatElapsed(draftElapsedSeconds)}</b>
               </div>
             </section>
 
@@ -9348,16 +9376,10 @@ function OrderEditor({
                       Lấy giờ hiện tại
                     </button>
                   </div>
-                  <DatePicker
-                    id="staff-time-restore-started-at"
-                    showTime
-                    format="HH:mm:ss DD/MM/YYYY"
-                    placeholder="Chọn giờ vào (24h)"
+                  <StaffDateTimeInput
+                    idPrefix="staff-time-restore-started-at"
                     value={timeRangeDraft.startedAt}
                     onChange={(val) => setTimeRangeDraft((prev) => ({ ...prev, startedAt: val }))}
-                    className="staff-time-field__datepicker"
-                    style={{ width: '100%' }}
-                    needConfirm={false}
                   />
                   <small className="staff-time-field__hint">
                     Chọn thời điểm bắt đầu tính giờ cho bàn/phòng.
@@ -9379,22 +9401,33 @@ function OrderEditor({
                       Lấy giờ hiện tại
                     </button>
                   </div>
-                  <DatePicker
-                    id="staff-time-restore-ended-at"
-                    showTime
-                    format="HH:mm:ss DD/MM/YYYY"
-                    placeholder="Chọn giờ ra (24h)"
+                  <StaffDateTimeInput
+                    idPrefix="staff-time-restore-ended-at"
                     value={timeRangeDraft.endedAt}
                     onChange={(val) => setTimeRangeDraft((prev) => ({ ...prev, endedAt: val }))}
-                    className="staff-time-field__datepicker"
-                    style={{ width: '100%' }}
-                    needConfirm={false}
                     allowClear
+                    placeholderDate="Để trống (Hiện tại)"
+                    placeholderTime="--:--"
                   />
-                  <small className="staff-time-field__hint">
-                    Điền giờ ra nếu khách đã kết thúc. Để trống nếu bàn vẫn đang tiếp tục chơi.
-                  </small>
+                  {timeRangeDraft.startedAt &&
+                  timeRangeDraft.endedAt &&
+                  timeRangeDraft.endedAt.valueOf() <= timeRangeDraft.startedAt.valueOf() ? (
+                    <small
+                      className="staff-time-field__hint"
+                      style={{ color: '#ef4444', fontWeight: 600 }}
+                    >
+                      ⚠️ Giờ ra phải sau giờ vào.
+                    </small>
+                  ) : (
+                    <small className="staff-time-field__hint">
+                      Điền giờ ra nếu khách đã kết thúc. Để trống nếu bàn vẫn đang tiếp tục chơi.
+                    </small>
+                  )}
                 </div>
+              </div>
+              <div className="staff-time-detail-row staff-time-detail-row--highlight">
+                <span>Tổng thời gian tính tiền (Dự kiến)</span>
+                <b>{formatElapsed(draftElapsedSeconds)}</b>
               </div>
             </section>
           </div>

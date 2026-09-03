@@ -19,6 +19,8 @@ export interface DashboardPieSlice {
 export interface DashboardTimelinePoint {
   label: string;
   revenue: number;
+  goodsRevenue: number;
+  timeRevenue: number;
   invoiceCount: number;
 }
 
@@ -52,6 +54,8 @@ export interface DashboardDataDto {
   toMs: number;
   summary: {
     subtotal: number;
+    goodsRevenue: number;
+    timeRevenue: number;
     discountTotal: number;
     revenue: number;
     customerCount: number;

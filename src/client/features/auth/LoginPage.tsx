@@ -23,6 +23,7 @@ import type { AuthContextResponse, LoginResponse } from '@contracts/auth';
 import { ApiError, jsonRequest } from '@client/lib/api';
 import {
   appBootstrapQueryOptions,
+  fetchFreshAppBootstrap,
   resetAppBootstrap,
 } from '@client/features/bootstrap/app-bootstrap';
 import { PosAppSplash } from '@client/features/pos/PosAppSplash';
@@ -267,9 +268,13 @@ function formatRetryDelay(seconds: number) {
     : `${remainingSeconds} giây`;
 }
 
-function accessErrorMessage(code: string | null) {
+function accessErrorMessage(code: string | null, tab: string | null) {
   if (!code) return null;
-  if (code === 'SESSION_EXPIRED') return 'Phiên Owner đã hết hạn. Vui lòng đăng nhập lại.';
+  if (code === 'SESSION_EXPIRED') {
+    return tab === 'owner'
+      ? 'Phiên Owner đã hết hạn. Vui lòng đăng nhập lại.'
+      : 'Phiên nhân viên đã hết hạn. Vui lòng đăng nhập lại.';
+  }
   if (code === 'CONNECTION_ERROR') return 'Không thể kết nối Pro POS. Vui lòng thử lại.';
   if (code === 'STORE_LOCKED') return 'Cửa hàng đang bị khóa.';
   if (code === 'ACCESS_IDENTITY_DENIED') return 'Email chưa được cấp quyền sử dụng Pro POS.';
@@ -344,7 +349,7 @@ export function LoginPage() {
   useEffect(() => {
     const authErrorParam = searchParams.get('authError');
     if (authErrorParam) {
-      const msg = accessErrorMessage(authErrorParam);
+      const msg = accessErrorMessage(authErrorParam, searchParams.get('tab'));
       if (msg) toast.error(msg);
     }
   }, [searchParams]);
@@ -451,14 +456,14 @@ export function LoginPage() {
       setRememberedEmployeeState(savedInfo);
       setIsRedirectingToPos(true);
       const seededAuthContext = authContextAfterEmployeeLogin(context.data, response);
-      await Promise.all([
-        import('@client/features/pos/StaffPosAreasPage'),
-        import('@client/features/pos/StaffPosPortalPage'),
-        queryClient.fetchQuery(appBootstrapQueryOptions(queryClient, 'areas')),
-      ]);
       if (seededAuthContext) {
         queryClient.setQueryData<AuthContextResponse>(['auth-context'], seededAuthContext);
       }
+      await Promise.all([
+        import('@client/features/pos/StaffPosAreasPage'),
+        import('@client/features/pos/StaffPosPortalPage'),
+        fetchFreshAppBootstrap(queryClient, 'areas'),
+      ]);
       toast.success(`Xin chào, ${savedInfo.displayName}!`);
       navigate('/pos', { replace: true });
     } catch (loginError) {

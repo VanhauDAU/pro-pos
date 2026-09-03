@@ -36,3 +36,8 @@ export function appBootstrapQueryOptions(queryClient: QueryClient, surface: AppB
 export function resetAppBootstrap(queryClient: QueryClient) {
   queryClient.removeQueries({ queryKey: APP_BOOTSTRAP_QUERY_KEY });
 }
+
+export function fetchFreshAppBootstrap(queryClient: QueryClient, surface: AppBootstrapSurface) {
+  resetAppBootstrap(queryClient);
+  return queryClient.fetchQuery(appBootstrapQueryOptions(queryClient, surface));
+}

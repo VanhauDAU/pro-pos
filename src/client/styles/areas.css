@@ -709,6 +709,7 @@ body,
   height: 3px;
   background: #0975f7;
   border-radius: 3px 3px 0 0;
+  animation: staffStatusIndicatorIn 180ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .staff-table-grid {
@@ -718,6 +719,7 @@ body,
 }
 
 .staff-table-card {
+  position: relative;
   min-height: 132px;
   padding: 18px 20px;
   border-radius: 18px;
@@ -733,9 +735,31 @@ body,
   transition:
     transform 0.16s cubic-bezier(0.16, 1, 0.3, 1),
     box-shadow 0.16s ease,
-    border-color 0.16s ease;
+    border-color 0.2s ease,
+    background-color 0.2s ease;
+  animation: staffTableCardEnter 220ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
+}
+
+.staff-table-card:nth-child(2) {
+  animation-delay: 20ms;
+}
+
+.staff-table-card:nth-child(3) {
+  animation-delay: 40ms;
+}
+
+.staff-table-card:nth-child(4) {
+  animation-delay: 60ms;
+}
+
+.staff-table-card:nth-child(5) {
+  animation-delay: 80ms;
+}
+
+.staff-table-card:nth-child(6) {
+  animation-delay: 100ms;
 }
 
 .staff-table-card:hover {
@@ -772,6 +796,7 @@ body,
   background: #fef3c7;
   padding: 2px 6px;
   border-radius: 4px;
+  animation: staffTableBadgeIn 180ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .staff-table-card__body {
@@ -780,6 +805,7 @@ body,
   display: flex;
   flex-direction: column;
   gap: 4px;
+  animation: staffTableBodyIn 200ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .staff-table-card__meta {
@@ -802,6 +828,33 @@ body,
   color: #0759b0;
   letter-spacing: -0.3px;
   line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.staff-table-card__total-value,
+.staff-table-card__changing-text {
+  display: inline-block;
+}
+
+.staff-table-card__total-value.is-changing {
+  animation: staffTablePriceChanged 340ms cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: left center;
+}
+
+.staff-table-card__changing-text {
+  animation: staffTableMetaChanged 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.staff-table-card__update-flash {
+  position: absolute;
+  z-index: 2;
+  inset: -1px;
+  border: 2px solid rgba(9, 117, 247, 0.72);
+  border-radius: inherit;
+  background: rgba(9, 117, 247, 0.035);
+  box-shadow: inset 0 0 18px rgba(9, 117, 247, 0.1);
+  pointer-events: none;
+  animation: staffTableRealtimeFlash 520ms ease-out both;
 }
 
 /* Sticky Status Legend for Table Cards */
@@ -2915,6 +2968,94 @@ body {
   }
 }
 
+@keyframes staffTableCardEnter {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes staffTableBodyIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes staffTablePriceChanged {
+  0% {
+    transform: translateY(2px) scale(0.98);
+    text-shadow: 0 0 0 rgba(9, 117, 247, 0);
+  }
+  45% {
+    transform: translateY(0) scale(1.045);
+    text-shadow: 0 2px 10px rgba(9, 117, 247, 0.2);
+  }
+  100% {
+    transform: scale(1);
+    text-shadow: 0 0 0 rgba(9, 117, 247, 0);
+  }
+}
+
+@keyframes staffTableMetaChanged {
+  0% {
+    opacity: 0.55;
+    transform: translateY(3px) scale(0.96);
+  }
+  70% {
+    opacity: 1;
+    transform: translateY(0) scale(1.04);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes staffTableRealtimeFlash {
+  0% {
+    opacity: 0;
+    transform: scale(0.99);
+  }
+  24% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1);
+  }
+}
+
+@keyframes staffTableBadgeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-2px) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes staffStatusIndicatorIn {
+  from {
+    opacity: 0;
+    transform: scaleX(0.35);
+  }
+  to {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+}
+
 /* Reduced Motion Override */
 @media (prefers-reduced-motion: reduce) {
   .pos-app-splash,
@@ -2924,8 +3065,19 @@ body {
   .staff-order-editor,
   .staff-payment-page,
   .login-success-card,
-  .pos-payment-celebration__card {
+  .pos-payment-celebration__card,
+  .staff-table-card,
+  .staff-table-card__body,
+  .staff-table-card__paused-badge,
+  .staff-table-card__total-value,
+  .staff-table-card__changing-text,
+  .staff-table-card__update-flash,
+  .staff-status-tab.is-active::after {
     animation: none !important;
+  }
+
+  .staff-table-card {
+    transition: none !important;
   }
 
   .staff-table-card:hover,

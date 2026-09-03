@@ -96,6 +96,13 @@ export class OwnerDashboardService {
 
     // 1. Summary KPIs
     const subtotal = invoices.reduce((sum, i) => sum + i.subtotal, 0);
+    const timeRevenue = Math.min(
+      subtotal,
+      lines
+        .filter((line) => line.lineType === 'TIME')
+        .reduce((sum, line) => sum + line.grossLineTotal, 0),
+    );
+    const goodsRevenue = Math.max(0, subtotal - timeRevenue);
     const discountTotal = invoices.reduce((sum, i) => sum + i.discountTotal, 0);
     const revenue = invoices.reduce((sum, i) => sum + i.total, 0);
     const invoiceCount = invoices.length;
@@ -134,6 +141,7 @@ export class OwnerDashboardService {
     // 3. Revenue Timeline Chart
     const revenueTimelineChart = this.buildTimelineChart(
       invoices,
+      lines,
       range,
       dateFrom,
       dateTo,
@@ -165,6 +173,8 @@ export class OwnerDashboardService {
       toMs,
       summary: {
         subtotal,
+        goodsRevenue,
+        timeRevenue,
         discountTotal,
         revenue,
         customerCount,
@@ -229,6 +239,7 @@ export class OwnerDashboardService {
 
   private buildTimelineChart(
     invoices: RawInvoiceRow[],
+    lines: RawLineItemRow[],
     range: string,
     dateFrom: string,
     dateTo: string,
@@ -240,13 +251,20 @@ export class OwnerDashboardService {
       const points: DashboardTimelinePoint[] = Array.from({ length: 24 }, (_, h) => ({
         label: `${String(h).padStart(2, '0')}:00`,
         revenue: 0,
+        goodsRevenue: 0,
+        timeRevenue: 0,
         invoiceCount: 0,
       }));
+
+      const timeByInvoice = this.timeRevenueByInvoice(lines);
 
       for (const inv of invoices) {
         const hour = getZonedParts(inv.issuedAt, timezone).hour;
         if (points[hour]) {
+          const invoiceTimeRevenue = Math.min(inv.subtotal, timeByInvoice.get(inv.id) ?? 0);
           points[hour]!.revenue += inv.total;
+          points[hour]!.timeRevenue += invoiceTimeRevenue;
+          points[hour]!.goodsRevenue += Math.max(0, inv.subtotal - invoiceTimeRevenue);
           points[hour]!.invoiceCount += 1;
         }
       }
@@ -254,25 +272,44 @@ export class OwnerDashboardService {
     }
 
     // Multi-day buckets from dateFrom to dateTo
-    const bucketMap = new Map<string, { label: string; revenue: number; invoiceCount: number }>();
+    const bucketMap = new Map<string, DashboardTimelinePoint>();
     let curr = dateFrom;
     while (curr <= dateTo) {
       const parts = dateParts(curr);
       const label = `${String(parts.day).padStart(2, '0')}/${String(parts.month).padStart(2, '0')}`;
-      bucketMap.set(curr, { label, revenue: 0, invoiceCount: 0 });
+      bucketMap.set(curr, {
+        label,
+        revenue: 0,
+        goodsRevenue: 0,
+        timeRevenue: 0,
+        invoiceCount: 0,
+      });
       curr = addDateOnlyDays(curr, 1);
     }
 
+    const timeByInvoice = this.timeRevenueByInvoice(lines);
     for (const inv of invoices) {
       const key = businessDateForTimestamp(inv.issuedAt, timezone, cutoffMinutes);
       const bucket = bucketMap.get(key);
       if (bucket) {
+        const invoiceTimeRevenue = Math.min(inv.subtotal, timeByInvoice.get(inv.id) ?? 0);
         bucket.revenue += inv.total;
+        bucket.timeRevenue += invoiceTimeRevenue;
+        bucket.goodsRevenue += Math.max(0, inv.subtotal - invoiceTimeRevenue);
         bucket.invoiceCount += 1;
       }
     }
 
     return Array.from(bucketMap.values());
+  }
+
+  private timeRevenueByInvoice(lines: RawLineItemRow[]) {
+    const totals = new Map<string, number>();
+    for (const line of lines) {
+      if (line.lineType !== 'TIME') continue;
+      totals.set(line.invoiceId, (totals.get(line.invoiceId) ?? 0) + line.grossLineTotal);
+    }
+    return totals;
   }
 
   private buildPaymentTimeChart(

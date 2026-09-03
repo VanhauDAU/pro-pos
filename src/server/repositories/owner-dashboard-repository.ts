@@ -19,6 +19,7 @@ export interface RawLineItemRow {
   lineType: string;
   description: string;
   quantityMilli: number;
+  grossLineTotal: number;
   lineTotal: number;
   productId: string | null;
   productName: string | null;
@@ -112,6 +113,7 @@ export class OwnerDashboardRepository {
         il.line_type AS lineType,
         il.description,
         il.quantity_milli AS quantityMilli,
+        il.gross_line_total AS grossLineTotal,
         il.line_total AS lineTotal,
         json_extract(il.snapshot_json, '$.productId') AS productId,
         json_extract(il.snapshot_json, '$.productName') AS productName,
@@ -128,20 +130,21 @@ export class OwnerDashboardRepository {
 
       SELECT
         ti.id AS invoiceId,
-        'PRODUCT' AS lineType,
-        toi.product_name_snapshot AS description,
-        toi.quantity_milli AS quantityMilli,
-        toi.net_line_total AS lineTotal,
-        toi.product_id AS productId,
-        toi.product_name_snapshot AS productName,
-        toi.unit_name_snapshot AS unitName,
+        til.line_type AS lineType,
+        til.description,
+        til.quantity_milli AS quantityMilli,
+        til.gross_line_total AS grossLineTotal,
+        til.line_total AS lineTotal,
+        json_extract(til.snapshot_json, '$.productId') AS productId,
+        COALESCE(json_extract(til.snapshot_json, '$.productName'), til.description) AS productName,
+        json_extract(til.snapshot_json, '$.unitName') AS unitName,
         p.category_id AS categoryId,
         COALESCE(c.name, 'Chưa phân loại') AS categoryName
-      FROM takeaway_order_items toi
-      JOIN takeaway_invoices ti ON ti.order_id = toi.order_id AND ti.store_id = toi.store_id
-      LEFT JOIN products p ON p.id = toi.product_id AND p.store_id = toi.store_id
-      LEFT JOIN categories c ON c.id = p.category_id AND c.store_id = toi.store_id
-      WHERE toi.store_id = ? AND ti.status = 'COMPLETED' AND ti.issued_at >= ? AND ti.issued_at <= ?
+      FROM takeaway_invoice_lines til
+      JOIN takeaway_invoices ti ON ti.id = til.invoice_id AND ti.store_id = til.store_id
+      LEFT JOIN products p ON p.id = json_extract(til.snapshot_json, '$.productId') AND p.store_id = til.store_id
+      LEFT JOIN categories c ON c.id = p.category_id AND c.store_id = til.store_id
+      WHERE til.store_id = ? AND ti.status = 'COMPLETED' AND ti.issued_at >= ? AND ti.issued_at <= ?
     `;
 
     const res = await this.db

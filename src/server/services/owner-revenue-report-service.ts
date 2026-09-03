@@ -9,6 +9,7 @@ import { AppError } from '@server/lib/app-error';
 import {
   OwnerRevenueReportRepository,
   type RawRevenueCancelledOrderRow,
+  type RawRevenueInvoiceLineRow,
   type RawRevenueInvoiceRow,
 } from '@server/repositories/owner-revenue-report-repository';
 import type { AppEnv } from '@server/types';
@@ -223,6 +224,8 @@ function emptyTimelineRow(key: string, label: string): RevenueReportTimelineRowD
     label,
     completedInvoiceCount: 0,
     cancelledOrderCount: 0,
+    goodsRevenue: 0,
+    timeRevenue: 0,
     grossRevenue: 0,
     cancelledAmount: 0,
     discountAmount: 0,
@@ -243,6 +246,7 @@ function formatDateLabel(dateOnly: string) {
 
 function buildTimeline(
   invoices: RawRevenueInvoiceRow[],
+  invoiceLines: RawRevenueInvoiceLineRow[],
   cancelled: RawRevenueCancelledOrderRow[],
   input: {
     dateFrom: string;
@@ -277,10 +281,19 @@ function buildTimeline(
     return granularity === 'day' ? date : date.slice(0, 7);
   };
 
+  const timeByInvoice = new Map<string, number>();
+  for (const line of invoiceLines) {
+    if (line.lineType !== 'TIME') continue;
+    timeByInvoice.set(line.invoiceId, (timeByInvoice.get(line.invoiceId) ?? 0) + line.grossAmount);
+  }
+
   for (const invoice of invoices) {
     const row = rows.get(keyForTimestamp(invoice.issuedAt));
     if (!row) continue;
+    const invoiceTimeRevenue = Math.min(invoice.subtotal, timeByInvoice.get(invoice.id) ?? 0);
     row.completedInvoiceCount += 1;
+    row.goodsRevenue = (row.goodsRevenue ?? 0) + Math.max(0, invoice.subtotal - invoiceTimeRevenue);
+    row.timeRevenue = (row.timeRevenue ?? 0) + invoiceTimeRevenue;
     row.grossRevenue += invoice.subtotal;
     row.discountAmount += invoice.discountTotal;
     row.netRevenue += invoice.total;
@@ -389,7 +402,7 @@ export class OwnerRevenueReportService {
         invoiceCount: hourRows.length,
       };
     });
-    const timeline = buildTimeline(invoices, cancelled, {
+    const timeline = buildTimeline(invoices, invoiceLines, cancelled, {
       dateFrom: range.dateFrom,
       dateTo: range.dateTo,
       dayCount: range.dayCount,

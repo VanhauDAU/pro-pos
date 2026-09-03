@@ -243,7 +243,12 @@ describe('Owner Dashboard Real Analytics (Acceptance Test)', () => {
     expect(data.summary.customerCount).toBe(0);
     expect(data.summary.avgItemsPerInvoice).toBe(2.5); // 2 beers + 3 water = 5 items across 2 invoices
     expect(data.summary.revenue).toBeGreaterThanOrEqual(80_000); // 50k + 30k + time
-    expect(data.summary.subtotal).toBeGreaterThanOrEqual(80_000);
+    expect(data.summary).toMatchObject({
+      goodsRevenue: 80_000,
+      timeRevenue: 60_000,
+      subtotal: 140_000,
+    });
+    expect(data.summary.goodsRevenue + data.summary.timeRevenue).toBe(data.summary.subtotal);
     expect(data.summary.avgRevenuePerInvoice).toBeGreaterThanOrEqual(40_000);
 
     // Assert Uncompleted Orders
@@ -256,6 +261,12 @@ describe('Owner Dashboard Real Analytics (Acceptance Test)', () => {
     expect(data.paymentTimeChart).toHaveLength(24);
     const sumTimelineRev = data.revenueTimelineChart.reduce((sum, p) => sum + p.revenue, 0);
     expect(sumTimelineRev).toBe(data.summary.revenue);
+    expect(data.revenueTimelineChart.reduce((sum, p) => sum + p.goodsRevenue, 0)).toBe(
+      data.summary.goodsRevenue,
+    );
+    expect(data.revenueTimelineChart.reduce((sum, p) => sum + p.timeRevenue, 0)).toBe(
+      data.summary.timeRevenue,
+    );
 
     // The product report reads frozen invoice lines from both order types and excludes table time.
     const productReport = await new OwnerProductReportService(env).getProductReport(storeId, {
@@ -360,6 +371,12 @@ describe('Owner Dashboard Real Analytics (Acceptance Test)', () => {
     });
     expect(revenueReport.summary.goodsRevenue! + revenueReport.summary.timeRevenue!).toBe(
       revenueReport.summary.grossRevenue,
+    );
+    expect(revenueReport.timeline.reduce((sum, row) => sum + (row.goodsRevenue ?? 0), 0)).toBe(
+      revenueReport.summary.goodsRevenue,
+    );
+    expect(revenueReport.timeline.reduce((sum, row) => sum + (row.timeRevenue ?? 0), 0)).toBe(
+      revenueReport.summary.timeRevenue,
     );
     expect(revenueReport.paymentMethods).toEqual([]);
     expect(revenueReport.orderTypes).toEqual([]);

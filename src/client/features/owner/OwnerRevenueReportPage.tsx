@@ -20,13 +20,12 @@ import {
 } from 'antd';
 import type { TableColumnsType } from 'antd';
 import dayjs from 'dayjs';
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { apiRequest, jsonRequest } from '@client/lib/api';
 import type { AuthContextResponse } from '@contracts/auth';
 import {
   revenueReportTypePermissions,
-  type RevenueReportBreakdownDto,
   type RevenueReportResponseDto,
   type RevenueReportTimeRange,
   type RevenueReportTimelineRowDto,
@@ -67,62 +66,45 @@ function timestamp(value: number, timezone: string) {
     hourCycle: 'h23',
   }).format(new Date(value));
 }
-function MiniKpi({ label, value, tone = 'blue' }: { label: string; value: string; tone?: string }) {
+function MiniKpi({
+  label,
+  value,
+  tone = 'blue',
+  detail,
+  featured = false,
+}: {
+  label: string;
+  value: string;
+  tone?: string;
+  detail?: string;
+  featured?: boolean;
+}) {
   return (
-    <div className={`revenue-compact-kpi is-${tone}`}>
+    <div className={`revenue-compact-kpi is-${tone}${featured ? ' is-featured' : ''}`}>
       <span>{label}</span>
       <strong>{value}</strong>
+      {detail ? <small>{detail}</small> : null}
     </div>
   );
 }
-function HorizontalChart({
-  rows,
-  color = '#0975f7',
-}: {
-  rows: RevenueReportBreakdownDto[];
-  color?: string;
-}) {
-  const max = Math.max(...rows.map((row) => row.amount), 1);
-  return (
-    <div className="revenue-horizontal-chart">
-      {rows.map((row) => (
-        <div className="revenue-horizontal-row" key={row.key}>
-          <div>
-            <span>{row.label}</span>
-            <small>
-              {row.invoiceCount} HĐ · {row.percentage}%
-            </small>
-          </div>
-          <div className="revenue-horizontal-track">
-            <i
-              style={{
-                width: `${Math.max(row.amount ? 3 : 0, (row.amount / max) * 100)}%`,
-                background: color,
-              }}
-            />
-          </div>
-          <strong>{money(row.amount)}</strong>
-        </div>
-      ))}
-    </div>
-  );
-}
-function HourChart({ data }: { data: RevenueReportResponseDto }) {
-  const max = Math.max(...data.hourlyAverage.map((row) => row.averageRevenue), 1);
-  return (
-    <div className="revenue-mini-hour-chart">
-      {data.hourlyAverage.map((row) => (
-        <div key={row.hour} title={`${row.label}: ${money(row.averageRevenue)}`}>
-          <i
-            style={{
-              height: `${Math.max(row.averageRevenue ? 4 : 0, (row.averageRevenue / max) * 100)}%`,
-            }}
-          />
-          <small>{row.hour % 3 === 0 ? `${row.hour}h` : ''}</small>
-        </div>
-      ))}
-    </div>
-  );
+
+const RevenueTrendChart = lazy(async () => {
+  const module = await import('./OwnerAnalyticsCharts');
+  return { default: module.RevenueTrendChart };
+});
+
+const HourlyRevenueChart = lazy(async () => {
+  const module = await import('./OwnerAnalyticsCharts');
+  return { default: module.HourlyRevenueChart };
+});
+
+const BreakdownBarChart = lazy(async () => {
+  const module = await import('./OwnerAnalyticsCharts');
+  return { default: module.BreakdownBarChart };
+});
+
+function ChartFallback() {
+  return <Skeleton active paragraph={{ rows: 5 }} />;
 }
 
 export function OwnerRevenueReportPage({
@@ -212,7 +194,18 @@ export function OwnerRevenueReportPage({
     { title: 'Thời gian', dataIndex: 'label', fixed: 'left', width: 105 },
     { title: 'HĐ', dataIndex: 'completedInvoiceCount', width: 60 },
     { title: 'Hủy', dataIndex: 'cancelledOrderCount', width: 60 },
-    { title: 'Tiền hàng', dataIndex: 'grossRevenue', render: money, width: 125 },
+    {
+      title: 'Tiền hàng',
+      dataIndex: 'goodsRevenue',
+      render: (value, row) => money(value ?? row.grossRevenue - (row.timeRevenue ?? 0)),
+      width: 125,
+    },
+    {
+      title: 'Tiền giờ',
+      dataIndex: 'timeRevenue',
+      render: (value) => money(value ?? 0),
+      width: 115,
+    },
     { title: 'Giảm giá', dataIndex: 'discountAmount', render: money, width: 115 },
     {
       title: 'Doanh thu',
@@ -237,7 +230,9 @@ export function OwnerRevenueReportPage({
       ['Chỉ tiêu', 'Giá trị'],
       ['Số hóa đơn hoàn tất', data.summary.completedInvoiceCount],
       ['Số đơn hàng đã hủy', data.summary.cancelledOrderCount],
-      ['Tổng tiền hàng (đ)', data.summary.grossRevenue],
+      ['Tổng tiền hàng (đ)', data.summary.goodsRevenue ?? data.summary.grossRevenue],
+      ['Tổng tiền giờ (đ)', data.summary.timeRevenue ?? 0],
+      ['Tổng trước giảm giá (đ)', data.summary.grossRevenue],
       ['Tổng tiền hủy (đ)', data.summary.cancelledAmount],
       ['Tổng giảm giá (đ)', data.summary.discountAmount],
       ['Doanh thu thuần (đ)', data.summary.netRevenue],
@@ -253,6 +248,7 @@ export function OwnerRevenueReportPage({
           'Số HĐ hoàn tất',
           'Số đơn hủy',
           'Tiền hàng (đ)',
+          'Tiền giờ (đ)',
           'Tiền hủy (đ)',
           'Giảm giá (đ)',
           'Doanh thu thuần (đ)',
@@ -264,7 +260,8 @@ export function OwnerRevenueReportPage({
           row.label,
           row.completedInvoiceCount,
           row.cancelledOrderCount,
-          row.grossRevenue,
+          row.goodsRevenue ?? row.grossRevenue - (row.timeRevenue ?? 0),
+          row.timeRevenue ?? 0,
           row.cancelledAmount,
           row.discountAmount,
           row.netRevenue,
@@ -275,7 +272,8 @@ export function OwnerRevenueReportPage({
         'TỔNG CỘNG',
         data.summary.completedInvoiceCount,
         data.summary.cancelledOrderCount,
-        data.summary.grossRevenue,
+        data.summary.goodsRevenue ?? data.summary.grossRevenue - (data.summary.timeRevenue ?? 0),
+        data.summary.timeRevenue ?? 0,
         data.summary.cancelledAmount,
         data.summary.discountAmount,
         data.summary.netRevenue,
@@ -525,76 +523,137 @@ export function OwnerRevenueReportPage({
               </>
             ) : (
               <>
-                <MiniKpi label="Doanh thu" value={money(data.summary.netRevenue)} tone="green" />
-                <MiniKpi label="Tiền hàng" value={money(data.summary.grossRevenue)} />
+                <MiniKpi
+                  label="Doanh thu thuần"
+                  value={money(data.summary.netRevenue)}
+                  tone="green"
+                  detail={`${data.summary.completedInvoiceCount} hóa đơn · TB ${money(data.summary.averageRevenuePerInvoice)}/HĐ`}
+                  featured
+                />
+                <MiniKpi
+                  label="Tiền hàng"
+                  value={money(data.summary.goodsRevenue ?? data.summary.grossRevenue)}
+                  detail="Mặt hàng trước giảm giá"
+                />
+                <MiniKpi
+                  label="Tiền giờ"
+                  value={money(data.summary.timeRevenue ?? 0)}
+                  tone="violet"
+                  detail="Dịch vụ bàn/phòng"
+                />
                 <MiniKpi
                   label="Giảm giá"
                   value={money(data.summary.discountAmount)}
                   tone="orange"
+                  detail={
+                    data.summary.grossRevenue > 0
+                      ? `${((data.summary.discountAmount / data.summary.grossRevenue) * 100).toFixed(1)}% tổng trước giảm`
+                      : '0% tổng trước giảm'
+                  }
                 />
                 <MiniKpi
                   label="Hóa đơn"
                   value={String(data.summary.completedInvoiceCount)}
                   tone="violet"
+                  detail={`${data.summary.productQuantity} mặt hàng`}
                 />
                 <MiniKpi
                   label="TB/HĐ"
                   value={money(data.summary.averageRevenuePerInvoice)}
                   tone="green"
+                  detail={`${data.summary.averageItemsPerInvoice} mặt hàng/HĐ`}
                 />
               </>
             )}
           </section>
           {hasData ? (
-            <div className="revenue-dashboard-grid">
-              <section className="revenue-compact-card is-main">
-                <div className="revenue-card-title">
-                  <h3>{TITLES[data.reportType]}</h3>
-                  <span>{data.summary.completedInvoiceCount} hóa đơn</span>
-                </div>
-                {data.reportType === 'PAYMENT_METHOD' ? (
-                  <HorizontalChart rows={data.paymentMethods} />
-                ) : data.reportType === 'SERVICE_MODE' ? (
-                  <HorizontalChart rows={data.orderTypes} color="#8b5cf6" />
-                ) : data.reportType === 'STAFF_REVENUE' ? (
-                  <HorizontalChart rows={data.staffRevenue} color="#10b981" />
-                ) : data.reportType === 'CANCELLATIONS' ? (
-                  <div className="revenue-cancel-list">
-                    {data.cancellations.slice(0, 8).map((row) => (
-                      <div key={row.id}>
-                        <span>
-                          {timestamp(row.cancelledAt, data.timezone)}
-                          <small>
-                            {row.cancelledByName} ·{' '}
-                            {row.orderType === 'DINE_IN' ? 'Tại bàn' : 'Mang về'}
-                          </small>
-                        </span>
-                        <span>{row.reason}</span>
-                        <b>{money(row.amount)}</b>
-                      </div>
-                    ))}
+            <>
+              <div className="revenue-dashboard-grid">
+                <section className="revenue-compact-card is-main">
+                  <div className="revenue-card-title">
+                    <h3>{TITLES[data.reportType]}</h3>
+                    <span>{data.summary.completedInvoiceCount} hóa đơn</span>
                   </div>
-                ) : (
+                  {data.reportType === 'PAYMENT_METHOD' ? (
+                    <Suspense fallback={<ChartFallback />}>
+                      <BreakdownBarChart rows={data.paymentMethods} />
+                    </Suspense>
+                  ) : data.reportType === 'SERVICE_MODE' ? (
+                    <Suspense fallback={<ChartFallback />}>
+                      <BreakdownBarChart rows={data.orderTypes} color="#8b5cf6" />
+                    </Suspense>
+                  ) : data.reportType === 'STAFF_REVENUE' ? (
+                    <Suspense fallback={<ChartFallback />}>
+                      <BreakdownBarChart rows={data.staffRevenue} color="#10b981" />
+                    </Suspense>
+                  ) : data.reportType === 'CANCELLATIONS' ? (
+                    <div className="revenue-cancel-list">
+                      {data.cancellations.slice(0, 8).map((row) => (
+                        <div key={row.id}>
+                          <span>
+                            {timestamp(row.cancelledAt, data.timezone)}
+                            <small>
+                              {row.cancelledByName} ·{' '}
+                              {row.orderType === 'DINE_IN' ? 'Tại bàn' : 'Mang về'}
+                            </small>
+                          </span>
+                          <span>{row.reason}</span>
+                          <b>{money(row.amount)}</b>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <Suspense fallback={<ChartFallback />}>
+                      <RevenueTrendChart
+                        points={data.timeline.map((row) => ({
+                          label: row.label,
+                          revenue: row.netRevenue,
+                          grossRevenue: row.grossRevenue,
+                          goodsRevenue:
+                            row.goodsRevenue ?? row.grossRevenue - (row.timeRevenue ?? 0),
+                          timeRevenue: row.timeRevenue ?? 0,
+                          invoiceCount: row.completedInvoiceCount,
+                        }))}
+                      />
+                    </Suspense>
+                  )}
+                </section>
+                {data.reportType !== 'CANCELLATIONS' ? (
+                  <section className="revenue-compact-card">
+                    <div className="revenue-card-title">
+                      <h3>Nhịp doanh thu 24 giờ</h3>
+                      <span>TB/{data.dayCount} ngày</span>
+                    </div>
+                    <Suspense fallback={<ChartFallback />}>
+                      <HourlyRevenueChart
+                        points={data.hourlyAverage.map((row) => ({
+                          hour: row.hour,
+                          label: row.label,
+                          revenue: row.averageRevenue,
+                          invoiceCount: row.invoiceCount,
+                        }))}
+                      />
+                    </Suspense>
+                  </section>
+                ) : null}
+              </div>
+              {data.reportType === 'OVERVIEW' ? (
+                <section className="revenue-compact-card revenue-detail-table-card">
+                  <div className="revenue-card-title">
+                    <h3>Chi tiết theo thời gian</h3>
+                    <span>Vuốt ngang để xem đủ chỉ tiêu</span>
+                  </div>
                   <Table
                     size="small"
                     rowKey="key"
                     columns={columns}
                     dataSource={data.timeline}
                     pagination={false}
-                    scroll={{ x: 600, y: 230 }}
+                    scroll={{ x: 820, y: 280 }}
                   />
-                )}
-              </section>
-              {data.reportType !== 'CANCELLATIONS' ? (
-                <section className="revenue-compact-card">
-                  <div className="revenue-card-title">
-                    <h3>Nhịp doanh thu 24 giờ</h3>
-                    <span>TB/{data.dayCount} ngày</span>
-                  </div>
-                  <HourChart data={data} />
                 </section>
               ) : null}
-            </div>
+            </>
           ) : (
             <Empty description="Chưa có dữ liệu trong kỳ đã chọn" />
           )}

@@ -34,11 +34,104 @@ import {
 
 const BRAND = '#0975f7';
 const ORDER_HOVER_PREFETCH_DELAY_MS = 80;
+const MONEY_ANIMATION_DURATION_MS = 280;
 type PosTable = PosOverviewTable;
 interface AreaOrderQuote extends RefreshableOrderQuote {}
 
+const MONEY_FORMATTER = new Intl.NumberFormat('vi-VN');
+
 function formatMoney(value: number) {
-  return new Intl.NumberFormat('vi-VN').format(Math.round(value));
+  return MONEY_FORMATTER.format(Math.round(value));
+}
+
+function prefersReducedMotion() {
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+}
+
+function AnimatedMoney({ value }: { value: number }) {
+  const targetRef = useRef(value);
+  const displayedValueRef = useRef(value);
+  const [displayedValue, setDisplayedValue] = useState(value);
+  const [revision, setRevision] = useState(0);
+
+  useEffect(() => {
+    if (targetRef.current === value) return;
+    targetRef.current = value;
+    setRevision((current) => current + 1);
+
+    if (prefersReducedMotion()) {
+      displayedValueRef.current = value;
+      setDisplayedValue(value);
+      return;
+    }
+
+    const from = displayedValueRef.current;
+    const difference = value - from;
+    const startedAt = performance.now();
+    let animationFrame = 0;
+
+    const update = (now: number) => {
+      const progress = Math.min(1, (now - startedAt) / MONEY_ANIMATION_DURATION_MS);
+      const easedProgress = 1 - Math.pow(1 - progress, 3);
+      const nextValue = Math.round(from + difference * easedProgress);
+      displayedValueRef.current = nextValue;
+      setDisplayedValue(nextValue);
+      if (progress < 1) animationFrame = window.requestAnimationFrame(update);
+    };
+
+    animationFrame = window.requestAnimationFrame(update);
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [value]);
+
+  return (
+    <div
+      className="staff-table-card__total"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      aria-label={`${formatMoney(value)} đồng`}
+    >
+      <span
+        key={revision}
+        className={revision > 0 ? 'staff-table-card__total-value is-changing' : undefined}
+        aria-hidden="true"
+      >
+        {formatMoney(displayedValue)}
+      </span>
+    </div>
+  );
+}
+
+function AnimatedInlineText({ value }: { value: string | number }) {
+  const previousValueRef = useRef(value);
+  const [revision, setRevision] = useState(0);
+
+  useEffect(() => {
+    if (previousValueRef.current === value) return;
+    previousValueRef.current = value;
+    setRevision((current) => current + 1);
+  }, [value]);
+
+  return (
+    <span key={revision} className={revision > 0 ? 'staff-table-card__changing-text' : undefined}>
+      {value}
+    </span>
+  );
+}
+
+function CardUpdateFlash({ signature }: { signature: string }) {
+  const previousSignatureRef = useRef(signature);
+  const [revision, setRevision] = useState(0);
+
+  useEffect(() => {
+    if (previousSignatureRef.current === signature) return;
+    previousSignatureRef.current = signature;
+    setRevision((current) => current + 1);
+  }, [signature]);
+
+  return revision > 0 ? (
+    <span key={revision} className="staff-table-card__update-flash" aria-hidden="true" />
+  ) : null;
 }
 
 function errorText(error: unknown) {
@@ -477,6 +570,9 @@ function AreasPage() {
                         navigate(`/pos/orders/${takeawayOrder.id}`);
                       }}
                     >
+                      <CardUpdateFlash
+                        signature={`${takeawayOrder.totalVnd ?? 0}|${takeawayOrder.itemCount ?? 0}`}
+                      />
                       <div className="staff-table-card__header">
                         <strong className="staff-table-card__name">{label}</strong>
                       </div>
@@ -484,11 +580,9 @@ function AreasPage() {
                         <div className="staff-table-card__meta">
                           <span>{formatTableShortDuration(takeawayOrder.openedAt, now)}</span>
                           <span className="staff-table-card__dot">•</span>
-                          <span>{takeawayOrder.itemCount ?? 0} món</span>
+                          <AnimatedInlineText value={`${takeawayOrder.itemCount ?? 0} món`} />
                         </div>
-                        <div className="staff-table-card__total">
-                          {formatMoney(takeawayOrder.totalVnd ?? 0)}
-                        </div>
+                        <AnimatedMoney value={takeawayOrder.totalVnd ?? 0} />
                       </div>
                     </button>
                   );
@@ -537,6 +631,9 @@ function AreasPage() {
                     else navigate(`/pos/orders/new?tableId=${table.id}`);
                   }}
                 >
+                  <CardUpdateFlash
+                    signature={`${table.status}|${table.timeSessionStatus ?? ''}|${table.totalVnd ?? 0}|${table.itemCount ?? 0}|${table.guestCount ?? 0}|${table.activeOrderId ?? ''}`}
+                  />
                   <div className="staff-table-card__header">
                     <strong className="staff-table-card__name">{table.name}</strong>
                     {isOccupied && isPaused && (
@@ -550,15 +647,15 @@ function AreasPage() {
                       <div className="staff-table-card__meta">
                         <span>{formatTableShortDuration(table.occupiedSince, now)}</span>
                         <span className="staff-table-card__dot">•</span>
-                        <span>
-                          {table.guestCount && table.guestCount > 0
-                            ? `${table.guestCount} khách`
-                            : `${table.itemCount ?? 0} món`}
-                        </span>
+                        <AnimatedInlineText
+                          value={
+                            table.guestCount && table.guestCount > 0
+                              ? `${table.guestCount} khách`
+                              : `${table.itemCount ?? 0} món`
+                          }
+                        />
                       </div>
-                      <div className="staff-table-card__total">
-                        {formatMoney(table.totalVnd ?? 0)}
-                      </div>
+                      <AnimatedMoney value={table.totalVnd ?? 0} />
                     </div>
                   ) : null}
                 </button>
@@ -573,17 +670,23 @@ function AreasPage() {
             <div className="staff-table-legend-item">
               <span className="staff-table-legend-dot staff-table-legend-dot--available" />
               <span className="staff-table-legend-label">Bàn trống</span>
-              <span className="staff-table-legend-count">{availableCount}</span>
+              <span className="staff-table-legend-count">
+                <AnimatedInlineText value={availableCount} />
+              </span>
             </div>
             <div className="staff-table-legend-item">
               <span className="staff-table-legend-dot staff-table-legend-dot--occupied" />
               <span className="staff-table-legend-label">Đang sử dụng</span>
-              <span className="staff-table-legend-count">{occupiedCount}</span>
+              <span className="staff-table-legend-count">
+                <AnimatedInlineText value={occupiedCount} />
+              </span>
             </div>
             <div className="staff-table-legend-item">
               <span className="staff-table-legend-dot staff-table-legend-dot--disabled" />
               <span className="staff-table-legend-label">Tạm ngưng</span>
-              <span className="staff-table-legend-count">{disabledCount}</span>
+              <span className="staff-table-legend-count">
+                <AnimatedInlineText value={disabledCount} />
+              </span>
             </div>
           </div>
         ) : (
@@ -591,7 +694,9 @@ function AreasPage() {
             <div className="staff-table-legend-item">
               <span className="staff-table-legend-dot staff-table-legend-dot--occupied" />
               <span className="staff-table-legend-label">Đang phục vụ mang về</span>
-              <span className="staff-table-legend-count">{activeTakeaways.length}</span>
+              <span className="staff-table-legend-count">
+                <AnimatedInlineText value={activeTakeaways.length} />
+              </span>
             </div>
           </div>
         )}

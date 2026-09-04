@@ -770,7 +770,6 @@ body,
   border: 1.5px solid #cbd5e1;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
   transition:
-    transform 0.16s cubic-bezier(0.16, 1, 0.3, 1),
     box-shadow 0.16s ease,
     border-color 0.16s ease;
   touch-action: manipulation;
@@ -778,12 +777,10 @@ body,
 }
 
 .staff-table-card:hover {
-  transform: translateY(-2px);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
 }
 
 .staff-table-card:active {
-  transform: scale(0.96);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
 }
 
@@ -972,7 +969,6 @@ body,
   border-radius: 18px !important;
   cursor: pointer !important;
   transition:
-    transform 0.16s ease,
     box-shadow 0.16s ease,
     border-color 0.16s ease !important;
 }
@@ -980,11 +976,6 @@ body,
 .staff-table-card--takeaway-create:hover {
   border-color: #0975f7 !important;
   box-shadow: 0 4px 14px rgba(9, 117, 247, 0.12) !important;
-  transform: translateY(-2px);
-}
-
-.staff-table-card--takeaway-create:active {
-  transform: scale(0.98);
 }
 
 .staff-takeaway-create-header {
@@ -1242,6 +1233,14 @@ body,
 
 .staff-order-editor--opening {
   background: #f7f8fa;
+}
+
+.staff-pos-surface-wrapper {
+  width: 100%;
+  height: 100%;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
 }
 
 .staff-order-editor--zoom-in,
@@ -2153,6 +2152,29 @@ body,
 
 .staff-order-item-name small {
   color: #777c86;
+}
+
+.staff-order-item-price-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  flex-shrink: 0;
+  text-align: right;
+}
+
+.staff-order-item-price-col b {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.25;
+}
+
+.staff-order-item-unit-price {
+  font-size: 11px;
+  font-weight: 400;
+  color: #64748b;
+  line-height: 1.2;
 }
 
 .staff-cart-note {
@@ -18452,16 +18474,33 @@ body {
 
 .staff-order-mobile-card-row__bottom {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
+  gap: 8px;
   margin-top: 4px;
 }
 
+.staff-order-mobile-card-row__pricing {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
 .staff-order-mobile-card-row__price {
-  font-size: 15px;
-  font-weight: 600;
-  color: #1e293b;
+  font-size: 14.5px;
+  font-weight: 700;
+  color: #0f172a;
   letter-spacing: -0.1px;
+  line-height: 1.2;
+}
+
+.staff-order-mobile-card-row__unit-price {
+  font-size: 12px;
+  font-weight: 400;
+  color: #64748b;
+  line-height: 1.2;
 }
 
 .staff-order-mobile-stepper {
@@ -18503,11 +18542,42 @@ body {
   color: #1e293b;
 }
 
-.staff-order-mobile-quantity-label,
+.staff-order-mobile-quantity-badge,
+.staff-order-mobile-quantity-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: 6px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.staff-order-mobile-quantity-badge:active,
+.staff-order-mobile-quantity-label:active {
+  background: #e2e8f0;
+  border-color: #cbd5e1;
+}
+
+.staff-order-mobile-quantity-badge.is-weight,
 .staff-order-mobile-weight-label {
-  font-size: 13.5px;
-  font-weight: 550;
-  color: #475569;
+  min-width: auto;
+  padding: 0 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #334155;
 }
 
 /* Time Line Item on Mobile (simple layout, no 1x) */
@@ -25749,9 +25819,7 @@ body {
   color: #111827;
 }
 
-.staff-pending-changes__list,
-.staff-call-history,
-.staff-call-history__entries {
+.staff-pending-changes__list {
   display: grid;
   gap: 0;
 }
@@ -25930,39 +25998,276 @@ body {
   background: #e6f4ff;
 }
 
-.staff-call-history__batch {
-  padding: 14px;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  background: #fff;
+/* Order call history drawer and batch cards */
+.staff-call-history-drawer .ant-drawer-header {
+  padding: 14px 18px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #ffffff;
 }
 
-.staff-call-history__heading,
+.staff-call-history-drawer .ant-drawer-body {
+  background-color: #f8fafc !important;
+  padding: 14px !important;
+}
+
+.staff-call-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding-right: 8px;
+}
+
+.staff-call-history-header__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 15px;
+  color: #0f172a;
+}
+
+.staff-call-history-header__icon {
+  font-size: 16px;
+  color: #475569;
+}
+
+.staff-call-history-header__count {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 11.5px;
+  font-weight: 600;
+  border: 1px solid #e2e8f0;
+}
+
+.staff-call-history {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 16px;
+}
+
+.staff-call-history__batch {
+  position: relative;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.staff-call-history__batch:hover {
+  border-color: #cbd5e1;
+}
+
+.staff-call-history__batch-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.staff-call-history__batch-tag-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.staff-call-history__batch-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1px;
+}
+
+.staff-call-history__batch-badge.is-latest {
+  background: #0f172a;
+  color: #ffffff;
+}
+
+.staff-call-history__latest-pill {
+  font-size: 11px;
+  font-weight: 600;
+  color: #2563eb;
+  background: #eff6ff;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.staff-call-history__batch-time {
+  font-size: 12px;
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.staff-call-history__batch-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0 4px;
+  font-size: 11.5px;
+  color: #64748b;
+}
+
+.staff-call-history__actor-info {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.staff-call-history__actor-icon {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.staff-call-history__entry-count {
+  font-size: 11px;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+.staff-call-history__entries {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 2px;
+}
+
 .staff-call-history__entry {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+  padding: 8px 0;
+  border-top: 1px dashed #f1f5f9;
 }
 
-.staff-call-history__entries {
-  margin-top: 10px;
+.staff-call-history__entry:first-child {
+  border-top: none;
+  padding-top: 6px;
 }
 
-.staff-call-history__entry {
-  padding-top: 8px;
-  border-top: 1px dashed #e5e7eb;
+.staff-call-history__entry:last-child {
+  padding-bottom: 2px;
 }
 
-.staff-call-history__entry > div,
-.staff-call-history__entry > span {
-  display: grid;
+.staff-call-history__entry-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
 }
 
-.staff-call-history__entry > span {
-  color: #0958d9;
+.staff-call-history__product-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e293b;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.staff-call-history__variant-tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11.5px;
+  color: #64748b;
+  line-height: 1.3;
+}
+
+.staff-call-history__note-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: #475569;
+  font-style: italic;
+  line-height: 1.3;
+}
+
+.staff-call-history__reason-tag {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  font-size: 11px;
+  color: #b91c1c;
+  background: #fef2f2;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-top: 2px;
+  line-height: 1.3;
+}
+
+.staff-call-history__entry-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  flex-shrink: 0;
+}
+
+.staff-call-history__quantity-delta {
+  font-size: 13px;
   font-weight: 700;
-  text-align: right;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+}
+
+.staff-call-history__quantity-delta.is-positive {
+  color: #0f172a;
+}
+
+.staff-call-history__quantity-delta.is-negative {
+  color: #dc2626;
+}
+
+.staff-call-history__quantity-transition {
+  font-size: 11px;
+  color: #94a3b8;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.2px;
+}
+
+.staff-call-history__empty-notice {
+  font-size: 12px;
+  color: #94a3b8;
+  font-style: italic;
+  padding: 6px 0 2px;
+}
+
+@media (max-width: 639px) {
+  .staff-call-history-drawer .ant-drawer-body {
+    padding: 10px !important;
+  }
+
+  .staff-call-history {
+    gap: 10px;
+  }
+
+  .staff-call-history__batch {
+    padding: 11px 12px;
+    border-radius: 10px;
+  }
 }
 
 /* Quiet save affordance: only active while the order has unsaved changes. */
@@ -26010,40 +26315,172 @@ body {
   z-index: 2;
 }
 
-.staff-order-mobile-btn--save.staff-save-button--attention {
-  --staff-save-button-fill: #f8fafc;
+/* ══════════════════════════════════════════════════════════════════════════════
+   SAVE BUTTON PROMINENCE / ATTENTION EFFECTS (Mobile & Desktop)
+   Hai hiệu ứng riêng biệt cho 2 nút Lưu đơn có màu nền khác nhau
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* HIỆU ỨNG 1: Nút Lưu đơn ở Trang Chi tiết đơn (Nền sáng #f8fafc)
+   Hiệu ứng: Viền hào quang thở xanh nhẹ nhàng (Halo Pulse) + Chấm tròn Beacon tinh tế + Lắc nhẹ nhắc nhở */
+.staff-order-mobile-btn--save.is-attention,
+.staff-order-mobile-btn--save.staff-save-button--attention,
+.staff-order-desktop-save-btn.is-attention {
+  background: #f0f7ff !important;
+  border: 1.5px solid #2563eb !important;
+  color: #1d4ed8 !important;
+  font-weight: 700 !important;
+  position: relative !important;
+  isolation: isolate;
+  transform-origin: center center;
+  animation:
+    staff-order-save-halo 2.2s cubic-bezier(0.4, 0, 0.6, 1) infinite,
+    staff-btn-gentle-wiggle 3.8s ease-in-out infinite !important;
 }
 
-@keyframes staff-save-light-orbit {
-  to {
-    transform: rotate(1turn);
-  }
+.staff-order-mobile-btn--save.is-attention::after,
+.staff-order-mobile-btn--save.staff-save-button--attention::after,
+.staff-order-desktop-save-btn.is-attention::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 7px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #2563eb;
+  box-shadow: 0 0 6px rgba(37, 99, 235, 0.85);
+  animation: staff-dot-beacon 1.8s ease-in-out infinite;
+  pointer-events: none;
 }
 
-@keyframes staff-save-button-nudge {
+@keyframes staff-order-save-halo {
   0%,
-  88%,
   100% {
-    translate: 0 0;
+    box-shadow:
+      0 0 0 0 rgba(37, 99, 235, 0.4),
+      0 2px 6px rgba(37, 99, 235, 0.1);
+    border-color: #3b82f6;
   }
-
-  91% {
-    translate: -1px 0;
+  50% {
+    box-shadow:
+      0 0 0 6px rgba(37, 99, 235, 0),
+      0 3px 10px rgba(37, 99, 235, 0.2);
+    border-color: #1d4ed8;
   }
+}
 
-  94% {
-    translate: 1px 0;
+@keyframes staff-dot-beacon {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
   }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.7);
+  }
+}
 
-  97% {
-    translate: -0.5px 0;
+/* HIỆU ỨNG 2: Nút Lưu đơn ở Trang Thêm món (Nền xanh dương đậm #0975f7)
+   Hiệu ứng: Vệt sáng kim loại quét qua (Glossy Sheen Sweep) + Đổ bóng nổi khối 3D + Lắc nhẹ nhắc nhở */
+.staff-product-picker-mobile__done-btn.is-attention {
+  position: relative !important;
+  overflow: hidden !important;
+  isolation: isolate;
+  background: linear-gradient(135deg, #0975f7 0%, #0284c7 100%) !important;
+  border: none !important;
+  color: #ffffff !important;
+  font-weight: 750 !important;
+  letter-spacing: -0.1px !important;
+  box-shadow: 0 4px 14px rgba(9, 117, 247, 0.42) !important;
+  transform-origin: center center;
+  animation:
+    staff-picker-save-elevate 3.8s ease-in-out infinite,
+    staff-btn-gentle-wiggle 3.8s ease-in-out infinite !important;
+}
+
+.staff-product-picker-mobile__done-btn.is-attention::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -120%;
+  width: 60%;
+  height: 200%;
+  background: linear-gradient(
+    115deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.08) 25%,
+    rgba(255, 255, 255, 0.45) 50%,
+    rgba(255, 255, 255, 0.08) 75%,
+    transparent 100%
+  );
+  transform: rotate(20deg);
+  animation: staff-sheen-sweep 3.8s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.staff-product-picker-mobile__done-btn.is-attention > span {
+  position: relative;
+  z-index: 2;
+}
+
+@keyframes staff-sheen-sweep {
+  0% {
+    left: -120%;
+  }
+  32%,
+  100% {
+    left: 200%;
+  }
+}
+
+@keyframes staff-picker-save-elevate {
+  0%,
+  76%,
+  100% {
+    box-shadow: 0 4px 14px rgba(9, 117, 247, 0.4);
+  }
+  85% {
+    box-shadow: 0 7px 18px rgba(9, 117, 247, 0.6);
+  }
+}
+
+/* LẮC NHẸ TỰ NHIÊN (Gentle Wiggle/Nudge) CHO CẢ 2 NÚT LƯU ĐƠN */
+@keyframes staff-btn-gentle-wiggle {
+  0%,
+  76%,
+  100% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+  78% {
+    transform: translate3d(-2px, 0, 0) rotate(-1deg);
+  }
+  81% {
+    transform: translate3d(2.5px, 0, 0) rotate(1.2deg);
+  }
+  84% {
+    transform: translate3d(-2px, 0, 0) rotate(-0.8deg);
+  }
+  87% {
+    transform: translate3d(1.5px, 0, 0) rotate(0.6deg);
+  }
+  90% {
+    transform: translate3d(-0.8px, 0, 0) rotate(-0.3deg);
+  }
+  93% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .staff-save-button--attention,
-  .staff-save-button--attention::before {
-    animation: none;
+  .staff-order-mobile-btn--save.is-attention,
+  .staff-product-picker-mobile__done-btn.is-attention,
+  .staff-save-button--attention {
+    animation: none !important;
+  }
+  .staff-product-picker-mobile__done-btn.is-attention::before {
+    display: none;
   }
 }
 
@@ -26472,24 +26909,28 @@ body {
   animation: posFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+.staff-order-editor--soft-enter {
+  animation: posOrderSoftReveal 140ms ease-out both;
+}
+
+@keyframes posOrderSoftReveal {
+  from {
+    opacity: 0.86;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 .staff-payment-page {
   animation: posFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 .staff-table-card {
   transition:
-    transform 0.12s cubic-bezier(0.2, 0, 0, 1),
     box-shadow 0.15s ease,
     border-color 0.2s ease,
     background-color 0.2s ease !important;
-}
-
-.staff-table-card:hover {
-  transform: translateY(-2px);
-}
-
-.staff-table-card:active {
-  transform: scale(0.96) !important;
 }
 
 .staff-area-pill,

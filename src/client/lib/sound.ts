@@ -39,6 +39,21 @@ type AudioContextWindow = Window & {
 
 const GESTURE_EVENTS: Array<keyof WindowEventMap> = ['pointerdown', 'touchend', 'click', 'keydown'];
 
+/**
+ * Detects whether the current device is a mobile phone (screen width < 768px with touch capability).
+ * UI touch feedback sounds are restricted to phones to avoid unwanted noises on desktop cashier terminals.
+ */
+export function isMobilePhoneDevice(): boolean {
+  if (typeof window === 'undefined') return false;
+  const isPhoneWidth = window.innerWidth < 768;
+  const isTouchDevice =
+    'ontouchstart' in window ||
+    Boolean(navigator.maxTouchPoints && navigator.maxTouchPoints > 0) ||
+    /Android|webOS|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent || '') ||
+    Boolean(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+  return isPhoneWidth && Boolean(isTouchDevice);
+}
+
 export class SoundManager {
   private audioContext: AudioContext | null = null;
   private readonly audioBuffers = new Map<PosSoundType, AudioBuffer>();
@@ -413,6 +428,186 @@ export class SoundManager {
     return Math.max(0, Math.min(1, volume ?? this.DEFAULT_VOLUME));
   }
 
+  /**
+   * Order saved sound: Two-tone ascending warm confirmation chime (E5 -> B5).
+   * Soft, reassuring, confirms the order is saved without being loud or intrusive.
+   * Only triggers on mobile phones.
+   */
+  playOrderSave(customVolume = 0.22): boolean {
+    if (typeof window === 'undefined' || this.isMuted || !isMobilePhoneDevice()) return false;
+    const context = this.getAudioContext();
+    if (!context || context.state === 'closed') return false;
+    if (context.state === 'suspended') {
+      context.resume().catch(() => {});
+    }
+
+    try {
+      const now = context.currentTime;
+      const volume = this.clampVolume(customVolume);
+      if (volume === 0) return false;
+
+      // Note 1: 659.25Hz (E5)
+      const osc1 = context.createOscillator();
+      const gain1 = context.createGain();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(659.25, now);
+      gain1.gain.setValueAtTime(0.001, now);
+      gain1.gain.linearRampToValueAtTime(0.16 * volume, now + 0.003);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+      osc1.connect(gain1);
+      gain1.connect(context.destination);
+      osc1.start(now);
+      osc1.stop(now + 0.08);
+
+      // Note 2: 987.77Hz (B5) at +45ms
+      const note2Start = now + 0.045;
+      const osc2 = context.createOscillator();
+      const gain2 = context.createGain();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(987.77, note2Start);
+      gain2.gain.setValueAtTime(0.001, note2Start);
+      gain2.gain.linearRampToValueAtTime(0.2 * volume, note2Start + 0.003);
+      gain2.gain.exponentialRampToValueAtTime(0.001, note2Start + 0.12);
+      osc2.connect(gain2);
+      gain2.connect(context.destination);
+      osc2.start(note2Start);
+      osc2.stop(note2Start + 0.12);
+
+      // Light sparkling harmonic overtone on Note 2 (1975Hz)
+      const oscSparkle = context.createOscillator();
+      const gainSparkle = context.createGain();
+      oscSparkle.type = 'triangle';
+      oscSparkle.frequency.setValueAtTime(1975.5, note2Start);
+      gainSparkle.gain.setValueAtTime(0.001, note2Start);
+      gainSparkle.gain.linearRampToValueAtTime(0.04 * volume, note2Start + 0.002);
+      gainSparkle.gain.exponentialRampToValueAtTime(0.001, note2Start + 0.06);
+      oscSparkle.connect(gainSparkle);
+      gainSparkle.connect(context.destination);
+      oscSparkle.start(note2Start);
+      oscSparkle.stop(note2Start + 0.06);
+
+      this.isUnlocked = true;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Cancel order sound: Subtle, gentle descending two-tone chime (F#5 -> D5).
+   * Noticeable and distinct, but soft, pleasant, and non-jarring.
+   * Only triggers on mobile phones.
+   */
+  playCancelOrder(customVolume = 0.22): boolean {
+    if (typeof window === 'undefined' || this.isMuted || !isMobilePhoneDevice()) return false;
+    const context = this.getAudioContext();
+    if (!context || context.state === 'closed') return false;
+    if (context.state === 'suspended') {
+      context.resume().catch(() => {});
+    }
+
+    try {
+      const now = context.currentTime;
+      const volume = this.clampVolume(customVolume);
+      if (volume === 0) return false;
+
+      // Note 1: 739.99Hz (F#5)
+      const osc1 = context.createOscillator();
+      const gain1 = context.createGain();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(739.99, now);
+      gain1.gain.setValueAtTime(0.001, now);
+      gain1.gain.linearRampToValueAtTime(0.18 * volume, now + 0.002);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+      osc1.connect(gain1);
+      gain1.connect(context.destination);
+      osc1.start(now);
+      osc1.stop(now + 0.08);
+
+      // Note 2: 587.33Hz (D5 - descending warm resolution) at +45ms
+      const note2Start = now + 0.045;
+      const osc2 = context.createOscillator();
+      const gain2 = context.createGain();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(587.33, note2Start);
+      gain2.gain.setValueAtTime(0.001, note2Start);
+      gain2.gain.linearRampToValueAtTime(0.16 * volume, note2Start + 0.002);
+      gain2.gain.exponentialRampToValueAtTime(0.001, note2Start + 0.1);
+      osc2.connect(gain2);
+      gain2.connect(context.destination);
+      osc2.start(note2Start);
+      osc2.stop(note2Start + 0.1);
+
+      this.isUnlocked = true;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Payment success fanfare: Multi-tone harmonious major chord arpeggio (C5 -> E5 -> G5 -> C6).
+   * Rewarding, gentle, and pleasantly soft.
+   * Only triggers on mobile phones.
+   */
+  playPaymentSuccess(customVolume = 0.20): boolean {
+    if (typeof window === 'undefined' || this.isMuted || !isMobilePhoneDevice()) return false;
+    const context = this.getAudioContext();
+    if (!context || context.state === 'closed') return false;
+    if (context.state === 'suspended') {
+      context.resume().catch(() => {});
+    }
+
+    try {
+      const now = context.currentTime;
+      const volume = this.clampVolume(customVolume);
+      if (volume === 0) return false;
+
+      // Gentle arpeggio notes: C5, E5, G5, C6 with soft volume
+      const notes = [
+        { freq: 523.25, time: now, dur: 0.1, vol: 0.08 },
+        { freq: 659.25, time: now + 0.05, dur: 0.12, vol: 0.1 },
+        { freq: 783.99, time: now + 0.1, dur: 0.14, vol: 0.12 },
+        { freq: 1046.5, time: now + 0.15, dur: 0.22, vol: 0.15 },
+      ];
+
+      for (const n of notes) {
+        const osc = context.createOscillator();
+        const gain = context.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(n.freq, n.time);
+
+        gain.gain.setValueAtTime(0.001, n.time);
+        gain.gain.linearRampToValueAtTime(n.vol * volume, n.time + 0.003);
+        gain.gain.exponentialRampToValueAtTime(0.001, n.time + n.dur);
+
+        osc.connect(gain);
+        gain.connect(context.destination);
+        osc.start(n.time);
+        osc.stop(n.time + n.dur);
+      }
+
+      // Very subtle, gentle sparkle on the top note
+      const topNoteTime = now + 0.15;
+      const oscTop = context.createOscillator();
+      const gainTop = context.createGain();
+      oscTop.type = 'triangle';
+      oscTop.frequency.setValueAtTime(2093, topNoteTime);
+      gainTop.gain.setValueAtTime(0.001, topNoteTime);
+      gainTop.gain.linearRampToValueAtTime(0.03 * volume, topNoteTime + 0.002);
+      gainTop.gain.exponentialRampToValueAtTime(0.001, topNoteTime + 0.12);
+      oscTop.connect(gainTop);
+      gainTop.connect(context.destination);
+      oscTop.start(topNoteTime);
+      oscTop.stop(topNoteTime + 0.12);
+
+      this.isUnlocked = true;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** Removes long-lived browser hooks; primarily useful for isolated tests. */
   destroy(): void {
     this.disarmGestureUnlock();
@@ -446,6 +641,18 @@ export function playPosSound(
   },
 ): void {
   posSound.play(type, options);
+}
+
+export function playOrderSaveSound(volume?: number): void {
+  posSound.playOrderSave(volume);
+}
+
+export function playCancelOrderSound(volume?: number): void {
+  posSound.playCancelOrder(volume);
+}
+
+export function playPaymentSuccessSound(volume?: number): void {
+  posSound.playPaymentSuccess(volume);
 }
 
 export function warmPosSounds(types: Array<Exclude<PosSoundType, 'NOTIFICATION_CHIME'>>): void {

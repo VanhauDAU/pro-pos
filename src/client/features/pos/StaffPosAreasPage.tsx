@@ -1,7 +1,14 @@
 import 'antd/dist/reset.css';
 import '@client/styles/areas.css';
 
-import { PauseCircleOutlined, ShoppingOutlined } from '@ant-design/icons';
+import {
+  DownOutlined,
+  PauseCircleOutlined,
+  ShoppingOutlined,
+  SyncOutlined,
+  UpOutlined,
+} from '@ant-design/icons';
+import { motion } from 'framer-motion';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, ConfigProvider, Empty, Spin } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -35,8 +42,12 @@ import {
 const BRAND = '#0975f7';
 const ORDER_HOVER_PREFETCH_DELAY_MS = 80;
 const MONEY_ANIMATION_DURATION_MS = 280;
+const PULL_REFRESH_THRESHOLD_PX = 56;
+const PULL_REFRESH_MAX_PX = 96;
+const PULL_REFRESH_LOADING_PX = 52;
 type PosTable = PosOverviewTable;
 interface AreaOrderQuote extends RefreshableOrderQuote {}
+type PullRefreshPhase = 'idle' | 'pulling' | 'ready' | 'refreshing';
 
 const MONEY_FORMATTER = new Intl.NumberFormat('vi-VN');
 
@@ -46,6 +57,16 @@ function formatMoney(value: number) {
 
 function prefersReducedMotion() {
   return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+}
+
+function getTableInteractionTransition() {
+  return prefersReducedMotion()
+    ? { duration: 0 }
+    : { duration: 0.14, ease: [0.2, 0, 0, 1] as const };
+}
+
+function getTableInteractionProps() {
+  return prefersReducedMotion() ? {} : { whileHover: { y: -1 }, whileTap: { scale: 0.99 } };
 }
 
 function AnimatedMoney({ value }: { value: number }) {
@@ -174,6 +195,169 @@ function AreasPage() {
     refetchOnMount: false,
     refetchOnWindowFocus: 'always',
   });
+
+  const [pullPhase, setPullPhase] = useState<PullRefreshPhase>('idle');
+  const pullDistanceRef = useRef(0);
+  const pullPhaseRef = useRef<PullRefreshPhase>('idle');
+  const pullRefreshingRef = useRef(false);
+  const lastRefreshTimeRef = useRef(0);
+  const areasPageRef = useRef<HTMLDivElement>(null);
+  const pullIndicatorRef = useRef<HTMLDivElement>(null);
+  const overviewRefetchRef = useRef(overview.refetch);
+
+  useEffect(() => {
+    overviewRefetchRef.current = overview.refetch;
+  }, [overview.refetch]);
+
+  const updatePullDistance = useCallback((distance: number) => {
+    pullDistanceRef.current = distance;
+    if (pullIndicatorRef.current) {
+      pullIndicatorRef.current.style.height = `${distance}px`;
+    }
+  }, []);
+
+  const updatePullPhase = useCallback((phase: PullRefreshPhase) => {
+    if (pullPhaseRef.current === phase) return;
+    pullPhaseRef.current = phase;
+    setPullPhase(phase);
+  }, []);
+
+  const performPullRefresh = useCallback(async () => {
+    const nowTime = Date.now();
+    if (pullRefreshingRef.current || nowTime - lastRefreshTimeRef.current < 1200) {
+      updatePullDistance(0);
+      updatePullPhase('idle');
+      return;
+    }
+    pullRefreshingRef.current = true;
+    lastRefreshTimeRef.current = nowTime;
+    updatePullDistance(PULL_REFRESH_LOADING_PX);
+    updatePullPhase('refreshing');
+
+    try {
+      // Tối ưu request: Chỉ gọi duy nhất overview.refetch(), không gọi lại danh mục hay các query khác
+      await overviewRefetchRef.current();
+    } catch {
+      // Ignore network errors
+    } finally {
+      pullRefreshingRef.current = false;
+      updatePullDistance(0);
+      updatePullPhase('idle');
+    }
+  }, [updatePullDistance, updatePullPhase]);
+
+  useEffect(() => {
+    const pageEl = areasPageRef.current;
+    if (!pageEl) return;
+
+    let startY: number | null = null;
+    let startX: number | null = null;
+    let isPulling = false;
+    let directionLocked = false;
+    const previousOverscrollBehavior = document.documentElement.style.overscrollBehaviorY;
+    document.documentElement.style.overscrollBehaviorY = 'none';
+
+    const resetGesture = () => {
+      startY = null;
+      startX = null;
+      isPulling = false;
+      directionLocked = false;
+    };
+
+    const isAtTop = () =>
+      window.scrollY <= 0 &&
+      document.documentElement.scrollTop <= 0 &&
+      document.body.scrollTop <= 0;
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 1 || pullRefreshingRef.current || !isAtTop()) {
+        resetGesture();
+        return;
+      }
+      const touch = e.touches[0];
+      if (!touch) return;
+      startY = touch.clientY;
+      startX = touch.clientX;
+      isPulling = false;
+      directionLocked = false;
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (
+        pullRefreshingRef.current ||
+        startY === null ||
+        startX === null ||
+        e.touches.length !== 1
+      ) {
+        return;
+      }
+      const touch = e.touches[0];
+      if (!touch) return;
+      const deltaY = touch.clientY - startY;
+      const deltaX = touch.clientX - startX;
+
+      if (!directionLocked && Math.max(Math.abs(deltaX), Math.abs(deltaY)) >= 8) {
+        directionLocked = true;
+        if (Math.abs(deltaX) >= Math.abs(deltaY) || deltaY <= 0) {
+          resetGesture();
+          return;
+        }
+      }
+
+      if (!directionLocked) return;
+
+      if (!isAtTop() || deltaY <= 0) {
+        if (isPulling) {
+          updatePullDistance(0);
+          updatePullPhase('idle');
+        }
+        resetGesture();
+        return;
+      }
+
+      isPulling = true;
+      if (e.cancelable) e.preventDefault();
+      const resistedDistance = Math.min(PULL_REFRESH_MAX_PX, Math.max(0, deltaY - 4) * 0.5);
+      updatePullDistance(resistedDistance);
+      updatePullPhase(resistedDistance >= PULL_REFRESH_THRESHOLD_PX ? 'ready' : 'pulling');
+    };
+
+    const onTouchEnd = () => {
+      const shouldRefresh = isPulling && pullDistanceRef.current >= PULL_REFRESH_THRESHOLD_PX;
+      resetGesture();
+      if (shouldRefresh) {
+        try {
+          navigator.vibrate?.(10);
+        } catch {}
+        void performPullRefresh();
+      } else if (!pullRefreshingRef.current) {
+        updatePullDistance(0);
+        updatePullPhase('idle');
+      }
+    };
+
+    const onTouchCancel = () => {
+      resetGesture();
+      if (!pullRefreshingRef.current) {
+        updatePullDistance(0);
+        updatePullPhase('idle');
+      }
+    };
+
+    pageEl.addEventListener('touchstart', onTouchStart, { passive: true });
+    pageEl.addEventListener('touchmove', onTouchMove, { passive: false });
+    pageEl.addEventListener('touchend', onTouchEnd, { passive: true });
+    pageEl.addEventListener('touchcancel', onTouchCancel, { passive: true });
+
+    return () => {
+      pageEl.removeEventListener('touchstart', onTouchStart);
+      pageEl.removeEventListener('touchmove', onTouchMove);
+      pageEl.removeEventListener('touchend', onTouchEnd);
+      pageEl.removeEventListener('touchcancel', onTouchCancel);
+      document.documentElement.style.overscrollBehaviorY = previousOverscrollBehavior;
+    };
+  }, [performPullRefresh, updatePullDistance, updatePullPhase]);
+
   const tables = {
     data: overview.data?.tables,
     isLoading: overview.isLoading,
@@ -207,21 +391,6 @@ function AreasPage() {
     const id = window.setTimeout(warmCatalog, 1_000);
     return () => window.clearTimeout(id);
   }, [queryClient]);
-
-  const recordCardZoomOrigin = useCallback((element: HTMLElement) => {
-    try {
-      const rect = element.getBoundingClientRect();
-      const root = document.documentElement;
-      const originX = rect.left + rect.width / 2;
-      const originY = rect.top + rect.height / 2;
-      const scale = Math.max(0.25, Math.min(0.65, rect.width / Math.max(window.innerWidth, 1)));
-      root.style.setProperty('--pos-zoom-origin-x', `${Math.round(originX)}px`);
-      root.style.setProperty('--pos-zoom-origin-y', `${Math.round(originY)}px`);
-      root.style.setProperty('--pos-zoom-scale', scale.toFixed(3));
-    } catch {
-      // Ignore in non-browser environment
-    }
-  }, []);
 
   const prefetchOrder = useCallback(
     (activeOrderId: string) => {
@@ -341,7 +510,33 @@ function AreasPage() {
     : (currentArea?.tables.filter((t) => t.status === 'DISABLED').length ?? 0);
 
   return (
-    <div className="staff-areas-page">
+    <div className="staff-areas-page" ref={areasPageRef}>
+      <div
+        ref={pullIndicatorRef}
+        className={`staff-areas-pull-refresh${pullPhase !== 'idle' ? ' is-visible' : ''}`}
+        role="status"
+        aria-live="polite"
+        aria-hidden={pullPhase === 'idle'}
+      >
+        <div className="staff-areas-pull-refresh__content">
+          {pullPhase === 'refreshing' ? (
+            <>
+              <SyncOutlined spin className="staff-areas-pull-refresh__icon" />
+              <span>Đang cập nhật trạng thái bàn...</span>
+            </>
+          ) : pullPhase === 'ready' ? (
+            <>
+              <UpOutlined className="staff-areas-pull-refresh__icon" />
+              <span>Thả ra để làm mới</span>
+            </>
+          ) : (
+            <>
+              <DownOutlined className="staff-areas-pull-refresh__icon" />
+              <span>Kéo xuống để làm mới</span>
+            </>
+          )}
+        </div>
+      </div>
       {tables.isLoading ? <Spin fullscreen description="Đang tải khu vực" /> : null}
       {tables.isError ? <Alert type="error" showIcon title="Chưa tải được khu vực và bàn" /> : null}
       {overview.isRefetchError && overview.data ? (
@@ -448,13 +643,18 @@ function AreasPage() {
           <div className="staff-table-grid">
             {/* Card Tạo đơn mang về mới (luôn hiển thị, giống mẫu ảnh) */}
             {status !== 'OCCUPIED' ? (
-              <button
+              <motion.button
+                transition={getTableInteractionTransition()}
                 type="button"
                 className="staff-table-card staff-table-card--takeaway-create"
-                onPointerDown={(e) => recordCardZoomOrigin(e.currentTarget)}
-                onClick={(e) => {
-                  recordCardZoomOrigin(e.currentTarget);
-                  navigate('/pos/orders/new?type=TAKEAWAY');
+                {...getTableInteractionProps()}
+                onClick={() => {
+                  navigate('/pos/orders/new?type=TAKEAWAY', {
+                    state: {
+                      transitionTableId: 'takeaway-create',
+                      transitionTableName: 'Mang về',
+                    },
+                  });
                 }}
               >
                 <div className="staff-takeaway-create-header">
@@ -543,31 +743,40 @@ function AreasPage() {
                   </svg>
                   <strong className="staff-takeaway-create-title">Mang về</strong>
                 </div>
-              </button>
+              </motion.button>
             ) : null}
 
             {/* Các đơn mang về đang hoạt động ("Mang về 01", "Mang về 02", ...) */}
             {status !== 'AVAILABLE'
               ? activeTakeaways.map((takeawayOrder, index) => {
                   const label = `Mang về ${String(index + 1).padStart(2, '0')}`;
+                  const takeawayTransitionId = `takeaway-${takeawayOrder.id}`;
+
                   return (
-                    <button
+                    <motion.button
+                      transition={getTableInteractionTransition()}
                       type="button"
                       key={takeawayOrder.id}
                       className="staff-table-card staff-table-card--occupied"
                       onPointerEnter={() => prefetchOrderOnHoverIntent(takeawayOrder.id)}
                       onPointerLeave={cancelHoverPrefetch}
-                      onPointerDown={(e) => {
+                      onPointerDown={() => {
                         startPosInteraction('order-shell');
                         startPosInteraction('order-verified');
                         cancelHoverPrefetch();
-                        recordCardZoomOrigin(e.currentTarget);
                         prefetchOrder(takeawayOrder.id);
                       }}
                       onFocus={() => prefetchOrder(takeawayOrder.id)}
-                      onClick={(e) => {
-                        recordCardZoomOrigin(e.currentTarget);
-                        navigate(`/pos/orders/${takeawayOrder.id}`);
+                      {...getTableInteractionProps()}
+                      onClick={() => {
+                        navigate(`/pos/orders/${takeawayOrder.id}`, {
+                          state: {
+                            transitionTableId: takeawayTransitionId,
+                            transitionTableName: label,
+                            transitionTableStatus: 'TAKEAWAY',
+                            transitionTotalVnd: takeawayOrder.totalVnd ?? 0,
+                          },
+                        });
                       }}
                     >
                       <CardUpdateFlash
@@ -575,6 +784,7 @@ function AreasPage() {
                       />
                       <div className="staff-table-card__header">
                         <strong className="staff-table-card__name">{label}</strong>
+                        <span className="staff-table-card__occupied-badge">Mang về</span>
                       </div>
                       <div className="staff-table-card__body">
                         <div className="staff-table-card__meta">
@@ -582,9 +792,11 @@ function AreasPage() {
                           <span className="staff-table-card__dot">•</span>
                           <AnimatedInlineText value={`${takeawayOrder.itemCount ?? 0} món`} />
                         </div>
-                        <AnimatedMoney value={takeawayOrder.totalVnd ?? 0} />
+                        <div>
+                          <AnimatedMoney value={takeawayOrder.totalVnd ?? 0} />
+                        </div>
                       </div>
-                    </button>
+                    </motion.button>
                   );
                 })
               : null}
@@ -597,8 +809,11 @@ function AreasPage() {
               const isOccupied = table.status === 'OCCUPIED';
               const isPaused = table.timeSessionStatus === 'PAUSED';
 
+              const tableTransitionId = table.id;
+
               return (
-                <button
+                <motion.button
+                  transition={getTableInteractionTransition()}
                   type="button"
                   key={table.id}
                   disabled={table.status === 'DISABLED'}
@@ -613,10 +828,9 @@ function AreasPage() {
                     if (table.activeOrderId) prefetchOrderOnHoverIntent(table.activeOrderId);
                   }}
                   onPointerLeave={cancelHoverPrefetch}
-                  onPointerDown={(e) => {
+                  onPointerDown={() => {
                     startPosInteraction('order-shell');
                     startPosInteraction('order-verified');
-                    recordCardZoomOrigin(e.currentTarget);
                     if (table.activeOrderId) {
                       cancelHoverPrefetch();
                       prefetchOrder(table.activeOrderId);
@@ -625,10 +839,24 @@ function AreasPage() {
                   onFocus={() => {
                     if (table.activeOrderId) prefetchOrder(table.activeOrderId);
                   }}
-                  onClick={(e) => {
-                    recordCardZoomOrigin(e.currentTarget);
-                    if (table.activeOrderId) navigate(`/pos/orders/${table.activeOrderId}`);
-                    else navigate(`/pos/orders/new?tableId=${table.id}`);
+                  {...getTableInteractionProps()}
+                  onClick={() => {
+                    const navState = {
+                      transitionTableId: tableTransitionId,
+                      transitionTableName: table.name,
+                      transitionTableStatus: table.status,
+                      transitionIsPaused: isPaused,
+                      transitionTotalVnd: table.totalVnd ?? 0,
+                      transitionAreaName: table.areaName,
+                      transitionOccupiedSince: table.occupiedSince,
+                      transitionItemCount: table.itemCount ?? 0,
+                      transitionGuestCount: table.guestCount ?? 0,
+                    };
+                    if (table.activeOrderId) {
+                      navigate(`/pos/orders/${table.activeOrderId}`, { state: navState });
+                    } else {
+                      navigate(`/pos/orders/new?tableId=${table.id}`, { state: navState });
+                    }
                   }}
                 >
                   <CardUpdateFlash
@@ -636,11 +864,11 @@ function AreasPage() {
                   />
                   <div className="staff-table-card__header">
                     <strong className="staff-table-card__name">{table.name}</strong>
-                    {isOccupied && isPaused && (
+                    {isOccupied && isPaused ? (
                       <span className="staff-table-card__paused-badge">
                         <PauseCircleOutlined /> Tạm dừng
                       </span>
-                    )}
+                    ) : null}
                   </div>
                   {isOccupied ? (
                     <div className="staff-table-card__body">
@@ -655,10 +883,12 @@ function AreasPage() {
                           }
                         />
                       </div>
-                      <AnimatedMoney value={table.totalVnd ?? 0} />
+                      <div>
+                        <AnimatedMoney value={table.totalVnd ?? 0} />
+                      </div>
                     </div>
                   ) : null}
-                </button>
+                </motion.button>
               );
             })}
           </div>

@@ -733,7 +733,6 @@ body,
   border: 1.5px solid #cbd5e1;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
   transition:
-    transform 0.16s cubic-bezier(0.16, 1, 0.3, 1),
     box-shadow 0.16s ease,
     border-color 0.2s ease,
     background-color 0.2s ease;
@@ -763,12 +762,10 @@ body,
 }
 
 .staff-table-card:hover {
-  transform: translateY(-2px);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
 }
 
 .staff-table-card:active {
-  transform: scale(0.96);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
 }
 
@@ -986,7 +983,6 @@ body,
   border-radius: 18px !important;
   cursor: pointer !important;
   transition:
-    transform 0.16s ease,
     box-shadow 0.16s ease,
     border-color 0.16s ease !important;
 }
@@ -994,11 +990,6 @@ body,
 .staff-table-card--takeaway-create:hover {
   border-color: #0975f7 !important;
   box-shadow: 0 4px 14px rgba(9, 117, 247, 0.12) !important;
-  transform: translateY(-2px);
-}
-
-.staff-table-card--takeaway-create:active {
-  transform: scale(0.98);
 }
 
 .staff-takeaway-create-header {
@@ -1048,6 +1039,45 @@ body,
   background: #f5f6f8;
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* Pull to Refresh in Areas Page */
+.staff-areas-pull-refresh {
+  display: none;
+  overflow: hidden;
+  height: 0;
+  transition: height 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  align-items: center;
+  justify-content: center;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 600;
+  user-select: none;
+  border-bottom: 1px solid transparent;
+}
+
+.staff-areas-pull-refresh.is-visible {
+  transition: none;
+  border-bottom-color: #e2e8f0;
+}
+
+.staff-areas-pull-refresh__content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 16px;
+}
+
+.staff-areas-pull-refresh__icon {
+  font-size: 14px;
+  color: var(--brand-primary, #0975f7);
+}
+
+/* Keep card faces stable while Framer Motion owns the subtle press transform. */
+.staff-table-card {
+  backface-visibility: hidden;
 }
 
 .staff-pos-shell--editor .staff-pos-main {
@@ -1337,6 +1367,10 @@ body,
     display: block;
     min-height: calc(100dvh - 144px);
     background: #f8fafc;
+  }
+
+  .staff-areas-pull-refresh {
+    display: flex;
   }
 
   .staff-area-sidebar {
@@ -2831,17 +2865,7 @@ body {
 }
 
 .staff-table-card {
-  transition:
-    transform 0.12s cubic-bezier(0.2, 0, 0, 1),
-    box-shadow 0.15s ease !important;
-}
-
-.staff-table-card:hover {
-  transform: translateY(-2px);
-}
-
-.staff-table-card:active {
-  transform: scale(0.96) !important;
+  transition: box-shadow 0.15s ease !important;
 }
 
 .staff-area-pill,

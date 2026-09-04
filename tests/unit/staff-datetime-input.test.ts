@@ -15,7 +15,11 @@ describe('StaffDateTimeInput logic', () => {
     const year = parts[0]!;
     const month = parts[1]!;
     const day = parts[2]!;
-    const next = base.clone().year(year).month(month - 1).date(day);
+    const next = base
+      .clone()
+      .year(year)
+      .month(month - 1)
+      .date(day);
 
     expect(next.format('YYYY-MM-DD')).toBe('2026-09-03');
     expect(next.format('HH:mm')).toBe('14:35');

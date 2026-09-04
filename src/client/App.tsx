@@ -3,6 +3,7 @@ import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes, useLocation, useSearchParams } from 'react-router';
 
 import { Toaster } from 'sonner';
+import { AnimatePresence, motion } from 'framer-motion';
 
 import { PosAppSplash } from '@client/features/pos/PosAppSplash';
 import { PwaUpdatePrompt } from '@client/features/pwa/PwaUpdatePrompt';
@@ -53,6 +54,9 @@ function StaffPosRoute() {
   const hasWarmAreasBootstrap = Boolean(queryClient.getQueryData(['app-bootstrap', 'areas']));
   const querySurface = surface === 'shell' && hasWarmAreasBootstrap ? 'areas' : surface;
   const bootstrap = useQuery(appBootstrapQueryOptions(queryClient, querySurface));
+  const hasTableTransition = Boolean(
+    (location.state as { transitionTableId?: string } | null)?.transitionTableId,
+  );
 
   if (bootstrap.isLoading || !bootstrap.data) {
     if (bootstrap.error) {
@@ -101,11 +105,32 @@ function StaffPosRoute() {
 
   return (
     <Suspense fallback={<PosAppSplash message="Đang nạp dữ liệu POS..." />}>
-      {surface === 'areas' ? (
-        <StaffPosAreasPage {...startupProps} />
-      ) : (
-        <StaffPosPortalPage {...startupProps} />
-      )}
+      <AnimatePresence mode="popLayout" initial={false}>
+        {surface === 'areas' ? (
+          <motion.div
+            key="areas-screen"
+            className="staff-pos-surface-wrapper"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1, transition: { duration: 0.14 } }}
+            exit={{ opacity: 0, transition: { duration: 0.12 } }}
+          >
+            <StaffPosAreasPage {...startupProps} />
+          </motion.div>
+        ) : (
+          <motion.div
+            key="portal-screen"
+            className="staff-pos-surface-wrapper"
+            initial={{ opacity: hasTableTransition ? 1 : 0 }}
+            animate={{
+              opacity: 1,
+              transition: { duration: hasTableTransition ? 0 : 0.14 },
+            }}
+            exit={{ opacity: 0, transition: { duration: 0.12 } }}
+          >
+            <StaffPosPortalPage {...startupProps} />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </Suspense>
   );
 }

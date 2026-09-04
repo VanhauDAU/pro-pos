@@ -1,3 +1,6 @@
+import 'antd/dist/reset.css';
+import '@client/styles/base.css';
+
 import {
   AppstoreFilled,
   AppstoreOutlined,
@@ -97,6 +100,7 @@ import {
   useState,
 } from 'react';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router';
+import { motion } from 'framer-motion';
 
 import type { AuthContextResponse } from '@contracts/auth';
 import type { AppBootstrapResponse } from '@contracts/app-bootstrap';
@@ -136,6 +140,43 @@ import {
   printIdentityAfterCheckout,
   provisionalPrintIdentity,
 } from '@client/lib/print-document-identity';
+import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
+import {
+  finishPosInteraction,
+  setPosPerformanceCsrfToken,
+  startPosInteraction,
+} from '@client/lib/pos-performance';
+import {
+  isMobilePhoneDevice,
+  playCancelOrderSound,
+  playOrderSaveSound,
+  playPaymentSuccessSound,
+  playPosSound,
+} from '@client/lib/sound';
+import { RealtimeProvider, useRealtime } from '@client/realtime/RealtimeProvider';
+import {
+  armPaymentReturn,
+  clearPaymentPageActive,
+  isReturningFromPayment,
+  markPaymentNavigationStarted,
+} from './payment-return-state';
+import { canonicalPaymentPath } from './payment-navigation';
+import { posErrorText } from './pos-error';
+import { orderQuoteQueryOptions, quoteIsVerifiedForInteraction } from './pos-order-query';
+import {
+  PosNotificationsProvider,
+  StaffBottomNav,
+  StaffHeader,
+  StaffNotificationCenter,
+  usePosNotifications,
+} from './StaffPosShellShared';
+
+function prefersReducedMotion() {
+  return (
+    typeof window !== 'undefined' &&
+    (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false)
+  );
+}
 
 const OwnerInvoicesPage = lazy(async () => {
   const module = await import('@client/features/owner/OwnerInvoicesPage');
@@ -263,31 +304,6 @@ function ReceiptPreviewLoadingModal({ title, onCancel }: { title: string; onCanc
 function renderLazyPosRoute(content: ReactNode) {
   return <Suspense fallback={<PosRouteLoadingFallback />}>{content}</Suspense>;
 }
-
-import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
-import {
-  finishPosInteraction,
-  setPosPerformanceCsrfToken,
-  startPosInteraction,
-} from '@client/lib/pos-performance';
-import { playPosSound } from '@client/lib/sound';
-import { RealtimeProvider, useRealtime } from '@client/realtime/RealtimeProvider';
-import {
-  armPaymentReturn,
-  clearPaymentPageActive,
-  isReturningFromPayment,
-  markPaymentNavigationStarted,
-} from './payment-return-state';
-import { canonicalPaymentPath } from './payment-navigation';
-import { posErrorText } from './pos-error';
-import { orderQuoteQueryOptions, quoteIsVerifiedForInteraction } from './pos-order-query';
-import {
-  PosNotificationsProvider,
-  StaffBottomNav,
-  StaffHeader,
-  StaffNotificationCenter,
-  usePosNotifications,
-} from './StaffPosShellShared';
 
 const BRAND = '#0975f7';
 
@@ -557,7 +573,9 @@ function promotionBenefitCopy(promotion: PosPromotionOption) {
 }
 
 function promotionTargetName(target: PosPromotionOption['configuredProductTargets'][number]) {
-  return target.variantName ? `${target.productName} · ${target.variantName}` : target.productName;
+  return isCustomVariantName(target.variantName)
+    ? `${target.productName} · ${target.variantName}`
+    : target.productName;
 }
 
 function formatPromotionQuantity(quantityMilli: number) {
@@ -597,7 +615,7 @@ function PromotionOptionDetails({ option }: { option: PosPromotionOption }) {
             {option.flatPriceItems.map((item) => (
               <li key={`${item.productId}:${item.variantId ?? ''}`}>
                 {item.productName}
-                {item.variantName ? ` · ${item.variantName}` : ''} · SL:{' '}
+                {isCustomVariantName(item.variantName) ? ` · ${item.variantName}` : ''} · SL:{' '}
                 {formatPromotionQuantity(item.quantityMilli)} ·{' '}
                 {formatMoney(item.originalUnitPriceVnd)}/món → {formatMoney(item.flatUnitPriceVnd)}
                 /món
@@ -957,6 +975,18 @@ function getProductInitials(name: string): string {
     return (p0.slice(0, 1) + p1.slice(0, 1)).toUpperCase();
   }
   return name.trim().slice(0, 2).toUpperCase();
+}
+
+export function isCustomVariantName(name: string | null | undefined): boolean {
+  if (!name) return false;
+  const normalized = name.trim().toLowerCase();
+  return (
+    normalized !== '' &&
+    normalized !== 'mặc định' &&
+    normalized !== 'giá mặc định' &&
+    normalized !== 'default' &&
+    normalized !== 'giá thường'
+  );
 }
 
 function formatItemQuantity(
@@ -1639,7 +1669,7 @@ function QrOrderPage() {
                                   <div className="staff-qr-ticket-item-name">
                                     {item.productName}
                                   </div>
-                                  {item.variantName && item.variantName !== 'Mặc định' ? (
+                                  {isCustomVariantName(item.variantName) ? (
                                     <span className="staff-qr-ticket-item-variant">
                                       {item.variantName}
                                     </span>
@@ -2854,11 +2884,7 @@ function StaffPromptPriceModal({ target, onCancel, onConfirm }: StaffPromptPrice
 
   const isValid = price !== null && !isNaN(price) && price >= 0 && price <= MAX_PRICE;
 
-  const hasCustomVariantName =
-    target.variant.name &&
-    target.variant.name !== 'Giá mặc định' &&
-    target.variant.name !== 'Mặc định' &&
-    target.variant.name !== 'default';
+  const hasCustomVariantName = isCustomVariantName(target.variant.name);
 
   return (
     <Modal
@@ -4369,20 +4395,6 @@ function OrderEditor({
   useEffect(() => {
     finishPosInteraction('order-shell', 'TAP_TO_SHELL', 'ORDER');
   }, []);
-  const [isZooming, setIsZooming] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    return Boolean(document.documentElement.style.getPropertyValue('--pos-zoom-origin-x'));
-  });
-  useEffect(() => {
-    if (!isZooming) return undefined;
-    const timer = window.setTimeout(() => {
-      setIsZooming(false);
-      document.documentElement.style.removeProperty('--pos-zoom-origin-x');
-      document.documentElement.style.removeProperty('--pos-zoom-origin-y');
-      document.documentElement.style.removeProperty('--pos-zoom-scale');
-    }, 280);
-    return () => window.clearTimeout(timer);
-  }, [isZooming]);
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -4391,6 +4403,21 @@ function OrderEditor({
   const holder = null;
   const preselectedTableId = searchParams.get('tableId');
   const typeParam = searchParams.get('type');
+  const navState = location.state as {
+    transitionTableId?: string;
+    transitionTableName?: string;
+    transitionTableStatus?: string;
+    transitionIsPaused?: boolean;
+    transitionTotalVnd?: number;
+    transitionAreaName?: string;
+    transitionOccupiedSince?: string | null;
+    transitionItemCount?: number;
+    transitionGuestCount?: number;
+  } | null;
+  const activeTransitionId =
+    navState?.transitionTableId ||
+    preselectedTableId ||
+    (typeParam === 'TAKEAWAY' ? 'takeaway-create' : null);
   const [orderType, setOrderType] = useState<'DINE_IN' | 'TAKEAWAY'>(() => {
     if (typeParam === 'TAKEAWAY') return 'TAKEAWAY';
     return 'DINE_IN';
@@ -4450,6 +4477,9 @@ function OrderEditor({
   const [clockNow, setClockNow] = useState(() => Date.now());
   const [isMobile, setIsMobile] = useState(() =>
     typeof window !== 'undefined' ? window.innerWidth <= 900 : false,
+  );
+  const [isPhone, setIsPhone] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 640 : false,
   );
   const [isDesktopPayment, setIsDesktopPayment] = useState(() =>
     typeof window !== 'undefined' ? window.innerWidth >= 1200 : false,
@@ -4656,6 +4686,7 @@ function OrderEditor({
     const handleResize = () => {
       setIsMobile(window.innerWidth <= 900);
       setIsDesktopPayment(window.innerWidth >= 1200);
+      setIsPhone(window.innerWidth < 640);
       try {
         const isCustom = localStorage.getItem('pos_cart_width_custom');
         if (isCustom !== 'true') {
@@ -5638,6 +5669,7 @@ function OrderEditor({
     if (checkoutAfterSave) {
       navigateToPayment(createdOrderId, true);
     } else {
+      playOrderSaveSound();
       messageApi.success('Lưu đơn hàng thành công.');
       setMobileView('CART');
       navigate(`/pos/orders/${createdOrderId}`, { replace: true });
@@ -5723,6 +5755,7 @@ function OrderEditor({
     if (checkoutAfterSave) {
       navigateToPayment(snapshot.order.id, true);
     } else {
+      playOrderSaveSound();
       messageApi.success(
         snapshot.callBatch
           ? `Đã lưu Đợt ${snapshot.callBatch.sequenceNo}.`
@@ -5832,6 +5865,7 @@ function OrderEditor({
       if (openPaymentAfterSave) {
         navigateToPayment(quote.data.order.id);
       } else {
+        playOrderSaveSound();
         messageApi.success('Lưu đơn hàng thành công.');
         setMobileView('CART');
       }
@@ -5845,6 +5879,7 @@ function OrderEditor({
         void queryClient.invalidateQueries({ queryKey: ['pos-overview'] });
         void queryClient.invalidateQueries({ queryKey: ['pos-orders-list'] });
         void queryClient.invalidateQueries({ queryKey: ['pos-tables'] });
+        playOrderSaveSound();
         messageApi.success('Lưu đơn hàng thành công.');
         if (openPaymentAfterSave) {
           navigateToPayment(quote.data.order.id);
@@ -5869,6 +5904,7 @@ function OrderEditor({
       applyOrderMutationSnapshot(snapshot);
       clearOrderDraft();
       setManualPromotionIds(null);
+      playOrderSaveSound();
       messageApi.success(
         snapshot.callBatch
           ? `Đã lưu Đợt ${snapshot.callBatch.sequenceNo}.`
@@ -6416,6 +6452,7 @@ function OrderEditor({
       );
       setCancelOpen(false);
       setCancelReason('');
+      playCancelOrderSound();
       messageApi.success('Đã hủy đơn hàng thành công.');
       applyClosureSnapshot(snapshot);
       if (orderType === 'TAKEAWAY' || quote.data.order.orderType === 'TAKEAWAY') {
@@ -6778,7 +6815,10 @@ function OrderEditor({
               <div className="staff-pending-change-row__content">
                 <strong>{change.productName}</strong>
                 <small>
-                  {[change.variantName, change.removalReason && `Lý do: ${change.removalReason}`]
+                  {[
+                    isCustomVariantName(change.variantName) ? change.variantName : null,
+                    change.removalReason && `Lý do: ${change.removalReason}`,
+                  ]
                     .filter(Boolean)
                     .join(' · ')}
                 </small>
@@ -6879,8 +6919,8 @@ function OrderEditor({
   if (!quoteReady) {
     const failed = !quote.isFetching && (quote.isError || quote.isRefetchError);
     return (
-      <div
-        className={`staff-order-editor staff-order-editor--opening${isZooming ? ' staff-order-editor--zoom-in' : ''}`}
+      <motion.div
+        className={`staff-order-editor staff-order-editor--opening${activeTransitionId ? ' staff-order-editor--soft-enter' : ''}`}
       >
         {failed ? (
           <div className="staff-order-opening__error">
@@ -6910,7 +6950,8 @@ function OrderEditor({
               />
               <div className="staff-order-opening__title">
                 <strong>
-                  {quote.data?.order.tableName ??
+                  {navState?.transitionTableName ??
+                    quote.data?.order.tableName ??
                     quote.data?.order.displayCode ??
                     'Đang mở đơn hàng'}
                 </strong>
@@ -6936,12 +6977,14 @@ function OrderEditor({
             </div>
           </div>
         )}
-      </div>
+      </motion.div>
     );
   }
 
   return (
-    <div className={`staff-order-editor${isZooming ? ' staff-order-editor--zoom-in' : ''}`}>
+    <motion.div
+      className={`staff-order-editor${activeTransitionId ? ' staff-order-editor--soft-enter' : ''}`}
+    >
       {holder}
       <PosPromotionModal
         open={promotionModalOpen}
@@ -6956,53 +6999,136 @@ function OrderEditor({
       ) : null}
       <Drawer
         open={callHistoryOpen}
-        title="Lịch sử gọi món"
-        width={isMobile ? '100%' : 460}
+        title={
+          <div className="staff-call-history-header">
+            <div className="staff-call-history-header__title">
+              <HistoryOutlined className="staff-call-history-header__icon" />
+              <span>Lịch sử gọi món</span>
+            </div>
+            {callHistory.data?.items.length ? (
+              <span className="staff-call-history-header__count">
+                {callHistory.data.items.length} đợt
+              </span>
+            ) : null}
+          </div>
+        }
+        width={isPhone ? '100%' : 460}
         onClose={() => setCallHistoryOpen(false)}
+        className="staff-call-history-drawer"
+        styles={{
+          body: {
+            padding: isPhone ? '10px' : '14px',
+            backgroundColor: '#f8fafc',
+          },
+          header: {
+            padding: isPhone ? '12px 14px' : '14px 18px',
+            borderBottom: '1px solid #e2e8f0',
+          },
+        }}
       >
         {callHistory.isLoading ? (
-          <Skeleton active paragraph={{ rows: 8 }} />
+          <div style={{ padding: 12 }}>
+            <Skeleton active paragraph={{ rows: 8 }} />
+          </div>
         ) : callHistory.data?.items.length ? (
           <div className="staff-call-history">
-            {callHistory.data.items.map((batch) => (
-              <section className="staff-call-history__batch" key={batch.id}>
-                <div className="staff-call-history__heading">
-                  <strong>Đợt {batch.sequenceNo}</strong>
-                  <span>{formatDateTime(batch.createdAt)}</span>
-                </div>
-                <small>{batch.actorName}</small>
-                {batch.entries.length > 0 ? (
-                  <div className="staff-call-history__entries">
-                    {batch.entries.map((entry) => (
-                      <div className="staff-call-history__entry" key={entry.id}>
-                        <div>
-                          <strong>{entry.productName}</strong>
-                          {entry.variantName ? <small>{entry.variantName}</small> : null}
-                          {entry.removalReason ? <small>Lý do: {entry.removalReason}</small> : null}
-                        </div>
-                        <span>
-                          {entry.deltaQuantityMilli > 0 ? '+' : ''}
-                          {formatItemQuantity(
-                            entry.productType === 'TIME' ? 'QUANTITY' : entry.productType,
-                            entry.deltaQuantityMilli,
-                            entry.unitName,
-                          )}
-                          <small>
-                            {formatDecimal(entry.beforeQuantityMilli / 1000)} →{' '}
-                            {formatDecimal(entry.afterQuantityMilli / 1000)}
-                          </small>
-                        </span>
-                      </div>
-                    ))}
+            {callHistory.data.items.map((batch, batchIndex) => {
+              const totalItemsInBatch = batch.entries.length;
+              return (
+                <section className="staff-call-history__batch" key={batch.id}>
+                  <div className="staff-call-history__batch-header">
+                    <div className="staff-call-history__batch-tag-wrap">
+                      <span
+                        className={`staff-call-history__batch-badge ${
+                          batchIndex === 0 ? 'is-latest' : ''
+                        }`}
+                      >
+                        Đợt {batch.sequenceNo}
+                      </span>
+                      {batchIndex === 0 ? (
+                        <span className="staff-call-history__latest-pill">Mới nhất</span>
+                      ) : null}
+                    </div>
+                    <span className="staff-call-history__batch-time">
+                      {formatDateTime(batch.createdAt)}
+                    </span>
                   </div>
-                ) : (
-                  <small>Khởi tạo đơn, chưa có mặt hàng.</small>
-                )}
-              </section>
-            ))}
+
+                  <div className="staff-call-history__batch-meta">
+                    <div className="staff-call-history__actor-info">
+                      <UserOutlined className="staff-call-history__actor-icon" />
+                      <span>{batch.actorName || 'Nhân viên'}</span>
+                    </div>
+                    {totalItemsInBatch > 0 ? (
+                      <span className="staff-call-history__entry-count">
+                        {totalItemsInBatch} món
+                      </span>
+                    ) : null}
+                  </div>
+
+                  {batch.entries.length > 0 ? (
+                    <div className="staff-call-history__entries">
+                      {batch.entries.map((entry) => {
+                        const isNegative = entry.deltaQuantityMilli < 0;
+                        const deltaFormatted = formatItemQuantity(
+                          entry.productType === 'TIME' ? 'QUANTITY' : entry.productType,
+                          Math.abs(entry.deltaQuantityMilli),
+                          entry.unitName,
+                        );
+                        const hasCustomVariant = isCustomVariantName(entry.variantName);
+
+                        return (
+                          <div className="staff-call-history__entry" key={entry.id}>
+                            <div className="staff-call-history__entry-left">
+                              <div className="staff-call-history__product-name">
+                                {entry.productName}
+                              </div>
+                              {hasCustomVariant ? (
+                                <span className="staff-call-history__variant-tag">
+                                  {entry.variantName}
+                                </span>
+                              ) : null}
+                              {entry.afterNote ? (
+                                <span className="staff-call-history__note-tag">
+                                  Ghi chú: {entry.afterNote}
+                                </span>
+                              ) : null}
+                              {entry.removalReason ? (
+                                <span className="staff-call-history__reason-tag">
+                                  Lý do huỷ: {entry.removalReason}
+                                </span>
+                              ) : null}
+                            </div>
+
+                            <div className="staff-call-history__entry-right">
+                              <span
+                                className={`staff-call-history__quantity-delta ${
+                                  isNegative ? 'is-negative' : 'is-positive'
+                                }`}
+                              >
+                                {isNegative ? '-' : '+'}
+                                {deltaFormatted}
+                              </span>
+                              <span className="staff-call-history__quantity-transition">
+                                {formatDecimal(entry.beforeQuantityMilli / 1000)} →{' '}
+                                {formatDecimal(entry.afterQuantityMilli / 1000)}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="staff-call-history__empty-notice">
+                      Khởi tạo đơn bàn, chưa gọi thêm món.
+                    </div>
+                  )}
+                </section>
+              );
+            })}
           </div>
         ) : (
-          <Empty description="Đơn này không có lịch sử gọi món" />
+          <Empty description="Đơn này không có lịch sử gọi món" style={{ marginTop: 40 }} />
         )}
       </Drawer>
 
@@ -7279,7 +7405,11 @@ function OrderEditor({
                   }
                   loading={saving}
                   onClick={isNew ? saveOrder : () => void saveAdditionalItems(false)}
-                  className="staff-product-picker-mobile__done-btn"
+                  className={`staff-product-picker-mobile__done-btn${
+                    !saving && (isNew ? draftLines.length > 0 : hasUnsavedChanges)
+                      ? ' is-attention'
+                      : ''
+                  }`}
                 >
                   Lưu đơn
                 </Button>
@@ -7331,8 +7461,10 @@ function OrderEditor({
                     {isNew
                       ? orderType === 'DINE_IN' && selectedTable
                         ? selectedTable.name
-                        : 'Tạo đơn mới'
-                      : quote.data?.order.displayCode ||
+                        : navState?.transitionTableName || 'Tạo đơn mới'
+                      : navState?.transitionTableName ||
+                        quote.data?.order.tableName ||
+                        quote.data?.order.displayCode ||
                         (orderId ? `D-${orderId.slice(0, 8).toUpperCase()}` : '—')}
                   </div>
                   <div className="staff-order-mobile-sub">
@@ -7443,431 +7575,450 @@ function OrderEditor({
               </div>
             </div>
 
-            {/* Mobile Ordered Items Section */}
-            <div className="staff-order-mobile-items-section">
-              <div
-                className="staff-order-mobile-section-header"
-                onClick={() => setOrderedItemsCollapsed((prev) => !prev)}
-              >
-                <span className="staff-order-mobile-section-title">
-                  Mặt hàng đã gọi (
-                  {committedDisplayItems.length +
-                    (quote.data?.time ||
+            {/* Mobile Ordered Items Section with fade/slide entrance */}
+            <motion.div
+              initial={prefersReducedMotion() ? false : { opacity: 0, y: 14 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={
+                prefersReducedMotion()
+                  ? { duration: 0 }
+                  : { delay: 0.08, duration: 0.22, ease: [0.16, 1, 0.3, 1] }
+              }
+              className="staff-order-mobile-content-fade"
+            >
+              <div className="staff-order-mobile-items-section">
+                <div
+                  className="staff-order-mobile-section-header"
+                  onClick={() => setOrderedItemsCollapsed((prev) => !prev)}
+                >
+                  <span className="staff-order-mobile-section-title">
+                    Mặt hàng đã gọi (
+                    {committedDisplayItems.length +
+                      (quote.data?.time ||
+                      (isNew &&
+                        orderType === 'DINE_IN' &&
+                        selectedTable?.timeProductId &&
+                        !timeRemoved) ||
+                      timeRestoringDraft
+                        ? 1
+                        : 0)}
+                    )
+                  </span>
+                  {!isNew && quote.data?.order.hasCallHistory ? (
+                    <button
+                      type="button"
+                      className="staff-order-mobile-history-btn"
+                      aria-label="Lịch sử gọi món"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setCallHistoryOpen(true);
+                      }}
+                    >
+                      <HistoryOutlined />
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="staff-order-mobile-collapse-btn"
+                    aria-label="Thu gọn/Mở rộng"
+                  >
+                    {orderedItemsCollapsed ? <DownOutlined /> : <UpOutlined />}
+                  </button>
+                </div>
+
+                {!orderedItemsCollapsed && (
+                  <div className="staff-order-mobile-items-list">
+                    {/* Small restore button if default time was deleted */}
+                    {(!isNew &&
+                      quote.data?.order.orderType === 'DINE_IN' &&
+                      !quote.data?.time &&
+                      !timeRestoringDraft) ||
                     (isNew &&
                       orderType === 'DINE_IN' &&
                       selectedTable?.timeProductId &&
-                      !timeRemoved) ||
-                    timeRestoringDraft
-                      ? 1
-                      : 0)}
-                  )
-                </span>
-                {!isNew && quote.data?.order.hasCallHistory ? (
-                  <button
-                    type="button"
-                    className="staff-order-mobile-history-btn"
-                    aria-label="Lịch sử gọi món"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setCallHistoryOpen(true);
-                    }}
-                  >
-                    <HistoryOutlined />
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  className="staff-order-mobile-collapse-btn"
-                  aria-label="Thu gọn/Mở rộng"
-                >
-                  {orderedItemsCollapsed ? <DownOutlined /> : <UpOutlined />}
-                </button>
-              </div>
-
-              {!orderedItemsCollapsed && (
-                <div className="staff-order-mobile-items-list">
-                  {/* Small restore button if default time was deleted */}
-                  {(!isNew &&
-                    quote.data?.order.orderType === 'DINE_IN' &&
-                    !quote.data?.time &&
-                    !timeRestoringDraft) ||
-                  (isNew &&
-                    orderType === 'DINE_IN' &&
-                    selectedTable?.timeProductId &&
-                    timeRemoved) ? (
-                    <div style={{ padding: '8px 16px 4px' }}>
-                      <Button
-                        size="small"
-                        type="dashed"
-                        icon={<PlusOutlined />}
-                        onClick={() => {
-                          if (isNew) {
-                            setTimeRemoved(false);
-                          } else {
-                            setTimeRestoringDraft(true);
-                            setTimeRangeDraft({ startedAt: dayjs(), endedAt: null });
-                            setTimeDetailOpen(true);
-                          }
-                        }}
-                        style={{
-                          fontSize: 12.5,
-                          color: '#0975F7',
-                          borderColor: '#91caff',
-                          borderRadius: 6,
-                          fontWeight: 500,
-                        }}
-                      >
-                        Khôi phục tính giờ
-                      </Button>
-                    </div>
-                  ) : null}
-
-                  {/* 1. Time line item (if present or new dine-in table with pricing configured or restoring) */}
-                  {quote.data?.time ? (
-                    <div
-                      className={`staff-order-mobile-item staff-order-mobile-item--time${quote.data.time.status === 'PAUSED' ? ' staff-order-mobile-item--paused' : ''}`}
-                      onClick={openTimeDetails}
-                    >
-                      <div className="staff-order-mobile-item__top">
-                        <span className="staff-order-mobile-item__name">
-                          <span>
-                            {quote.data.time.tableSegments &&
-                            quote.data.time.tableSegments.length > 1
-                              ? 'Tiền giờ (Chuyển bàn)'
-                              : 'Giờ'}
-                          </span>
-                          {quote.data.time.status === 'PAUSED' ? (
-                            <Tag
-                              color="warning"
-                              icon={<PauseCircleOutlined />}
-                              style={{ marginLeft: 6 }}
-                            >
-                              Tạm dừng
-                            </Tag>
-                          ) : quote.data.time.status === 'ENDED' || quote.data.time.endedAtMs ? (
-                            <Tag
-                              color="default"
-                              icon={<ClockCircleOutlined />}
-                              style={{ marginLeft: 6 }}
-                            >
-                              Đã dừng giờ
-                            </Tag>
-                          ) : null}
-                        </span>
-                        <span className="staff-order-mobile-item__price">
-                          {formatMoney(quote.data.time.amountAfterRoundingVnd)}
-                        </span>
-                      </div>
-                      <div className="staff-order-mobile-item__time-sub">
-                        <div>Từ: {formatDateTime(quote.data.time.startedAtMs)}</div>
-                        <div>
-                          Tới:{' '}
-                          {quote.data.time.endedAtMs
-                            ? formatDateTime(quote.data.time.endedAtMs)
-                            : quote.data.time.status === 'PAUSED' && quote.data.time.pausedAtMs
-                              ? formatDateTime(quote.data.time.pausedAtMs)
-                              : 'Hiện tại'}
-                        </div>
-                        <div>
-                          Tổng thời gian tạm tính: {formatDurationVietnamese(liveElapsedSeconds)}
-                        </div>
-                        {quote.data.time.tableSegments &&
-                          quote.data.time.tableSegments.length > 1 && (
-                            <div className="staff-order-mobile-item__chain">
-                              Bàn:{' '}
-                              {quote.data.time.tableSegments.map((s) => s.tableName).join(' → ')}
-                            </div>
-                          )}
-                      </div>
-                    </div>
-                  ) : isNew &&
-                    orderType === 'DINE_IN' &&
-                    selectedTable?.timeProductId &&
-                    !timeRemoved ? (
-                    <div
-                      className="staff-order-mobile-item staff-order-mobile-item--time"
-                      onClick={() => {
-                        setTableAction('SELECT');
-                        setTableModalOpen(true);
-                      }}
-                    >
-                      <div className="staff-order-mobile-item__top">
-                        <span className="staff-order-mobile-item__name">
-                          <span>Giờ</span>
-                        </span>
-                        <span className="staff-order-mobile-item__price">0 đ</span>
-                      </div>
-                      <div className="staff-order-mobile-item__time-sub">
-                        <div>Từ: --:--:--</div>
-                        <div>Tới: --:--:--</div>
-                        <div>Tổng thời gian tạm tính: --:--:--</div>
-                      </div>
-                    </div>
-                  ) : timeRestoringDraft ? (
-                    <div
-                      className="staff-order-mobile-item staff-order-mobile-item--time"
-                      onClick={openTimeDetails}
-                    >
-                      <div className="staff-order-mobile-item__top">
-                        <span className="staff-order-mobile-item__name">
-                          <span>Giờ</span>
-                        </span>
-                        <span className="staff-order-mobile-item__price">0 đ</span>
-                      </div>
-                      <div className="staff-order-mobile-item__time-sub">
-                        <div>Từ: --:--:--</div>
-                        <div>Tới: --:--:--</div>
-                        <div>Tổng thời gian tạm tính: --:--:--</div>
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {pendingChangesPanel}
-
-                  {/* 2. Items already committed to the order */}
-                  {committedDisplayItems.map((item) => {
-                    const isDraftLine = draftLines.some((l) => l.id === item.id);
-                    const catalogProd = catalog.data?.find((p) => p.productId === item.productId);
-
-                    const openItemEdit = () => {
-                      if (item.promotionGift) return;
-                      setEditingItem({
-                        source: isDraftLine ? 'DRAFT' : 'SAVED',
-                        id: item.id,
-                        productId: item.productId,
-                        variantId: item.variantId,
-                        productType: item.productType,
-                        productName: item.productName,
-                        variantName: item.variantName,
-                        unitName: item.unitName,
-                        unitPriceVnd: item.unitPriceVnd,
-                        quantityMilli: item.quantityMilli,
-                        note: item.note ?? '',
-                        grossLineTotalVnd: item.grossLineTotalVnd,
-                        discountAmountVnd: item.discountAmountVnd,
-                        discountType: item.discountType,
-                        discountInputValue: item.discountInputValue,
-                        discountReason: item.discountReason,
-                        netLineTotalVnd: item.netLineTotalVnd,
-                      });
-                    };
-
-                    return (
-                      <SwipeableOrderItemRow
-                        key={item.id}
-                        locked={Boolean(item.promotionGift)}
-                        onClick={openItemEdit}
-                        onDelete={() => {
-                          if (item.promotionGift) return;
-                          if (isNew || isDraftLine) {
-                            setDraftLines((lines) => lines.filter((line) => line.id !== item.id));
-                            messageApi.success('Đã xóa món khỏi đơn.');
-                          } else {
-                            setDeleteItemTarget({
-                              id: item.id,
-                              name: item.productName,
-                              source: 'SAVED',
-                            });
-                            setDeleteItemReason('Khách đổi ý');
-                            setDeleteItemModalOpen(true);
-                          }
-                        }}
-                        className="staff-order-mobile-swipe-card"
-                      >
-                        <div
-                          className={`staff-order-mobile-card-row ${isDraftLine ? 'is-draft' : ''}`}
-                        >
-                          {/* Left: Thumbnail image */}
-                          <div
-                            className={`staff-order-mobile-card-row__visual ${catalogProd?.avatarType === 'IMAGE' && catalogProd.mediaId ? 'has-image' : 'has-color'}`}
-                            style={{
-                              background:
-                                catalogProd?.avatarType === 'IMAGE' && catalogProd.mediaId
-                                  ? undefined
-                                  : catalogProd?.avatarColor || '#0975f7',
-                            }}
-                          >
-                            {catalogProd?.avatarType === 'IMAGE' && catalogProd.mediaId ? (
-                              <img
-                                src={`/api/v1/media/${catalogProd.mediaId}`}
-                                alt=""
-                                loading="lazy"
-                              />
-                            ) : (
-                              getProductInitials(item.productName)
-                            )}
-                            {isDraftLine && (
-                              <div className="staff-order-mobile-draft-ribbon">
-                                <span>Mới</span>
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Right: Content details */}
-                          <div className="staff-order-mobile-card-row__content">
-                            {/* Top row: Name + Ellipsis Dots */}
-                            <div className="staff-order-mobile-card-row__top">
-                              <span className="staff-order-mobile-card-row__name">
-                                <strong>{item.productName}</strong>
-                                {item.variantName && item.variantName !== 'Mặc định' && (
-                                  <small className="staff-order-mobile-card-row__variant">
-                                    {' '}
-                                    · {item.variantName}
-                                  </small>
-                                )}
-                                {item.promotionGift ? (
-                                  <Tag color="success" style={{ marginLeft: 4 }}>
-                                    Quà tặng
-                                  </Tag>
-                                ) : null}
-                              </span>
-
-                              {!item.promotionGift && (
-                                <button
-                                  type="button"
-                                  className="staff-order-mobile-card-row__dots-btn"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    openItemEdit();
-                                  }}
-                                  aria-label="Tùy chỉnh món"
-                                >
-                                  <EllipsisOutlined />
-                                </button>
-                              )}
-                            </div>
-
-                            {/* Optional: Note and Discount details */}
-                            {item.note && (
-                              <div className="staff-order-mobile-card-row__note">
-                                Ghi chú: {item.note}
-                              </div>
-                            )}
-                            <ItemDiscountDetail
-                              amount={item.discountAmountVnd}
-                              reason={item.discountReason}
-                              promotionGift={item.promotionGift}
-                            />
-
-                            {/* Bottom row: Price + Quantity Stepper */}
-                            <div className="staff-order-mobile-card-row__bottom">
-                              <span className="staff-order-mobile-card-row__price">
-                                {formatMoney(item.netLineTotalVnd)}
-                              </span>
-
-                              {item.productType !== 'WEIGHT' && !item.promotionGift ? (
-                                <span
-                                  className="staff-order-mobile-quantity-label"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    openItemEdit();
-                                  }}
-                                >
-                                  {formatItemQuantity(
-                                    item.productType,
-                                    item.quantityMilli,
-                                    item.unitName,
-                                  )}
-                                </span>
-                              ) : item.productType === 'WEIGHT' ? (
-                                <span className="staff-order-mobile-weight-label">
-                                  {formatItemQuantity(
-                                    item.productType,
-                                    item.quantityMilli,
-                                    item.unitName,
-                                  )}
-                                </span>
-                              ) : null}
-                            </div>
-                          </div>
-                        </div>
-                      </SwipeableOrderItemRow>
-                    );
-                  })}
-
-                  {committedDisplayItems.length === 0 &&
-                    pendingChangeRows.length === 0 &&
-                    !(
-                      isNew &&
-                      orderType === 'DINE_IN' &&
-                      selectedTable?.timeProductId &&
-                      !timeRemoved
-                    ) &&
-                    !quote.data?.time &&
-                    !timeRestoringDraft && (
-                      <div className="staff-order-mobile-empty">
-                        <p>Chưa có mặt hàng nào trong đơn</p>
+                      timeRemoved) ? (
+                      <div style={{ padding: '8px 16px 4px' }}>
                         <Button
+                          size="small"
                           type="dashed"
                           icon={<PlusOutlined />}
                           onClick={() => {
-                            startPosInteraction('product-picker');
-                            setMobileView('PRODUCTS');
+                            if (isNew) {
+                              setTimeRemoved(false);
+                            } else {
+                              setTimeRestoringDraft(true);
+                              setTimeRangeDraft({ startedAt: dayjs(), endedAt: null });
+                              setTimeDetailOpen(true);
+                            }
+                          }}
+                          style={{
+                            fontSize: 12.5,
+                            color: '#0975F7',
+                            borderColor: '#91caff',
+                            borderRadius: 6,
+                            fontWeight: 500,
                           }}
                         >
-                          Chọn món ngay
+                          Khôi phục tính giờ
                         </Button>
                       </div>
-                    )}
-                </div>
-              )}
-            </div>
+                    ) : null}
 
-            {/* Mobile Order Financial Summary Details (In-Flow / Non-Sticky) */}
-            <div className="staff-order-mobile-summary-card">
-              <div className="staff-order-mobile-summary__title">Tổng tiền</div>
-              <div className="staff-order-mobile-summary__row">
-                <span>Tổng tiền hàng ({regularProductCount} món)</span>
-                <span>{formatMoney(regularProductGross)}</span>
+                    {/* 1. Time line item (if present or new dine-in table with pricing configured or restoring) */}
+                    {quote.data?.time ? (
+                      <div
+                        className={`staff-order-mobile-item staff-order-mobile-item--time${quote.data.time.status === 'PAUSED' ? ' staff-order-mobile-item--paused' : ''}`}
+                        onClick={openTimeDetails}
+                      >
+                        <div className="staff-order-mobile-item__top">
+                          <span className="staff-order-mobile-item__name">
+                            <span>
+                              {quote.data.time.tableSegments &&
+                              quote.data.time.tableSegments.length > 1
+                                ? 'Tiền giờ (Chuyển bàn)'
+                                : 'Giờ'}
+                            </span>
+                            {quote.data.time.status === 'PAUSED' ? (
+                              <Tag
+                                color="warning"
+                                icon={<PauseCircleOutlined />}
+                                style={{ marginLeft: 6 }}
+                              >
+                                Tạm dừng
+                              </Tag>
+                            ) : quote.data.time.status === 'ENDED' || quote.data.time.endedAtMs ? (
+                              <Tag
+                                color="default"
+                                icon={<ClockCircleOutlined />}
+                                style={{ marginLeft: 6 }}
+                              >
+                                Đã dừng giờ
+                              </Tag>
+                            ) : null}
+                          </span>
+                          <span className="staff-order-mobile-item__price">
+                            {formatMoney(quote.data.time.amountAfterRoundingVnd)}
+                          </span>
+                        </div>
+                        <div className="staff-order-mobile-item__time-sub">
+                          <div>Từ: {formatDateTime(quote.data.time.startedAtMs)}</div>
+                          <div>
+                            Tới:{' '}
+                            {quote.data.time.endedAtMs
+                              ? formatDateTime(quote.data.time.endedAtMs)
+                              : quote.data.time.status === 'PAUSED' && quote.data.time.pausedAtMs
+                                ? formatDateTime(quote.data.time.pausedAtMs)
+                                : 'Hiện tại'}
+                          </div>
+                          <div>
+                            Tổng thời gian tạm tính: {formatDurationVietnamese(liveElapsedSeconds)}
+                          </div>
+                          {quote.data.time.tableSegments &&
+                            quote.data.time.tableSegments.length > 1 && (
+                              <div className="staff-order-mobile-item__chain">
+                                Bàn:{' '}
+                                {quote.data.time.tableSegments.map((s) => s.tableName).join(' → ')}
+                              </div>
+                            )}
+                        </div>
+                      </div>
+                    ) : isNew &&
+                      orderType === 'DINE_IN' &&
+                      selectedTable?.timeProductId &&
+                      !timeRemoved ? (
+                      <div
+                        className="staff-order-mobile-item staff-order-mobile-item--time"
+                        onClick={() => {
+                          setTableAction('SELECT');
+                          setTableModalOpen(true);
+                        }}
+                      >
+                        <div className="staff-order-mobile-item__top">
+                          <span className="staff-order-mobile-item__name">
+                            <span>Giờ</span>
+                          </span>
+                          <span className="staff-order-mobile-item__price">0 đ</span>
+                        </div>
+                        <div className="staff-order-mobile-item__time-sub">
+                          <div>Từ: --:--:--</div>
+                          <div>Tới: --:--:--</div>
+                          <div>Tổng thời gian tạm tính: --:--:--</div>
+                        </div>
+                      </div>
+                    ) : timeRestoringDraft ? (
+                      <div
+                        className="staff-order-mobile-item staff-order-mobile-item--time"
+                        onClick={openTimeDetails}
+                      >
+                        <div className="staff-order-mobile-item__top">
+                          <span className="staff-order-mobile-item__name">
+                            <span>Giờ</span>
+                          </span>
+                          <span className="staff-order-mobile-item__price">0 đ</span>
+                        </div>
+                        <div className="staff-order-mobile-item__time-sub">
+                          <div>Từ: --:--:--</div>
+                          <div>Tới: --:--:--</div>
+                          <div>Tổng thời gian tạm tính: --:--:--</div>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {pendingChangesPanel}
+
+                    {/* 2. Items already committed to the order */}
+                    {committedDisplayItems.map((item) => {
+                      const isDraftLine = draftLines.some((l) => l.id === item.id);
+                      const catalogProd = catalog.data?.find((p) => p.productId === item.productId);
+
+                      const openItemEdit = () => {
+                        if (item.promotionGift) return;
+                        setEditingItem({
+                          source: isDraftLine ? 'DRAFT' : 'SAVED',
+                          id: item.id,
+                          productId: item.productId,
+                          variantId: item.variantId,
+                          productType: item.productType,
+                          productName: item.productName,
+                          variantName: item.variantName,
+                          unitName: item.unitName,
+                          unitPriceVnd: item.unitPriceVnd,
+                          quantityMilli: item.quantityMilli,
+                          note: item.note ?? '',
+                          grossLineTotalVnd: item.grossLineTotalVnd,
+                          discountAmountVnd: item.discountAmountVnd,
+                          discountType: item.discountType,
+                          discountInputValue: item.discountInputValue,
+                          discountReason: item.discountReason,
+                          netLineTotalVnd: item.netLineTotalVnd,
+                        });
+                      };
+
+                      return (
+                        <SwipeableOrderItemRow
+                          key={item.id}
+                          locked={Boolean(item.promotionGift)}
+                          onClick={openItemEdit}
+                          onDelete={() => {
+                            if (item.promotionGift) return;
+                            if (isNew || isDraftLine) {
+                              setDraftLines((lines) => lines.filter((line) => line.id !== item.id));
+                              messageApi.success('Đã xóa món khỏi đơn.');
+                            } else {
+                              setDeleteItemTarget({
+                                id: item.id,
+                                name: item.productName,
+                                source: 'SAVED',
+                              });
+                              setDeleteItemReason('Khách đổi ý');
+                              setDeleteItemModalOpen(true);
+                            }
+                          }}
+                          className="staff-order-mobile-swipe-card"
+                        >
+                          <div
+                            className={`staff-order-mobile-card-row ${isDraftLine ? 'is-draft' : ''}`}
+                          >
+                            {/* Left: Thumbnail image */}
+                            <div
+                              className={`staff-order-mobile-card-row__visual ${catalogProd?.avatarType === 'IMAGE' && catalogProd.mediaId ? 'has-image' : 'has-color'}`}
+                              style={{
+                                background:
+                                  catalogProd?.avatarType === 'IMAGE' && catalogProd.mediaId
+                                    ? undefined
+                                    : catalogProd?.avatarColor || '#0975f7',
+                              }}
+                            >
+                              {catalogProd?.avatarType === 'IMAGE' && catalogProd.mediaId ? (
+                                <img
+                                  src={`/api/v1/media/${catalogProd.mediaId}`}
+                                  alt=""
+                                  loading="lazy"
+                                />
+                              ) : (
+                                getProductInitials(item.productName)
+                              )}
+                              {isDraftLine && (
+                                <div className="staff-order-mobile-draft-ribbon">
+                                  <span>Mới</span>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Right: Content details */}
+                            <div className="staff-order-mobile-card-row__content">
+                              {/* Top row: Name + Ellipsis Dots */}
+                              <div className="staff-order-mobile-card-row__top">
+                                <span className="staff-order-mobile-card-row__name">
+                                  <strong>{item.productName}</strong>
+                                  {isCustomVariantName(item.variantName) && (
+                                    <small className="staff-order-mobile-card-row__variant">
+                                      {' '}
+                                      · {item.variantName}
+                                    </small>
+                                  )}
+                                  {item.promotionGift ? (
+                                    <Tag color="success" style={{ marginLeft: 4 }}>
+                                      Quà tặng
+                                    </Tag>
+                                  ) : null}
+                                </span>
+
+                                {!item.promotionGift && (
+                                  <button
+                                    type="button"
+                                    className="staff-order-mobile-card-row__dots-btn"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openItemEdit();
+                                    }}
+                                    aria-label="Tùy chỉnh món"
+                                  >
+                                    <EllipsisOutlined />
+                                  </button>
+                                )}
+                              </div>
+
+                              {/* Optional: Note and Discount details */}
+                              {item.note && (
+                                <div className="staff-order-mobile-card-row__note">
+                                  Ghi chú: {item.note}
+                                </div>
+                              )}
+                              <ItemDiscountDetail
+                                amount={item.discountAmountVnd}
+                                reason={item.discountReason}
+                                promotionGift={item.promotionGift}
+                              />
+
+                              {/* Bottom row: Price + Quantity */}
+                              <div className="staff-order-mobile-card-row__bottom">
+                                <div className="staff-order-mobile-card-row__pricing">
+                                  <span className="staff-order-mobile-card-row__price">
+                                    {formatMoney(item.netLineTotalVnd)}
+                                  </span>
+                                  {item.quantityMilli !== 1000 || item.discountAmountVnd > 0 ? (
+                                    <span className="staff-order-mobile-card-row__unit-price">
+                                      · {formatMoney(item.unitPriceVnd)}
+                                      {item.unitName ? `/${item.unitName}` : ''}
+                                    </span>
+                                  ) : null}
+                                </div>
+
+                                {item.productType !== 'WEIGHT' && !item.promotionGift ? (
+                                  <span
+                                    className="staff-order-mobile-quantity-badge"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openItemEdit();
+                                    }}
+                                  >
+                                    {formatItemQuantity(
+                                      item.productType,
+                                      item.quantityMilli,
+                                      item.unitName,
+                                    )}
+                                  </span>
+                                ) : item.productType === 'WEIGHT' ? (
+                                  <span className="staff-order-mobile-quantity-badge is-weight">
+                                    {formatItemQuantity(
+                                      item.productType,
+                                      item.quantityMilli,
+                                      item.unitName,
+                                    )}
+                                  </span>
+                                ) : null}
+                              </div>
+                            </div>
+                          </div>
+                        </SwipeableOrderItemRow>
+                      );
+                    })}
+
+                    {committedDisplayItems.length === 0 &&
+                      pendingChangeRows.length === 0 &&
+                      !(
+                        isNew &&
+                        orderType === 'DINE_IN' &&
+                        selectedTable?.timeProductId &&
+                        !timeRemoved
+                      ) &&
+                      !quote.data?.time &&
+                      !timeRestoringDraft && (
+                        <div className="staff-order-mobile-empty">
+                          <p>Chưa có mặt hàng nào trong đơn</p>
+                          <Button
+                            type="dashed"
+                            icon={<PlusOutlined />}
+                            onClick={() => {
+                              startPosInteraction('product-picker');
+                              setMobileView('PRODUCTS');
+                            }}
+                          >
+                            Chọn món ngay
+                          </Button>
+                        </div>
+                      )}
+                  </div>
+                )}
               </div>
-              {totalTimeGross > 0 && (
+
+              {/* Mobile Order Financial Summary Details (In-Flow / Non-Sticky) */}
+              <div className="staff-order-mobile-summary-card">
+                <div className="staff-order-mobile-summary__title">Tổng tiền</div>
                 <div className="staff-order-mobile-summary__row">
-                  <span>Tiền giờ</span>
-                  <span>{formatMoney(totalTimeGross)}</span>
+                  <span>Tổng tiền hàng ({regularProductCount} món)</span>
+                  <span>{formatMoney(regularProductGross)}</span>
                 </div>
-              )}
-              {combinedItemManualDiscountTotal > 0 && (
-                <div className="staff-order-mobile-summary__row">
-                  <span>Giảm giá món</span>
-                  <span className="staff-cart-discount-amount">
-                    -{formatMoney(combinedItemManualDiscountTotal)}
-                  </span>
-                </div>
-              )}
-              <div
-                className="staff-order-mobile-summary__row staff-promotion-trigger"
-                onClick={() => void openPromotionPicker()}
-              >
-                <span>
-                  Khuyến mãi <EditOutlined />
-                </span>
-                <span className="staff-cart-discount-amount">
-                  {totalDiscount > 0 ? `-${formatMoney(totalDiscount)}` : '0đ'}
-                </span>
-              </div>
-              {appliedPromotions.length > 0 ? (
+                {totalTimeGross > 0 && (
+                  <div className="staff-order-mobile-summary__row">
+                    <span>Tiền giờ</span>
+                    <span>{formatMoney(totalTimeGross)}</span>
+                  </div>
+                )}
+                {combinedItemManualDiscountTotal > 0 && (
+                  <div className="staff-order-mobile-summary__row">
+                    <span>Giảm giá món</span>
+                    <span className="staff-cart-discount-amount">
+                      -{formatMoney(combinedItemManualDiscountTotal)}
+                    </span>
+                  </div>
+                )}
                 <div
-                  className="staff-applied-promotions-box"
+                  className="staff-order-mobile-summary__row staff-promotion-trigger"
                   onClick={() => void openPromotionPicker()}
                 >
-                  {appliedPromotions.map((promotion) => (
-                    <div key={promotion.id} className="staff-applied-promotion-row-item">
-                      <span className="staff-applied-promotion-name">{promotion.name}</span>
-                      <span className="staff-applied-promotion-amount">
-                        {promotionBenefitCopy(promotion)}
-                      </span>
-                    </div>
-                  ))}
+                  <span>
+                    Khuyến mãi <EditOutlined />
+                  </span>
+                  <span className="staff-cart-discount-amount">
+                    {totalDiscount > 0 ? `-${formatMoney(totalDiscount)}` : '0đ'}
+                  </span>
                 </div>
-              ) : null}
-              <div className="staff-order-mobile-divider" />
-              <div className="staff-order-mobile-summary__total-row">
-                <strong>Tổng tiền</strong>
-                <strong>{formatMoney(displayedTotal)}</strong>
+                {appliedPromotions.length > 0 ? (
+                  <div
+                    className="staff-applied-promotions-box"
+                    onClick={() => void openPromotionPicker()}
+                  >
+                    {appliedPromotions.map((promotion) => (
+                      <div key={promotion.id} className="staff-applied-promotion-row-item">
+                        <span className="staff-applied-promotion-name">{promotion.name}</span>
+                        <span className="staff-applied-promotion-amount">
+                          {promotionBenefitCopy(promotion)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="staff-order-mobile-divider" />
+                <div className="staff-order-mobile-summary__total-row">
+                  <strong>Tổng tiền</strong>
+                  <strong>{formatMoney(displayedTotal)}</strong>
+                </div>
               </div>
-            </div>
+            </motion.div>
 
-            {/* Floating "+ Thêm món" Button */}
+            {/* Keep this fixed button outside transformed motion containers to prevent jumps. */}
             <button
               type="button"
               className="staff-order-mobile-fab"
@@ -7909,7 +8060,7 @@ function OrderEditor({
                       icon={<PlayCircleOutlined />}
                       loading={resuming}
                       onClick={() => setResumeModalOpen(true)}
-                      className={`staff-order-mobile-btn staff-order-mobile-btn--save${emphasizeSaveButton ? ' staff-save-button--attention' : ''}`}
+                      className={`staff-order-mobile-btn staff-order-mobile-btn--save${emphasizeSaveButton ? ' is-attention' : ''}`}
                     >
                       Tiếp tục chơi
                     </Button>
@@ -7945,7 +8096,7 @@ function OrderEditor({
                       }
                       loading={saving}
                       onClick={isNew ? saveOrder : () => void saveAdditionalItems(false)}
-                      className="staff-order-mobile-btn staff-order-mobile-btn--save"
+                      className={`staff-order-mobile-btn staff-order-mobile-btn--save${emphasizeSaveButton ? ' is-attention' : ''}`}
                     >
                       Lưu đơn
                     </Button>
@@ -7981,7 +8132,11 @@ function OrderEditor({
             />
             <div className="staff-order-editor__heading">
               <Typography.Title level={3}>
-                {isNew ? 'Tạo đơn mới' : 'Chi tiết đơn hàng'}
+                {isNew
+                  ? navState?.transitionTableName || 'Tạo đơn mới'
+                  : navState?.transitionTableName ||
+                    quote.data?.order.tableName ||
+                    'Chi tiết đơn hàng'}
               </Typography.Title>
               {!isNew && quote.data ? (
                 <Typography.Text type="secondary">
@@ -8539,7 +8694,9 @@ function OrderEditor({
                                 </span>
                                 <span className="staff-order-item-name">
                                   <strong>{item.productName}</strong>
-                                  <small>{item.variantName}</small>
+                                  {isCustomVariantName(item.variantName) ? (
+                                    <small>{item.variantName}</small>
+                                  ) : null}
                                   {item.note ? <small>Ghi chú: {item.note}</small> : null}
                                   {item.promotionGift ? <Tag color="success">Quà tặng</Tag> : null}
                                   <ItemDiscountDetail
@@ -8548,7 +8705,15 @@ function OrderEditor({
                                     promotionGift={item.promotionGift}
                                   />
                                 </span>
-                                <b>{formatMoney(item.netLineTotalVnd)}</b>
+                                <div className="staff-order-item-price-col">
+                                  <b>{formatMoney(item.netLineTotalVnd)}</b>
+                                  {item.quantityMilli !== 1000 || item.discountAmountVnd > 0 ? (
+                                    <small className="staff-order-item-unit-price">
+                                      {formatMoney(item.unitPriceVnd)}
+                                      {item.unitName ? `/${item.unitName}` : ''}
+                                    </small>
+                                  ) : null}
+                                </div>
                               </SwipeableOrderItemRow>
                             ))}
                           </div>
@@ -8678,7 +8843,9 @@ function OrderEditor({
                               <Button
                                 danger
                                 icon={<StopOutlined />}
-                                onClick={() => setCancelOpen(true)}
+                                onClick={() => {
+                                  setCancelOpen(true);
+                                }}
                                 className="staff-action-cancel-btn"
                               >
                                 Hủy đơn hàng
@@ -8801,7 +8968,7 @@ function OrderEditor({
                       }
                       loading={saving}
                       onClick={isNew ? saveOrder : () => void saveAdditionalItems(false)}
-                      className={emphasizeSaveButton ? 'staff-save-button--attention' : ''}
+                      className={`staff-order-desktop-save-btn${emphasizeSaveButton ? ' is-attention' : ''}`}
                     >
                       Lưu đơn
                     </Button>
@@ -10020,7 +10187,7 @@ function OrderEditor({
           }}
         />
       )}
-    </div>
+    </motion.div>
   );
 }
 
@@ -11022,7 +11189,11 @@ function PaymentPage({
             selectedBankAccount?.accountName ?? staffContext.data?.bankAccountName ?? null,
         },
       };
-      playPosSound('PAYMENT_SUCCESS', { dedupeKey: `payment:${resolvedCode}` });
+      if (isMobilePhoneDevice()) {
+        playPaymentSuccessSound();
+      } else {
+        playPosSound('PAYMENT_SUCCESS', { dedupeKey: `payment:${resolvedCode}` });
+      }
       const successData = {
         orderId: quote.data.order.id,
         invoiceId: result.invoiceId,
@@ -11531,7 +11702,9 @@ function PaymentPage({
                     <div className="payment-workspace__item" key={item.id}>
                       <span>
                         <strong>{item.productName}</strong>
-                        {item.variantName ? <small>{item.variantName}</small> : null}
+                        {isCustomVariantName(item.variantName) ? (
+                          <small>{item.variantName}</small>
+                        ) : null}
                       </span>
                       <span>{formatDecimal(item.quantityMilli / 1000)}</span>
                       <b>{formatMoney(item.netLineTotalVnd)}</b>
@@ -12454,5 +12627,3 @@ export function StaffPosPortalPage({
   }
   return <StaffPosPortalReady bootstrap={bootstrap} />;
 }
-import 'antd/dist/reset.css';
-import '@client/styles/base.css';

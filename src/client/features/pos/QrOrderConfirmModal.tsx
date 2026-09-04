@@ -14,6 +14,7 @@ import type { AuthContextResponse } from '@contracts/auth';
 import type { GuestOrderRequestDto } from '@contracts/qr-order';
 import { apiRequest, jsonRequest } from '@client/lib/api';
 import { usePosPollingInterval } from '@client/realtime/RealtimeProvider';
+import { isCustomVariantName } from './StaffPosPortalPage';
 
 function formatVnd(amount: number) {
   return new Intl.NumberFormat('vi-VN').format(Math.round(amount));
@@ -416,7 +417,7 @@ export function QrOrderConfirmModal({ open, onClose, areas }: QrOrderConfirmModa
                                     {item.quantity} ×
                                   </span>
                                   <span>{item.productName}</span>
-                                  {item.variantName && item.variantName !== 'Mặc định' ? (
+                                  {isCustomVariantName(item.variantName) ? (
                                     <span style={{ color: '#64748b', fontSize: 12 }}>
                                       {' '}
                                       ({item.variantName})

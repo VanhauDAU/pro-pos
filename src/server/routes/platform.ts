@@ -136,6 +136,11 @@ platformRoutes.post('/stores/:storeId/devices/:deviceId/request-push-prompt', as
   return success(c, { requested: true, deliveredConnections });
 });
 
+platformRoutes.get('/maintenance/storage', async (c) => {
+  const result = await new MaintenanceService(c.env).getStorageReport();
+  return success(c, result);
+});
+
 platformRoutes.post('/maintenance/cleanup', async (c) => {
   const result = await new MaintenanceService(c.env).runRetentionCleanup();
   return success(c, result);

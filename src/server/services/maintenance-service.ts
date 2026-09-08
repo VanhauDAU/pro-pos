@@ -1,3 +1,4 @@
+import type { DatabaseStorageReport } from '@contracts/platform';
 import {
   DAY_MS,
   DEFAULT_RETENTION_POLICY,
@@ -11,6 +12,10 @@ export class MaintenanceService {
 
   constructor(private readonly env: AppEnv['Bindings']) {
     this.repository = new MaintenanceRepository(env.DB);
+  }
+
+  async getStorageReport(): Promise<DatabaseStorageReport> {
+    return this.repository.getStorageReport(DEFAULT_RETENTION_POLICY);
   }
 
   async runRetentionCleanup(): Promise<MaintenanceCleanupResult> {

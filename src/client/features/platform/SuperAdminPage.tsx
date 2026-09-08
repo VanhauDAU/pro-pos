@@ -35,6 +35,7 @@ import {
   CheckCircleOutlined,
   MobileOutlined,
   BellOutlined,
+  DatabaseOutlined,
 } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -80,6 +81,7 @@ import type {
 
 import logo from '@client/assets/logo-black.svg';
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
+import { DatabaseMaintenancePanel } from './DatabaseMaintenancePanel';
 
 interface CreateStoreValues {
   name: string;
@@ -927,7 +929,7 @@ export function SuperAdminPage() {
   }, []);
 
   // Navigation & Filter state
-  const [activeTab, setActiveTab] = useState<'analytics' | 'stores'>('analytics');
+  const [activeTab, setActiveTab] = useState<'analytics' | 'stores' | 'database'>('analytics');
   const [analyticsDays, setAnalyticsDays] = useState<number>(14);
   const [trendMetric, setTrendMetric] = useState<'revenue' | 'invoices'>('revenue');
 
@@ -1444,7 +1446,7 @@ export function SuperAdminPage() {
             block
             size="large"
             value={activeTab}
-            onChange={(val) => setActiveTab(val as 'analytics' | 'stores')}
+            onChange={(val) => setActiveTab(val as 'analytics' | 'stores' | 'database')}
             options={[
               {
                 label: (
@@ -1471,6 +1473,18 @@ export function SuperAdminPage() {
                   </span>
                 ),
                 value: 'stores',
+              },
+              {
+                label: (
+                  <span className="platform-tab-label">
+                    <DatabaseOutlined
+                      style={{ color: activeTab === 'database' ? '#8b5cf6' : '#64748b' }}
+                    />
+                    <span className="platform-tab-text-full">Cơ sở dữ liệu</span>
+                    <span className="platform-tab-text-short">Cơ sở dữ liệu</span>
+                  </span>
+                ),
+                value: 'database',
               },
             ]}
             className="platform-segmented-tabs"
@@ -1693,7 +1707,7 @@ export function SuperAdminPage() {
               </Card>
             </div>
           ) : null
-        ) : (
+        ) : activeTab === 'stores' ? (
           /* TAB 2: STORES MANAGEMENT TABLE */
           <Card className="platform-table-card" styles={{ body: { padding: '20px 24px' } }}>
             <div className="platform-toolbar">
@@ -2019,6 +2033,12 @@ export function SuperAdminPage() {
               />
             )}
           </Card>
+        ) : (
+          /* TAB 3: DATABASE OBSERVABILITY & MAINTENANCE */
+          <DatabaseMaintenancePanel
+            csrfToken={context.data?.csrfToken}
+            active={activeTab === 'database'}
+          />
         )}
       </main>
 

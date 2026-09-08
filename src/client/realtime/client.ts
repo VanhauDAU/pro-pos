@@ -271,19 +271,18 @@ export class PosRealtimeClient {
   }
 
   applyStaffPresence(userId: string, isOnline: boolean, lastSeenAt: number) {
+    const resolvedLastSeenAt = lastSeenAt || Date.now();
     this.queryClient.setQueriesData<
       Array<{ id: string; isOnline?: boolean; lastSeenAt?: number | null }>
     >({ queryKey: ['staff-employees-list'] }, (old) => {
       if (!old) return old;
       return old.map((emp) =>
-        emp.id === userId
-          ? { ...emp, isOnline, lastSeenAt: isOnline ? Date.now() : lastSeenAt }
-          : emp,
+        emp.id === userId ? { ...emp, isOnline, lastSeenAt: resolvedLastSeenAt } : emp,
       );
     });
     window.dispatchEvent(
       new CustomEvent('propos:staff-presence', {
-        detail: { userId, isOnline, lastSeenAt },
+        detail: { userId, isOnline, lastSeenAt: resolvedLastSeenAt },
       }),
     );
   }

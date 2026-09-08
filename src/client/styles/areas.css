@@ -819,6 +819,34 @@ body,
   font-size: 11px;
 }
 
+.staff-table-card__dish-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3.5px;
+  vertical-align: middle;
+}
+
+.staff-table-card__dish-icon {
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+  opacity: 0.72;
+  flex-shrink: 0;
+  display: inline-block;
+  user-select: none;
+  pointer-events: none;
+  transition: opacity 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.staff-table-card:hover .staff-table-card__dish-icon {
+  opacity: 0.92;
+}
+
+.staff-table-card--occupied.staff-table-card--paused .staff-table-card__dish-icon {
+  opacity: 0.82;
+  filter: sepia(0.6) hue-rotate(330deg);
+}
+
 .staff-table-card__total {
   font-size: 20px;
   font-weight: 800;
@@ -1495,6 +1523,11 @@ body,
 
   .staff-table-card__meta {
     font-size: 12px;
+  }
+
+  .staff-table-card__dish-icon {
+    width: 13px;
+    height: 13px;
   }
 
   .staff-table-card__total {

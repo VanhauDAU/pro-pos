@@ -102,6 +102,20 @@ export interface PlatformStoreDetail {
     revokedAt: number | null;
     lastSeenAt: number | null;
     createdAt: number;
+    isOnline?: boolean;
+    currentSession?: {
+      id: string;
+      userId: string;
+      userName: string;
+      userUsername: string;
+      userRoleName: string | null;
+      createdAt: number;
+      lastSeenAt: number;
+      isOnline: boolean;
+    } | null;
+    sessionCount?: number;
+    pushNotificationEnabled?: boolean;
+    pushLastSeenAt?: number | null;
   }>;
   sessions: Array<{
     id: string;
@@ -120,6 +134,8 @@ export interface PlatformStoreDetail {
     expiresAt: number;
     idleExpiresAt: number;
     revokedAt?: number | null;
+    isOnline?: boolean;
+    presenceStatus?: 'ONLINE' | 'OFFLINE' | 'REVOKED' | 'EXPIRED';
   }>;
   stats: {
     totalAreas: number;
@@ -131,6 +147,22 @@ export interface PlatformStoreDetail {
     paidOrders: number;
     totalInvoices: number;
     totalRevenue: number;
+    todayOrders?: number;
+    todayInvoices?: number;
+    todayAvgOrderValue?: number;
+    dineInOrders?: number;
+    takeawayOrders?: number;
+    cancelledOrders?: number;
+    cancelRate?: number;
+    totalDiscountAmount?: number;
+    totalCustomers?: number;
+    totalDebtBalance?: number;
+    totalCategories?: number;
+    activeProductsCount?: number;
+    totalDevices?: number;
+    onlineDevicesCount?: number;
+    offlineDevicesCount?: number;
+    lastActivityAt?: number | null;
   };
   analytics: {
     summary: {
@@ -141,6 +173,20 @@ export interface PlatformStoreDetail {
       completionRate: number;
       activeDevices: number;
       activeMembers: number;
+      todayOrders?: number;
+      todayInvoices?: number;
+      todayAvgOrderValue?: number;
+      dineInOrders?: number;
+      takeawayOrders?: number;
+      cancelledOrders?: number;
+      cancelRate?: number;
+      totalDiscountAmount?: number;
+      totalCustomers?: number;
+      totalDebtBalance?: number;
+      totalCategories?: number;
+      onlineDevices?: number;
+      offlineDevices?: number;
+      lastActivityAt?: number | null;
     };
     revenueTrend: PlatformAnalytics['revenueTrend'];
     paymentMethods: PlatformAnalytics['paymentMethods'];

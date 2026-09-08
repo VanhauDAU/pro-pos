@@ -310,6 +310,22 @@ function calculateQuoteTotals(
   };
 }
 
+export function countTableUniqueItems(
+  items: Array<{ productType: string; productId: string; quantityMilli?: number | bigint }>,
+  giftItems: Array<{ productId: string }> = [],
+): number {
+  const set = new Set<string>();
+  for (const item of items) {
+    if (item.productType !== 'TIME' && Number(item.quantityMilli ?? 1) > 0) {
+      set.add(item.productId);
+    }
+  }
+  for (const gift of giftItems) {
+    set.add(gift.productId);
+  }
+  return set.size;
+}
+
 interface PreparedSaveItem {
   itemId: string;
   productId: string;
@@ -496,11 +512,7 @@ export class PosService {
           });
         }
         const quote = await this.quote(storeId, table.activeOrderId, now);
-        const itemCount = quote.items.reduce(
-          (sum, item) =>
-            sum + (item.productType === 'TIME' ? 0 : Number(item.quantityMilli) / 1000),
-          0,
-        );
+        const itemCount = countTableUniqueItems(quote.items);
         return Object.assign({}, table, {
           totalVnd: quote.totalVnd,
           itemCount,
@@ -628,11 +640,7 @@ export class PosService {
             {
               ...table,
               totalVnd: quote.totalVnd,
-              itemCount: quote.items.reduce(
-                (sum, item) =>
-                  sum + (item.productType === 'TIME' ? 0 : Number(item.quantityMilli) / 1000),
-                0,
-              ),
+              itemCount: countTableUniqueItems(quote.items),
               guestCount: quote.order.guestCount,
               timeSessionStatus: quote.time?.status ?? null,
             },
@@ -780,12 +788,10 @@ export class PosService {
               orderItemCount:
                 entry.items.reduce((sum, item) => sum + Number(item.quantityMilli) / 1000, 0) +
                 giftItemCount,
-              tableItemCount:
-                entry.items.reduce(
-                  (sum, item) =>
-                    sum + (item.productType === 'TIME' ? 0 : Number(item.quantityMilli) / 1000),
-                  0,
-                ) + giftItemCount,
+              tableItemCount: countTableUniqueItems(
+                entry.items,
+                promotions.applied.flatMap((p) => p.giftItems),
+              ),
               guestCount: entry.order.guest_count ?? 1,
               timeStatus: entry.pricing?.status ?? null,
             },
@@ -1112,10 +1118,7 @@ export class PosService {
             {
               ...table,
               totalVnd: quote.totalVnd,
-              itemCount: quote.items.reduce(
-                (sum, item) => sum + (item.productType === 'TIME' ? 0 : item.quantityMilli / 1000),
-                0,
-              ),
+              itemCount: countTableUniqueItems(quote.items),
               guestCount: quote.order.guestCount,
               timeSessionStatus: quote.time?.status ?? null,
             },
@@ -3443,10 +3446,7 @@ export class PosService {
         ? {
             ...table,
             totalVnd: quote.totalVnd,
-            itemCount: quote.items.reduce(
-              (sum, item) => sum + (item.productType === 'TIME' ? 0 : item.quantityMilli / 1000),
-              0,
-            ),
+            itemCount: countTableUniqueItems(quote.items),
             guestCount: quote.order.guestCount,
             timeSessionStatus: quote.time?.status ?? null,
           }
@@ -3797,7 +3797,7 @@ export class PosService {
       this.repository.findTakeawayOrder(storeId, replay.orderId),
       this.repository.findTableByOrderId(storeId, replay.orderId),
     ]);
-    if (!invoice || (!order && !takeaway)) return replay;
+    if (!invoice || (!order && !takeaway)) return { ...replay, replayed: true as const };
     const invoiceData = invoice;
     const resolved = order ?? takeaway!;
     const tableSummaries = table ? [table] : [];
@@ -3833,6 +3833,7 @@ export class PosService {
         totalVnd: invoiceData.total,
       },
       tableSummaries,
+      replayed: true as const,
     };
   }
 
@@ -4131,6 +4132,7 @@ export class PosService {
         totalVnd: quote.totalVnd,
       },
       tableSummaries,
+      replayed: false as const,
     };
   }
 

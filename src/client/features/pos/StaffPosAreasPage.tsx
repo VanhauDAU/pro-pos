@@ -1,5 +1,6 @@
 import 'antd/dist/reset.css';
 import '@client/styles/areas.css';
+import dishIcon from '@client/assets/icon_monan_rmbackground.webp';
 
 import {
   DownOutlined,
@@ -17,7 +18,7 @@ import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-route
 import type { AppBootstrapResponse } from '@contracts/app-bootstrap';
 import type { PosOverviewSnapshot, PosOverviewTable } from '@contracts/pos';
 
-import { apiRequest } from '@client/lib/api';
+import { ApiError, apiRequest } from '@client/lib/api';
 import {
   recordPosStartupReady,
   setPosPerformanceCsrfToken,
@@ -790,7 +791,18 @@ function AreasPage() {
                         <div className="staff-table-card__meta">
                           <span>{formatTableShortDuration(takeawayOrder.openedAt, now)}</span>
                           <span className="staff-table-card__dot">•</span>
-                          <AnimatedInlineText value={`${takeawayOrder.itemCount ?? 0} món`} />
+                          <span className="staff-table-card__dish-badge">
+                            <img
+                              src={dishIcon}
+                              alt=""
+                              className="staff-table-card__dish-icon"
+                              width={14}
+                              height={14}
+                              loading="lazy"
+                              decoding="async"
+                            />
+                            <AnimatedInlineText value={`${takeawayOrder.itemCount ?? 0} món`} />
+                          </span>
                         </div>
                         <div>
                           <AnimatedMoney value={takeawayOrder.totalVnd ?? 0} />
@@ -860,7 +872,7 @@ function AreasPage() {
                   }}
                 >
                   <CardUpdateFlash
-                    signature={`${table.status}|${table.timeSessionStatus ?? ''}|${table.totalVnd ?? 0}|${table.itemCount ?? 0}|${table.guestCount ?? 0}|${table.activeOrderId ?? ''}`}
+                    signature={`${table.status}|${table.timeSessionStatus ?? ''}|${table.totalVnd ?? 0}|${table.itemCount ?? 0}|${table.activeOrderId ?? ''}`}
                   />
                   <div className="staff-table-card__header">
                     <strong className="staff-table-card__name">{table.name}</strong>
@@ -875,13 +887,18 @@ function AreasPage() {
                       <div className="staff-table-card__meta">
                         <span>{formatTableShortDuration(table.occupiedSince, now)}</span>
                         <span className="staff-table-card__dot">•</span>
-                        <AnimatedInlineText
-                          value={
-                            table.guestCount && table.guestCount > 0
-                              ? `${table.guestCount} khách`
-                              : `${table.itemCount ?? 0} món`
-                          }
-                        />
+                        <span className="staff-table-card__dish-badge">
+                          <img
+                            src={dishIcon}
+                            alt=""
+                            className="staff-table-card__dish-icon"
+                            width={14}
+                            height={14}
+                            loading="lazy"
+                            decoding="async"
+                          />
+                          <AnimatedInlineText value={`${table.itemCount ?? 0} món`} />
+                        </span>
                       </div>
                       <div>
                         <AnimatedMoney value={table.totalVnd ?? 0} />
@@ -995,19 +1012,27 @@ export function StaffPosAreasPage({
   retryBootstrap?: () => void;
 }) {
   if (bootstrapLoading || !bootstrap) {
-    return bootstrapError ? (
-      <div className="pos-app-splash" role="alert">
-        <div className="pos-app-splash__content">
-          <strong>Chưa thể tải dữ liệu POS</strong>
-          <div className="pos-app-splash__message">{errorText(bootstrapError)}</div>
-          <Button type="primary" onClick={retryBootstrap}>
-            Thử lại
-          </Button>
+    if (bootstrapError) {
+      if (
+        (bootstrapError instanceof ApiError && bootstrapError.status === 401) ||
+        bootstrapError.message.includes('Phiên đăng nhập không hợp lệ') ||
+        bootstrapError.message.includes('Vui lòng đăng nhập')
+      ) {
+        return <Navigate to="/?tab=employee&authError=SESSION_EXPIRED" replace />;
+      }
+      return (
+        <div className="pos-app-splash" role="alert">
+          <div className="pos-app-splash__content">
+            <strong>Chưa thể tải dữ liệu POS</strong>
+            <div className="pos-app-splash__message">{errorText(bootstrapError)}</div>
+            <Button type="primary" onClick={retryBootstrap}>
+              Thử lại
+            </Button>
+          </div>
         </div>
-      </div>
-    ) : (
-      <PosAppSplash message="Đang nạp dữ liệu POS..." />
-    );
+      );
+    }
+    return <PosAppSplash message="Đang nạp dữ liệu POS..." />;
   }
   if (bootstrap.auth.actor?.kind !== 'EMPLOYEE' || !bootstrap.pos) {
     return <Navigate to="/?tab=employee&authError=SESSION_EXPIRED" replace />;

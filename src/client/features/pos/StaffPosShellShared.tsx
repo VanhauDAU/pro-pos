@@ -280,7 +280,8 @@ export function PosNotificationsProvider({ children }: { children: React.ReactNo
   }, []);
   useEffect(() => {
     if (realtimeStatus !== 'CONNECTED') return undefined;
-    const warm = () => warmPosSounds(['NEW_QR_ORDER', 'TABLE_OPEN_REQUEST', 'CHECKOUT_REQUEST']);
+    const warm = () =>
+      warmPosSounds(['NEW_QR_ORDER', 'TABLE_OPEN_REQUEST', 'CHECKOUT_REQUEST', 'PAYMENT_SUCCESS']);
     const idleWindow = window as Window & {
       requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
       cancelIdleCallback?: (id: number) => void;

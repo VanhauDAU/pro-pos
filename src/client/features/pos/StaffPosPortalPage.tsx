@@ -147,11 +147,9 @@ import {
   startPosInteraction,
 } from '@client/lib/pos-performance';
 import {
-  isMobilePhoneDevice,
   playCancelOrderSound,
   playOrderSaveSound,
   playPaymentSuccessSound,
-  playPosSound,
 } from '@client/lib/sound';
 import { RealtimeProvider, useRealtime } from '@client/realtime/RealtimeProvider';
 import {
@@ -1796,10 +1794,36 @@ function MorePage({ auth }: { auth: AuthContextResponse }) {
     <div className="staff-more-page">
       {holder}
       <section className="staff-profile-hero">
-        <Avatar size={76} icon={<UserOutlined />} />
+        <div style={{ position: 'relative', display: 'inline-block' }}>
+          <Avatar size={76} icon={<UserOutlined />} />
+          <span
+            className="owner-staff-online-dot"
+            style={{ width: 16, height: 16, border: '3px solid #fff', bottom: 2, right: 2 }}
+            title="Đang hoạt động"
+          />
+        </div>
         <div>
-          <Typography.Title level={2}>{auth.actor!.displayName}</Typography.Title>
-          <Typography.Text>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <Typography.Title level={2} style={{ margin: 0 }}>
+              {auth.actor!.displayName}
+            </Typography.Title>
+            <Tag
+              color="success"
+              style={{
+                borderRadius: 12,
+                padding: '1px 10px',
+                fontWeight: 600,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                fontSize: 12,
+              }}
+            >
+              <span className="owner-staff-online-pulse" />
+              Đang hoạt động
+            </Tag>
+          </div>
+          <Typography.Text style={{ marginTop: 4, display: 'block' }}>
             {isOwner ? 'Chủ cửa hàng (Quản trị viên)' : 'Nhân viên cửa hàng'}
           </Typography.Text>
         </div>
@@ -11189,11 +11213,7 @@ function PaymentPage({
             selectedBankAccount?.accountName ?? staffContext.data?.bankAccountName ?? null,
         },
       };
-      if (isMobilePhoneDevice()) {
-        playPaymentSuccessSound();
-      } else {
-        playPosSound('PAYMENT_SUCCESS', { dedupeKey: `payment:${resolvedCode}` });
-      }
+      playPaymentSuccessSound({ dedupeKey: `payment:${resolvedCode}`, volume: 1.0 });
       const successData = {
         orderId: quote.data.order.id,
         invoiceId: result.invoiceId,

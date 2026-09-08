@@ -473,6 +473,7 @@ export class AuthService {
       Math.max(1, identity.employee_remember_session_hours),
     );
     const maxAgeSeconds = rememberSessionHours * 60 * 60;
+    await this.repository.revokeActiveSessionsOnDevice(device.device_id, now);
     await this.repository.createSession({
       id: crypto.randomUUID(),
       tokenHash: await hashOpaqueToken(rawToken, this.sessionTokenPepper),
@@ -532,7 +533,7 @@ export class AuthService {
         row.store_id === device.storeId);
     if (!sessionValid || !employeeDeviceValid) return { principal: null, device };
 
-    if (now - row.last_seen_at > 5 * 60_000) {
+    if (now - row.last_seen_at > 60_000) {
       const idleSeconds =
         row.session_kind === 'EMPLOYEE'
           ? Math.min(
@@ -548,6 +549,7 @@ export class AuthService {
         row.session_id,
         now,
         Math.min(row.expires_at, now + idleSeconds * 1000),
+        row.session_device_id,
       );
     }
 

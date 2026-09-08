@@ -62,6 +62,7 @@ class MockAudioContext extends EventTarget {
       ({
         gain: {
           setValueAtTime: vi.fn(),
+          linearRampToValueAtTime: vi.fn(),
           exponentialRampToValueAtTime: vi.fn(),
         },
         connect: vi.fn(),
@@ -295,5 +296,37 @@ describe('POS Web Audio sound service', () => {
         1,
       );
     }
+  });
+
+  it('plays PAYMENT_SUCCESS immediately even when page is in background (push notification)', async () => {
+    const { manager, context } = createManager();
+    await unlockAndIgnoreSilentSource(manager, context);
+    documentMock.setVisible(false);
+
+    manager.play('PAYMENT_SUCCESS', { dedupeKey: 'push-payment-bg', allowBackground: true });
+
+    await vi.waitFor(() => expect(startedDecodedSources(context)).toHaveLength(1));
+  });
+
+  it('auto-resumes suspended AudioContext when immediate payment sound triggers', async () => {
+    const { manager, context } = createManager('suspended');
+    expect(context.state).toBe('suspended');
+
+    manager.play('PAYMENT_SUCCESS', { dedupeKey: 'push-payment-wake' });
+
+    await vi.waitFor(() => expect(context.resume).toHaveBeenCalled());
+    await vi.waitFor(() => expect(startedDecodedSources(context)).toHaveLength(1));
+  });
+
+  it('synthesizes payment fanfare when decode fails for PAYMENT_SUCCESS', async () => {
+    MockAudioContext.decodeFails = true;
+    const { manager, context } = createManager();
+    await unlockAndIgnoreSilentSource(manager, context);
+
+    manager.play('PAYMENT_SUCCESS', { dedupeKey: 'payment-decode-error' });
+
+    // Procedural payment fanfare starts coin clinks + arpeggio oscillators
+    await vi.waitFor(() => expect(context.oscillatorStarts.length).toBeGreaterThanOrEqual(5));
+    expect(startedDecodedSources(context)).toHaveLength(0);
   });
 });

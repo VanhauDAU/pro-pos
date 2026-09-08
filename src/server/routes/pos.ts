@@ -57,6 +57,7 @@ import { RealtimeDispatcher } from '@server/realtime/realtime-dispatcher';
 import { qrOrderStaffRoutes } from '@server/routes/qr-order-staff';
 import { QrOrderService } from '@server/services/qr-order-service';
 import { pushNotificationRoutes } from '@server/routes/push-notifications';
+import { PushNotificationService } from '@server/services/push-notification-service';
 import type { AppEnv } from '@server/types';
 import { addRequestTiming, measureRequestTiming } from '@server/lib/performance';
 import { MediaService } from '@server/services/media-service';
@@ -1143,25 +1144,72 @@ posRoutes.post(
 posRoutes.post('/orders/:orderId/checkout', requirePermission('checkout.complete'), async (c) => {
   const body = await parseJson(c.req.raw, checkoutSchema);
   const actor = c.get('actor');
-  return success(
-    c,
-    await new PosService(c.env).checkout({
-      storeId: actor.storeId!,
-      actorId: actor.id,
-      requestId: c.get('requestId'),
-      idempotencyKey: idempotencyKey(c),
-      orderId: c.req.param('orderId'),
-      expectedOrderVersion: body.expectedOrderVersion,
-      paymentSnapshotId: body.paymentSnapshotId ?? null,
-      bankAccountId: body.bankAccountId ?? null,
-      method: body.method,
-      cashReceivedVnd: body.cashReceivedVnd ?? null,
-      allocations: body.allocations ?? [],
-      debtAmountVnd: body.debtAmountVnd,
-      actorSessionId: c.get('sessionId'),
-      deviceId: c.get('device')?.id ?? null,
-    }),
-  );
+  const result = await new PosService(c.env).checkout({
+    storeId: actor.storeId!,
+    actorId: actor.id,
+    requestId: c.get('requestId'),
+    idempotencyKey: idempotencyKey(c),
+    orderId: c.req.param('orderId'),
+    expectedOrderVersion: body.expectedOrderVersion,
+    paymentSnapshotId: body.paymentSnapshotId ?? null,
+    bankAccountId: body.bankAccountId ?? null,
+    method: body.method,
+    cashReceivedVnd: body.cashReceivedVnd ?? null,
+    allocations: body.allocations ?? [],
+    debtAmountVnd: body.debtAmountVnd,
+    actorSessionId: c.get('sessionId'),
+    deviceId: c.get('device')?.id ?? null,
+  });
+
+  if ('order' in result && result.order && !result.replayed && actor.storeId) {
+    const storeId = actor.storeId;
+    const actorDevice = c.get('device');
+    const orderData = result.order;
+    const tableSummaries = 'tableSummaries' in result ? result.tableSummaries : [];
+    c.executionCtx.waitUntil(
+      (async () => {
+        try {
+          const isTakeaway = orderData.orderType === 'TAKEAWAY';
+          const table = tableSummaries?.[0];
+          const tableName = table
+            ? `${table.name}${table.areaName ? ` (${table.areaName})` : ''}`
+            : 'Bàn';
+          const methodDesc = result.method === 'BANK_TRANSFER' ? 'Chuyển khoản' : 'Tiền mặt';
+          const formattedMoney = `${new Intl.NumberFormat('vi-VN').format(result.total)}đ`;
+          const bodyDesc = isTakeaway
+            ? `Mang về #${result.displayCode} • ${formattedMoney} • ${methodDesc}${actor.displayName ? ` • Thu ngân: ${actor.displayName}` : ''}`
+            : `${tableName} • ${formattedMoney} • ${methodDesc} • HĐ: #${result.displayCode}`;
+
+          await new PushNotificationService(c.env).sendStoreNotification({
+            storeId,
+            kind: 'ORDER_PAID',
+            soundType: 'PAYMENT_SUCCESS',
+            title: 'Thanh toán thành công',
+            body: bodyDesc,
+            url: `/pos?orderId=${result.orderId}`,
+            tag: `order-paid:${result.orderId}`,
+            timestamp: Date.now(),
+            orderId: result.orderId,
+            actionTitle: 'Xem hóa đơn',
+            onlyActiveSessions: true,
+            excludeDeviceId: actorDevice?.id ?? null,
+          });
+        } catch (err) {
+          console.error(
+            JSON.stringify({
+              level: 'error',
+              message: 'failed to dispatch order checkout push notification',
+              storeId,
+              orderId: result.orderId,
+              error: err instanceof Error ? err.message : String(err),
+            }),
+          );
+        }
+      })(),
+    );
+  }
+
+  return success(c, result);
 });
 
 posRoutes.post('/orders/:orderId/transfer', requirePermission('table.transfer'), async (c) => {

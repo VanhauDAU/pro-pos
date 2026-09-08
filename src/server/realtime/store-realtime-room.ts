@@ -24,6 +24,8 @@ function tag(kind: 'user' | 'session' | 'device', id: string) {
 }
 
 export class StoreRealtimeRoom extends DurableObject<CloudflareBindings> {
+  private pendingPushPrompts = new Map<string, number>();
+
   constructor(ctx: DurableObjectState, env: CloudflareBindings) {
     super(ctx, env);
     ctx.blockConcurrencyWhile(async () => this.migrate());
@@ -111,7 +113,10 @@ export class StoreRealtimeRoom extends DurableObject<CloudflareBindings> {
       parsedAfter !== null && Number.isSafeInteger(parsedAfter) && parsedAfter >= 0
         ? parsedAfter
         : null;
-    const sync = await new RealtimeRepository(this.env.DB).sync(storeId, after);
+    const [sync, onlineUserIds] = await Promise.all([
+      new RealtimeRepository(this.env.DB).sync(storeId, after),
+      this.listConnectedUserIds(storeId),
+    ]);
     const ready: RealtimeServerFrame = {
       type: 'ready',
       connectionId,
@@ -119,8 +124,21 @@ export class StoreRealtimeRoom extends DurableObject<CloudflareBindings> {
       reauthAtMs: reauthAt,
       schemaVersion: REALTIME_SCHEMA_VERSION,
       sync,
+      onlineUserIds,
     };
     server.send(JSON.stringify(ready));
+    this.broadcastStaffPresence(storeId, userId, true, Date.now());
+    if (deviceId && this.pendingPushPrompts.has(deviceId)) {
+      const requestedAt = this.pendingPushPrompts.get(deviceId)!;
+      this.pendingPushPrompts.delete(deviceId);
+      const promptFrame: RealtimeServerFrame = {
+        type: 'device_push_prompt',
+        deviceId,
+        storeId,
+        requestedAt,
+      };
+      server.send(JSON.stringify(promptFrame));
+    }
     return new Response(null, {
       status: 101,
       webSocket: client,
@@ -251,6 +269,60 @@ export class StoreRealtimeRoom extends DurableObject<CloudflareBindings> {
     return [...connected];
   }
 
+  async listConnectedUserIds(storeId: string): Promise<string[]> {
+    this.ensureStore(storeId);
+    const connected = new Set<string>();
+    const now = Date.now();
+    for (const ws of this.ctx.getWebSockets()) {
+      const attachment = ws.deserializeAttachment() as RealtimeConnectionAttachment | null;
+      if (attachment?.storeId === storeId && attachment.userId && attachment.reauthAt > now) {
+        connected.add(attachment.userId);
+      }
+    }
+    return [...connected];
+  }
+
+  broadcastStaffPresence(storeId: string, userId: string, isOnline: boolean, lastSeenAt: number) {
+    const frame: RealtimeServerFrame = {
+      type: 'staff_presence',
+      storeId,
+      userId,
+      isOnline,
+      lastSeenAt,
+    };
+    const payload = JSON.stringify(frame);
+    for (const ws of this.ctx.getWebSockets()) {
+      try {
+        ws.send(payload);
+      } catch {}
+    }
+  }
+
+  async requestDevicePushPrompt(storeId: string, deviceId: string): Promise<number> {
+    this.ensureStore(storeId);
+    let sent = 0;
+    const now = Date.now();
+    const frame: RealtimeServerFrame = {
+      type: 'device_push_prompt',
+      deviceId,
+      storeId,
+      requestedAt: now,
+    };
+    const payload = JSON.stringify(frame);
+    for (const ws of this.ctx.getWebSockets(tag('device', deviceId))) {
+      try {
+        ws.send(payload);
+        sent += 1;
+      } catch {}
+    }
+    if (sent === 0) {
+      this.pendingPushPrompts.set(deviceId, now);
+    } else {
+      this.pendingPushPrompts.delete(deviceId);
+    }
+    return sent;
+  }
+
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
     if (typeof message === 'string' && message === '{"type":"ping"}') {
       ws.send('{"type":"pong"}');
@@ -265,10 +337,24 @@ export class StoreRealtimeRoom extends DurableObject<CloudflareBindings> {
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string) {
+    const attachment = ws.deserializeAttachment() as RealtimeConnectionAttachment | null;
     ws.close(code, reason);
+    if (attachment?.userId && attachment?.storeId) {
+      const remaining = this.ctx.getWebSockets(tag('user', attachment.userId));
+      if (remaining.length === 0) {
+        this.broadcastStaffPresence(attachment.storeId, attachment.userId, false, Date.now());
+      }
+    }
   }
 
   async webSocketError(ws: WebSocket) {
+    const attachment = ws.deserializeAttachment() as RealtimeConnectionAttachment | null;
     ws.close(1011, 'Realtime socket error');
+    if (attachment?.userId && attachment?.storeId) {
+      const remaining = this.ctx.getWebSockets(tag('user', attachment.userId));
+      if (remaining.length === 0) {
+        this.broadcastStaffPresence(attachment.storeId, attachment.userId, false, Date.now());
+      }
+    }
   }
 }

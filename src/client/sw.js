@@ -50,6 +50,10 @@ registerRoute(
   },
 );
 
+self.addEventListener('install', () => {
+  self.skipWaiting();
+});
+
 self.addEventListener('message', (event) => {
   if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
 });
@@ -68,6 +72,49 @@ self.addEventListener('push', (event) => {
     (async () => {
       const tag = payload.tag ?? 'propos-notification';
 
+      // 1. Broadcast to BroadcastChannel (accessible to all tabs/windows of origin)
+      try {
+        if (typeof BroadcastChannel !== 'undefined') {
+          const bc = new BroadcastChannel('propos-notifications');
+          // eslint-disable-next-line unicorn/require-post-message-target-origin -- BroadcastChannel has no targetOrigin parameter.
+          bc.postMessage({ type: 'PUSH_NOTIFICATION_RECEIVED', payload });
+          bc.close();
+        }
+      } catch {
+        // Fallback below
+      }
+
+      // 2. Direct client postMessage for any open window clients
+      try {
+        const windowClients = await self.clients.matchAll({
+          type: 'window',
+          includeUncontrolled: true,
+        });
+        for (const client of windowClients) {
+          // eslint-disable-next-line unicorn/require-post-message-target-origin -- Client.postMessage has no targetOrigin parameter.
+          client.postMessage({ type: 'PUSH_NOTIFICATION_RECEIVED', payload });
+        }
+      } catch {
+        // Non-blocking
+      }
+
+      const defaultActionTitle = payload.kind === 'ORDER_PAID' ? 'Xem hóa đơn' : 'Mở POS';
+      const defaultUrl = payload.kind === 'ORDER_PAID' ? '/pos' : '/pos/qr-order';
+
+      const soundMap = {
+        ORDER_PAID: '/sounds/sound_thanhtoanthanhcong.mp3',
+        PAYMENT_SUCCESS: '/sounds/sound_thanhtoanthanhcong.mp3',
+        QR_ORDER: '/sounds/sound_goimonmoi.mp3',
+        NEW_QR_ORDER: '/sounds/sound_goimonmoi.mp3',
+        CALL_STAFF: '/sounds/sound_yeuccaumoban.mp3',
+        CHECKOUT_REQUEST: '/sounds/sound_yeucauthanhtoan.mp3',
+        TABLE_OPEN_REQUEST: '/sounds/sound_yeuccaumoban.mp3',
+      };
+      const soundFile =
+        (payload.soundType && soundMap[payload.soundType]) ||
+        (payload.kind && soundMap[payload.kind]) ||
+        undefined;
+
       const options = {
         body: payload.body ?? 'Bạn có thông báo mới.',
         icon: payload.icon ?? '/pwa-192x192.png',
@@ -75,17 +122,19 @@ self.addEventListener('push', (event) => {
         tag,
         renotify: true,
         requireInteraction: payload.requireInteraction !== false,
-        silent: true,
+        silent: false,
+        ...(soundFile ? { sound: soundFile } : {}),
         timestamp: payload.timestamp ?? Date.now(),
-        actions: [{ action: 'open', title: payload.actionTitle ?? 'Mở QR Order' }],
+        actions: [{ action: 'open', title: payload.actionTitle ?? defaultActionTitle }],
         data: {
-          url: payload.url ?? '/pos/qr-order',
+          url: payload.url ?? defaultUrl,
           tag,
-          kind: payload.kind ?? 'QR_ORDER',
+          kind: payload.kind ?? 'NOTIFICATION',
           requestId: payload.requestId ?? null,
           orderId: payload.orderId ?? null,
+          soundType: payload.soundType ?? null,
         },
-        vibrate: [300, 120, 300, 120, 700],
+        vibrate: [200, 100, 200, 100, 400],
       };
 
       await Promise.all([
@@ -106,10 +155,7 @@ self.addEventListener('notificationclick', (event) => {
         ? self.navigator.clearAppBadge()
         : Promise.resolve(),
       self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
-        const target = new URL(
-          event.notification.data?.url ?? '/pos/qr-order',
-          self.location.origin,
-        ).href;
+        const target = new URL(event.notification.data?.url ?? '/pos', self.location.origin).href;
         const existing =
           clients.find((client) => client.focused) ??
           clients.find((client) => client.url.startsWith(self.location.origin));

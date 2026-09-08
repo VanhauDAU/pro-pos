@@ -148,10 +148,28 @@ export function OwnerRevenueReportPage({
     toHour: 0,
     toMinute: 0,
   });
-  const [appliedParams, setAppliedParams] = useState<string | null>(null);
+  const [appliedParams, setAppliedParams] = useState<string | null>(() =>
+    new URLSearchParams({
+      reportType: 'OVERVIEW',
+      timeRange: 'today',
+      hourMode: 'all',
+      fromHour: '0',
+      fromMinute: '0',
+      toHour: '0',
+      toMinute: '0',
+    }).toString(),
+  );
   useEffect(() => {
-    if (!allowedReports.some((item) => item.value === reportType) && allowedReports[0])
-      setReportType(allowedReports[0].value);
+    if (!allowedReports.some((item) => item.value === reportType) && allowedReports[0]) {
+      const nextType = allowedReports[0].value;
+      setReportType(nextType);
+      setAppliedParams((prev) => {
+        if (!prev) return prev;
+        const p = new URLSearchParams(prev);
+        p.set('reportType', nextType);
+        return p.toString();
+      });
+    }
   }, [allowedReports, reportType]);
   useEffect(() => {
     if (reportType !== 'STAFF_REVENUE') setEmployeeId(null);
@@ -178,7 +196,7 @@ export function OwnerRevenueReportPage({
     queryKey: ['revenue-report', apiPrefix, appliedParams],
     queryFn: () =>
       apiRequest<RevenueReportResponseDto>(`${apiPrefix}/reports/revenue?${appliedParams!}`),
-    enabled: appliedParams !== null,
+    enabled: Boolean(appliedParams) && allowedReports.length > 0,
   });
   const data = reportQuery.data;
   const hasData = Boolean(
@@ -484,7 +502,13 @@ export function OwnerRevenueReportPage({
           icon={<ReloadOutlined />}
           loading={reportQuery.isFetching}
           disabled={!canLoad}
-          onClick={() => setAppliedParams(params)}
+          onClick={() => {
+            if (appliedParams === params) {
+              void reportQuery.refetch();
+            } else {
+              setAppliedParams(params);
+            }
+          }}
         >
           Xem
         </Button>

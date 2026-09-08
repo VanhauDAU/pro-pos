@@ -24,11 +24,17 @@ import {
   RiseOutlined,
   SearchOutlined,
   ShopOutlined,
+  ShoppingOutlined,
   StarOutlined,
   StopOutlined,
   TeamOutlined,
   TrophyOutlined,
   UnlockOutlined,
+  UserOutlined,
+  WarningOutlined,
+  CheckCircleOutlined,
+  MobileOutlined,
+  BellOutlined,
 } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -480,11 +486,140 @@ function HourlyPeakChart({ data }: { data: PlatformAnalytics['hourlyDistribution
 function StoreLeaderboardWidget({
   stores,
   onSelectStore,
+  isMobile,
 }: {
   stores: PlatformAnalytics['storePerformance'];
   onSelectStore: (storeId: string) => void;
+  isMobile?: boolean;
 }) {
   const maxRevenue = Math.max(...stores.map((s) => s.totalRevenue), 1);
+
+  if (isMobile) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {stores.length === 0 ? (
+          <Empty description="Chưa có dữ liệu cửa hàng" style={{ margin: '16px 0' }} />
+        ) : (
+          stores.map((record, idx) => {
+            const rank = idx + 1;
+            const cls =
+              rank === 1
+                ? 'platform-rank-1'
+                : rank === 2
+                  ? 'platform-rank-2'
+                  : rank === 3
+                    ? 'platform-rank-3'
+                    : 'platform-rank-default';
+            const pct = Math.round((record.totalRevenue / maxRevenue) * 100);
+
+            return (
+              <div
+                key={record.storeId}
+                className="platform-mobile-rank-card"
+                onClick={() => onSelectStore(record.storeId)}
+                style={{ cursor: 'pointer' }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                    marginBottom: 6,
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                    <span className={`platform-rank-badge ${cls}`}>{rank}</span>
+                    <div style={{ minWidth: 0 }}>
+                      <div
+                        style={{
+                          fontWeight: 700,
+                          fontSize: 14,
+                          color: '#0f172a',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {record.storeName}
+                      </div>
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 2 }}>
+                        <span className="platform-badge-id">{record.storeId.slice(0, 8)}</span>
+                        <Tag
+                          color={record.status === 'ACTIVE' ? 'success' : 'error'}
+                          style={{ fontSize: 10, borderRadius: 4, margin: 0, padding: '0 4px' }}
+                        >
+                          {record.status === 'ACTIVE' ? 'Hoạt động' : 'Đã khóa'}
+                        </Tag>
+                      </div>
+                    </div>
+                  </div>
+                  <Button
+                    type="primary"
+                    ghost
+                    size="small"
+                    icon={<EyeOutlined />}
+                    style={{ borderRadius: 6, fontSize: 11.5, flexShrink: 0 }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelectStore(record.storeId);
+                    }}
+                  >
+                    Chi tiết
+                  </Button>
+                </div>
+
+                <div
+                  style={{
+                    background: '#f8fafc',
+                    borderRadius: 8,
+                    padding: '8px 10px',
+                    marginTop: 6,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'baseline',
+                    }}
+                  >
+                    <span style={{ fontSize: 12, color: '#64748b' }}>Doanh thu:</span>
+                    <span style={{ fontWeight: 800, color: '#2563eb', fontSize: 14 }}>
+                      {formatVnd(record.totalRevenue)}
+                    </span>
+                  </div>
+                  <Progress
+                    percent={pct}
+                    size="small"
+                    strokeColor="#2563eb"
+                    showInfo={false}
+                    style={{ margin: '4px 0 2px' }}
+                  />
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      fontSize: 11.5,
+                      color: '#64748b',
+                      marginTop: 4,
+                    }}
+                  >
+                    <span>
+                      {record.totalInvoices} HĐ ({record.totalOrders} đơn)
+                    </span>
+                    <span>
+                      {record.activeDevices} POS · {record.occupiedTables}/{record.totalTables} bàn
+                    </span>
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    );
+  }
 
   const columns = [
     {
@@ -607,7 +742,91 @@ function StoreLeaderboardWidget({
 /* =========================================================================
    Top Selling Products / Services Widget
    ========================================================================= */
-function TopProductsWidget({ products }: { products: PlatformAnalytics['topProducts'] }) {
+function TopProductsWidget({
+  products,
+  isMobile,
+}: {
+  products: PlatformAnalytics['topProducts'];
+  isMobile?: boolean;
+}) {
+  if (isMobile) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {products.length === 0 ? (
+          <Empty description="Chưa có mặt hàng nào được bán" style={{ margin: '16px 0' }} />
+        ) : (
+          products.map((record, idx) => (
+            <div
+              key={`${record.name}_${record.productType}`}
+              className="platform-mobile-product-card"
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 8,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                  <span
+                    className="platform-rank-badge platform-rank-default"
+                    style={{ width: 22, height: 22, fontSize: 11, flexShrink: 0 }}
+                  >
+                    {idx + 1}
+                  </span>
+                  <div style={{ minWidth: 0 }}>
+                    <div
+                      style={{
+                        fontWeight: 650,
+                        fontSize: 13.5,
+                        color: '#0f172a',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {record.name}
+                    </div>
+                    <Tag
+                      color={
+                        record.productType === 'TIME'
+                          ? 'blue'
+                          : record.productType === 'WEIGHT'
+                            ? 'orange'
+                            : 'cyan'
+                      }
+                      style={{ fontSize: 10, margin: '2px 0 0', padding: '0 4px', borderRadius: 4 }}
+                    >
+                      {record.productType === 'TIME'
+                        ? 'Giờ chơi'
+                        : record.productType === 'WEIGHT'
+                          ? 'Theo cân'
+                          : 'Món / Đồ uống'}
+                    </Tag>
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                  <div style={{ fontWeight: 700, color: '#0975f7', fontSize: 13.5 }}>
+                    {formatVnd(record.totalRevenue)}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: '#64748b' }}>
+                    {record.totalQuantity}{' '}
+                    {record.productType === 'TIME'
+                      ? 'giờ'
+                      : record.productType === 'WEIGHT'
+                        ? 'kg'
+                        : 'phần'}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    );
+  }
+
   const columns = [
     {
       title: '#',
@@ -721,14 +940,20 @@ export function SuperAdminPage() {
   const [selectedMemberForHistory, setSelectedMemberForHistory] = useState<StoreMember | null>(
     null,
   );
-  const [sessionStatusFilter, setSessionStatusFilter] = useState<
-    'ALL' | 'ACTIVE' | 'REVOKED' | 'EXPIRED'
+
+  const [sessionPresenceFilter, setSessionPresenceFilter] = useState<
+    'ALL' | 'ONLINE' | 'OFFLINE' | 'REVOKED' | 'EXPIRED'
   >('ALL');
+  const [sessionViewMode, setSessionViewMode] = useState<'DEVICES' | 'HISTORY'>('DEVICES');
+  const [selectedDeviceFilter, setSelectedDeviceFilter] = useState<string>('ALL');
+  const [storeTrendDays, setStoreTrendDays] = useState<number>(14);
   const [sessionSearchTerm, setSessionSearchTerm] = useState('');
-  const [memberHistoryFilter, setMemberHistoryFilter] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>(
-    'ALL',
-  );
+  const [memberHistoryFilter, setMemberHistoryFilter] = useState<
+    'ALL' | 'ONLINE' | 'OFFLINE' | 'INACTIVE'
+  >('ALL');
+  const [activeDetailTab, setActiveDetailTab] = useState<string>('overview');
   const [cleaningDb, setCleaningDb] = useState(false);
+  const [requestingPushDeviceId, setRequestingPushDeviceId] = useState<string | null>(null);
 
   const context = useQuery({
     queryKey: ['auth-context'],
@@ -749,8 +974,11 @@ export function SuperAdminPage() {
   });
 
   const storeDetail = useQuery({
-    queryKey: ['platform-store-detail', selectedStoreId],
-    queryFn: () => apiRequest<PlatformStoreDetail>(`/api/v1/platform/stores/${selectedStoreId}`),
+    queryKey: ['platform-store-detail', selectedStoreId, storeTrendDays],
+    queryFn: () =>
+      apiRequest<PlatformStoreDetail>(
+        `/api/v1/platform/stores/${selectedStoreId}?days=${storeTrendDays}`,
+      ),
     enabled: context.data?.actor?.kind === 'SUPER_ADMIN' && Boolean(selectedStoreId),
   });
 
@@ -992,6 +1220,31 @@ export function SuperAdminPage() {
     }
   };
 
+  const handleRequestPushPrompt = async (deviceId: string, deviceName: string) => {
+    if (!selectedStoreId) return;
+    setRequestingPushDeviceId(deviceId);
+    try {
+      const res = await jsonRequest<{ requested: boolean; deliveredConnections: number }>(
+        `/api/v1/platform/stores/${selectedStoreId}/devices/${deviceId}/request-push-prompt`,
+        {},
+        { method: 'POST', headers: csrfHeaders() },
+      );
+      if (res.deliveredConnections > 0) {
+        message.success(
+          `Đã gửi yêu cầu bật thông báo tới "${deviceName}". Popup đã xuất hiện trên máy POS!`,
+        );
+      } else {
+        message.info(
+          `Đã lưu yêu cầu cho "${deviceName}". Popup sẽ tự động mở khi thiết bị kết nối vào POS.`,
+        );
+      }
+    } catch (err) {
+      message.error(readableError(err));
+    } finally {
+      setRequestingPushDeviceId(null);
+    }
+  };
+
   const handleMaintenanceCleanup = async () => {
     setCleaningDb(true);
     try {
@@ -1095,29 +1348,6 @@ export function SuperAdminPage() {
             </Typography.Text>
           </div>
           <div className="platform-actions-row">
-            <Popconfirm
-              title="Dọn dẹp dữ liệu vận hành quá hạn 7 ngày?"
-              description="Xóa nhật ký, lệnh tạm, thông báo, phiên hết hạn và yêu cầu QR đã xử lý; không xóa hóa đơn, thanh toán hoặc lịch sử bán hàng."
-              okText="Dọn dẹp ngay"
-              cancelText="Hủy"
-              okButtonProps={{ danger: true, loading: cleaningDb }}
-              onConfirm={handleMaintenanceCleanup}
-            >
-              <Button icon={<ClearOutlined />} loading={cleaningDb}>
-                Dọn dẹp DB (7 ngày)
-              </Button>
-            </Popconfirm>
-            <Button
-              icon={<ReloadOutlined />}
-              onClick={() => {
-                void queryClient.invalidateQueries({ queryKey: ['platform-analytics'] });
-                void queryClient.invalidateQueries({ queryKey: ['platform-stores'] });
-                message.info('Đang làm mới dữ liệu...');
-              }}
-              className="platform-refresh-btn"
-            >
-              Làm mới
-            </Button>
             <Button
               type="primary"
               size="large"
@@ -1130,6 +1360,35 @@ export function SuperAdminPage() {
             >
               Tạo cửa hàng mới
             </Button>
+            <div className="platform-actions-subrow">
+              <Popconfirm
+                title="Dọn dẹp dữ liệu vận hành quá hạn 7 ngày?"
+                description="Xóa nhật ký, lệnh tạm, thông báo, phiên hết hạn và yêu cầu QR đã xử lý; không xóa hóa đơn, thanh toán hoặc lịch sử bán hàng."
+                okText="Dọn dẹp ngay"
+                cancelText="Hủy"
+                okButtonProps={{ danger: true, loading: cleaningDb }}
+                onConfirm={handleMaintenanceCleanup}
+              >
+                <Button
+                  icon={<ClearOutlined />}
+                  loading={cleaningDb}
+                  className="platform-cleanup-btn"
+                >
+                  Dọn dẹp DB
+                </Button>
+              </Popconfirm>
+              <Button
+                icon={<ReloadOutlined />}
+                onClick={() => {
+                  void queryClient.invalidateQueries({ queryKey: ['platform-analytics'] });
+                  void queryClient.invalidateQueries({ queryKey: ['platform-stores'] });
+                  message.info('Đang làm mới dữ liệu...');
+                }}
+                className="platform-refresh-btn"
+              >
+                Làm mới
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -1350,6 +1609,7 @@ export function SuperAdminPage() {
                 <StoreLeaderboardWidget
                   stores={analytics.data.storePerformance}
                   onSelectStore={openStoreDetail}
+                  isMobile={isMobile}
                 />
               </Card>
 
@@ -1395,7 +1655,7 @@ export function SuperAdminPage() {
                     </Typography.Text>
                   </div>
                 </div>
-                <TopProductsWidget products={analytics.data.topProducts} />
+                <TopProductsWidget products={analytics.data.topProducts} isMobile={isMobile} />
               </Card>
             </div>
           ) : null
@@ -1432,130 +1692,298 @@ export function SuperAdminPage() {
               </Button>
             </div>
 
-            <Table
-              rowKey="id"
-              loading={stores.isLoading}
-              dataSource={filteredStores}
-              pagination={{ pageSize: 10, showSizeChanger: false }}
-              scroll={{ x: 720 }}
-              columns={[
-                {
-                  title: 'Tên cửa hàng',
-                  dataIndex: 'name',
-                  key: 'name',
-                  render: (val: string, record: PlatformStoreSummary) => (
-                    <div>
-                      <Typography.Text strong style={{ fontSize: 15 }}>
-                        {val}
-                      </Typography.Text>
-                      <div style={{ marginTop: 2 }}>
-                        <span className="platform-badge-id">ID: {record.id.slice(0, 8)}...</span>
+            {isMobile ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {stores.isLoading ? (
+                  <div style={{ textAlign: 'center', padding: '40px 0' }}>
+                    <Spin />
+                  </div>
+                ) : filteredStores.length === 0 ? (
+                  <Empty
+                    description="Không tìm thấy cửa hàng phù hợp."
+                    style={{ margin: '20px 0' }}
+                  />
+                ) : (
+                  filteredStores.map((store) => (
+                    <div key={store.id} className="platform-mobile-store-card">
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'flex-start',
+                          gap: 8,
+                          marginBottom: 8,
+                        }}
+                      >
+                        <div style={{ minWidth: 0 }}>
+                          <Typography.Text
+                            strong
+                            style={{
+                              fontSize: 15,
+                              color: '#0f172a',
+                              display: 'block',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {store.name}
+                          </Typography.Text>
+                          <div
+                            style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3 }}
+                          >
+                            <span className="platform-badge-id">ID: {store.id.slice(0, 8)}</span>
+                            <Badge
+                              status={store.status === 'ACTIVE' ? 'success' : 'error'}
+                              text={
+                                <span
+                                  style={{
+                                    fontWeight: 600,
+                                    fontSize: 12,
+                                    color: store.status === 'ACTIVE' ? '#10b981' : '#ef4444',
+                                  }}
+                                >
+                                  {store.status === 'ACTIVE' ? 'Hoạt động' : 'Đã khóa'}
+                                </span>
+                              }
+                            />
+                          </div>
+                        </div>
+                        <Button
+                          type="primary"
+                          ghost
+                          size="small"
+                          icon={<EyeOutlined />}
+                          onClick={() => openStoreDetail(store.id)}
+                          style={{ borderRadius: 6, fontWeight: 600, flexShrink: 0 }}
+                        >
+                          Chi tiết
+                        </Button>
                       </div>
-                    </div>
-                  ),
-                },
-                {
-                  title: 'Trạng thái',
-                  dataIndex: 'status',
-                  key: 'status',
-                  render: (status: 'ACTIVE' | 'LOCKED') => (
-                    <Badge
-                      status={status === 'ACTIVE' ? 'success' : 'error'}
-                      text={
-                        <span
+
+                      <div
+                        style={{
+                          background: '#f8fafc',
+                          borderRadius: 8,
+                          padding: '8px 10px',
+                          marginBottom: 10,
+                          fontSize: 12,
+                        }}
+                      >
+                        <div
                           style={{
-                            fontWeight: 600,
-                            color: status === 'ACTIVE' ? '#10b981' : '#ef4444',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            marginBottom: 6,
                           }}
                         >
-                          {status === 'ACTIVE' ? 'Đang hoạt động' : 'Đã khóa'}
-                        </span>
-                      }
-                    />
-                  ),
-                },
-                {
-                  title: 'Realtime POS',
-                  dataIndex: 'posRealtimeEnabled',
-                  key: 'posRealtimeEnabled',
-                  render: (enabled: boolean, store: PlatformStoreSummary) => (
-                    <Button
-                      size="small"
-                      type={enabled ? 'primary' : 'default'}
-                      loading={submitting}
-                      onClick={() => toggleRealtime(store)}
-                      style={{ borderRadius: 6, fontSize: 12 }}
-                    >
-                      {enabled ? 'Đang bật' : 'Đang tắt'}
-                    </Button>
-                  ),
-                },
-                {
-                  title: 'Ngày khởi tạo',
-                  dataIndex: 'createdAt',
-                  key: 'createdAt',
-                  render: (val: number) => (
-                    <span style={{ color: '#64748b', fontSize: 13 }}>{formatDateTime(val)}</span>
-                  ),
-                },
-                {
-                  title: 'Thao tác',
-                  key: 'actions',
-                  align: 'right',
-                  render: (_, store: PlatformStoreSummary) => (
-                    <Space size="small">
+                          <span style={{ color: '#64748b' }}>Realtime POS:</span>
+                          <Button
+                            size="small"
+                            type={store.posRealtimeEnabled ? 'primary' : 'default'}
+                            loading={submitting}
+                            onClick={() => toggleRealtime(store)}
+                            style={{
+                              borderRadius: 6,
+                              fontSize: 11.5,
+                              height: 26,
+                              padding: '0 8px',
+                            }}
+                          >
+                            {store.posRealtimeEnabled ? 'Đang bật' : 'Đang tắt'}
+                          </Button>
+                        </div>
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                          }}
+                        >
+                          <span style={{ color: '#64748b' }}>Ngày khởi tạo:</span>
+                          <span style={{ color: '#334155', fontWeight: 500 }}>
+                            {formatDateTime(store.createdAt)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                        <Popconfirm
+                          title={
+                            store.status === 'ACTIVE'
+                              ? 'Khóa cửa hàng này?'
+                              : 'Mở lại cửa hàng này?'
+                          }
+                          description={
+                            store.status === 'ACTIVE'
+                              ? 'Nhân viên và Owner sẽ không thể đăng nhập.'
+                              : 'Cho phép cửa hàng hoạt động lại bình thường.'
+                          }
+                          okText="Xác nhận"
+                          cancelText="Hủy"
+                          onConfirm={() => changeStatus(store)}
+                        >
+                          <Button
+                            size="small"
+                            danger={store.status === 'ACTIVE'}
+                            icon={store.status === 'ACTIVE' ? <LockOutlined /> : <UnlockOutlined />}
+                            style={{ borderRadius: 6, width: '100%' }}
+                          >
+                            {store.status === 'ACTIVE' ? 'Khóa' : 'Mở lại'}
+                          </Button>
+                        </Popconfirm>
+                        <Popconfirm
+                          title={`Xóa vĩnh viễn cửa hàng "${store.name}"?`}
+                          description="Hành động này sẽ XÓA SẠCH toàn bộ dữ liệu (đơn hàng, hóa đơn, thực đơn, nhân viên, thiết bị, báo cáo...) và KHÔNG THỂ KHÔI PHỤC."
+                          okText="Xóa sạch"
+                          cancelText="Hủy"
+                          okButtonProps={{ danger: true }}
+                          onConfirm={() => deleteStore(store)}
+                        >
+                          <Button
+                            size="small"
+                            danger
+                            icon={<DeleteOutlined />}
+                            style={{ borderRadius: 6, width: '100%' }}
+                            loading={submitting}
+                          >
+                            Xóa
+                          </Button>
+                        </Popconfirm>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            ) : (
+              <Table
+                rowKey="id"
+                loading={stores.isLoading}
+                dataSource={filteredStores}
+                pagination={{ pageSize: 10, showSizeChanger: false }}
+                scroll={{ x: 720 }}
+                columns={[
+                  {
+                    title: 'Tên cửa hàng',
+                    dataIndex: 'name',
+                    key: 'name',
+                    render: (val: string, record: PlatformStoreSummary) => (
+                      <div>
+                        <Typography.Text strong style={{ fontSize: 15 }}>
+                          {val}
+                        </Typography.Text>
+                        <div style={{ marginTop: 2 }}>
+                          <span className="platform-badge-id">ID: {record.id.slice(0, 8)}...</span>
+                        </div>
+                      </div>
+                    ),
+                  },
+                  {
+                    title: 'Trạng thái',
+                    dataIndex: 'status',
+                    key: 'status',
+                    render: (status: 'ACTIVE' | 'LOCKED') => (
+                      <Badge
+                        status={status === 'ACTIVE' ? 'success' : 'error'}
+                        text={
+                          <span
+                            style={{
+                              fontWeight: 600,
+                              color: status === 'ACTIVE' ? '#10b981' : '#ef4444',
+                            }}
+                          >
+                            {status === 'ACTIVE' ? 'Đang hoạt động' : 'Đã khóa'}
+                          </span>
+                        }
+                      />
+                    ),
+                  },
+                  {
+                    title: 'Realtime POS',
+                    dataIndex: 'posRealtimeEnabled',
+                    key: 'posRealtimeEnabled',
+                    render: (enabled: boolean, store: PlatformStoreSummary) => (
                       <Button
-                        type="primary"
-                        ghost
-                        icon={<EyeOutlined />}
-                        onClick={() => openStoreDetail(store.id)}
-                        style={{ borderRadius: 6 }}
+                        size="small"
+                        type={enabled ? 'primary' : 'default'}
+                        loading={submitting}
+                        onClick={() => toggleRealtime(store)}
+                        style={{ borderRadius: 6, fontSize: 12 }}
                       >
-                        Chi tiết
+                        {enabled ? 'Đang bật' : 'Đang tắt'}
                       </Button>
-                      <Popconfirm
-                        title={
-                          store.status === 'ACTIVE' ? 'Khóa cửa hàng này?' : 'Mở lại cửa hàng này?'
-                        }
-                        description={
-                          store.status === 'ACTIVE'
-                            ? 'Nhân viên và Owner sẽ không thể đăng nhập.'
-                            : 'Cho phép cửa hàng hoạt động lại bình thường.'
-                        }
-                        okText="Xác nhận"
-                        cancelText="Hủy"
-                        onConfirm={() => changeStatus(store)}
-                      >
+                    ),
+                  },
+                  {
+                    title: 'Ngày khởi tạo',
+                    dataIndex: 'createdAt',
+                    key: 'createdAt',
+                    render: (val: number) => (
+                      <span style={{ color: '#64748b', fontSize: 13 }}>{formatDateTime(val)}</span>
+                    ),
+                  },
+                  {
+                    title: 'Thao tác',
+                    key: 'actions',
+                    align: 'right',
+                    render: (_, store: PlatformStoreSummary) => (
+                      <Space size="small">
                         <Button
-                          danger={store.status === 'ACTIVE'}
-                          icon={store.status === 'ACTIVE' ? <LockOutlined /> : <UnlockOutlined />}
+                          type="primary"
+                          ghost
+                          icon={<EyeOutlined />}
+                          onClick={() => openStoreDetail(store.id)}
                           style={{ borderRadius: 6 }}
                         >
-                          {store.status === 'ACTIVE' ? 'Khóa' : 'Mở lại'}
+                          Chi tiết
                         </Button>
-                      </Popconfirm>
-                      <Popconfirm
-                        title={`Xóa vĩnh viễn cửa hàng "${store.name}"?`}
-                        description="Hành động này sẽ XÓA SẠCH toàn bộ dữ liệu (đơn hàng, hóa đơn, thực đơn, nhân viên, thiết bị, báo cáo...) và KHÔNG THỂ KHÔI PHỤC."
-                        okText="Xóa sạch"
-                        cancelText="Hủy"
-                        okButtonProps={{ danger: true }}
-                        onConfirm={() => deleteStore(store)}
-                      >
-                        <Button
-                          danger
-                          icon={<DeleteOutlined />}
-                          style={{ borderRadius: 6 }}
-                          loading={submitting}
+                        <Popconfirm
+                          title={
+                            store.status === 'ACTIVE'
+                              ? 'Khóa cửa hàng này?'
+                              : 'Mở lại cửa hàng này?'
+                          }
+                          description={
+                            store.status === 'ACTIVE'
+                              ? 'Nhân viên và Owner sẽ không thể đăng nhập.'
+                              : 'Cho phép cửa hàng hoạt động lại bình thường.'
+                          }
+                          okText="Xác nhận"
+                          cancelText="Hủy"
+                          onConfirm={() => changeStatus(store)}
                         >
-                          Xóa
-                        </Button>
-                      </Popconfirm>
-                    </Space>
-                  ),
-                },
-              ]}
-            />
+                          <Button
+                            danger={store.status === 'ACTIVE'}
+                            icon={store.status === 'ACTIVE' ? <LockOutlined /> : <UnlockOutlined />}
+                            style={{ borderRadius: 6 }}
+                          >
+                            {store.status === 'ACTIVE' ? 'Khóa' : 'Mở lại'}
+                          </Button>
+                        </Popconfirm>
+                        <Popconfirm
+                          title={`Xóa vĩnh viễn cửa hàng "${store.name}"?`}
+                          description="Hành động này sẽ XÓA SẠCH toàn bộ dữ liệu (đơn hàng, hóa đơn, thực đơn, nhân viên, thiết bị, báo cáo...) và KHÔNG THỂ KHÔI PHỤC."
+                          okText="Xóa sạch"
+                          cancelText="Hủy"
+                          okButtonProps={{ danger: true }}
+                          onConfirm={() => deleteStore(store)}
+                        >
+                          <Button
+                            danger
+                            icon={<DeleteOutlined />}
+                            style={{ borderRadius: 6 }}
+                            loading={submitting}
+                          >
+                            Xóa
+                          </Button>
+                        </Popconfirm>
+                      </Space>
+                    ),
+                  },
+                ]}
+              />
+            )}
           </Card>
         )}
       </main>
@@ -1620,7 +2048,7 @@ export function SuperAdminPage() {
                   onConfirm={() => deleteStore(detail.store)}
                 >
                   <Button danger icon={<DeleteOutlined />} loading={submitting}>
-                    Xóa cửa hàng
+                    {isMobile ? 'Xóa' : 'Xóa cửa hàng'}
                   </Button>
                 </Popconfirm>
               </Space>
@@ -1650,13 +2078,14 @@ export function SuperAdminPage() {
               />
             ) : detail ? (
               <Tabs
-                defaultActiveKey="overview"
+                activeKey={activeDetailTab}
+                onChange={setActiveDetailTab}
                 items={[
                   {
                     key: 'overview',
                     label: (
                       <span>
-                        <InfoCircleOutlined /> Tổng quan & Cài đặt
+                        <InfoCircleOutlined /> {isMobile ? 'Tổng quan' : 'Tổng quan & Cài đặt'}
                       </span>
                     ),
                     children: (
@@ -1787,7 +2216,10 @@ export function SuperAdminPage() {
                     key: 'members',
                     label: (
                       <span>
-                        <TeamOutlined /> Tài khoản & Nhân sự ({detail.members.length})
+                        <TeamOutlined />{' '}
+                        {isMobile
+                          ? `Nhân sự (${detail.members.length})`
+                          : `Tài khoản & Nhân sự (${detail.members.length})`}
                       </span>
                     ),
                     children: (
@@ -1797,173 +2229,414 @@ export function SuperAdminPage() {
                           <strong>Lịch sử thiết bị</strong> để xem chi tiết tất cả các lần đăng
                           nhập, thiết bị sử dụng và trạng thái phiên làm việc.
                         </div>
-                        <Table
-                          rowKey="id"
-                          size="middle"
-                          dataSource={detail.members}
-                          pagination={false}
-                          scroll={{ x: 720 }}
-                          columns={[
-                            {
-                              title: 'Tài khoản',
-                              key: 'user',
-                              render: (_, m) => (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                  <Avatar
-                                    size={38}
+                        {isMobile ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                            {detail.members.map((m) => {
+                              const userSessions = detail.sessions.filter(
+                                (s) => s.userId === m.userId,
+                              );
+                              const onlineSessions = userSessions.filter(
+                                (s) =>
+                                  s.isOnline ||
+                                  (s.status === 'ACTIVE' &&
+                                    Date.now() < s.expiresAt &&
+                                    Date.now() - s.lastSeenAt <= 5 * 60_000),
+                              );
+                              const isOnline = onlineSessions.length > 0;
+
+                              return (
+                                <div key={m.id} className="platform-mobile-member-card">
+                                  <div
                                     style={{
-                                      background: m.roleCode === 'OWNER' ? '#f59e0b' : '#3b82f6',
-                                      fontWeight: 700,
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'space-between',
+                                      gap: 8,
+                                      marginBottom: 8,
                                     }}
                                   >
-                                    {getInitials(m.displayName)}
-                                  </Avatar>
-                                  <div>
-                                    <Typography.Text strong style={{ fontSize: 14 }}>
-                                      {m.displayName}
-                                    </Typography.Text>
-                                    <div style={{ fontSize: 12, color: '#64748b' }}>
-                                      @{m.username}{' '}
-                                      {m.roleCode === 'OWNER' ? (
-                                        <Tag color="gold" style={{ borderRadius: 4 }}>
-                                          Chủ cửa hàng
-                                        </Tag>
-                                      ) : (
-                                        <Tag color="blue" style={{ borderRadius: 4 }}>
-                                          {m.roleName}
-                                        </Tag>
-                                      )}
-                                    </div>
-                                  </div>
-                                </div>
-                              ),
-                            },
-                            {
-                              title: 'Email / SĐT',
-                              key: 'contact',
-                              render: (_, m) => (
-                                <div style={{ fontSize: 13 }}>
-                                  {m.email ? (
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                      <MailOutlined style={{ color: '#94a3b8' }} />
-                                      <span>{m.email}</span>
-                                    </div>
-                                  ) : (
-                                    <span style={{ color: '#94a3b8' }}>Chưa có email</span>
-                                  )}
-                                  {m.phone ? (
                                     <div
                                       style={{
                                         display: 'flex',
                                         alignItems: 'center',
-                                        gap: 4,
-                                        marginTop: 2,
+                                        gap: 8,
+                                        minWidth: 0,
                                       }}
                                     >
-                                      <PhoneOutlined style={{ color: '#94a3b8' }} />
-                                      <span style={{ color: '#64748b' }}>{m.phone}</span>
-                                    </div>
-                                  ) : null}
-                                </div>
-                              ),
-                            },
-                            {
-                              title: 'Trạng thái',
-                              key: 'status',
-                              render: (_, m) => (
-                                <Badge
-                                  status={m.userStatus === 'ACTIVE' ? 'success' : 'default'}
-                                  text={m.userStatus === 'ACTIVE' ? 'Hoạt động' : 'Đã khóa'}
-                                />
-                              ),
-                            },
-                            {
-                              title: 'Thiết bị & Phiên',
-                              key: 'deviceSummary',
-                              render: (_, m) => {
-                                const userSessions = detail.sessions.filter(
-                                  (s) => s.userId === m.userId,
-                                );
-                                const activeSessions = userSessions.filter(
-                                  (s) => s.status === 'ACTIVE' && Date.now() < s.expiresAt,
-                                );
-                                return (
-                                  <div>
-                                    {activeSessions.length > 0 ? (
-                                      <Tag
-                                        color="success"
+                                      <Avatar
+                                        size={36}
                                         style={{
-                                          borderRadius: 6,
-                                          fontWeight: 600,
-                                          display: 'inline-flex',
-                                          alignItems: 'center',
-                                          gap: 4,
+                                          background:
+                                            m.roleCode === 'OWNER' ? '#f59e0b' : '#3b82f6',
+                                          fontWeight: 700,
+                                          flexShrink: 0,
                                         }}
                                       >
-                                        <Badge status="processing" color="#10b981" />{' '}
-                                        {activeSessions.length} máy đang online
-                                      </Tag>
-                                    ) : (
-                                      <Tag
-                                        color="default"
-                                        style={{ borderRadius: 6, color: '#64748b' }}
-                                      >
-                                        {userSessions.length > 0
-                                          ? `${userSessions.length} lịch sử phiên`
-                                          : 'Chưa có phiên'}
-                                      </Tag>
-                                    )}
-                                    {userSessions.length > 0 && userSessions[0] ? (
-                                      <div
-                                        style={{ fontSize: 11.5, color: '#94a3b8', marginTop: 3 }}
-                                      >
-                                        Gần nhất:{' '}
-                                        {formatRelativeTime(
-                                          userSessions[0].lastSeenAt || userSessions[0].createdAt,
+                                        {getInitials(m.displayName)}
+                                      </Avatar>
+                                      <div style={{ minWidth: 0 }}>
+                                        <Typography.Text
+                                          strong
+                                          style={{
+                                            fontSize: 14,
+                                            display: 'block',
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis',
+                                            whiteSpace: 'nowrap',
+                                          }}
+                                        >
+                                          {m.displayName}
+                                        </Typography.Text>
+                                        <div style={{ fontSize: 11.5, color: '#64748b' }}>
+                                          @{m.username}{' '}
+                                          {m.roleCode === 'OWNER' ? (
+                                            <Tag
+                                              color="gold"
+                                              style={{ borderRadius: 4, margin: 0, fontSize: 10 }}
+                                            >
+                                              Chủ quán
+                                            </Tag>
+                                          ) : (
+                                            <Tag
+                                              color="blue"
+                                              style={{ borderRadius: 4, margin: 0, fontSize: 10 }}
+                                            >
+                                              {m.roleName}
+                                            </Tag>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                    <Badge
+                                      status={m.userStatus === 'ACTIVE' ? 'success' : 'default'}
+                                      text={
+                                        <span style={{ fontSize: 11.5, fontWeight: 500 }}>
+                                          {m.userStatus === 'ACTIVE' ? 'Hoạt động' : 'Khóa'}
+                                        </span>
+                                      }
+                                    />
+                                  </div>
+
+                                  <div
+                                    style={{
+                                      background: '#f8fafc',
+                                      borderRadius: 8,
+                                      padding: '8px 10px',
+                                      marginBottom: 8,
+                                      fontSize: 12,
+                                    }}
+                                  >
+                                    <div
+                                      style={{
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        marginBottom: 4,
+                                      }}
+                                    >
+                                      <span style={{ color: '#64748b' }}>Liên hệ:</span>
+                                      <span style={{ color: '#334155', fontWeight: 500 }}>
+                                        {m.phone || m.email || 'Chưa có'}
+                                      </span>
+                                    </div>
+                                    <div
+                                      style={{
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center',
+                                      }}
+                                    >
+                                      <span style={{ color: '#64748b' }}>Phiên làm việc:</span>
+                                      {isOnline ? (
+                                        <Tag
+                                          color="success"
+                                          style={{ margin: 0, fontSize: 11, fontWeight: 600 }}
+                                        >
+                                          🟢 Online ({onlineSessions[0]?.deviceName || 'Máy POS'})
+                                        </Tag>
+                                      ) : userSessions.length > 0 ? (
+                                        <Tag color="default" style={{ margin: 0, fontSize: 11 }}>
+                                          ⚪ Ngoại tuyến ({userSessions.length} phiên)
+                                        </Tag>
+                                      ) : (
+                                        <span style={{ color: '#94a3b8' }}>Chưa đăng nhập</span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div
+                                    style={{
+                                      display: 'grid',
+                                      gridTemplateColumns: '1.2fr 1fr 1fr',
+                                      gap: 6,
+                                    }}
+                                  >
+                                    <Button
+                                      size="small"
+                                      type="primary"
+                                      ghost
+                                      icon={<HistoryOutlined />}
+                                      onClick={() => {
+                                        setSelectedMemberForHistory(m);
+                                        setMemberHistoryFilter('ALL');
+                                      }}
+                                      style={{ borderRadius: 6, fontSize: 11.5 }}
+                                    >
+                                      Lịch sử
+                                    </Button>
+                                    <Button
+                                      size="small"
+                                      icon={<EditOutlined />}
+                                      onClick={() => handleEditMember(m)}
+                                      style={{ borderRadius: 6, fontSize: 11.5 }}
+                                    >
+                                      Sửa
+                                    </Button>
+                                    <Button
+                                      size="small"
+                                      icon={<KeyOutlined />}
+                                      onClick={() => handleResetPassword(m)}
+                                      style={{ borderRadius: 6, fontSize: 11.5 }}
+                                    >
+                                      Đổi MK
+                                    </Button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <Table
+                            rowKey="id"
+                            size="middle"
+                            dataSource={detail.members}
+                            pagination={false}
+                            scroll={{ x: 720 }}
+                            columns={[
+                              {
+                                title: 'Tài khoản',
+                                key: 'user',
+                                render: (_, m) => (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                    <Avatar
+                                      size={38}
+                                      style={{
+                                        background: m.roleCode === 'OWNER' ? '#f59e0b' : '#3b82f6',
+                                        fontWeight: 700,
+                                      }}
+                                    >
+                                      {getInitials(m.displayName)}
+                                    </Avatar>
+                                    <div>
+                                      <Typography.Text strong style={{ fontSize: 14 }}>
+                                        {m.displayName}
+                                      </Typography.Text>
+                                      <div style={{ fontSize: 12, color: '#64748b' }}>
+                                        @{m.username}{' '}
+                                        {m.roleCode === 'OWNER' ? (
+                                          <Tag color="gold" style={{ borderRadius: 4 }}>
+                                            Chủ cửa hàng
+                                          </Tag>
+                                        ) : (
+                                          <Tag color="blue" style={{ borderRadius: 4 }}>
+                                            {m.roleName}
+                                          </Tag>
                                         )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ),
+                              },
+                              {
+                                title: 'Email / SĐT',
+                                key: 'contact',
+                                render: (_, m) => (
+                                  <div style={{ fontSize: 13 }}>
+                                    {m.email ? (
+                                      <div
+                                        style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+                                      >
+                                        <MailOutlined style={{ color: '#94a3b8' }} />
+                                        <span>{m.email}</span>
+                                      </div>
+                                    ) : (
+                                      <span style={{ color: '#94a3b8' }}>Chưa có email</span>
+                                    )}
+                                    {m.phone ? (
+                                      <div
+                                        style={{
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          gap: 4,
+                                          marginTop: 2,
+                                        }}
+                                      >
+                                        <PhoneOutlined style={{ color: '#94a3b8' }} />
+                                        <span style={{ color: '#64748b' }}>{m.phone}</span>
                                       </div>
                                     ) : null}
                                   </div>
-                                );
+                                ),
                               },
-                            },
-                            {
-                              title: 'Thao tác',
-                              key: 'actions',
-                              align: 'right',
-                              render: (_, m) => (
-                                <Space size="small">
-                                  <Button
-                                    size="small"
-                                    type="primary"
-                                    ghost
-                                    icon={<HistoryOutlined />}
-                                    onClick={() => {
-                                      setSelectedMemberForHistory(m);
-                                      setMemberHistoryFilter('ALL');
-                                    }}
-                                  >
-                                    Lịch sử thiết bị
-                                  </Button>
-                                  <Button
-                                    size="small"
-                                    icon={<EditOutlined />}
-                                    onClick={() => handleEditMember(m)}
-                                  >
-                                    Sửa
-                                  </Button>
-                                  <Button
-                                    size="small"
-                                    icon={<KeyOutlined />}
-                                    onClick={() => handleResetPassword(m)}
-                                  >
-                                    Đổi MK
-                                  </Button>
-                                </Space>
-                              ),
-                            },
-                          ]}
-                        />
+                              {
+                                title: 'Trạng thái',
+                                key: 'status',
+                                render: (_, m) => (
+                                  <Badge
+                                    status={m.userStatus === 'ACTIVE' ? 'success' : 'default'}
+                                    text={m.userStatus === 'ACTIVE' ? 'Hoạt động' : 'Đã khóa'}
+                                  />
+                                ),
+                              },
+                              {
+                                title: 'Thiết bị & Phiên',
+                                key: 'deviceSummary',
+                                render: (_, m) => {
+                                  const userSessions = detail.sessions.filter(
+                                    (s) => s.userId === m.userId,
+                                  );
+                                  const onlineSessions = userSessions.filter(
+                                    (s) =>
+                                      s.isOnline ||
+                                      (s.status === 'ACTIVE' &&
+                                        Date.now() < s.expiresAt &&
+                                        Date.now() - s.lastSeenAt <= 5 * 60_000),
+                                  );
+                                  const activeNonOnlineSessions = userSessions.filter(
+                                    (s) =>
+                                      s.status === 'ACTIVE' &&
+                                      Date.now() < s.expiresAt &&
+                                      !onlineSessions.some((os) => os.id === s.id),
+                                  );
+
+                                  if (onlineSessions.length > 0) {
+                                    const devName =
+                                      onlineSessions[0]?.deviceName ||
+                                      (onlineSessions[0]?.deviceId
+                                        ? `Máy ${onlineSessions[0].deviceId.slice(0, 8)}`
+                                        : 'Web Session');
+                                    return (
+                                      <div>
+                                        <Tag
+                                          color="success"
+                                          style={{
+                                            borderRadius: 6,
+                                            fontWeight: 600,
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: 4,
+                                          }}
+                                        >
+                                          <Badge status="processing" color="#10b981" />
+                                          🟢 Online: {devName}
+                                          {onlineSessions.length > 1
+                                            ? ` (+${onlineSessions.length - 1} máy)`
+                                            : ''}
+                                        </Tag>
+                                        <div
+                                          style={{ fontSize: 11, color: '#10b981', marginTop: 3 }}
+                                        >
+                                          Vừa hoạt động:{' '}
+                                          {formatRelativeTime(onlineSessions[0]?.lastSeenAt)}
+                                        </div>
+                                      </div>
+                                    );
+                                  }
+
+                                  if (activeNonOnlineSessions.length > 0) {
+                                    const devName =
+                                      activeNonOnlineSessions[0]?.deviceName ||
+                                      (activeNonOnlineSessions[0]?.deviceId
+                                        ? `Máy ${activeNonOnlineSessions[0].deviceId.slice(0, 8)}`
+                                        : 'Web Session');
+                                    return (
+                                      <div>
+                                        <Tag
+                                          color="default"
+                                          style={{
+                                            borderRadius: 6,
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: 4,
+                                            color: '#64748b',
+                                            background: '#f1f5f9',
+                                          }}
+                                        >
+                                          ⚪ Ngoại tuyến ({devName})
+                                        </Tag>
+                                        <div
+                                          style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}
+                                        >
+                                          Lần cuối:{' '}
+                                          {formatRelativeTime(
+                                            activeNonOnlineSessions[0]?.lastSeenAt,
+                                          )}
+                                        </div>
+                                      </div>
+                                    );
+                                  }
+
+                                  return (
+                                    <div>
+                                      <Tag
+                                        color="default"
+                                        style={{ borderRadius: 6, color: '#94a3b8' }}
+                                      >
+                                        {userSessions.length > 0
+                                          ? `${userSessions.length} lịch sử phiên`
+                                          : 'Chưa đăng nhập'}
+                                      </Tag>
+                                      {userSessions.length > 0 && userSessions[0] ? (
+                                        <div
+                                          style={{ fontSize: 11.5, color: '#94a3b8', marginTop: 3 }}
+                                        >
+                                          Trước đây:{' '}
+                                          {formatRelativeTime(
+                                            userSessions[0].lastSeenAt || userSessions[0].createdAt,
+                                          )}
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                  );
+                                },
+                              },
+                              {
+                                title: 'Thao tác',
+                                key: 'actions',
+                                align: 'right',
+                                render: (_, m) => (
+                                  <Space size="small">
+                                    <Button
+                                      size="small"
+                                      type="primary"
+                                      ghost
+                                      icon={<HistoryOutlined />}
+                                      onClick={() => {
+                                        setSelectedMemberForHistory(m);
+                                        setMemberHistoryFilter('ALL');
+                                      }}
+                                    >
+                                      Lịch sử thiết bị
+                                    </Button>
+                                    <Button
+                                      size="small"
+                                      icon={<EditOutlined />}
+                                      onClick={() => handleEditMember(m)}
+                                    >
+                                      Sửa
+                                    </Button>
+                                    <Button
+                                      size="small"
+                                      icon={<KeyOutlined />}
+                                      onClick={() => handleResetPassword(m)}
+                                    >
+                                      Đổi MK
+                                    </Button>
+                                  </Space>
+                                ),
+                              },
+                            ]}
+                          />
+                        )}
                       </div>
                     ),
                   },
@@ -1971,369 +2644,2050 @@ export function SuperAdminPage() {
                     key: 'devices',
                     label: (
                       <span>
-                        <DesktopOutlined /> Thiết bị POS ({detail.devices.length})
+                        <MobileOutlined /> Thiết bị POS ({detail.devices.length})
+                        {detail.devices.filter((d) => d.isOnline).length > 0 && (
+                          <span
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 4,
+                              marginLeft: 8,
+                              padding: '1px 8px',
+                              borderRadius: 12,
+                              fontSize: 11,
+                              fontWeight: 700,
+                              background: '#ecfdf5',
+                              color: '#059669',
+                              border: '1px solid #a7f3d0',
+                            }}
+                          >
+                            <span className="platform-pulse-dot" style={{ width: 6, height: 6 }} />
+                            {detail.devices.filter((d) => d.isOnline).length} Online
+                          </span>
+                        )}
                       </span>
                     ),
-                    children:
-                      detail.devices.length === 0 ? (
-                        <Empty description="Chưa có thiết bị POS nào được kích hoạt." />
-                      ) : (
-                        <Table
-                          rowKey="id"
-                          size="small"
-                          dataSource={detail.devices}
-                          pagination={false}
-                          scroll={{ x: 650 }}
-                          columns={[
-                            {
-                              title: 'Tên thiết bị',
-                              key: 'name',
-                              render: (_, d) => (
-                                <div className="platform-device-name">
-                                  <div className="platform-device-name__icon">
-                                    <DesktopOutlined />
-                                  </div>
-                                  <div>
-                                    <Typography.Text strong>
-                                      {d.name || 'Thiết bị POS'}
-                                    </Typography.Text>
-                                    <div style={{ fontSize: 11, color: '#94a3b8' }}>ID: {d.id}</div>
-                                  </div>
-                                </div>
-                              ),
-                            },
-                            {
-                              title: 'Trạng thái',
-                              dataIndex: 'status',
-                              key: 'status',
-                              render: (s: 'ACTIVE' | 'REVOKED') => (
-                                <Tag color={s === 'ACTIVE' ? 'success' : 'error'}>
-                                  {s === 'ACTIVE' ? 'Hoạt động' : 'Đã thu hồi'}
-                                </Tag>
-                              ),
-                            },
-                            {
-                              title: 'Người kích hoạt',
-                              dataIndex: 'activatedByName',
-                              key: 'activatedByName',
-                            },
-                            {
-                              title: 'Kích hoạt lúc',
-                              dataIndex: 'activatedAt',
-                              key: 'activatedAt',
-                              render: (val: number) => formatDateTime(val),
-                            },
-                            {
-                              title: 'Hoạt động gần nhất',
-                              dataIndex: 'lastSeenAt',
-                              key: 'lastSeenAt',
-                              render: (val: number | null) => (
-                                <div>
-                                  <div>{formatDateTime(val)}</div>
-                                  <div style={{ fontSize: 11, color: '#10b981' }}>
-                                    {formatRelativeTime(val)}
-                                  </div>
-                                </div>
-                              ),
-                            },
-                            {
-                              title: 'Phiên trên máy',
-                              key: 'sessionsCount',
-                              render: (_, d) => {
-                                const devSessions = detail.sessions.filter(
-                                  (s) => s.deviceId === d.id,
-                                );
-                                const activeDevSessions = devSessions.filter(
-                                  (s) => s.status === 'ACTIVE' && Date.now() < s.expiresAt,
-                                );
-                                return (
-                                  <div>
-                                    {activeDevSessions.length > 0 ? (
-                                      <Tag color="success">
-                                        🟢 {activeDevSessions.length} đang dùng
-                                      </Tag>
-                                    ) : (
-                                      <Tag color="default">{devSessions.length} lịch sử</Tag>
-                                    )}
-                                  </div>
-                                );
-                              },
-                            },
-                            {
-                              title: 'Thao tác',
-                              key: 'actions',
-                              align: 'right',
-                              render: (_, d) =>
-                                d.status === 'ACTIVE' ? (
-                                  <Popconfirm
-                                    title="Thu hồi máy POS này?"
-                                    description="Thiết bị sẽ bị ngắt kết nối và tất cả phiên đăng nhập trên máy sẽ bị hủy."
-                                    okText="Thu hồi"
-                                    cancelText="Hủy"
-                                    okButtonProps={{ danger: true, loading: submitting }}
-                                    onConfirm={() => handleRevokeDevice(d.id)}
-                                  >
-                                    <Button size="small" danger icon={<StopOutlined />}>
-                                      Thu hồi máy
-                                    </Button>
-                                  </Popconfirm>
-                                ) : (
-                                  <Tag color="default">Đã thu hồi</Tag>
-                                ),
-                            },
-                          ]}
-                        />
-                      ),
-                  },
-                  {
-                    key: 'sessions',
-                    label: (
-                      <span>
-                        <ClockCircleOutlined /> Lịch sử đăng nhập ({detail.sessions.length})
-                      </span>
-                    ),
-                    children: (() => {
-                      const filtered = detail.sessions.filter((s) => {
-                        const matchesStatus =
-                          sessionStatusFilter === 'ALL' ||
-                          (sessionStatusFilter === 'ACTIVE' &&
-                            s.status === 'ACTIVE' &&
-                            Date.now() < s.expiresAt) ||
-                          (sessionStatusFilter === 'REVOKED' && s.status === 'REVOKED') ||
-                          (sessionStatusFilter === 'EXPIRED' &&
-                            (s.status === 'EXPIRED' ||
-                              (s.status === 'ACTIVE' && Date.now() >= s.expiresAt)));
-
-                        const term = sessionSearchTerm.trim().toLowerCase();
-                        const matchesSearch =
-                          !term ||
-                          s.userName.toLowerCase().includes(term) ||
-                          s.userUsername.toLowerCase().includes(term) ||
-                          (s.deviceName && s.deviceName.toLowerCase().includes(term)) ||
-                          (s.deviceId && s.deviceId.toLowerCase().includes(term));
-
-                        return matchesStatus && matchesSearch;
-                      });
-
-                      return (
-                        <div>
+                    children: (
+                      <div>
+                        {/* Telemetry Summary Banner */}
+                        <div className="platform-telemetry-banner">
                           <div
                             style={{
                               display: 'flex',
-                              flexWrap: 'wrap',
                               justifyContent: 'space-between',
-                              alignItems: 'center',
+                              alignItems: 'flex-start',
+                              flexWrap: 'wrap',
                               gap: 12,
                               marginBottom: 14,
                             }}
                           >
-                            <Segmented
-                              value={sessionStatusFilter}
-                              onChange={(val) =>
-                                setSessionStatusFilter(val as typeof sessionStatusFilter)
-                              }
-                              options={[
-                                { label: `Tất cả (${detail.sessions.length})`, value: 'ALL' },
-                                {
-                                  label: `Đang hoạt động (${detail.sessions.filter((s) => s.status === 'ACTIVE' && Date.now() < s.expiresAt).length})`,
-                                  value: 'ACTIVE',
-                                },
-                                {
-                                  label: `Đã thu hồi (${detail.sessions.filter((s) => s.status === 'REVOKED').length})`,
-                                  value: 'REVOKED',
-                                },
-                                {
-                                  label: `Hết hạn (${detail.sessions.filter((s) => s.status === 'EXPIRED' || (s.status === 'ACTIVE' && Date.now() >= s.expiresAt)).length})`,
-                                  value: 'EXPIRED',
-                                },
-                              ]}
-                            />
-                            <Input
-                              placeholder="Tìm theo nhân sự, máy POS..."
-                              prefix={<SearchOutlined style={{ color: '#94a3b8' }} />}
-                              value={sessionSearchTerm}
-                              onChange={(e) => setSessionSearchTerm(e.target.value)}
-                              allowClear
-                              style={{ width: isMobile ? '100%' : 260 }}
-                            />
+                            <div>
+                              <Typography.Text strong style={{ fontSize: 14.5 }}>
+                                Trạng thái kết nối thiết bị POS tại cửa hàng
+                              </Typography.Text>
+                              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
+                                Hệ thống xác định trực tuyến qua tín hiệu heartbeat 5 phút gần nhất.
+                                Khi nhân viên đăng nhập mới, phiên cũ trên cùng máy sẽ tự động thu
+                                hồi.
+                              </div>
+                            </div>
+                            <Tag
+                              color="blue"
+                              style={{ margin: 0, padding: '2px 8px', fontSize: 12 }}
+                            >
+                              Chính sách: 1 phiên đăng nhập / 1 máy POS
+                            </Tag>
                           </div>
 
-                          {filtered.length === 0 ? (
-                            <Empty description="Không có phiên đăng nhập nào phù hợp." />
-                          ) : (
-                            <Table
-                              rowKey="id"
-                              size="small"
-                              dataSource={filtered}
-                              pagination={{
-                                pageSize: 10,
-                                size: 'small',
-                                showTotal: (t) => `Tổng ${t} phiên`,
-                              }}
-                              scroll={{ x: 750 }}
-                              columns={[
-                                {
-                                  title: 'Người dùng',
-                                  key: 'user',
-                                  render: (_, s) => (
-                                    <div>
-                                      <Typography.Text strong>{s.userName}</Typography.Text>
-                                      <div style={{ fontSize: 12, color: '#64748b' }}>
-                                        @{s.userUsername}{' '}
-                                        <Tag color={s.sessionKind === 'OWNER' ? 'gold' : 'blue'}>
-                                          {s.userRoleName || s.sessionKind}
-                                        </Tag>
+                          <div className="platform-telemetry-stats">
+                            <div className="platform-telemetry-stat-box">
+                              <div
+                                style={{
+                                  width: 36,
+                                  height: 36,
+                                  borderRadius: 8,
+                                  background: '#eff6ff',
+                                  color: '#2563eb',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  fontSize: 18,
+                                }}
+                              >
+                                <MobileOutlined />
+                              </div>
+                              <div>
+                                <div
+                                  style={{
+                                    fontSize: 11,
+                                    color: '#64748b',
+                                    textTransform: 'uppercase',
+                                    fontWeight: 600,
+                                  }}
+                                >
+                                  Tổng máy POS
+                                </div>
+                                <div style={{ fontSize: 18, fontWeight: 800, color: '#0f172a' }}>
+                                  {detail.devices.length}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="platform-telemetry-stat-box platform-telemetry-stat-box--online">
+                              <div
+                                style={{
+                                  width: 36,
+                                  height: 36,
+                                  borderRadius: 8,
+                                  background: '#d1fae5',
+                                  color: '#059669',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  fontSize: 18,
+                                }}
+                              >
+                                <CheckCircleOutlined />
+                              </div>
+                              <div>
+                                <div
+                                  style={{
+                                    fontSize: 11,
+                                    color: '#047857',
+                                    textTransform: 'uppercase',
+                                    fontWeight: 600,
+                                  }}
+                                >
+                                  Đang trực tuyến
+                                </div>
+                                <div
+                                  style={{
+                                    fontSize: 18,
+                                    fontWeight: 800,
+                                    color: '#065f46',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 6,
+                                  }}
+                                >
+                                  <span className="platform-pulse-dot" />
+                                  {detail.devices.filter((d) => d.isOnline).length} máy
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="platform-telemetry-stat-box platform-telemetry-stat-box--offline">
+                              <div
+                                style={{
+                                  width: 36,
+                                  height: 36,
+                                  borderRadius: 8,
+                                  background: '#f1f5f9',
+                                  color: '#64748b',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  fontSize: 18,
+                                }}
+                              >
+                                <StopOutlined />
+                              </div>
+                              <div>
+                                <div
+                                  style={{
+                                    fontSize: 11,
+                                    color: '#64748b',
+                                    textTransform: 'uppercase',
+                                    fontWeight: 600,
+                                  }}
+                                >
+                                  Ngoại tuyến
+                                </div>
+                                <div style={{ fontSize: 18, fontWeight: 800, color: '#334155' }}>
+                                  {
+                                    detail.devices.filter(
+                                      (d) => d.status === 'ACTIVE' && !d.isOnline,
+                                    ).length
+                                  }{' '}
+                                  máy
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="platform-telemetry-stat-box">
+                              <div
+                                style={{
+                                  width: 36,
+                                  height: 36,
+                                  borderRadius: 8,
+                                  background: '#fef2f2',
+                                  color: '#ef4444',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  fontSize: 18,
+                                }}
+                              >
+                                <StopOutlined />
+                              </div>
+                              <div>
+                                <div
+                                  style={{
+                                    fontSize: 11,
+                                    color: '#991b1b',
+                                    textTransform: 'uppercase',
+                                    fontWeight: 600,
+                                  }}
+                                >
+                                  Đã thu hồi
+                                </div>
+                                <div style={{ fontSize: 18, fontWeight: 800, color: '#b91c1c' }}>
+                                  {detail.devices.filter((d) => d.status === 'REVOKED').length} máy
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="platform-telemetry-stat-box">
+                              <div
+                                style={{
+                                  width: 36,
+                                  height: 36,
+                                  borderRadius: 8,
+                                  background: '#eff6ff',
+                                  color: '#2563eb',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  fontSize: 18,
+                                }}
+                              >
+                                <BellOutlined />
+                              </div>
+                              <div>
+                                <div
+                                  style={{
+                                    fontSize: 11,
+                                    color: '#1d4ed8',
+                                    textTransform: 'uppercase',
+                                    fontWeight: 600,
+                                  }}
+                                >
+                                  Bật thông báo
+                                </div>
+                                <div style={{ fontSize: 18, fontWeight: 800, color: '#1e40af' }}>
+                                  {detail.devices.filter((d) => d.pushNotificationEnabled).length}{' '}
+                                  máy
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {detail.devices.length === 0 ? (
+                          <Empty description="Chưa có thiết bị POS nào được kích hoạt." />
+                        ) : isMobile ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                            {detail.devices.map((d) => {
+                              const count =
+                                d.sessionCount ??
+                                detail.sessions.filter((s) => s.deviceId === d.id).length;
+                              const cardModifier = d.isOnline
+                                ? 'platform-mobile-device-card--online'
+                                : d.status === 'ACTIVE'
+                                  ? 'platform-mobile-device-card--offline'
+                                  : 'platform-mobile-device-card--revoked';
+
+                              return (
+                                <div
+                                  key={d.id}
+                                  className={`platform-mobile-device-card ${cardModifier}`}
+                                >
+                                  {/* Header: Name and Status */}
+                                  <div
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'space-between',
+                                      gap: 8,
+                                      marginBottom: 8,
+                                    }}
+                                  >
+                                    <div
+                                      style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: 8,
+                                        minWidth: 0,
+                                      }}
+                                    >
+                                      <div
+                                        style={{
+                                          width: 34,
+                                          height: 34,
+                                          borderRadius: 8,
+                                          background: d.isOnline ? '#ecfdf5' : '#f1f5f9',
+                                          color: d.isOnline ? '#059669' : '#64748b',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                          flexShrink: 0,
+                                          position: 'relative',
+                                        }}
+                                      >
+                                        <MobileOutlined style={{ fontSize: 17 }} />
+                                        {d.isOnline && (
+                                          <span
+                                            className="platform-pulse-dot"
+                                            style={{
+                                              position: 'absolute',
+                                              top: -2,
+                                              right: -2,
+                                              width: 8,
+                                              height: 8,
+                                            }}
+                                          />
+                                        )}
+                                      </div>
+                                      <div style={{ minWidth: 0 }}>
+                                        <Typography.Text
+                                          strong
+                                          style={{
+                                            fontSize: 14,
+                                            display: 'block',
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis',
+                                            whiteSpace: 'nowrap',
+                                          }}
+                                        >
+                                          {d.name || 'Thiết bị POS'}
+                                        </Typography.Text>
+                                        <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                                          ID: <code>{d.id}</code>
+                                        </div>
                                       </div>
                                     </div>
-                                  ),
-                                },
-                                {
-                                  title: 'Thiết bị đăng nhập',
-                                  key: 'device',
-                                  render: (_, s) => (
-                                    <div>
-                                      {s.deviceId ? (
-                                        <div>
-                                          <DesktopOutlined
-                                            style={{ marginRight: 6, color: '#2563eb' }}
-                                          />
-                                          <Typography.Text strong>
-                                            {s.deviceName || 'Máy POS'}
-                                          </Typography.Text>
-                                          <div style={{ fontSize: 11, color: '#94a3b8' }}>
-                                            ID: {s.deviceId}
-                                          </div>
-                                          {s.deviceStatus === 'REVOKED' && (
-                                            <Tag
-                                              color="error"
-                                              style={{ fontSize: 10, marginTop: 2 }}
-                                            >
-                                              Máy đã thu hồi
-                                            </Tag>
-                                          )}
-                                        </div>
+                                    <div style={{ flexShrink: 0 }}>
+                                      {d.isOnline ? (
+                                        <Tag
+                                          color="success"
+                                          style={{ fontSize: 11, margin: 0, fontWeight: 600 }}
+                                        >
+                                          🟢 Trực tuyến
+                                        </Tag>
+                                      ) : d.status === 'ACTIVE' ? (
+                                        <Tag color="default" style={{ fontSize: 11, margin: 0 }}>
+                                          ⚪ Ngoại tuyến
+                                        </Tag>
                                       ) : (
-                                        <div>
-                                          <GlobalOutlined
-                                            style={{ marginRight: 6, color: '#0ea5e9' }}
-                                          />
-                                          <Typography.Text>
-                                            {s.deviceName || 'Trình duyệt trực tiếp'}
-                                          </Typography.Text>
-                                          <div style={{ fontSize: 11, color: '#94a3b8' }}>
-                                            Web Session
-                                          </div>
-                                        </div>
+                                        <Tag color="error" style={{ fontSize: 11, margin: 0 }}>
+                                          🔴 Đã thu hồi
+                                        </Tag>
                                       )}
                                     </div>
-                                  ),
-                                },
-                                {
-                                  title: 'Thời gian đăng nhập',
-                                  dataIndex: 'createdAt',
-                                  key: 'createdAt',
-                                  render: (val: number) => (
-                                    <div>
-                                      <div>{formatDateTimeFull(val)}</div>
-                                      <div style={{ fontSize: 11, color: '#64748b' }}>
-                                        {formatRelativeTime(val)}
-                                      </div>
-                                    </div>
-                                  ),
-                                },
-                                {
-                                  title: 'Hoạt động gần nhất',
-                                  dataIndex: 'lastSeenAt',
-                                  key: 'lastSeenAt',
-                                  render: (val: number) => (
-                                    <div>
-                                      <div>{formatDateTimeFull(val)}</div>
-                                      <div style={{ fontSize: 11, color: '#10b981' }}>
-                                        {formatRelativeTime(val)}
-                                      </div>
-                                    </div>
-                                  ),
-                                },
-                                {
-                                  title: 'Trạng thái phiên',
-                                  key: 'sessionStatus',
-                                  render: (_, s) => {
-                                    const isLive =
-                                      s.status === 'ACTIVE' && Date.now() < s.expiresAt;
-                                    const isRevoked = s.status === 'REVOKED';
-                                    if (isLive) {
-                                      return (
-                                        <div>
-                                          <Tag color="success" style={{ fontWeight: 600 }}>
-                                            🟢 Đang hoạt động
-                                          </Tag>
-                                          <div
-                                            style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}
-                                          >
-                                            Hết hạn: {formatDateTime(s.expiresAt)}
-                                          </div>
-                                        </div>
-                                      );
-                                    }
-                                    if (isRevoked) {
-                                      return (
-                                        <div>
-                                          <Tag color="error" style={{ fontWeight: 600 }}>
-                                            🔴 Đã thu hồi
-                                          </Tag>
-                                          {s.revokedAt ? (
-                                            <div
-                                              style={{
-                                                fontSize: 11,
-                                                color: '#ef4444',
-                                                marginTop: 2,
-                                              }}
-                                            >
-                                              {formatDateTime(s.revokedAt)}
-                                            </div>
-                                          ) : null}
-                                        </div>
-                                      );
-                                    }
-                                    return (
-                                      <div>
-                                        <Tag color="default">⚪ Hết hạn</Tag>
+                                  </div>
+
+                                  {/* Info Box */}
+                                  <div
+                                    style={{
+                                      background: '#f8fafc',
+                                      borderRadius: 8,
+                                      padding: '8px 10px',
+                                      marginBottom: 10,
+                                      fontSize: 12,
+                                    }}
+                                  >
+                                    <div
+                                      style={{
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center',
+                                        marginBottom: 5,
+                                      }}
+                                    >
+                                      <span style={{ color: '#64748b' }}>Nhân sự đăng nhập:</span>
+                                      {d.currentSession ? (
                                         <div
-                                          style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}
+                                          style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: 5,
+                                            maxWidth: '60%',
+                                          }}
                                         >
-                                          {formatDateTime(s.expiresAt)}
+                                          <Avatar
+                                            size={20}
+                                            style={{
+                                              background: d.isOnline ? '#10b981' : '#3b82f6',
+                                              fontSize: 10,
+                                              fontWeight: 700,
+                                              flexShrink: 0,
+                                            }}
+                                          >
+                                            {getInitials(d.currentSession.userName)}
+                                          </Avatar>
+                                          <Typography.Text
+                                            strong
+                                            style={{
+                                              fontSize: 12,
+                                              overflow: 'hidden',
+                                              textOverflow: 'ellipsis',
+                                              whiteSpace: 'nowrap',
+                                            }}
+                                          >
+                                            {d.currentSession.userName}
+                                          </Typography.Text>
                                         </div>
-                                      </div>
-                                    );
-                                  },
-                                },
-                                {
-                                  title: 'Thao tác',
-                                  key: 'actions',
-                                  align: 'right',
-                                  render: (_, s) => {
-                                    const isLive =
-                                      s.status === 'ACTIVE' && Date.now() < s.expiresAt;
-                                    return isLive ? (
+                                      ) : (
+                                        <span style={{ color: '#94a3b8', fontSize: 11.5 }}>
+                                          Chưa có
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    <div
+                                      style={{
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center',
+                                        marginBottom: 5,
+                                      }}
+                                    >
+                                      <span style={{ color: '#64748b' }}>Thông báo PWA:</span>
+                                      {d.pushNotificationEnabled ? (
+                                        <Tag
+                                          color="success"
+                                          icon={<BellOutlined />}
+                                          style={{
+                                            borderRadius: 6,
+                                            fontWeight: 500,
+                                            margin: 0,
+                                            fontSize: 11,
+                                          }}
+                                        >
+                                          Đã bật
+                                        </Tag>
+                                      ) : (
+                                        <Tag
+                                          color="default"
+                                          style={{
+                                            borderRadius: 6,
+                                            color: '#94a3b8',
+                                            margin: 0,
+                                            fontSize: 11,
+                                          }}
+                                        >
+                                          Chưa bật
+                                        </Tag>
+                                      )}
+                                    </div>
+
+                                    <div
+                                      style={{
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center',
+                                        marginBottom: 5,
+                                      }}
+                                    >
+                                      <span style={{ color: '#64748b' }}>Hoạt động cuối:</span>
+                                      <span
+                                        style={{
+                                          color: d.isOnline ? '#059669' : '#334155',
+                                          fontWeight: d.isOnline ? 600 : 400,
+                                          fontSize: 11.5,
+                                        }}
+                                      >
+                                        {d.isOnline
+                                          ? '🟢 Đang kết nối'
+                                          : formatRelativeTime(d.lastSeenAt)}
+                                      </span>
+                                    </div>
+
+                                    <div
+                                      style={{
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center',
+                                      }}
+                                    >
+                                      <span style={{ color: '#64748b' }}>Lượt phiên:</span>
+                                      <Tag color="purple" style={{ margin: 0, fontSize: 11 }}>
+                                        {count} lượt
+                                      </Tag>
+                                    </div>
+                                  </div>
+
+                                  {/* Request push notification prominent button */}
+                                  {d.status === 'ACTIVE' && !d.pushNotificationEnabled && (
+                                    <Button
+                                      block
+                                      icon={<BellOutlined />}
+                                      loading={requestingPushDeviceId === d.id}
+                                      style={{
+                                        color: '#2563eb',
+                                        borderColor: '#93c5fd',
+                                        background: '#eff6ff',
+                                        fontWeight: 600,
+                                        marginBottom: 8,
+                                        height: 34,
+                                      }}
+                                      onClick={() => void handleRequestPushPrompt(d.id, d.name)}
+                                    >
+                                      Yêu cầu bật thông báo
+                                    </Button>
+                                  )}
+
+                                  {/* Action Buttons */}
+                                  <div
+                                    style={{
+                                      display: 'flex',
+                                      gap: 6,
+                                      justifyContent: 'flex-end',
+                                      flexWrap: 'wrap',
+                                    }}
+                                  >
+                                    {d.currentSession && d.status === 'ACTIVE' && (
                                       <Popconfirm
-                                        title="Đăng xuất thiết bị này?"
-                                        description="Phiên làm việc trên thiết bị sẽ bị hủy ngay lập tức và buộc người dùng đăng nhập lại."
+                                        title="Đăng xuất khỏi thiết bị này?"
+                                        description="Nhân viên sẽ bị đăng xuất khỏi ứng dụng POS và phải nhập lại PIN."
                                         okText="Đăng xuất"
                                         cancelText="Hủy"
                                         okButtonProps={{ danger: true, loading: submitting }}
-                                        onConfirm={() => handleRevokeSession(s.id)}
+                                        onConfirm={() => handleRevokeSession(d.currentSession!.id)}
+                                      >
+                                        <Button
+                                          size="small"
+                                          danger
+                                          ghost
+                                          icon={<LogoutOutlined />}
+                                          style={{ flex: 1, minWidth: 80 }}
+                                        >
+                                          Đăng xuất
+                                        </Button>
+                                      </Popconfirm>
+                                    )}
+                                    <Button
+                                      size="small"
+                                      icon={<HistoryOutlined />}
+                                      style={{ flex: 1, minWidth: 70 }}
+                                      onClick={() => {
+                                        setActiveDetailTab('sessions');
+                                        setSessionViewMode('HISTORY');
+                                        setSelectedDeviceFilter(d.id);
+                                      }}
+                                    >
+                                      Lịch sử
+                                    </Button>
+                                    {d.status === 'ACTIVE' ? (
+                                      <Popconfirm
+                                        title="Thu hồi máy POS này?"
+                                        description="Thiết bị sẽ bị ngắt kết nối và tất cả phiên đăng nhập trên máy sẽ bị hủy."
+                                        okText="Thu hồi"
+                                        cancelText="Hủy"
+                                        okButtonProps={{ danger: true, loading: submitting }}
+                                        onConfirm={() => handleRevokeDevice(d.id)}
+                                      >
+                                        <Button
+                                          size="small"
+                                          danger
+                                          icon={<StopOutlined />}
+                                          style={{ flex: 1, minWidth: 70 }}
+                                        >
+                                          Thu hồi
+                                        </Button>
+                                      </Popconfirm>
+                                    ) : (
+                                      <Tag
+                                        color="default"
+                                        style={{ alignSelf: 'center', margin: 0 }}
+                                      >
+                                        Đã thu hồi
+                                      </Tag>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <Table
+                            rowKey="id"
+                            size="small"
+                            dataSource={detail.devices}
+                            pagination={false}
+                            scroll={{ x: 780 }}
+                            columns={[
+                              {
+                                title: 'Thiết bị POS',
+                                key: 'name',
+                                render: (_, d) => (
+                                  <div className="platform-device-name">
+                                    <div
+                                      className="platform-device-name__icon"
+                                      style={{
+                                        background: d.isOnline ? '#ecfdf5' : '#f1f5f9',
+                                        color: d.isOnline ? '#059669' : '#64748b',
+                                        position: 'relative',
+                                      }}
+                                    >
+                                      <MobileOutlined style={{ fontSize: 18 }} />
+                                      {d.isOnline && (
+                                        <span
+                                          className="platform-pulse-dot"
+                                          style={{
+                                            position: 'absolute',
+                                            top: -2,
+                                            right: -2,
+                                            width: 8,
+                                            height: 8,
+                                          }}
+                                        />
+                                      )}
+                                    </div>
+                                    <div>
+                                      <div
+                                        style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                                      >
+                                        <Typography.Text strong>
+                                          {d.name || 'Thiết bị POS'}
+                                        </Typography.Text>
+                                        {d.isOnline ? (
+                                          <Tag color="success" style={{ fontSize: 11, margin: 0 }}>
+                                            🟢 Trực tuyến
+                                          </Tag>
+                                        ) : d.status === 'ACTIVE' ? (
+                                          <Tag color="default" style={{ fontSize: 11, margin: 0 }}>
+                                            ⚪ Ngoại tuyến
+                                          </Tag>
+                                        ) : (
+                                          <Tag color="error" style={{ fontSize: 11, margin: 0 }}>
+                                            🔴 Đã thu hồi
+                                          </Tag>
+                                        )}
+                                      </div>
+                                      <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
+                                        ID: <code>{d.id}</code>
+                                      </div>
+                                    </div>
+                                  </div>
+                                ),
+                              },
+                              {
+                                title: 'Nhân sự đang đăng nhập',
+                                key: 'currentStaff',
+                                render: (_, d) => {
+                                  if (d.currentSession) {
+                                    return (
+                                      <div>
+                                        <div
+                                          style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                                        >
+                                          <Avatar
+                                            size={22}
+                                            style={{
+                                              background: d.isOnline ? '#10b981' : '#3b82f6',
+                                              fontSize: 11,
+                                              fontWeight: 700,
+                                            }}
+                                          >
+                                            {getInitials(d.currentSession.userName)}
+                                          </Avatar>
+                                          <Typography.Text strong>
+                                            {d.currentSession.userName}
+                                          </Typography.Text>
+                                          <Tag
+                                            color="blue"
+                                            style={{ fontSize: 10, margin: 0, padding: '0 4px' }}
+                                          >
+                                            {d.currentSession.userRoleName}
+                                          </Tag>
+                                        </div>
+                                        <div
+                                          style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}
+                                        >
+                                          @{d.currentSession.userUsername} · Vào lúc{' '}
+                                          {formatRelativeTime(d.currentSession.createdAt)}
+                                        </div>
+                                      </div>
+                                    );
+                                  }
+                                  return (
+                                    <span style={{ color: '#94a3b8', fontSize: 12 }}>
+                                      Chưa có nhân sự đăng nhập
+                                    </span>
+                                  );
+                                },
+                              },
+                              {
+                                title: 'Thông báo PWA',
+                                key: 'pushNotification',
+                                render: (_, d) => {
+                                  if (d.pushNotificationEnabled) {
+                                    return (
+                                      <Tooltip title="Thiết bị đã bật thông báo đẩy khi thanh toán thành công và có đơn mới">
+                                        <Tag
+                                          color="success"
+                                          icon={<BellOutlined />}
+                                          style={{ borderRadius: 6, fontWeight: 500, margin: 0 }}
+                                        >
+                                          Đã bật
+                                        </Tag>
+                                      </Tooltip>
+                                    );
+                                  }
+                                  return (
+                                    <Tooltip title="Thiết bị chưa cấp quyền hoặc đã tắt thông báo trong Cài đặt">
+                                      <Tag
+                                        color="default"
+                                        style={{ borderRadius: 6, color: '#94a3b8', margin: 0 }}
+                                      >
+                                        Chưa bật
+                                      </Tag>
+                                    </Tooltip>
+                                  );
+                                },
+                              },
+                              {
+                                title: 'Hoạt động gần nhất',
+                                dataIndex: 'lastSeenAt',
+                                key: 'lastSeenAt',
+                                render: (val: number | null, d) => (
+                                  <div>
+                                    <div>{formatDateTime(val)}</div>
+                                    {d.isOnline ? (
+                                      <div
+                                        style={{ fontSize: 11, color: '#059669', fontWeight: 600 }}
+                                      >
+                                        🟢 Đang kết nối
+                                      </div>
+                                    ) : (
+                                      <div style={{ fontSize: 11, color: '#64748b' }}>
+                                        {formatRelativeTime(val)}
+                                      </div>
+                                    )}
+                                  </div>
+                                ),
+                              },
+                              {
+                                title: 'Lượt phiên',
+                                key: 'sessionCount',
+                                render: (_, d) => {
+                                  const count =
+                                    d.sessionCount ??
+                                    detail.sessions.filter((s) => s.deviceId === d.id).length;
+                                  return (
+                                    <Tooltip
+                                      title={`Đã có ${count} lượt đăng nhập được ghi nhận trên máy này`}
+                                    >
+                                      <Tag color="purple" style={{ cursor: 'pointer' }}>
+                                        {count} lượt
+                                      </Tag>
+                                    </Tooltip>
+                                  );
+                                },
+                              },
+                              {
+                                title: 'Kích hoạt bởi',
+                                key: 'activatedInfo',
+                                render: (_, d) => (
+                                  <div style={{ fontSize: 12 }}>
+                                    <div>{d.activatedByName || '—'}</div>
+                                    <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                                      {formatDateTime(d.activatedAt)}
+                                    </div>
+                                  </div>
+                                ),
+                              },
+                              {
+                                title: 'Thao tác',
+                                key: 'actions',
+                                align: 'right',
+                                render: (_, d) => (
+                                  <Space size="small">
+                                    {d.status === 'ACTIVE' && !d.pushNotificationEnabled && (
+                                      <Tooltip title="Gửi tín hiệu mở popup yêu cầu nhân viên trên máy này bật thông báo PWA">
+                                        <Button
+                                          size="small"
+                                          icon={<BellOutlined />}
+                                          loading={requestingPushDeviceId === d.id}
+                                          style={{
+                                            color: '#2563eb',
+                                            borderColor: '#93c5fd',
+                                            background: '#eff6ff',
+                                          }}
+                                          onClick={() => void handleRequestPushPrompt(d.id, d.name)}
+                                        >
+                                          Yêu cầu bật thông báo
+                                        </Button>
+                                      </Tooltip>
+                                    )}
+                                    {d.currentSession && d.status === 'ACTIVE' && (
+                                      <Popconfirm
+                                        title="Đăng xuất khỏi thiết bị này?"
+                                        description="Nhân viên sẽ bị đăng xuất khỏi ứng dụng POS và phải nhập lại PIN."
+                                        okText="Đăng xuất"
+                                        cancelText="Hủy"
+                                        okButtonProps={{ danger: true, loading: submitting }}
+                                        onConfirm={() => handleRevokeSession(d.currentSession!.id)}
+                                      >
+                                        <Button size="small" danger ghost icon={<LogoutOutlined />}>
+                                          Đăng xuất
+                                        </Button>
+                                      </Popconfirm>
+                                    )}
+                                    <Button
+                                      size="small"
+                                      icon={<HistoryOutlined />}
+                                      onClick={() => {
+                                        setActiveDetailTab('sessions');
+                                        setSessionViewMode('HISTORY');
+                                        setSelectedDeviceFilter(d.id);
+                                      }}
+                                    >
+                                      Lịch sử
+                                    </Button>
+                                    {d.status === 'ACTIVE' ? (
+                                      <Popconfirm
+                                        title="Thu hồi máy POS này?"
+                                        description="Thiết bị sẽ bị ngắt kết nối và tất cả phiên đăng nhập trên máy sẽ bị hủy."
+                                        okText="Thu hồi"
+                                        cancelText="Hủy"
+                                        okButtonProps={{ danger: true, loading: submitting }}
+                                        onConfirm={() => handleRevokeDevice(d.id)}
                                       >
                                         <Button size="small" danger icon={<StopOutlined />}>
                                           Thu hồi
                                         </Button>
                                       </Popconfirm>
                                     ) : (
-                                      <span style={{ color: '#cbd5e1' }}>—</span>
-                                    );
+                                      <Tag color="default">Đã thu hồi</Tag>
+                                    )}
+                                  </Space>
+                                ),
+                              },
+                            ]}
+                          />
+                        )}
+                      </div>
+                    ),
+                  },
+                  {
+                    key: 'sessions',
+                    label: (
+                      <span>
+                        <ClockCircleOutlined />{' '}
+                        {isMobile
+                          ? `Phiên (${detail.sessions.length})`
+                          : `Lịch sử đăng nhập (${detail.sessions.length})`}
+                        {detail.sessions.filter((s) => s.isOnline).length > 0 && (
+                          <span
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 4,
+                              marginLeft: isMobile ? 4 : 8,
+                              padding: isMobile ? '0 5px' : '1px 8px',
+                              borderRadius: 12,
+                              fontSize: isMobile ? 10 : 11,
+                              fontWeight: 700,
+                              background: '#ecfdf5',
+                              color: '#059669',
+                              border: '1px solid #a7f3d0',
+                            }}
+                          >
+                            <span className="platform-pulse-dot" style={{ width: 5, height: 5 }} />
+                            {detail.sessions.filter((s) => s.isOnline).length} Online
+                          </span>
+                        )}
+                      </span>
+                    ),
+                    children: (() => {
+                      const onlineSessions = detail.sessions.filter((s) => s.isOnline);
+                      const offlineActiveSessions = detail.sessions.filter(
+                        (s) => s.status === 'ACTIVE' && Date.now() < s.expiresAt && !s.isOnline,
+                      );
+                      const revokedSessions = detail.sessions.filter((s) => s.status === 'REVOKED');
+                      const expiredSessions = detail.sessions.filter(
+                        (s) =>
+                          s.status === 'EXPIRED' ||
+                          (s.status === 'ACTIVE' && Date.now() >= s.expiresAt),
+                      );
+
+                      const filtered = detail.sessions.filter((s) => {
+                        // Presence filter
+                        if (sessionPresenceFilter === 'ONLINE' && !s.isOnline) return false;
+                        if (
+                          sessionPresenceFilter === 'OFFLINE' &&
+                          !(s.status === 'ACTIVE' && Date.now() < s.expiresAt && !s.isOnline)
+                        )
+                          return false;
+                        if (sessionPresenceFilter === 'REVOKED' && s.status !== 'REVOKED')
+                          return false;
+                        if (
+                          sessionPresenceFilter === 'EXPIRED' &&
+                          !(
+                            s.status === 'EXPIRED' ||
+                            (s.status === 'ACTIVE' && Date.now() >= s.expiresAt)
+                          )
+                        )
+                          return false;
+
+                        // Device filter
+                        if (selectedDeviceFilter !== 'ALL') {
+                          if (selectedDeviceFilter === 'WEB' && s.deviceId) return false;
+                          if (selectedDeviceFilter !== 'WEB' && s.deviceId !== selectedDeviceFilter)
+                            return false;
+                        }
+
+                        // Search filter
+                        const term = sessionSearchTerm.trim().toLowerCase();
+                        if (!term) return true;
+                        return (
+                          s.userName.toLowerCase().includes(term) ||
+                          s.userUsername.toLowerCase().includes(term) ||
+                          (s.deviceName && s.deviceName.toLowerCase().includes(term)) ||
+                          (s.deviceId && s.deviceId.toLowerCase().includes(term))
+                        );
+                      });
+
+                      return (
+                        <div>
+                          {/* Banner giải thích & KPI telemetry */}
+                          <div className="platform-telemetry-banner">
+                            <div
+                              style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'flex-start',
+                                flexWrap: 'wrap',
+                                gap: 12,
+                                marginBottom: 14,
+                              }}
+                            >
+                              <div>
+                                <Typography.Text strong style={{ fontSize: 14.5 }}>
+                                  Quản lý phiên làm việc & Kiểm soát trực tuyến
+                                </Typography.Text>
+                                <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
+                                  Cửa hàng có <strong>{detail.devices.length} máy POS</strong> vật
+                                  lý với tổng cộng{' '}
+                                  <strong>{detail.sessions.length} lượt đăng nhập</strong> trong
+                                  lịch sử. Mỗi thiết bị chỉ duy trì 1 phiên hoạt động duy nhất.
+                                </div>
+                              </div>
+                              <Segmented
+                                value={sessionViewMode}
+                                onChange={(val) => setSessionViewMode(val as 'DEVICES' | 'HISTORY')}
+                                options={[
+                                  {
+                                    label: (
+                                      <span>
+                                        <MobileOutlined /> Theo thiết bị ({detail.devices.length})
+                                      </span>
+                                    ),
+                                    value: 'DEVICES',
                                   },
-                                },
-                              ]}
-                            />
+                                  {
+                                    label: (
+                                      <span>
+                                        <HistoryOutlined /> Lịch sử chi tiết (
+                                        {detail.sessions.length})
+                                      </span>
+                                    ),
+                                    value: 'HISTORY',
+                                  },
+                                ]}
+                              />
+                            </div>
+
+                            <div className="platform-telemetry-stats">
+                              <div
+                                className="platform-telemetry-stat-box platform-telemetry-stat-box--online"
+                                style={{ cursor: 'pointer' }}
+                                onClick={() => {
+                                  setSessionViewMode('HISTORY');
+                                  setSessionPresenceFilter('ONLINE');
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    width: 36,
+                                    height: 36,
+                                    borderRadius: 8,
+                                    background: '#d1fae5',
+                                    color: '#059669',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: 18,
+                                  }}
+                                >
+                                  <CheckCircleOutlined />
+                                </div>
+                                <div>
+                                  <div
+                                    style={{
+                                      fontSize: 11,
+                                      color: '#047857',
+                                      textTransform: 'uppercase',
+                                      fontWeight: 600,
+                                    }}
+                                  >
+                                    Đang trực tuyến (Online)
+                                  </div>
+                                  <div
+                                    style={{
+                                      fontSize: 18,
+                                      fontWeight: 800,
+                                      color: '#065f46',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: 6,
+                                    }}
+                                  >
+                                    <span className="platform-pulse-dot" />
+                                    {onlineSessions.length} phiên
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div
+                                className="platform-telemetry-stat-box platform-telemetry-stat-box--offline"
+                                style={{ cursor: 'pointer' }}
+                                onClick={() => {
+                                  setSessionViewMode('HISTORY');
+                                  setSessionPresenceFilter('OFFLINE');
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    width: 36,
+                                    height: 36,
+                                    borderRadius: 8,
+                                    background: '#f1f5f9',
+                                    color: '#64748b',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: 18,
+                                  }}
+                                >
+                                  <StopOutlined />
+                                </div>
+                                <div>
+                                  <div
+                                    style={{
+                                      fontSize: 11,
+                                      color: '#64748b',
+                                      textTransform: 'uppercase',
+                                      fontWeight: 600,
+                                    }}
+                                  >
+                                    Ngoại tuyến (Offline)
+                                  </div>
+                                  <div style={{ fontSize: 18, fontWeight: 800, color: '#334155' }}>
+                                    {offlineActiveSessions.length} phiên
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div
+                                className="platform-telemetry-stat-box"
+                                style={{ cursor: 'pointer' }}
+                                onClick={() => {
+                                  setSessionViewMode('HISTORY');
+                                  setSessionPresenceFilter('REVOKED');
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    width: 36,
+                                    height: 36,
+                                    borderRadius: 8,
+                                    background: '#fef2f2',
+                                    color: '#ef4444',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: 18,
+                                  }}
+                                >
+                                  <StopOutlined />
+                                </div>
+                                <div>
+                                  <div
+                                    style={{
+                                      fontSize: 11,
+                                      color: '#991b1b',
+                                      textTransform: 'uppercase',
+                                      fontWeight: 600,
+                                    }}
+                                  >
+                                    Đã thu hồi
+                                  </div>
+                                  <div style={{ fontSize: 18, fontWeight: 800, color: '#b91c1c' }}>
+                                    {revokedSessions.length} phiên
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div
+                                className="platform-telemetry-stat-box"
+                                style={{ cursor: 'pointer' }}
+                                onClick={() => {
+                                  setSessionViewMode('HISTORY');
+                                  setSessionPresenceFilter('EXPIRED');
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    width: 36,
+                                    height: 36,
+                                    borderRadius: 8,
+                                    background: '#f8fafc',
+                                    color: '#94a3b8',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: 18,
+                                  }}
+                                >
+                                  <ClockCircleOutlined />
+                                </div>
+                                <div>
+                                  <div
+                                    style={{
+                                      fontSize: 11,
+                                      color: '#64748b',
+                                      textTransform: 'uppercase',
+                                      fontWeight: 600,
+                                    }}
+                                  >
+                                    Hết hạn
+                                  </div>
+                                  <div style={{ fontSize: 18, fontWeight: 800, color: '#64748b' }}>
+                                    {expiredSessions.length} phiên
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Chế độ 1: Theo thiết bị POS */}
+                          {sessionViewMode === 'DEVICES' && (
+                            <div>
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  alignItems: 'center',
+                                  marginBottom: 12,
+                                }}
+                              >
+                                <Typography.Text strong style={{ fontSize: 15 }}>
+                                  Trạng thái các thiết bị vật lý ({detail.devices.length} máy POS)
+                                </Typography.Text>
+                                <Button
+                                  type="link"
+                                  size="small"
+                                  icon={<HistoryOutlined />}
+                                  onClick={() => {
+                                    setSessionViewMode('HISTORY');
+                                    setSelectedDeviceFilter('ALL');
+                                    setSessionPresenceFilter('ALL');
+                                  }}
+                                >
+                                  Xem toàn bộ lịch sử ({detail.sessions.length} phiên) &rarr;
+                                </Button>
+                              </div>
+
+                              {detail.devices.length === 0 ? (
+                                <Empty description="Chưa có thiết bị POS nào." />
+                              ) : (
+                                <div className="platform-device-grid">
+                                  {detail.devices.map((d) => {
+                                    const devSessions = detail.sessions.filter(
+                                      (s) => s.deviceId === d.id,
+                                    );
+                                    const isDeviceOnline = Boolean(d.isOnline);
+                                    const isDeviceActive = d.status === 'ACTIVE';
+
+                                    return (
+                                      <Card
+                                        key={d.id}
+                                        size="small"
+                                        className={`platform-device-card ${
+                                          isDeviceOnline
+                                            ? 'platform-device-card--online'
+                                            : !isDeviceActive
+                                              ? 'platform-device-card--revoked'
+                                              : 'platform-device-card--offline'
+                                        }`}
+                                      >
+                                        <div
+                                          style={{
+                                            display: 'flex',
+                                            justifyContent: 'space-between',
+                                            alignItems: 'flex-start',
+                                            marginBottom: 12,
+                                          }}
+                                        >
+                                          <div
+                                            style={{
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              gap: 10,
+                                            }}
+                                          >
+                                            <div
+                                              style={{
+                                                width: 38,
+                                                height: 38,
+                                                borderRadius: 10,
+                                                background: isDeviceOnline ? '#ecfdf5' : '#f1f5f9',
+                                                color: isDeviceOnline ? '#059669' : '#64748b',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                fontSize: 18,
+                                              }}
+                                            >
+                                              <MobileOutlined />
+                                            </div>
+                                            <div>
+                                              <div
+                                                style={{
+                                                  fontWeight: 700,
+                                                  fontSize: 14.5,
+                                                  color: '#0f172a',
+                                                }}
+                                              >
+                                                {d.name || 'Thiết bị POS'}
+                                              </div>
+                                              <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                                                ID: <code>{d.id}</code>
+                                              </div>
+                                            </div>
+                                          </div>
+
+                                          <div>
+                                            {isDeviceOnline ? (
+                                              <Tag
+                                                color="success"
+                                                style={{ fontWeight: 600, margin: 0 }}
+                                              >
+                                                🟢 Trực tuyến
+                                              </Tag>
+                                            ) : isDeviceActive ? (
+                                              <Tag color="default" style={{ margin: 0 }}>
+                                                ⚪ Ngoại tuyến
+                                              </Tag>
+                                            ) : (
+                                              <Tag color="error" style={{ margin: 0 }}>
+                                                🔴 Đã thu hồi
+                                              </Tag>
+                                            )}
+                                          </div>
+                                        </div>
+
+                                        {/* Current Session / Staff Info */}
+                                        <div
+                                          style={{
+                                            background: '#f8fafc',
+                                            borderRadius: 8,
+                                            padding: '10px 12px',
+                                            marginBottom: 12,
+                                            border: '1px solid #eef2f7',
+                                          }}
+                                        >
+                                          {d.currentSession ? (
+                                            <div>
+                                              <div
+                                                style={{
+                                                  fontSize: 11,
+                                                  color: '#64748b',
+                                                  textTransform: 'uppercase',
+                                                  fontWeight: 600,
+                                                  marginBottom: 6,
+                                                }}
+                                              >
+                                                Nhân sự đang đăng nhập
+                                              </div>
+                                              <div
+                                                style={{
+                                                  display: 'flex',
+                                                  alignItems: 'center',
+                                                  gap: 8,
+                                                  marginBottom: 6,
+                                                }}
+                                              >
+                                                <Avatar
+                                                  size={26}
+                                                  style={{
+                                                    background: isDeviceOnline
+                                                      ? '#10b981'
+                                                      : '#3b82f6',
+                                                    fontWeight: 700,
+                                                  }}
+                                                >
+                                                  {getInitials(d.currentSession.userName)}
+                                                </Avatar>
+                                                <div>
+                                                  <Typography.Text
+                                                    strong
+                                                    style={{ fontSize: 13.5 }}
+                                                  >
+                                                    {d.currentSession.userName}
+                                                  </Typography.Text>
+                                                  <div style={{ fontSize: 11.5, color: '#64748b' }}>
+                                                    @{d.currentSession.userUsername} ·{' '}
+                                                    <Tag
+                                                      color="blue"
+                                                      style={{
+                                                        fontSize: 10,
+                                                        margin: 0,
+                                                        padding: '0 4px',
+                                                      }}
+                                                    >
+                                                      {d.currentSession.userRoleName}
+                                                    </Tag>
+                                                  </div>
+                                                </div>
+                                              </div>
+
+                                              <div
+                                                style={{
+                                                  fontSize: 11.5,
+                                                  color: '#64748b',
+                                                  display: 'flex',
+                                                  flexDirection: 'column',
+                                                  gap: 2,
+                                                }}
+                                              >
+                                                <div>
+                                                  Đăng nhập:{' '}
+                                                  <strong>
+                                                    {formatRelativeTime(d.currentSession.createdAt)}
+                                                  </strong>{' '}
+                                                  ({formatDateTime(d.currentSession.createdAt)})
+                                                </div>
+                                                <div>
+                                                  Hoạt động cuối:{' '}
+                                                  <strong>
+                                                    {formatRelativeTime(
+                                                      d.currentSession.lastSeenAt,
+                                                    )}
+                                                  </strong>
+                                                </div>
+                                              </div>
+
+                                              {isDeviceActive && (
+                                                <div style={{ marginTop: 8, textAlign: 'right' }}>
+                                                  <Popconfirm
+                                                    title="Đăng xuất khỏi thiết bị này?"
+                                                    description="Nhân viên sẽ bị đăng xuất khỏi ứng dụng POS và phải nhập lại mã PIN."
+                                                    okText="Đăng xuất"
+                                                    cancelText="Hủy"
+                                                    okButtonProps={{
+                                                      danger: true,
+                                                      loading: submitting,
+                                                    }}
+                                                    onConfirm={() =>
+                                                      handleRevokeSession(d.currentSession!.id)
+                                                    }
+                                                  >
+                                                    <Button
+                                                      size="small"
+                                                      danger
+                                                      ghost
+                                                      icon={<LogoutOutlined />}
+                                                    >
+                                                      Đăng xuất nhân viên
+                                                    </Button>
+                                                  </Popconfirm>
+                                                </div>
+                                              )}
+                                            </div>
+                                          ) : (
+                                            <div
+                                              style={{
+                                                color: '#94a3b8',
+                                                fontSize: 12,
+                                                padding: '4px 0',
+                                              }}
+                                            >
+                                              <div>
+                                                Chưa có tài khoản nào đăng nhập trên máy này.
+                                              </div>
+                                              {d.lastSeenAt && (
+                                                <div
+                                                  style={{
+                                                    fontSize: 11,
+                                                    marginTop: 4,
+                                                    color: '#64748b',
+                                                  }}
+                                                >
+                                                  Lần thấy cuối: {formatDateTime(d.lastSeenAt)} (
+                                                  {formatRelativeTime(d.lastSeenAt)})
+                                                </div>
+                                              )}
+                                            </div>
+                                          )}
+                                        </div>
+
+                                        {/* Card Footer */}
+                                        <div
+                                          style={{
+                                            display: 'flex',
+                                            justifyContent: 'space-between',
+                                            alignItems: 'center',
+                                            fontSize: 12,
+                                          }}
+                                        >
+                                          <span style={{ color: '#64748b' }}>
+                                            {devSessions.length} lượt phiên trong lịch sử
+                                          </span>
+                                          <Space size="small">
+                                            <Button
+                                              size="small"
+                                              type="text"
+                                              icon={<HistoryOutlined />}
+                                              onClick={() => {
+                                                setSelectedDeviceFilter(d.id);
+                                                setSessionPresenceFilter('ALL');
+                                                setSessionViewMode('HISTORY');
+                                              }}
+                                            >
+                                              Lịch sử
+                                            </Button>
+                                            {isDeviceActive && !d.pushNotificationEnabled && (
+                                              <Button
+                                                size="small"
+                                                icon={<BellOutlined />}
+                                                loading={requestingPushDeviceId === d.id}
+                                                style={{
+                                                  color: '#2563eb',
+                                                  borderColor: '#93c5fd',
+                                                  background: '#eff6ff',
+                                                }}
+                                                onClick={() =>
+                                                  void handleRequestPushPrompt(d.id, d.name)
+                                                }
+                                              >
+                                                Bật thông báo
+                                              </Button>
+                                            )}
+                                            {isDeviceActive && (
+                                              <Popconfirm
+                                                title="Thu hồi máy POS này?"
+                                                description="Thiết bị sẽ bị ngắt kết nối và tất cả phiên đăng nhập trên máy sẽ bị hủy."
+                                                okText="Thu hồi"
+                                                cancelText="Hủy"
+                                                okButtonProps={{
+                                                  danger: true,
+                                                  loading: submitting,
+                                                }}
+                                                onConfirm={() => handleRevokeDevice(d.id)}
+                                              >
+                                                <Button
+                                                  size="small"
+                                                  type="text"
+                                                  danger
+                                                  icon={<StopOutlined />}
+                                                >
+                                                  Thu hồi
+                                                </Button>
+                                              </Popconfirm>
+                                            )}
+                                          </Space>
+                                        </div>
+                                      </Card>
+                                    );
+                                  })}
+
+                                  {/* Web sessions card */}
+                                  {detail.sessions.some((s) => !s.deviceId) && (
+                                    <Card
+                                      size="small"
+                                      className="platform-device-card platform-device-card--offline"
+                                    >
+                                      <div
+                                        style={{
+                                          display: 'flex',
+                                          justifyContent: 'space-between',
+                                          alignItems: 'flex-start',
+                                          marginBottom: 12,
+                                        }}
+                                      >
+                                        <div
+                                          style={{ display: 'flex', alignItems: 'center', gap: 10 }}
+                                        >
+                                          <div
+                                            style={{
+                                              width: 38,
+                                              height: 38,
+                                              borderRadius: 10,
+                                              background: '#e0f2fe',
+                                              color: '#0284c7',
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              justifyContent: 'center',
+                                              fontSize: 18,
+                                            }}
+                                          >
+                                            <GlobalOutlined />
+                                          </div>
+                                          <div>
+                                            <div
+                                              style={{
+                                                fontWeight: 700,
+                                                fontSize: 14.5,
+                                                color: '#0f172a',
+                                              }}
+                                            >
+                                              Trình duyệt web trực tiếp
+                                            </div>
+                                            <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                                              Phiên web (Chủ cửa hàng / Web Admin)
+                                            </div>
+                                          </div>
+                                        </div>
+                                        <Tag color="cyan">Web Browser</Tag>
+                                      </div>
+
+                                      <div
+                                        style={{
+                                          background: '#f8fafc',
+                                          borderRadius: 8,
+                                          padding: '10px 12px',
+                                          marginBottom: 12,
+                                          border: '1px solid #eef2f7',
+                                        }}
+                                      >
+                                        <div style={{ fontSize: 12, color: '#334155' }}>
+                                          Tổng cộng có{' '}
+                                          <strong>
+                                            {detail.sessions.filter((s) => !s.deviceId).length}{' '}
+                                            phiên
+                                          </strong>{' '}
+                                          đăng nhập qua trình duyệt web trực tiếp.
+                                        </div>
+                                        <div
+                                          style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}
+                                        >
+                                          {
+                                            detail.sessions.filter(
+                                              (s) =>
+                                                !s.deviceId &&
+                                                s.status === 'ACTIVE' &&
+                                                Date.now() < s.expiresAt,
+                                            ).length
+                                          }{' '}
+                                          phiên đang hoạt động
+                                        </div>
+                                      </div>
+
+                                      <div
+                                        style={{
+                                          display: 'flex',
+                                          justifyContent: 'flex-end',
+                                        }}
+                                      >
+                                        <Button
+                                          size="small"
+                                          type="text"
+                                          icon={<HistoryOutlined />}
+                                          onClick={() => {
+                                            setSelectedDeviceFilter('WEB');
+                                            setSessionPresenceFilter('ALL');
+                                            setSessionViewMode('HISTORY');
+                                          }}
+                                        >
+                                          Xem lịch sử phiên Web
+                                        </Button>
+                                      </div>
+                                    </Card>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Chế độ 2: Danh sách lịch sử chi tiết */}
+                          {sessionViewMode === 'HISTORY' && (
+                            <div>
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  flexWrap: 'wrap',
+                                  justifyContent: 'space-between',
+                                  alignItems: 'center',
+                                  gap: 12,
+                                  marginBottom: 14,
+                                }}
+                              >
+                                <Space wrap>
+                                  <Segmented
+                                    value={sessionPresenceFilter}
+                                    onChange={(val) =>
+                                      setSessionPresenceFilter(val as typeof sessionPresenceFilter)
+                                    }
+                                    options={[
+                                      { label: `Tất cả (${detail.sessions.length})`, value: 'ALL' },
+                                      {
+                                        label: `🟢 Online (${onlineSessions.length})`,
+                                        value: 'ONLINE',
+                                      },
+                                      {
+                                        label: `⚪ Offline (${offlineActiveSessions.length})`,
+                                        value: 'OFFLINE',
+                                      },
+                                      {
+                                        label: `🔴 Đã thu hồi (${revokedSessions.length})`,
+                                        value: 'REVOKED',
+                                      },
+                                      {
+                                        label: `⏳ Hết hạn (${expiredSessions.length})`,
+                                        value: 'EXPIRED',
+                                      },
+                                    ]}
+                                  />
+
+                                  <Select
+                                    value={selectedDeviceFilter}
+                                    onChange={setSelectedDeviceFilter}
+                                    style={{ minWidth: 200 }}
+                                    options={[
+                                      {
+                                        label: `Tất cả thiết bị (${detail.devices.length})`,
+                                        value: 'ALL',
+                                      },
+                                      ...detail.devices.map((d) => ({
+                                        label: `${d.name || 'Máy POS'} ${d.isOnline ? '🟢 Online' : '⚪ Offline'}`,
+                                        value: d.id,
+                                      })),
+                                      ...(detail.sessions.some((s) => !s.deviceId)
+                                        ? [{ label: '🌐 Trình duyệt Web', value: 'WEB' }]
+                                        : []),
+                                    ]}
+                                  />
+                                </Space>
+
+                                <Input
+                                  placeholder="Tìm theo nhân sự, máy POS, ID..."
+                                  prefix={<SearchOutlined style={{ color: '#94a3b8' }} />}
+                                  value={sessionSearchTerm}
+                                  onChange={(e) => setSessionSearchTerm(e.target.value)}
+                                  allowClear
+                                  style={{ width: isMobile ? '100%' : 260 }}
+                                />
+                              </div>
+
+                              {filtered.length === 0 ? (
+                                <Empty description="Không có phiên đăng nhập nào phù hợp bộ lọc." />
+                              ) : isMobile ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                  {filtered.map((s) => {
+                                    const isLive =
+                                      s.status === 'ACTIVE' && Date.now() < s.expiresAt;
+                                    const isRevoked = s.status === 'REVOKED';
+
+                                    return (
+                                      <div key={s.id} className="platform-mobile-session-card">
+                                        <div
+                                          style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'space-between',
+                                            gap: 8,
+                                            marginBottom: 8,
+                                          }}
+                                        >
+                                          <div
+                                            style={{
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              gap: 8,
+                                              minWidth: 0,
+                                            }}
+                                          >
+                                            <Avatar
+                                              size={30}
+                                              style={{
+                                                background:
+                                                  s.sessionKind === 'OWNER' ? '#f59e0b' : '#3b82f6',
+                                                fontWeight: 700,
+                                                flexShrink: 0,
+                                              }}
+                                            >
+                                              {getInitials(s.userName)}
+                                            </Avatar>
+                                            <div style={{ minWidth: 0 }}>
+                                              <Typography.Text
+                                                strong
+                                                style={{
+                                                  fontSize: 13.5,
+                                                  display: 'block',
+                                                  overflow: 'hidden',
+                                                  textOverflow: 'ellipsis',
+                                                  whiteSpace: 'nowrap',
+                                                }}
+                                              >
+                                                {s.userName}
+                                              </Typography.Text>
+                                              <div style={{ fontSize: 11, color: '#64748b' }}>
+                                                @{s.userUsername}{' '}
+                                                <Tag
+                                                  color={
+                                                    s.sessionKind === 'OWNER' ? 'gold' : 'blue'
+                                                  }
+                                                  style={{ fontSize: 10, margin: 0 }}
+                                                >
+                                                  {s.userRoleName || s.sessionKind}
+                                                </Tag>
+                                              </div>
+                                            </div>
+                                          </div>
+                                          <div>
+                                            {isRevoked ? (
+                                              <Tag
+                                                color="error"
+                                                style={{ fontWeight: 600, margin: 0, fontSize: 11 }}
+                                              >
+                                                🔴 Thu hồi
+                                              </Tag>
+                                            ) : !isLive ? (
+                                              <Tag
+                                                color="default"
+                                                style={{ margin: 0, fontSize: 11 }}
+                                              >
+                                                ⚪ Hết hạn
+                                              </Tag>
+                                            ) : s.isOnline ? (
+                                              <Tag
+                                                color="success"
+                                                style={{ fontWeight: 600, margin: 0, fontSize: 11 }}
+                                              >
+                                                🟢 Online
+                                              </Tag>
+                                            ) : (
+                                              <Tag
+                                                color="default"
+                                                style={{ margin: 0, fontSize: 11 }}
+                                              >
+                                                ⚪ Offline
+                                              </Tag>
+                                            )}
+                                          </div>
+                                        </div>
+
+                                        <div
+                                          style={{
+                                            background: '#f8fafc',
+                                            borderRadius: 8,
+                                            padding: '6px 10px',
+                                            fontSize: 11.5,
+                                            marginBottom: 8,
+                                          }}
+                                        >
+                                          <div
+                                            style={{
+                                              display: 'flex',
+                                              justifyContent: 'space-between',
+                                              marginBottom: 3,
+                                            }}
+                                          >
+                                            <span style={{ color: '#64748b' }}>Thiết bị:</span>
+                                            <span style={{ color: '#334155', fontWeight: 500 }}>
+                                              {s.deviceId
+                                                ? `📱 ${s.deviceName || 'Máy POS'}`
+                                                : '🌐 Trình duyệt Web'}
+                                            </span>
+                                          </div>
+                                          <div
+                                            style={{
+                                              display: 'flex',
+                                              justifyContent: 'space-between',
+                                              marginBottom: 3,
+                                            }}
+                                          >
+                                            <span style={{ color: '#64748b' }}>Đăng nhập:</span>
+                                            <span style={{ color: '#334155' }}>
+                                              {formatDateTime(s.createdAt)}
+                                            </span>
+                                          </div>
+                                          <div
+                                            style={{
+                                              display: 'flex',
+                                              justifyContent: 'space-between',
+                                            }}
+                                          >
+                                            <span style={{ color: '#64748b' }}>
+                                              Hoạt động cuối:
+                                            </span>
+                                            <span
+                                              style={{
+                                                color: s.isOnline ? '#059669' : '#64748b',
+                                                fontWeight: s.isOnline ? 600 : 400,
+                                              }}
+                                            >
+                                              {s.isOnline
+                                                ? '🟢 Đang kết nối'
+                                                : formatRelativeTime(s.lastSeenAt)}
+                                            </span>
+                                          </div>
+                                        </div>
+
+                                        {isLive && (
+                                          <div
+                                            style={{ display: 'flex', justifyContent: 'flex-end' }}
+                                          >
+                                            <Popconfirm
+                                              title="Đăng xuất thiết bị này?"
+                                              description="Phiên làm việc sẽ bị hủy ngay lập tức và buộc nhân sự đăng nhập lại."
+                                              okText="Đăng xuất"
+                                              cancelText="Hủy"
+                                              okButtonProps={{ danger: true, loading: submitting }}
+                                              onConfirm={() => handleRevokeSession(s.id)}
+                                            >
+                                              <Button size="small" danger icon={<StopOutlined />}>
+                                                Thu hồi phiên
+                                              </Button>
+                                            </Popconfirm>
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <Table
+                                  rowKey="id"
+                                  size="small"
+                                  dataSource={filtered}
+                                  pagination={{
+                                    pageSize: 10,
+                                    size: 'small',
+                                    showTotal: (t) => `Tổng ${t} phiên`,
+                                  }}
+                                  scroll={{ x: 820 }}
+                                  columns={[
+                                    {
+                                      title: 'Người dùng',
+                                      key: 'user',
+                                      render: (_, s) => (
+                                        <div
+                                          style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+                                        >
+                                          <Avatar
+                                            size={28}
+                                            style={{
+                                              background:
+                                                s.sessionKind === 'OWNER' ? '#f59e0b' : '#3b82f6',
+                                              fontWeight: 700,
+                                            }}
+                                          >
+                                            {getInitials(s.userName)}
+                                          </Avatar>
+                                          <div>
+                                            <Typography.Text strong>{s.userName}</Typography.Text>
+                                            <div style={{ fontSize: 12, color: '#64748b' }}>
+                                              @{s.userUsername}{' '}
+                                              <Tag
+                                                color={s.sessionKind === 'OWNER' ? 'gold' : 'blue'}
+                                              >
+                                                {s.userRoleName || s.sessionKind}
+                                              </Tag>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      ),
+                                    },
+                                    {
+                                      title: 'Thiết bị POS',
+                                      key: 'device',
+                                      render: (_, s) => (
+                                        <div>
+                                          {s.deviceId ? (
+                                            <div>
+                                              <MobileOutlined
+                                                style={{ marginRight: 6, color: '#2563eb' }}
+                                              />
+                                              <Typography.Text strong>
+                                                {s.deviceName || 'Máy POS'}
+                                              </Typography.Text>
+                                              <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                                                ID: <code>{s.deviceId}</code>
+                                              </div>
+                                              {s.deviceStatus === 'REVOKED' && (
+                                                <Tag
+                                                  color="error"
+                                                  style={{ fontSize: 10, marginTop: 2 }}
+                                                >
+                                                  Máy đã thu hồi
+                                                </Tag>
+                                              )}
+                                            </div>
+                                          ) : (
+                                            <div>
+                                              <GlobalOutlined
+                                                style={{ marginRight: 6, color: '#0ea5e9' }}
+                                              />
+                                              <Typography.Text>
+                                                {s.deviceName || 'Trình duyệt trực tiếp'}
+                                              </Typography.Text>
+                                              <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                                                Web Session
+                                              </div>
+                                            </div>
+                                          )}
+                                        </div>
+                                      ),
+                                    },
+                                    {
+                                      title: 'Trạng thái kết nối',
+                                      key: 'presence',
+                                      render: (_, s) => {
+                                        const isLive =
+                                          s.status === 'ACTIVE' && Date.now() < s.expiresAt;
+                                        const isRevoked = s.status === 'REVOKED';
+
+                                        if (isRevoked) {
+                                          return (
+                                            <div>
+                                              <Tag color="error" style={{ fontWeight: 600 }}>
+                                                🔴 Đã thu hồi
+                                              </Tag>
+                                              {s.revokedAt ? (
+                                                <div
+                                                  style={{
+                                                    fontSize: 11,
+                                                    color: '#ef4444',
+                                                    marginTop: 2,
+                                                  }}
+                                                >
+                                                  {formatDateTime(s.revokedAt)}
+                                                </div>
+                                              ) : null}
+                                            </div>
+                                          );
+                                        }
+
+                                        if (!isLive) {
+                                          return (
+                                            <div>
+                                              <Tag color="default">⚪ Hết hạn</Tag>
+                                              <div
+                                                style={{
+                                                  fontSize: 11,
+                                                  color: '#94a3b8',
+                                                  marginTop: 2,
+                                                }}
+                                              >
+                                                {formatDateTime(s.expiresAt)}
+                                              </div>
+                                            </div>
+                                          );
+                                        }
+
+                                        if (s.isOnline) {
+                                          return (
+                                            <div>
+                                              <Tag color="success" style={{ fontWeight: 600 }}>
+                                                🟢 Đang trực tuyến
+                                              </Tag>
+                                              <div
+                                                style={{
+                                                  fontSize: 11,
+                                                  color: '#059669',
+                                                  marginTop: 2,
+                                                }}
+                                              >
+                                                Có tín hiệu trong 5p
+                                              </div>
+                                            </div>
+                                          );
+                                        }
+
+                                        return (
+                                          <div>
+                                            <Tag color="default">⚪ Ngoại tuyến</Tag>
+                                            <div
+                                              style={{
+                                                fontSize: 11,
+                                                color: '#64748b',
+                                                marginTop: 2,
+                                              }}
+                                            >
+                                              Hết hạn: {formatDateTime(s.expiresAt)}
+                                            </div>
+                                          </div>
+                                        );
+                                      },
+                                    },
+                                    {
+                                      title: 'Thời gian đăng nhập',
+                                      dataIndex: 'createdAt',
+                                      key: 'createdAt',
+                                      render: (val: number) => (
+                                        <div>
+                                          <div>{formatDateTimeFull(val)}</div>
+                                          <div style={{ fontSize: 11, color: '#64748b' }}>
+                                            {formatRelativeTime(val)}
+                                          </div>
+                                        </div>
+                                      ),
+                                    },
+                                    {
+                                      title: 'Hoạt động gần nhất',
+                                      dataIndex: 'lastSeenAt',
+                                      key: 'lastSeenAt',
+                                      render: (val: number, s) => (
+                                        <div>
+                                          <div>{formatDateTimeFull(val)}</div>
+                                          <div
+                                            style={{
+                                              fontSize: 11,
+                                              color: s.isOnline ? '#059669' : '#64748b',
+                                              fontWeight: s.isOnline ? 600 : 400,
+                                            }}
+                                          >
+                                            {s.isOnline
+                                              ? '🟢 Đang kết nối'
+                                              : formatRelativeTime(val)}
+                                          </div>
+                                        </div>
+                                      ),
+                                    },
+                                    {
+                                      title: 'Thao tác',
+                                      key: 'actions',
+                                      align: 'right',
+                                      render: (_, s) => {
+                                        const isLive =
+                                          s.status === 'ACTIVE' && Date.now() < s.expiresAt;
+                                        return isLive ? (
+                                          <Popconfirm
+                                            title="Đăng xuất thiết bị này?"
+                                            description="Phiên làm việc sẽ bị hủy ngay lập tức và buộc nhân sự đăng nhập lại."
+                                            okText="Đăng xuất"
+                                            cancelText="Hủy"
+                                            okButtonProps={{ danger: true, loading: submitting }}
+                                            onConfirm={() => handleRevokeSession(s.id)}
+                                          >
+                                            <Button size="small" danger icon={<StopOutlined />}>
+                                              Thu hồi
+                                            </Button>
+                                          </Popconfirm>
+                                        ) : (
+                                          <span style={{ color: '#cbd5e1' }}>—</span>
+                                        );
+                                      },
+                                    },
+                                  ]}
+                                />
+                              )}
+                            </div>
                           )}
                         </div>
                       );
@@ -2343,11 +4697,54 @@ export function SuperAdminPage() {
                     key: 'stats',
                     label: (
                       <span>
-                        <AppstoreOutlined /> Dữ liệu & Thống kê
+                        <AppstoreOutlined /> {isMobile ? 'Báo cáo' : 'Dữ liệu & Thống kê'}
                       </span>
                     ),
                     children: (
                       <div className="platform-store-analytics">
+                        {/* Header toolbar with Trend Days selector and Last Activity */}
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            flexWrap: 'wrap',
+                            gap: 12,
+                            padding: '4px 0',
+                          }}
+                        >
+                          <div>
+                            <Typography.Title level={5} style={{ margin: 0 }}>
+                              Thống kê kinh doanh & Phân tích vận hành
+                            </Typography.Title>
+                            <div style={{ fontSize: 12.5, color: '#64748b', marginTop: 2 }}>
+                              {detail.stats.lastActivityAt ? (
+                                <span>
+                                  Hoạt động gần nhất:{' '}
+                                  <strong>{formatDateTimeFull(detail.stats.lastActivityAt)}</strong>{' '}
+                                  ({formatRelativeTime(detail.stats.lastActivityAt)})
+                                </span>
+                              ) : (
+                                'Chưa phát sinh hoạt động bán hàng'
+                              )}
+                            </div>
+                          </div>
+
+                          <Space align="center">
+                            <span style={{ fontSize: 13, color: '#64748b' }}>Chu kỳ xu hướng:</span>
+                            <Segmented
+                              value={storeTrendDays}
+                              onChange={(val) => setStoreTrendDays(val as number)}
+                              options={[
+                                { label: '7 ngày', value: 7 },
+                                { label: '14 ngày', value: 14 },
+                                { label: '30 ngày', value: 30 },
+                              ]}
+                            />
+                          </Space>
+                        </div>
+
+                        {/* Top KPI Cards: Today & High-level Metrics */}
                         <div className="platform-store-kpi-grid">
                           <Card className="platform-store-kpi platform-store-kpi--primary">
                             <Statistic
@@ -2360,40 +4757,54 @@ export function SuperAdminPage() {
                               {formatCompactVnd(detail.analytics.summary.last30DaysRevenue)}
                             </span>
                           </Card>
+
                           <Card className="platform-store-kpi">
                             <Statistic
-                              title="Doanh thu 7 ngày"
-                              value={formatCompactVnd(detail.analytics.summary.last7DaysRevenue)}
-                              prefix={<RiseOutlined />}
+                              title="Đơn hàng hôm nay"
+                              value={detail.stats.todayOrders ?? 0}
+                              prefix={<ShoppingOutlined />}
+                              suffix={
+                                <span style={{ fontSize: 14, fontWeight: 400, color: '#64748b' }}>
+                                  đơn
+                                </span>
+                              }
                             />
-                            <span>Tích lũy: {formatCompactVnd(detail.stats.totalRevenue)}</span>
+                            <span>Đã xuất {detail.stats.todayInvoices ?? 0} hóa đơn hôm nay</span>
                           </Card>
+
                           <Card className="platform-store-kpi">
                             <Statistic
-                              title="Giá trị hóa đơn TB"
-                              value={formatCompactVnd(detail.analytics.summary.avgInvoiceValue)}
+                              title="Giá trị TB / đơn hôm nay"
+                              value={formatCompactVnd(detail.stats.todayAvgOrderValue ?? 0)}
                               prefix={<CreditCardOutlined />}
                             />
-                            <span>{detail.stats.totalInvoices} hóa đơn đã xuất</span>
+                            <span>
+                              TB toàn thời gian:{' '}
+                              {formatCompactVnd(detail.analytics.summary.avgInvoiceValue)}
+                            </span>
                           </Card>
+
                           <Card className="platform-store-kpi">
                             <Statistic
-                              title="Tỷ lệ hoàn tất đơn"
-                              value={detail.analytics.summary.completionRate}
-                              suffix="%"
-                              prefix={<TrophyOutlined />}
+                              title="Bàn & Đơn đang mở"
+                              value={`${detail.stats.openTables}/${detail.stats.totalTables}`}
+                              prefix={<ShopOutlined />}
+                              suffix={
+                                <span style={{ fontSize: 14, fontWeight: 400, color: '#64748b' }}>
+                                  bàn
+                                </span>
+                              }
                             />
-                            <span>
-                              {detail.stats.paidOrders}/{detail.stats.totalOrders} đơn đã thanh toán
-                            </span>
+                            <span>{detail.stats.openOrders} đơn đang phục vụ chưa thanh toán</span>
                           </Card>
                         </div>
 
+                        {/* Trend Chart Card */}
                         <Card className="platform-chart-card">
                           <div className="platform-chart-header">
                             <div className="platform-chart-title">
                               <LineChartOutlined style={{ color: '#2563eb' }} />
-                              Xu hướng 14 ngày gần nhất
+                              Xu hướng kinh doanh ({storeTrendDays} ngày qua)
                             </div>
                             <Segmented
                               size="small"
@@ -2411,6 +4822,7 @@ export function SuperAdminPage() {
                           />
                         </Card>
 
+                        {/* Two-Column Charts: Payment methods & Hourly distribution */}
                         <div className="platform-two-col-grid">
                           <Card
                             className="platform-chart-card"
@@ -2426,34 +4838,143 @@ export function SuperAdminPage() {
                           </Card>
                         </div>
 
+                        {/* Two-Column Deep-dive Operations & Customers */}
                         <div className="platform-two-col-grid platform-store-data-grid">
-                          <Card className="platform-chart-card" title="Mặt hàng bán chạy">
-                            <TopProductsWidget products={detail.analytics.topProducts} />
-                          </Card>
                           <Card
                             className="platform-chart-card"
-                            title="Quy mô & trạng thái vận hành"
+                            title="Phân tích đơn hàng & Chống thất thoát"
                           >
                             <div className="platform-store-operation-grid">
-                              <Statistic title="Khu vực" value={detail.stats.totalAreas} />
                               <Statistic
-                                title="Bàn đang phục vụ"
-                                value={detail.stats.openTables}
-                                suffix={`/ ${detail.stats.totalTables}`}
-                              />
-                              <Statistic title="Mặt hàng menu" value={detail.stats.totalProducts} />
-                              <Statistic title="Đơn đang mở" value={detail.stats.openOrders} />
-                              <Statistic
-                                title="Nhân sự hoạt động"
-                                value={detail.analytics.summary.activeMembers}
+                                title="Đơn tại bàn (Dine-in)"
+                                value={detail.stats.dineInOrders ?? 0}
+                                prefix={<ShopOutlined />}
+                                suffix={
+                                  <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>
+                                    đơn
+                                  </span>
+                                }
                               />
                               <Statistic
-                                title="Thiết bị hoạt động"
-                                value={detail.analytics.summary.activeDevices}
+                                title="Đơn mang về (Takeaway)"
+                                value={detail.stats.takeawayOrders ?? 0}
+                                prefix={<ShoppingOutlined />}
+                                suffix={
+                                  <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>
+                                    đơn
+                                  </span>
+                                }
+                              />
+                              <Statistic
+                                title="Tỷ lệ hoàn tất"
+                                value={detail.analytics.summary.completionRate}
+                                suffix="%"
+                                prefix={<TrophyOutlined />}
+                                valueStyle={{ color: '#10b981' }}
+                              />
+                              <Statistic
+                                title="Đơn hủy / Thất thoát"
+                                value={detail.stats.cancelledOrders ?? 0}
+                                suffix={
+                                  <span
+                                    style={{
+                                      fontSize: 13,
+                                      fontWeight: 600,
+                                      color:
+                                        (detail.stats.cancelledOrders ?? 0) > 0
+                                          ? '#ef4444'
+                                          : '#64748b',
+                                    }}
+                                  >
+                                    ({detail.stats.cancelRate ?? 0}%)
+                                  </span>
+                                }
+                                prefix={<WarningOutlined />}
+                                valueStyle={{
+                                  color:
+                                    (detail.stats.cancelledOrders ?? 0) > 0 ? '#ef4444' : undefined,
+                                }}
+                              />
+                              <Statistic
+                                title="Tổng giảm giá / KM"
+                                value={formatCompactVnd(detail.stats.totalDiscountAmount ?? 0)}
+                                prefix={<DollarOutlined />}
+                              />
+                              <Statistic
+                                title="Tổng doanh thu tích lũy"
+                                value={formatCompactVnd(detail.stats.totalRevenue)}
+                                prefix={<RiseOutlined />}
+                              />
+                            </div>
+                          </Card>
+
+                          <Card
+                            className="platform-chart-card"
+                            title="Khách hàng, Thực đơn & Quy mô"
+                          >
+                            <div className="platform-store-operation-grid">
+                              <Statistic
+                                title="Tổng khách hàng lưu"
+                                value={detail.stats.totalCustomers ?? 0}
+                                prefix={<UserOutlined />}
+                                suffix={
+                                  <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>
+                                    khách
+                                  </span>
+                                }
+                              />
+                              <Statistic
+                                title="Dư nợ khách hàng"
+                                value={formatCompactVnd(detail.stats.totalDebtBalance ?? 0)}
+                                valueStyle={{
+                                  color:
+                                    (detail.stats.totalDebtBalance ?? 0) > 0
+                                      ? '#d97706'
+                                      : undefined,
+                                }}
+                              />
+                              <Statistic
+                                title="Danh mục món"
+                                value={detail.stats.totalCategories ?? 0}
+                                prefix={<AppstoreOutlined />}
+                                suffix={
+                                  <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>
+                                    nhóm
+                                  </span>
+                                }
+                              />
+                              <Statistic
+                                title="Mặt hàng menu"
+                                value={
+                                  detail.stats.activeProductsCount ?? detail.stats.totalProducts
+                                }
+                                suffix={`/ ${detail.stats.totalProducts} món`}
+                              />
+                              <Statistic
+                                title="Thiết bị POS trực tuyến"
+                                value={
+                                  detail.stats.onlineDevicesCount ??
+                                  detail.devices.filter((d) => d.isOnline).length
+                                }
+                                suffix={`/ ${detail.stats.totalDevices} máy`}
+                                valueStyle={{ color: '#10b981' }}
+                              />
+                              <Statistic
+                                title="Khu vực & Bàn"
+                                value={detail.stats.totalAreas}
+                                suffix={`khu / ${detail.stats.totalTables} bàn`}
                               />
                             </div>
                           </Card>
                         </div>
+
+                        {/* Top Products */}
+                        <Card
+                          className="platform-chart-card"
+                          title="Mặt hàng bán chạy nhất (Top Products)"
+                        >
+                          <TopProductsWidget products={detail.analytics.topProducts} />
+                        </Card>
                       </div>
                     ),
                   },
@@ -2512,19 +5033,22 @@ export function SuperAdminPage() {
               const userSessions = detail.sessions.filter(
                 (s) => s.userId === selectedMemberForHistory.userId,
               );
-              const activeSessions = userSessions.filter(
-                (s) => s.status === 'ACTIVE' && Date.now() < s.expiresAt,
+              const onlineSessions = userSessions.filter((s) => s.isOnline);
+              const offlineSessions = userSessions.filter(
+                (s) => s.status === 'ACTIVE' && Date.now() < s.expiresAt && !s.isOnline,
               );
               const inactiveSessions = userSessions.filter(
                 (s) => s.status !== 'ACTIVE' || Date.now() >= s.expiresAt,
               );
 
               const displayedSessions =
-                memberHistoryFilter === 'ACTIVE'
-                  ? activeSessions
-                  : memberHistoryFilter === 'INACTIVE'
-                    ? inactiveSessions
-                    : userSessions;
+                memberHistoryFilter === 'ONLINE'
+                  ? onlineSessions
+                  : memberHistoryFilter === 'OFFLINE'
+                    ? offlineSessions
+                    : memberHistoryFilter === 'INACTIVE'
+                      ? inactiveSessions
+                      : userSessions;
 
               return (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 12 }}>
@@ -2541,9 +5065,11 @@ export function SuperAdminPage() {
                     <Col xs={12} sm={8}>
                       <Card size="small" style={{ background: '#f0fdf4', borderRadius: 8 }}>
                         <Statistic
-                          title="Thiết bị đang Online"
-                          value={activeSessions.length}
-                          prefix={<Badge status="processing" color="#10b981" />}
+                          title="Đang trực tuyến (Online)"
+                          value={onlineSessions.length}
+                          prefix={
+                            <span className="platform-pulse-dot" style={{ marginRight: 6 }} />
+                          }
                           valueStyle={{ color: '#10b981', fontWeight: 700 }}
                         />
                       </Card>
@@ -2590,7 +5116,8 @@ export function SuperAdminPage() {
                       onChange={(val) => setMemberHistoryFilter(val as typeof memberHistoryFilter)}
                       options={[
                         { label: `Tất cả (${userSessions.length})`, value: 'ALL' },
-                        { label: `Đang Online (${activeSessions.length})`, value: 'ACTIVE' },
+                        { label: `🟢 Online (${onlineSessions.length})`, value: 'ONLINE' },
+                        { label: `⚪ Offline (${offlineSessions.length})`, value: 'OFFLINE' },
                         {
                           label: `Đã kết thúc / Hết hạn (${inactiveSessions.length})`,
                           value: 'INACTIVE',
@@ -2607,6 +5134,142 @@ export function SuperAdminPage() {
                       description="Không có phiên đăng nhập nào trong bộ lọc này."
                       style={{ margin: '24px 0' }}
                     />
+                  ) : isMobile ? (
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 10,
+                        maxHeight: '55vh',
+                        overflowY: 'auto',
+                        paddingRight: 4,
+                      }}
+                    >
+                      {displayedSessions.map((s) => {
+                        const isLive = s.status === 'ACTIVE' && Date.now() < s.expiresAt;
+                        const isRevoked = s.status === 'REVOKED';
+
+                        return (
+                          <div key={s.id} className="platform-mobile-session-card">
+                            <div
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: 8,
+                                marginBottom: 6,
+                              }}
+                            >
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 6,
+                                  minWidth: 0,
+                                }}
+                              >
+                                {s.deviceId ? (
+                                  <DesktopOutlined style={{ color: '#2563eb', fontSize: 16 }} />
+                                ) : (
+                                  <GlobalOutlined style={{ color: '#0ea5e9', fontSize: 16 }} />
+                                )}
+                                <Typography.Text
+                                  strong
+                                  style={{
+                                    fontSize: 13,
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  {s.deviceName || (s.deviceId ? 'Máy POS' : 'Trình duyệt Web')}
+                                </Typography.Text>
+                              </div>
+                              <div>
+                                {isRevoked ? (
+                                  <Tag color="error" style={{ margin: 0, fontSize: 11 }}>
+                                    🔴 Thu hồi
+                                  </Tag>
+                                ) : !isLive ? (
+                                  <Tag color="default" style={{ margin: 0, fontSize: 11 }}>
+                                    ⚪ Hết hạn
+                                  </Tag>
+                                ) : s.isOnline ? (
+                                  <Tag
+                                    color="success"
+                                    style={{ margin: 0, fontSize: 11, fontWeight: 600 }}
+                                  >
+                                    🟢 Online
+                                  </Tag>
+                                ) : (
+                                  <Tag color="default" style={{ margin: 0, fontSize: 11 }}>
+                                    ⚪ Offline
+                                  </Tag>
+                                )}
+                              </div>
+                            </div>
+
+                            <div
+                              style={{
+                                background: '#f8fafc',
+                                borderRadius: 8,
+                                padding: '6px 10px',
+                                fontSize: 11.5,
+                                marginBottom: 8,
+                              }}
+                            >
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  marginBottom: 3,
+                                }}
+                              >
+                                <span style={{ color: '#64748b' }}>Đăng nhập:</span>
+                                <span style={{ color: '#334155' }}>
+                                  {formatDateTime(s.createdAt)}
+                                </span>
+                              </div>
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                }}
+                              >
+                                <span style={{ color: '#64748b' }}>Hoạt động cuối:</span>
+                                <span
+                                  style={{
+                                    color: s.isOnline ? '#059669' : '#64748b',
+                                    fontWeight: s.isOnline ? 600 : 400,
+                                  }}
+                                >
+                                  {s.isOnline
+                                    ? '🟢 Đang kết nối'
+                                    : formatRelativeTime(s.lastSeenAt)}
+                                </span>
+                              </div>
+                            </div>
+
+                            {isLive && (
+                              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                                <Popconfirm
+                                  title="Đăng xuất thiết bị này từ xa?"
+                                  description="Phiên làm việc trên thiết bị sẽ bị hủy ngay lập tức và buộc người dùng đăng nhập lại."
+                                  okText="Đăng xuất"
+                                  cancelText="Hủy"
+                                  okButtonProps={{ danger: true, loading: submitting }}
+                                  onConfirm={() => handleRevokeSession(s.id)}
+                                >
+                                  <Button size="small" danger icon={<StopOutlined />}>
+                                    Thu hồi phiên
+                                  </Button>
+                                </Popconfirm>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   ) : (
                     <Table
                       rowKey="id"
@@ -2670,11 +5333,17 @@ export function SuperAdminPage() {
                           title: 'Hoạt động lần cuối',
                           dataIndex: 'lastSeenAt',
                           key: 'lastSeenAt',
-                          render: (val: number) => (
+                          render: (val: number, s) => (
                             <div>
                               <div>{formatDateTimeFull(val)}</div>
-                              <div style={{ fontSize: 11, color: '#10b981' }}>
-                                {formatRelativeTime(val)}
+                              <div
+                                style={{
+                                  fontSize: 11,
+                                  color: s.isOnline ? '#059669' : '#64748b',
+                                  fontWeight: s.isOnline ? 600 : 400,
+                                }}
+                              >
+                                {s.isOnline ? '🟢 Đang kết nối' : formatRelativeTime(val)}
                               </div>
                             </div>
                           ),
@@ -2685,18 +5354,7 @@ export function SuperAdminPage() {
                           render: (_, s) => {
                             const isLive = s.status === 'ACTIVE' && Date.now() < s.expiresAt;
                             const isRevoked = s.status === 'REVOKED';
-                            if (isLive) {
-                              return (
-                                <div>
-                                  <Tag color="success" style={{ fontWeight: 600 }}>
-                                    🟢 Đang hoạt động
-                                  </Tag>
-                                  <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
-                                    Hết hạn: {formatDateTime(s.expiresAt)}
-                                  </div>
-                                </div>
-                              );
-                            }
+
                             if (isRevoked) {
                               return (
                                 <div>
@@ -2711,11 +5369,36 @@ export function SuperAdminPage() {
                                 </div>
                               );
                             }
+
+                            if (!isLive) {
+                              return (
+                                <div>
+                                  <Tag color="default">⚪ Hết hạn</Tag>
+                                  <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
+                                    {formatDateTime(s.expiresAt)}
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            if (s.isOnline) {
+                              return (
+                                <div>
+                                  <Tag color="success" style={{ fontWeight: 600 }}>
+                                    🟢 Đang trực tuyến
+                                  </Tag>
+                                  <div style={{ fontSize: 11, color: '#059669', marginTop: 2 }}>
+                                    Có tín hiệu trong 5p
+                                  </div>
+                                </div>
+                              );
+                            }
+
                             return (
                               <div>
-                                <Tag color="default">⚪ Hết hạn</Tag>
-                                <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
-                                  {formatDateTime(s.expiresAt)}
+                                <Tag color="default">⚪ Ngoại tuyến</Tag>
+                                <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                                  Hết hạn: {formatDateTime(s.expiresAt)}
                                 </div>
                               </div>
                             );

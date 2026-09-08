@@ -27,6 +27,14 @@ export const SOUND_FILES: Record<Exclude<PosSoundType, 'NOTIFICATION_CHIME'>, st
   GUEST_QR_OPEN_REQUESTED: '/sounds/guest_qr_open_requested.mp3',
 };
 
+export interface PlaySoundOptions {
+  dedupeKey?: string;
+  volume?: number;
+  force?: boolean;
+  immediate?: boolean;
+  allowBackground?: boolean;
+}
+
 interface QueueItem {
   type: PosSoundType;
   volume: number | undefined;
@@ -279,14 +287,7 @@ export class SoundManager {
     }
   }
 
-  play(
-    type: PosSoundType,
-    options?: {
-      dedupeKey?: string;
-      volume?: number;
-      force?: boolean;
-    },
-  ): void {
+  play(type: PosSoundType, options?: PlaySoundOptions): void {
     if (typeof window === 'undefined' || (this.isMuted && !options?.force)) return;
 
     // Mark the event before checking foreground/audio state. A background event
@@ -297,6 +298,17 @@ export class SoundManager {
       this.seenKeys.set(options.dedupeKey, Date.now());
     }
 
+    const isPayment = type === 'PAYMENT_SUCCESS';
+    const immediate = options?.immediate ?? isPayment;
+    const allowBackground = options?.allowBackground ?? isPayment;
+    const targetVolume = options?.volume ?? (isPayment ? 1.0 : undefined);
+
+    if (immediate) {
+      if (!this.isForeground() && !allowBackground) return;
+      void this.executeImmediatePlay(type, targetVolume);
+      return;
+    }
+
     if (!this.canPlayNow()) {
       this.dropQueuedSounds();
       if (this.audioContext?.state !== 'running') this.armGestureUnlock();
@@ -304,8 +316,153 @@ export class SoundManager {
     }
 
     if (this.playQueue.length >= this.MAX_QUEUE_SIZE) this.playQueue.shift();
-    this.playQueue.push({ type, volume: options?.volume, enqueuedAt: Date.now() });
+    this.playQueue.push({ type, volume: targetVolume, enqueuedAt: Date.now() });
     void this.processQueue();
+  }
+
+  private async executeImmediatePlay(type: PosSoundType, customVolume?: number): Promise<boolean> {
+    const context = this.getAudioContext();
+    if (context && context.state === 'suspended') {
+      try {
+        await context.resume();
+      } catch {
+        // Resume may fail if strictly blocked by browser policy without prior gesture
+      }
+    }
+
+    if (type === 'PAYMENT_SUCCESS') {
+      return this.executePaymentSuccessPlay(customVolume);
+    }
+
+    const volume = this.clampVolume(customVolume);
+    if (volume === 0) return false;
+
+    // Try 1: Decoded AudioBuffer in Web Audio
+    if (context && context.state === 'running') {
+      try {
+        const buffer =
+          this.audioBuffers.get(type) ??
+          (type !== 'NOTIFICATION_CHIME'
+            ? await this.preload(type as Exclude<PosSoundType, 'NOTIFICATION_CHIME'>)
+            : null);
+        if (buffer) {
+          const source = context.createBufferSource();
+          const gain = context.createGain();
+          source.buffer = buffer;
+          gain.gain.setValueAtTime(volume, context.currentTime);
+          source.connect(gain);
+          gain.connect(context.destination);
+          source.start(0);
+          this.isUnlocked = true;
+          this.lastPlayTime = Date.now();
+          return true;
+        }
+      } catch {
+        // Fall back below
+      }
+    }
+
+    // Try 2: Synthesized chime
+    if (type === 'NOTIFICATION_CHIME' && context && context.state === 'running') {
+      if (this.playSynthesizedChime(volume, Date.now())) {
+        this.lastPlayTime = Date.now();
+        return true;
+      }
+    }
+
+    // Try 3: HTML5 Audio fallback for audio files
+    const soundFile = SOUND_FILES[type as keyof typeof SOUND_FILES];
+    if (typeof Audio !== 'undefined' && soundFile) {
+      try {
+        const audio = new Audio(soundFile);
+        audio.volume = Math.min(1, volume);
+        const playPromise = audio.play();
+        if (playPromise !== undefined) {
+          playPromise
+            .then(() => {
+              this.isUnlocked = true;
+            })
+            .catch(() => {});
+        }
+        this.lastPlayTime = Date.now();
+        return true;
+      } catch {
+        // Fallback below
+      }
+    }
+
+    const item: QueueItem = {
+      type,
+      volume: customVolume,
+      enqueuedAt: Date.now(),
+    };
+    return this.executePlay(item);
+  }
+
+  private async executePaymentSuccessPlay(customVolume = 1.0): Promise<boolean> {
+    const volume = this.clampVolume(customVolume);
+    if (volume === 0) return false;
+
+    const context = this.getAudioContext();
+    if (context && context.state === 'suspended') {
+      try {
+        await context.resume();
+      } catch {
+        // Fallback attempted below
+      }
+    }
+
+    // Try 1: Decoded AudioBuffer in Web Audio (instant playback)
+    if (context && context.state === 'running') {
+      try {
+        const buffer =
+          this.audioBuffers.get('PAYMENT_SUCCESS') ?? (await this.preload('PAYMENT_SUCCESS'));
+        if (buffer) {
+          const source = context.createBufferSource();
+          const gain = context.createGain();
+          source.buffer = buffer;
+          gain.gain.setValueAtTime(volume, context.currentTime);
+          source.connect(gain);
+          gain.connect(context.destination);
+          source.start(0);
+          this.isUnlocked = true;
+          this.lastPlayTime = Date.now();
+          return true;
+        }
+      } catch {
+        // Fall back to synthesized payment fanfare below
+      }
+    }
+
+    // Try 2: Instant Procedural Web Audio Synthesis (0ms network-free fallback)
+    if (context && context.state === 'running') {
+      if (this.playSynthesizedPaymentFanfare(volume)) {
+        this.lastPlayTime = Date.now();
+        return true;
+      }
+    }
+
+    // Try 3: HTML5 Audio fallback (e.g. if Web Audio context is not allowed or closed)
+    if (typeof Audio !== 'undefined') {
+      try {
+        const audio = new Audio(SOUND_FILES.PAYMENT_SUCCESS);
+        audio.volume = Math.min(1, volume);
+        const playPromise = audio.play();
+        if (playPromise !== undefined) {
+          playPromise
+            .then(() => {
+              this.isUnlocked = true;
+            })
+            .catch(() => {});
+        }
+        this.lastPlayTime = Date.now();
+        return true;
+      } catch {
+        // Ignore fallback error
+      }
+    }
+
+    return false;
   }
 
   private canPlayNow(enqueuedAt?: number): boolean {
@@ -546,12 +703,18 @@ export class SoundManager {
   }
 
   /**
-   * Payment success fanfare: Multi-tone harmonious major chord arpeggio (C5 -> E5 -> G5 -> C6).
-   * Rewarding, gentle, and pleasantly soft.
-   * Only triggers on mobile phones.
+   * Signature Pro POS payment success fanfare:
+   * Layered metallic coin clink ('cha-ching') + victorious ascending bell chime (G5 -> C6 -> E6 -> G6 -> C7).
+   * Punchy, catchy, unmistakable payment confirmation for counters and push notifications.
    */
-  playPaymentSuccess(customVolume = 0.20): boolean {
-    if (typeof window === 'undefined' || this.isMuted || !isMobilePhoneDevice()) return false;
+  playPaymentSuccess(customVolume = 1.0): boolean {
+    if (typeof window === 'undefined' || this.isMuted) return false;
+    void this.executePaymentSuccessPlay(customVolume);
+    return true;
+  }
+
+  playSynthesizedPaymentFanfare(customVolume = 1.0): boolean {
+    if (typeof window === 'undefined' || this.isMuted) return false;
     const context = this.getAudioContext();
     if (!context || context.state === 'closed') return false;
     if (context.state === 'suspended') {
@@ -563,12 +726,34 @@ export class SoundManager {
       const volume = this.clampVolume(customVolume);
       if (volume === 0) return false;
 
-      // Gentle arpeggio notes: C5, E5, G5, C6 with soft volume
+      // 1. Double Coin Clink (metallic inharmonic cluster: 3350Hz & 3820Hz)
+      const playCoinClink = (startTime: number, baseFreq: number, clinkVol: number) => {
+        const freqs = [baseFreq, baseFreq * Math.SQRT2, baseFreq * 2.312];
+        for (const f of freqs) {
+          const osc = context.createOscillator();
+          const gain = context.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(f, startTime);
+          gain.gain.setValueAtTime(0.001, startTime);
+          gain.gain.linearRampToValueAtTime(clinkVol * volume, startTime + 0.001);
+          gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.07);
+          osc.connect(gain);
+          gain.connect(context.destination);
+          osc.start(startTime);
+          osc.stop(startTime + 0.07);
+        }
+      };
+
+      playCoinClink(now, 3350, 0.25);
+      playCoinClink(now + 0.038, 3820, 0.28);
+
+      // 2. Ascending Triumphant Fanfare (G5 -> C6 -> E6 -> G6 -> C7)
       const notes = [
-        { freq: 523.25, time: now, dur: 0.1, vol: 0.08 },
-        { freq: 659.25, time: now + 0.05, dur: 0.12, vol: 0.1 },
-        { freq: 783.99, time: now + 0.1, dur: 0.14, vol: 0.12 },
-        { freq: 1046.5, time: now + 0.15, dur: 0.22, vol: 0.15 },
+        { freq: 783.99, time: now + 0.07, dur: 0.35, vol: 0.35 },
+        { freq: 1046.5, time: now + 0.145, dur: 0.4, vol: 0.42 },
+        { freq: 1318.51, time: now + 0.22, dur: 0.48, vol: 0.5 },
+        { freq: 1567.98, time: now + 0.295, dur: 0.55, vol: 0.6 },
+        { freq: 2093.0, time: now + 0.37, dur: 0.85, vol: 0.75 }, // C7 peak
       ];
 
       for (const n of notes) {
@@ -576,30 +761,28 @@ export class SoundManager {
         const gain = context.createGain();
         osc.type = 'sine';
         osc.frequency.setValueAtTime(n.freq, n.time);
-
         gain.gain.setValueAtTime(0.001, n.time);
         gain.gain.linearRampToValueAtTime(n.vol * volume, n.time + 0.003);
         gain.gain.exponentialRampToValueAtTime(0.001, n.time + n.dur);
-
         osc.connect(gain);
         gain.connect(context.destination);
         osc.start(n.time);
         osc.stop(n.time + n.dur);
       }
 
-      // Very subtle, gentle sparkle on the top note
-      const topNoteTime = now + 0.15;
-      const oscTop = context.createOscillator();
-      const gainTop = context.createGain();
-      oscTop.type = 'triangle';
-      oscTop.frequency.setValueAtTime(2093, topNoteTime);
-      gainTop.gain.setValueAtTime(0.001, topNoteTime);
-      gainTop.gain.linearRampToValueAtTime(0.03 * volume, topNoteTime + 0.002);
-      gainTop.gain.exponentialRampToValueAtTime(0.001, topNoteTime + 0.12);
-      oscTop.connect(gainTop);
-      gainTop.connect(context.destination);
-      oscTop.start(topNoteTime);
-      oscTop.stop(topNoteTime + 0.12);
+      // Sparkle chime overtone on C7 (4186 Hz)
+      const topNoteTime = now + 0.37;
+      const oscSparkle = context.createOscillator();
+      const gainSparkle = context.createGain();
+      oscSparkle.type = 'triangle';
+      oscSparkle.frequency.setValueAtTime(4186.01, topNoteTime);
+      gainSparkle.gain.setValueAtTime(0.001, topNoteTime);
+      gainSparkle.gain.linearRampToValueAtTime(0.18 * volume, topNoteTime + 0.002);
+      gainSparkle.gain.exponentialRampToValueAtTime(0.001, topNoteTime + 0.5);
+      oscSparkle.connect(gainSparkle);
+      gainSparkle.connect(context.destination);
+      oscSparkle.start(topNoteTime);
+      oscSparkle.stop(topNoteTime + 0.5);
 
       this.isUnlocked = true;
       return true;
@@ -632,14 +815,7 @@ const singletonHost = globalThis as typeof globalThis & {
 export const posSound = singletonHost.proPosSoundManager ?? new SoundManager();
 singletonHost.proPosSoundManager = posSound;
 
-export function playPosSound(
-  type: PosSoundType,
-  options?: {
-    dedupeKey?: string;
-    volume?: number;
-    force?: boolean;
-  },
-): void {
+export function playPosSound(type: PosSoundType, options?: PlaySoundOptions): void {
   posSound.play(type, options);
 }
 
@@ -651,10 +827,137 @@ export function playCancelOrderSound(volume?: number): void {
   posSound.playCancelOrder(volume);
 }
 
-export function playPaymentSuccessSound(volume?: number): void {
-  posSound.playPaymentSuccess(volume);
+export function playPaymentSuccessSound(optionsOrVolume?: number | PlaySoundOptions): void {
+  const options =
+    typeof optionsOrVolume === 'number' ? { volume: optionsOrVolume } : optionsOrVolume;
+  const playOpts: PlaySoundOptions = {
+    volume: options?.volume ?? 1.0,
+    immediate: true,
+    allowBackground: options?.allowBackground ?? true,
+  };
+  if (options?.dedupeKey !== undefined) {
+    playOpts.dedupeKey = options.dedupeKey;
+  }
+  if (options?.force !== undefined) {
+    playOpts.force = options.force;
+  }
+  posSound.play('PAYMENT_SUCCESS', playOpts);
 }
 
 export function warmPosSounds(types: Array<Exclude<PosSoundType, 'NOTIFICATION_CHIME'>>): void {
   posSound.warm(types);
+}
+
+export function playPushNotificationSound(payload?: {
+  kind?: string | null;
+  soundType?: string | null;
+  orderId?: string | null;
+  tag?: string | null;
+}): void {
+  if (!payload) return;
+  const soundType = payload.soundType;
+  const kind = payload.kind;
+  const dedupeKey = `push:${payload.orderId ?? payload.tag ?? kind ?? soundType ?? Date.now()}`;
+
+  if (soundType === 'PAYMENT_SUCCESS' || kind === 'ORDER_PAID') {
+    playPaymentSuccessSound({
+      dedupeKey,
+      volume: 1.0,
+      allowBackground: true,
+      force: true,
+    });
+  } else if (soundType === 'NEW_QR_ORDER' || kind === 'QR_ORDER') {
+    posSound.play('NEW_QR_ORDER', {
+      dedupeKey,
+      volume: 1.0,
+      immediate: true,
+      allowBackground: true,
+      force: true,
+    });
+  } else if (soundType === 'CHECKOUT_REQUEST' || kind === 'CHECKOUT_REQUEST') {
+    posSound.play('CHECKOUT_REQUEST', {
+      dedupeKey,
+      volume: 1.0,
+      immediate: true,
+      allowBackground: true,
+      force: true,
+    });
+  } else if (soundType === 'TABLE_OPEN_REQUEST' || kind === 'TABLE_OPEN_REQUEST') {
+    posSound.play('TABLE_OPEN_REQUEST', {
+      dedupeKey,
+      volume: 1.0,
+      immediate: true,
+      allowBackground: true,
+      force: true,
+    });
+  } else if (soundType === 'CALL_STAFF' || kind === 'CALL_STAFF') {
+    posSound.play('CALL_STAFF', {
+      dedupeKey,
+      volume: 1.0,
+      immediate: true,
+      allowBackground: true,
+      force: true,
+    });
+  } else {
+    posSound.play('NOTIFICATION_CHIME', {
+      dedupeKey,
+      volume: 1.0,
+      immediate: true,
+      allowBackground: true,
+      force: true,
+    });
+  }
+}
+
+export function registerPushNotificationSoundListener(): () => void {
+  if (typeof window === 'undefined') {
+    return () => {};
+  }
+
+  warmPosSounds([
+    'PAYMENT_SUCCESS',
+    'NEW_QR_ORDER',
+    'CALL_STAFF',
+    'CHECKOUT_REQUEST',
+    'TABLE_OPEN_REQUEST',
+  ]);
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker
+      .getRegistration()
+      .then((reg) => {
+        reg?.update().catch(() => {});
+      })
+      .catch(() => {});
+  }
+
+  const handleMessage = (event: MessageEvent) => {
+    if (event.data?.type === 'PUSH_NOTIFICATION_RECEIVED') {
+      playPushNotificationSound(event.data.payload);
+    }
+  };
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', handleMessage);
+  }
+
+  let broadcastChannel: BroadcastChannel | null = null;
+  try {
+    if (typeof BroadcastChannel !== 'undefined') {
+      broadcastChannel = new BroadcastChannel('propos-notifications');
+      broadcastChannel.addEventListener('message', handleMessage);
+    }
+  } catch {
+    // Non-blocking
+  }
+
+  return () => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.removeEventListener('message', handleMessage);
+    }
+    if (broadcastChannel) {
+      broadcastChannel.removeEventListener('message', handleMessage);
+      broadcastChannel.close();
+    }
+  };
 }

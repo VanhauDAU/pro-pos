@@ -329,14 +329,43 @@ export class AuthRepository {
       .first<PrincipalContextRow>();
   }
 
-  async touchSession(sessionId: string, lastSeenAt: number, idleExpiresAt: number) {
+  async touchSession(
+    sessionId: string,
+    lastSeenAt: number,
+    idleExpiresAt: number,
+    deviceId?: string | null,
+  ) {
+    const batch = [
+      this.db
+        .prepare(
+          `UPDATE auth_sessions
+           SET last_seen_at = ?, idle_expires_at = ?
+           WHERE id = ? AND status = 'ACTIVE'`,
+        )
+        .bind(lastSeenAt, idleExpiresAt, sessionId),
+    ];
+    if (deviceId) {
+      batch.push(
+        this.db
+          .prepare(
+            `UPDATE devices
+             SET last_seen_at = ?, updated_at = ?
+             WHERE id = ? AND status = 'ACTIVE'`,
+          )
+          .bind(lastSeenAt, lastSeenAt, deviceId),
+      );
+    }
+    await this.db.batch(batch);
+  }
+
+  async revokeActiveSessionsOnDevice(deviceId: string, now: number) {
     await this.db
       .prepare(
         `UPDATE auth_sessions
-         SET last_seen_at = ?, idle_expires_at = ?
-         WHERE id = ? AND status = 'ACTIVE'`,
+         SET status = 'REVOKED', revoked_at = ?
+         WHERE device_id = ? AND status = 'ACTIVE'`,
       )
-      .bind(lastSeenAt, idleExpiresAt, sessionId)
+      .bind(now, deviceId)
       .run();
   }
 

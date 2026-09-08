@@ -8,6 +8,8 @@ import { PlatformRepository } from '@server/repositories/platform-repository';
 import { PlatformService } from '@server/services/platform-service';
 import { StaffService } from '@server/services/staff-service';
 import { AccessAuthService } from '@server/services/access-auth-service';
+import { AuthService } from '@server/services/auth-service';
+import { PushSubscriptionRepository } from '@server/repositories/push-subscription-repository';
 
 const ORIGIN = 'https://pro-pos.test';
 const OWNER_EMAIL = 'push.owner@example.com';
@@ -194,5 +196,112 @@ describe('POS Push Notifications without unnecessary table.view permission', () 
       p256dh: 'BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QT9t0A3qcVOkxE-TestKeyP256dh',
       auth: 'tH8TestAuthKey12345678',
     });
+  });
+
+  it('lists active store device subscriptions only when staff has an active session', async () => {
+    const pushRepo = new PushSubscriptionRepository(env.DB);
+    const now = Date.now();
+
+    // With active employee session
+    const activeSubs = await pushRepo.listActiveStoreDeviceSubscriptions(storeId, now);
+    expect(activeSubs.length).toBeGreaterThanOrEqual(1);
+    expect(
+      activeSubs.some(
+        (sub) => sub.endpoint === 'https://fcm.googleapis.com/fcm/send/test-sub-token-123',
+      ),
+    ).toBe(true);
+
+    // Filtered when excludeDeviceId is provided
+    const deviceRow = await env.DB.prepare(
+      'SELECT device_id FROM push_subscriptions WHERE endpoint = ?',
+    )
+      .bind('https://fcm.googleapis.com/fcm/send/test-sub-token-123')
+      .first<{ device_id: string | null }>();
+
+    if (deviceRow?.device_id) {
+      const excludedSubs = await pushRepo.listActiveStoreDeviceSubscriptions(
+        storeId,
+        now,
+        deviceRow.device_id,
+      );
+      expect(
+        excludedSubs.some(
+          (sub) => sub.endpoint === 'https://fcm.googleapis.com/fcm/send/test-sub-token-123',
+        ),
+      ).toBe(false);
+    }
+
+    // In the future when sessions are expired
+    const farFuture = now + 365 * 24 * 60 * 60 * 1000;
+    const futureSubs = await pushRepo.listActiveStoreDeviceSubscriptions(storeId, farFuture);
+    expect(
+      futureSubs.some(
+        (sub) => sub.endpoint === 'https://fcm.googleapis.com/fcm/send/test-sub-token-123',
+      ),
+    ).toBe(false);
+  });
+
+  it('allows employee to unsubscribe from push notifications via DELETE /subscriptions', async () => {
+    // Check that device has pushNotificationEnabled in store details before unsubscribe
+    const platform = new PlatformService(env);
+    const storeDetailsBefore = await platform.getStoreDetails(storeId);
+    expect(storeDetailsBefore.devices.some((d) => d.pushNotificationEnabled)).toBe(true);
+
+    const deleteResponse = await SELF.fetch(`${ORIGIN}/api/v1/pos/push/subscriptions`, {
+      method: 'DELETE',
+      headers: {
+        Origin: ORIGIN,
+        'Content-Type': 'application/json',
+        Cookie: `${deviceCookie}; ${sessionCookie}`,
+        'X-CSRF-Token': csrfToken,
+      },
+      body: JSON.stringify({
+        endpoint: 'https://fcm.googleapis.com/fcm/send/test-sub-token-123',
+      }),
+    });
+
+    expect(deleteResponse.status).toBe(200);
+    const body = await jsonData<{ unsubscribed: boolean }>(deleteResponse);
+    expect(body.unsubscribed).toBe(true);
+
+    // Verify it is removed from DB
+    const remaining = await env.DB.prepare('SELECT id FROM push_subscriptions WHERE endpoint = ?')
+      .bind('https://fcm.googleapis.com/fcm/send/test-sub-token-123')
+      .first<{ id: string }>();
+    expect(remaining).toBeNull();
+
+    // Verify store details now reflects pushNotificationEnabled: false
+    const storeDetailsAfter = await platform.getStoreDetails(storeId);
+    expect(storeDetailsAfter.devices.some((d) => d.pushNotificationEnabled)).toBe(false);
+  });
+
+  it('allows SUPER_ADMIN to request push notification prompt on a POS device', async () => {
+    const admin = await completeAccess('PLATFORM_LOGIN', 'system.push@example.com');
+    if (admin.purpose !== 'PLATFORM_LOGIN') throw new Error('Expected platform session.');
+    const adminContext = await new AuthService(env).context(admin.rawSession);
+    const adminSessionCookie = `__Host-propos-session=${admin.rawSession}`;
+
+    const storeDetails = await new PlatformService(env).getStoreDetails(storeId);
+    const targetDevice = storeDetails.devices[0];
+    if (!targetDevice) throw new Error('Expected at least one device in store details.');
+    expect(targetDevice).toBeDefined();
+
+    const response = await SELF.fetch(
+      `${ORIGIN}/api/v1/platform/stores/${storeId}/devices/${targetDevice.id}/request-push-prompt`,
+      {
+        method: 'POST',
+        headers: {
+          Origin: ORIGIN,
+          Cookie: adminSessionCookie,
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': adminContext.csrfToken!,
+        },
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const body = await jsonData<{ requested: boolean; deliveredConnections: number }>(response);
+    expect(body.requested).toBe(true);
+    expect(typeof body.deliveredConnections).toBe('number');
   });
 });

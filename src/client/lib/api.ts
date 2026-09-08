@@ -61,6 +61,20 @@ function logRequestMetric(input: {
   console[level]('[API]', input);
 }
 
+let staffLogoutRedirecting = false;
+
+export function forceStaffLogout(reason = 'SESSION_EXPIRED') {
+  if (typeof window === 'undefined' || staffLogoutRedirecting) return;
+  staffLogoutRedirecting = true;
+  try {
+    window.sessionStorage.clear();
+  } catch {
+    // Ignore storage errors in restricted contexts
+  }
+  const target = `/?tab=employee&authError=${encodeURIComponent(reason)}`;
+  window.location.replace(target);
+}
+
 export async function apiRequest<T>(
   path: string,
   init?: RequestInit & ApiRequestOptions,
@@ -103,6 +117,13 @@ export async function apiRequest<T>(
         });
       }
       if (!response.ok || 'error' in payload) {
+        if (
+          response.status === 401 &&
+          typeof window !== 'undefined' &&
+          (window.location.pathname.startsWith('/pos') || path.startsWith('/api/v1/pos/'))
+        ) {
+          forceStaffLogout('SESSION_EXPIRED');
+        }
         throw new ApiError(payload as ApiErrorEnvelope, response.status);
       }
       if (isMutation) rememberMutationId(new Headers(requestInit.headers));

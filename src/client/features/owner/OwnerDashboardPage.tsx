@@ -37,15 +37,10 @@ import {
   Typography,
 } from 'antd';
 import type { TableColumnsType } from 'antd';
-import { useMemo, useState } from 'react';
+import { lazy, Suspense, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 
-import type {
-  DashboardDataDto,
-  DashboardPaymentTimePoint,
-  DashboardStaffRevenueRow,
-  DashboardTimelinePoint,
-} from '@contracts/dashboard';
+import type { DashboardDataDto, DashboardStaffRevenueRow } from '@contracts/dashboard';
 import { apiRequest } from '@client/lib/api';
 
 export interface StoreSettings {
@@ -86,352 +81,23 @@ function formatMoney(value: number) {
   return new Intl.NumberFormat('vi-VN').format(value) + 'đ';
 }
 
-function formatShortMoney(value: number) {
-  if (value >= 1_000_000_000) {
-    return (value / 1_000_000_000).toFixed(1).replace(/\.0$/, '') + ' tỷ';
-  }
-  if (value >= 1_000_000) {
-    return (value / 1_000_000).toFixed(1).replace(/\.0$/, '') + ' tr';
-  }
-  if (value >= 1_000) {
-    return (value / 1_000).toFixed(0) + 'k';
-  }
-  return String(value);
-}
+const ModernDonutChart = lazy(async () => {
+  const module = await import('./OwnerAnalyticsCharts');
+  return { default: module.ModernDonutChart };
+});
 
-// ─── SVG Donut Chart Component ───────────────────────────────────────────────
+const RevenueTrendChart = lazy(async () => {
+  const module = await import('./OwnerAnalyticsCharts');
+  return { default: module.RevenueTrendChart };
+});
 
-function SvgDonutChart({
-  slices,
-  unit = 'đ',
-  isMoney = true,
-}: {
-  slices: { key: string; label: string; value: number; percentage: number; color: string }[];
-  unit?: string;
-  isMoney?: boolean;
-}) {
-  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
+const HourlyRevenueChart = lazy(async () => {
+  const module = await import('./OwnerAnalyticsCharts');
+  return { default: module.HourlyRevenueChart };
+});
 
-  const total = useMemo(() => slices.reduce((sum, s) => sum + s.value, 0), [slices]);
-
-  if (!slices.length || total === 0) {
-    return (
-      <div className="dashboard-donut-empty">
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Chưa có dữ liệu" />
-      </div>
-    );
-  }
-
-  // Pre-calculate SVG arcs
-  const radius = 68;
-  const strokeWidth = 26;
-  const circumference = 2 * Math.PI * radius;
-
-  let cumulativeOffset = 0;
-  const segments = slices.map((slice, i) => {
-    const strokeDasharray = `${(slice.percentage / 100) * circumference} ${circumference}`;
-    const strokeDashoffset = -cumulativeOffset;
-    cumulativeOffset += (slice.percentage / 100) * circumference;
-    return {
-      ...slice,
-      index: i,
-      strokeDasharray,
-      strokeDashoffset,
-    };
-  });
-
-  const activeSlice = hoveredIdx !== null ? slices[hoveredIdx] : null;
-
-  return (
-    <div className="dashboard-donut-container">
-      <div className="dashboard-donut-chart">
-        <svg viewBox="0 0 180 180" className="dashboard-donut-svg">
-          <circle
-            cx="90"
-            cy="90"
-            r={radius}
-            fill="transparent"
-            stroke="#f1f5f9"
-            strokeWidth={strokeWidth}
-          />
-          {segments.map((seg) => (
-            <circle
-              key={seg.key}
-              cx="90"
-              cy="90"
-              r={radius}
-              fill="transparent"
-              stroke={seg.color}
-              strokeWidth={hoveredIdx === seg.index ? strokeWidth + 4 : strokeWidth}
-              strokeDasharray={seg.strokeDasharray}
-              strokeDashoffset={seg.strokeDashoffset}
-              strokeLinecap="round"
-              className="dashboard-donut-segment"
-              onMouseEnter={() => setHoveredIdx(seg.index)}
-              onMouseLeave={() => setHoveredIdx(null)}
-            />
-          ))}
-        </svg>
-        <div className="dashboard-donut-center">
-          {activeSlice ? (
-            <>
-              <span className="dashboard-donut-center__label">{activeSlice.label}</span>
-              <strong className="dashboard-donut-center__val" style={{ color: activeSlice.color }}>
-                {activeSlice.percentage}%
-              </strong>
-              <small className="dashboard-donut-center__sub">
-                {isMoney ? formatMoney(activeSlice.value) : `${activeSlice.value} ${unit}`}
-              </small>
-            </>
-          ) : (
-            <>
-              <span className="dashboard-donut-center__label">Tổng cộng</span>
-              <strong className="dashboard-donut-center__val">
-                {isMoney ? formatShortMoney(total) : `${total} ${unit}`}
-              </strong>
-              <small className="dashboard-donut-center__sub">{slices.length} mục</small>
-            </>
-          )}
-        </div>
-      </div>
-
-      <div className="dashboard-donut-legend">
-        {slices.map((slice, i) => (
-          <div
-            key={slice.key}
-            className={`dashboard-donut-legend__row ${
-              hoveredIdx === i ? 'dashboard-donut-legend__row--active' : ''
-            }`}
-            onMouseEnter={() => setHoveredIdx(i)}
-            onMouseLeave={() => setHoveredIdx(null)}
-          >
-            <span
-              className="dashboard-donut-legend__dot"
-              style={{ backgroundColor: slice.color }}
-            />
-            <span className="dashboard-donut-legend__label">{slice.label}</span>
-            <span className="dashboard-donut-legend__pct">{slice.percentage}%</span>
-            <span className="dashboard-donut-legend__val">
-              {isMoney ? formatMoney(slice.value) : `${slice.value} ${unit}`}
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ─── SVG Timeline Bar Chart Component ────────────────────────────────────────
-
-function SvgTimelineBarChart({ points }: { points: DashboardTimelinePoint[] }) {
-  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
-
-  const maxVal = useMemo(() => {
-    const m = Math.max(...points.map((p) => p.revenue), 0);
-    return m === 0 ? 100_000 : m;
-  }, [points]);
-
-  const yTicks = useMemo(() => {
-    return [maxVal, maxVal * 0.75, maxVal * 0.5, maxVal * 0.25, 0];
-  }, [maxVal]);
-
-  const totalRevenue = useMemo(() => points.reduce((sum, p) => sum + p.revenue, 0), [points]);
-
-  if (!points.length) {
-    return (
-      <div className="dashboard-chart-empty">
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Chưa có dữ liệu" />
-      </div>
-    );
-  }
-
-  return (
-    <div className="dashboard-barchart-wrapper">
-      <div className="dashboard-barchart-header">
-        <div>
-          <span className="dashboard-barchart-total-label">Tổng doanh thu kỳ này:</span>
-          <strong className="dashboard-barchart-total-val">{formatMoney(totalRevenue)}</strong>
-        </div>
-      </div>
-
-      <div className="dashboard-barchart">
-        {/* Y Axis */}
-        <div className="dashboard-barchart__yaxis">
-          {yTicks.map((val, idx) => (
-            <span key={idx}>{formatShortMoney(val)}</span>
-          ))}
-        </div>
-
-        {/* Plot area */}
-        <div className="dashboard-barchart__plot">
-          {/* Grid lines */}
-          <div className="dashboard-barchart__gridline" style={{ top: '0%' }} />
-          <div className="dashboard-barchart__gridline" style={{ top: '25%' }} />
-          <div className="dashboard-barchart__gridline" style={{ top: '50%' }} />
-          <div className="dashboard-barchart__gridline" style={{ top: '75%' }} />
-          <div className="dashboard-barchart__gridline" style={{ top: '100%' }} />
-
-          {/* Columns */}
-          <div
-            className="dashboard-barchart__columns"
-            style={{ minWidth: points.length > 7 ? `${points.length * 28}px` : '100%' }}
-          >
-            {points.map((p, idx) => {
-              const heightPct = Math.min(
-                100,
-                Math.max(p.revenue > 0 ? 4 : 0, (p.revenue / maxVal) * 100),
-              );
-              const isHovered = hoveredIdx === idx;
-              return (
-                <div
-                  key={idx}
-                  className={`dashboard-barchart__col ${
-                    isHovered ? 'dashboard-barchart__col--active' : ''
-                  }`}
-                  onMouseEnter={() => setHoveredIdx(idx)}
-                  onMouseLeave={() => setHoveredIdx(null)}
-                >
-                  <Tooltip
-                    title={
-                      <div style={{ textAlign: 'center' }}>
-                        <div>
-                          <strong>{p.label}</strong>
-                        </div>
-                        <div>Doanh thu: {formatMoney(p.revenue)}</div>
-                        <div>Số hóa đơn: {p.invoiceCount}</div>
-                      </div>
-                    }
-                    placement="top"
-                  >
-                    <div className="dashboard-barchart__bar-track">
-                      <div
-                        className="dashboard-barchart__bar"
-                        style={{
-                          height: `${heightPct}%`,
-                          backgroundColor:
-                            p.revenue > 0 ? (isHovered ? '#0659c0' : '#0975F7') : '#e2e8f0',
-                        }}
-                      />
-                    </div>
-                  </Tooltip>
-                  <span className="dashboard-barchart__label">{p.label}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── SVG Payment Time Bar Chart ──────────────────────────────────────────────
-
-function SvgPaymentTimeChart({ points }: { points: DashboardPaymentTimePoint[] }) {
-  const [hoveredHour, setHoveredHour] = useState<number | null>(null);
-
-  const maxVal = useMemo(() => {
-    const m = Math.max(...points.map((p) => p.revenue), 0);
-    return m === 0 ? 100_000 : m;
-  }, [points]);
-
-  const peakHour = useMemo(() => {
-    let peak = points[0];
-    for (const p of points) {
-      if (p.revenue > (peak?.revenue ?? 0)) {
-        peak = p;
-      }
-    }
-    return peak && peak.revenue > 0 ? peak : null;
-  }, [points]);
-
-  return (
-    <div className="dashboard-barchart-wrapper">
-      <div className="dashboard-barchart-header">
-        {peakHour ? (
-          <div>
-            <span className="dashboard-barchart-total-label">
-              Khung giờ thanh toán cao điểm nhất:
-            </span>{' '}
-            <Tag color="orange" icon={<ClockCircleOutlined />}>
-              {peakHour.hourLabel} ({formatMoney(peakHour.revenue)} · {peakHour.invoiceCount} HĐ)
-            </Tag>
-          </div>
-        ) : (
-          <span className="dashboard-barchart-total-label">
-            Phân bố doanh thu theo 24 giờ trong ngày
-          </span>
-        )}
-      </div>
-
-      <div className="dashboard-barchart">
-        <div className="dashboard-barchart__yaxis">
-          <span>{formatShortMoney(maxVal)}</span>
-          <span>{formatShortMoney(maxVal * 0.5)}</span>
-          <span>0</span>
-        </div>
-
-        <div className="dashboard-barchart__plot">
-          <div className="dashboard-barchart__gridline" style={{ top: '0%' }} />
-          <div className="dashboard-barchart__gridline" style={{ top: '50%' }} />
-          <div className="dashboard-barchart__gridline" style={{ top: '100%' }} />
-
-          <div
-            className="dashboard-barchart__columns"
-            style={{ minWidth: points.length > 8 ? `${points.length * 24}px` : '100%' }}
-          >
-            {points.map((p) => {
-              const heightPct = Math.min(
-                100,
-                Math.max(p.revenue > 0 ? 4 : 0, (p.revenue / maxVal) * 100),
-              );
-              const isHovered = hoveredHour === p.hour;
-              const isPeak = peakHour?.hour === p.hour;
-              return (
-                <div
-                  key={p.hour}
-                  className="dashboard-barchart__col"
-                  onMouseEnter={() => setHoveredHour(p.hour)}
-                  onMouseLeave={() => setHoveredHour(null)}
-                >
-                  <Tooltip
-                    title={
-                      <div style={{ textAlign: 'center' }}>
-                        <div>
-                          <strong>{p.hourLabel}</strong>
-                        </div>
-                        <div>Doanh thu: {formatMoney(p.revenue)}</div>
-                        <div>Số lượt TT: {p.invoiceCount}</div>
-                      </div>
-                    }
-                    placement="top"
-                  >
-                    <div className="dashboard-barchart__bar-track">
-                      <div
-                        className="dashboard-barchart__bar"
-                        style={{
-                          height: `${heightPct}%`,
-                          backgroundColor:
-                            p.revenue > 0
-                              ? isPeak
-                                ? '#f59e0b'
-                                : isHovered
-                                  ? '#059669'
-                                  : '#10b981'
-                              : '#e2e8f0',
-                        }}
-                      />
-                    </div>
-                  </Tooltip>
-                  <span className="dashboard-barchart__label">{p.hour}h</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+function ChartFallback() {
+  return <Skeleton active paragraph={{ rows: 5 }} />;
 }
 
 // ─── Onboarding Checklist Component ──────────────────────────────────────────
@@ -683,71 +349,86 @@ export function OwnerDashboardPage({ settings }: { settings: StoreSettings | und
       render: (amt: number) => <strong style={{ color: '#0975F7' }}>{formatMoney(amt)}</strong>,
     },
   ];
+  const subtotal = data?.summary.subtotal ?? 0;
+  const goodsShare =
+    subtotal > 0 ? Math.round(((data?.summary.goodsRevenue ?? 0) / subtotal) * 100) : 0;
+  const timeShare =
+    subtotal > 0 ? Math.round(((data?.summary.timeRevenue ?? 0) / subtotal) * 100) : 0;
+  const discountRate = subtotal > 0 ? ((data?.summary.discountTotal ?? 0) / subtotal) * 100 : 0;
 
   return (
     <div className="owner-dashboard-page">
       {/* ── Page Header & Filters ── */}
       <div className="owner-page-heading owner-dashboard-header">
-        <div>
-          <Typography.Title level={2} style={{ margin: 0 }}>
-            <RiseOutlined style={{ marginRight: 10, color: '#0975F7' }} />
+        <div className="owner-dashboard-header__main">
+          <Typography.Title
+            level={2}
+            className="owner-dashboard-header__title"
+            style={{ margin: 0 }}
+          >
+            <RiseOutlined
+              className="owner-dashboard-header__icon"
+              style={{ marginRight: 8, color: '#0975F7' }}
+            />
             Tổng quan kinh doanh
           </Typography.Title>
-          <Typography.Text type="secondary">
+          <Typography.Text type="secondary" className="owner-dashboard-header__subtitle">
             Theo dõi thời gian thực kết quả kinh doanh và hoạt động cửa hàng.
           </Typography.Text>
         </div>
 
         <div className="owner-dashboard-controls">
-          <Select
-            value={range}
-            onChange={(val) => {
-              setRange(val);
-              if (val !== 'custom') {
-                setCustomFrom(null);
-                setCustomTo(null);
-              }
-            }}
-            className="owner-dashboard-range-select"
-            options={[
-              { value: 'today', label: 'Hôm nay' },
-              { value: 'yesterday', label: 'Hôm qua' },
-              { value: 'week', label: 'Tuần này' },
-              { value: 'month', label: 'Tháng này' },
-              { value: 'year', label: 'Năm nay' },
-              { value: 'custom', label: 'Khoảng thời gian khác' },
-            ]}
-          />
+          <div className="owner-dashboard-controls__row">
+            <Select
+              value={range}
+              onChange={(val) => {
+                setRange(val);
+                if (val !== 'custom') {
+                  setCustomFrom(null);
+                  setCustomTo(null);
+                }
+              }}
+              className="owner-dashboard-range-select"
+              options={[
+                { value: 'today', label: 'Hôm nay' },
+                { value: 'yesterday', label: 'Hôm qua' },
+                { value: 'week', label: 'Tuần này' },
+                { value: 'month', label: 'Tháng này' },
+                { value: 'year', label: 'Năm nay' },
+                { value: 'custom', label: 'Khoảng thời gian khác' },
+              ]}
+            />
+
+            <Tooltip title="Tự động cập nhật mỗi 30 giây hoặc bấm để làm mới">
+              <Button
+                icon={<ReloadOutlined spin={isFetching} />}
+                onClick={() => void refetch()}
+                className="owner-dashboard-refresh-btn"
+              >
+                <span className="owner-dashboard-refresh-btn-text">Làm mới</span>
+              </Button>
+            </Tooltip>
+          </div>
 
           {range === 'custom' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div className="owner-dashboard-custom-picker">
               <Input
                 type="date"
                 value={customFrom ?? ''}
                 onChange={(e) => setCustomFrom(e.target.value || null)}
-                style={{ width: 140 }}
+                className="owner-dashboard-custom-input"
               />
-              <span>-</span>
+              <span className="owner-dashboard-custom-sep">-</span>
               <Input
                 type="date"
                 value={customTo ?? ''}
                 onChange={(e) => setCustomTo(e.target.value || null)}
-                style={{ width: 140 }}
+                className="owner-dashboard-custom-input"
               />
             </div>
           )}
 
-          <Tooltip title="Tự động cập nhật mỗi 30 giây hoặc bấm để làm mới">
-            <Button
-              icon={<ReloadOutlined spin={isFetching} />}
-              onClick={() => void refetch()}
-              className="owner-dashboard-refresh-btn"
-            >
-              Làm mới
-            </Button>
-          </Tooltip>
-
-          <Typography.Text className="owner-filter-note">
+          <Typography.Text className="owner-filter-note owner-dashboard-tz-note">
             Múi giờ: {settings?.timezone ?? 'Asia/Ho_Chi_Minh'}
           </Typography.Text>
         </div>
@@ -762,8 +443,27 @@ export function OwnerDashboardPage({ settings }: { settings: StoreSettings | und
         </div>
       ) : (
         <>
-          {/* ── 7 Thống Kê Tổng Quan (KPIs) ── */}
+          {/* ── Thống kê tổng quan ── */}
           <div className="owner-dashboard-summary-grid">
+            <Card className="owner-stat-card owner-stat-card--revenue owner-stat-card--featured">
+              <div className="owner-stat-card__head">
+                <span
+                  className="owner-stat-card__icon"
+                  style={{ background: 'rgba(255,255,255,.18)', color: '#fff' }}
+                >
+                  <DollarCircleOutlined />
+                </span>
+                <span className="owner-stat-card__label">Doanh thu thuần</span>
+              </div>
+              <div className="owner-stat-card__value">
+                {formatMoney(data?.summary.revenue ?? 0)}
+              </div>
+              <div className="owner-stat-card__detail owner-stat-card__detail--featured">
+                <span>{data?.summary.invoiceCount ?? 0} hóa đơn</span>
+                <span>TB {formatMoney(data?.summary.avgRevenuePerInvoice ?? 0)}/HĐ</span>
+              </div>
+            </Card>
+
             <Card className="owner-stat-card owner-stat-card--blue">
               <div className="owner-stat-card__head">
                 <span
@@ -775,15 +475,32 @@ export function OwnerDashboardPage({ settings }: { settings: StoreSettings | und
                 <span className="owner-stat-card__label">Tiền hàng</span>
               </div>
               <div className="owner-stat-card__value">
-                {formatMoney(data?.summary.subtotal ?? 0)}
+                {formatMoney(data?.summary.goodsRevenue ?? 0)}
               </div>
+              <div className="owner-stat-card__detail">{goodsShare}% tổng trước giảm giá</div>
+            </Card>
+
+            <Card className="owner-stat-card owner-stat-card--violet">
+              <div className="owner-stat-card__head">
+                <span
+                  className="owner-stat-card__icon"
+                  style={{ background: '#f5f3ff', color: '#8b5cf6' }}
+                >
+                  <ClockCircleOutlined />
+                </span>
+                <span className="owner-stat-card__label">Tiền giờ</span>
+              </div>
+              <div className="owner-stat-card__value">
+                {formatMoney(data?.summary.timeRevenue ?? 0)}
+              </div>
+              <div className="owner-stat-card__detail">{timeShare}% tổng trước giảm giá</div>
             </Card>
 
             <Card className="owner-stat-card owner-stat-card--purple">
               <div className="owner-stat-card__head">
                 <span
                   className="owner-stat-card__icon"
-                  style={{ background: '#f5f3ff', color: '#8b5cf6' }}
+                  style={{ background: '#fff7ed', color: '#f97316' }}
                 >
                   <TagsOutlined />
                 </span>
@@ -792,42 +509,7 @@ export function OwnerDashboardPage({ settings }: { settings: StoreSettings | und
               <div className="owner-stat-card__value">
                 {formatMoney(data?.summary.discountTotal ?? 0)}
               </div>
-            </Card>
-
-            <Card className="owner-stat-card owner-stat-card--emerald">
-              <div className="owner-stat-card__head">
-                <span
-                  className="owner-stat-card__icon"
-                  style={{ background: '#ecfdf5', color: '#10b981' }}
-                >
-                  <DollarCircleOutlined />
-                </span>
-                <span className="owner-stat-card__label">Doanh thu</span>
-              </div>
-              <div className="owner-stat-card__value" style={{ color: '#059669', fontWeight: 800 }}>
-                {formatMoney(data?.summary.revenue ?? 0)}
-              </div>
-            </Card>
-
-            <Card className="owner-stat-card owner-stat-card--orange">
-              <div className="owner-stat-card__head">
-                <span
-                  className="owner-stat-card__icon"
-                  style={{ background: '#fffbeb', color: '#f59e0b' }}
-                >
-                  <UsergroupAddOutlined />
-                </span>
-                <span className="owner-stat-card__label">Số khách hàng</span>
-              </div>
-              <Tooltip title="Tính năng hồ sơ & quản lý khách hàng đang chuẩn bị triển khai">
-                <div className="owner-stat-card__value">
-                  {data?.summary.customerCount && data.summary.customerCount > 0 ? (
-                    data.summary.customerCount
-                  ) : (
-                    <span style={{ color: '#94a3b8', fontSize: 18, fontWeight: 500 }}>Chưa có</span>
-                  )}
-                </div>
-              </Tooltip>
+              <div className="owner-stat-card__detail">{discountRate.toFixed(1)}% tổng tiền</div>
             </Card>
 
             <Card className="owner-stat-card owner-stat-card--teal">
@@ -841,6 +523,7 @@ export function OwnerDashboardPage({ settings }: { settings: StoreSettings | und
                 <span className="owner-stat-card__label">Số hóa đơn</span>
               </div>
               <div className="owner-stat-card__value">{data?.summary.invoiceCount ?? 0}</div>
+              <div className="owner-stat-card__detail">Hóa đơn hoàn tất trong kỳ</div>
             </Card>
 
             <Card className="owner-stat-card owner-stat-card--indigo">
@@ -854,6 +537,7 @@ export function OwnerDashboardPage({ settings }: { settings: StoreSettings | und
                 <span className="owner-stat-card__label">TB mặt hàng / HĐ</span>
               </div>
               <div className="owner-stat-card__value">{data?.summary.avgItemsPerInvoice ?? 0}</div>
+              <div className="owner-stat-card__detail">Không bao gồm dịch vụ giờ</div>
             </Card>
 
             <Card className="owner-stat-card owner-stat-card--pink">
@@ -869,6 +553,21 @@ export function OwnerDashboardPage({ settings }: { settings: StoreSettings | und
               <div className="owner-stat-card__value">
                 {formatMoney(data?.summary.avgRevenuePerInvoice ?? 0)}
               </div>
+              <div className="owner-stat-card__detail">Giá trị trung bình mỗi hóa đơn</div>
+            </Card>
+
+            <Card className="owner-stat-card owner-stat-card--orange">
+              <div className="owner-stat-card__head">
+                <span
+                  className="owner-stat-card__icon"
+                  style={{ background: '#fffbeb', color: '#f59e0b' }}
+                >
+                  <UsergroupAddOutlined />
+                </span>
+                <span className="owner-stat-card__label">Khách hàng</span>
+              </div>
+              <div className="owner-stat-card__value">{data?.summary.customerCount ?? 0}</div>
+              <div className="owner-stat-card__detail">Hồ sơ khách đang hoạt động</div>
             </Card>
           </div>
 
@@ -935,22 +634,31 @@ export function OwnerDashboardPage({ settings }: { settings: StoreSettings | und
             </div>
           </Card>
 
-          {/* ── 2 Biểu Đồ Cột ── */}
+          {/* ── Biểu đồ doanh thu ── */}
           <div className="owner-charts-2col">
-            {/* Biểu đồ cột doanh thu tổng hợp */}
             <Card
-              className="owner-chart-card"
-              title="Biểu đồ cột doanh thu tổng hợp (Thời gian & Doanh thu)"
+              className="owner-chart-card owner-chart-card--featured"
+              title="Xu hướng doanh thu"
+              extra={
+                <span className="owner-chart-card__hint">Cột: trước giảm · Đường: thực thu</span>
+              }
             >
-              <SvgTimelineBarChart points={data?.revenueTimelineChart ?? []} />
+              <Suspense fallback={<ChartFallback />}>
+                <RevenueTrendChart points={data?.revenueTimelineChart ?? []} />
+              </Suspense>
             </Card>
 
-            {/* Biểu đồ doanh thu theo thời gian thanh toán */}
-            <Card
-              className="owner-chart-card"
-              title="Biểu đồ doanh thu theo thời gian thanh toán (24 Giờ)"
-            >
-              <SvgPaymentTimeChart points={data?.paymentTimeChart ?? []} />
+            <Card className="owner-chart-card" title="Khung giờ thanh toán">
+              <Suspense fallback={<ChartFallback />}>
+                <HourlyRevenueChart
+                  points={(data?.paymentTimeChart ?? []).map((point) => ({
+                    hour: point.hour,
+                    label: point.hourLabel,
+                    revenue: point.revenue,
+                    invoiceCount: point.invoiceCount,
+                  }))}
+                />
+              </Suspense>
             </Card>
           </div>
 
@@ -972,15 +680,17 @@ export function OwnerDashboardPage({ settings }: { settings: StoreSettings | und
                 />
               }
             >
-              <SvgDonutChart
-                slices={
-                  paymentTab === 'byRevenue'
-                    ? (data?.paymentMethods.byRevenue ?? [])
-                    : (data?.paymentMethods.byCount ?? [])
-                }
-                isMoney={paymentTab === 'byRevenue'}
-                unit={paymentTab === 'byRevenue' ? 'đ' : 'HĐ'}
-              />
+              <Suspense fallback={<ChartFallback />}>
+                <ModernDonutChart
+                  slices={
+                    paymentTab === 'byRevenue'
+                      ? (data?.paymentMethods.byRevenue ?? [])
+                      : (data?.paymentMethods.byCount ?? [])
+                  }
+                  isMoney={paymentTab === 'byRevenue'}
+                  unit={paymentTab === 'byRevenue' ? 'đ' : 'HĐ'}
+                />
+              </Suspense>
             </Card>
 
             {/* 2. Hình thức phục vụ */}
@@ -999,15 +709,17 @@ export function OwnerDashboardPage({ settings }: { settings: StoreSettings | und
                 />
               }
             >
-              <SvgDonutChart
-                slices={
-                  orderTypeTab === 'byRevenue'
-                    ? (data?.orderTypes.byRevenue ?? [])
-                    : (data?.orderTypes.byCount ?? [])
-                }
-                isMoney={orderTypeTab === 'byRevenue'}
-                unit={orderTypeTab === 'byRevenue' ? 'đ' : 'HĐ'}
-              />
+              <Suspense fallback={<ChartFallback />}>
+                <ModernDonutChart
+                  slices={
+                    orderTypeTab === 'byRevenue'
+                      ? (data?.orderTypes.byRevenue ?? [])
+                      : (data?.orderTypes.byCount ?? [])
+                  }
+                  isMoney={orderTypeTab === 'byRevenue'}
+                  unit={orderTypeTab === 'byRevenue' ? 'đ' : 'HĐ'}
+                />
+              </Suspense>
             </Card>
 
             {/* 3. Mặt hàng theo danh mục */}
@@ -1026,15 +738,17 @@ export function OwnerDashboardPage({ settings }: { settings: StoreSettings | und
                 />
               }
             >
-              <SvgDonutChart
-                slices={
-                  categoryTab === 'byAmount'
-                    ? (data?.categories.byAmount ?? [])
-                    : (data?.categories.byQuantity ?? [])
-                }
-                isMoney={categoryTab === 'byAmount'}
-                unit={categoryTab === 'byAmount' ? 'đ' : 'Món'}
-              />
+              <Suspense fallback={<ChartFallback />}>
+                <ModernDonutChart
+                  slices={
+                    categoryTab === 'byAmount'
+                      ? (data?.categories.byAmount ?? [])
+                      : (data?.categories.byQuantity ?? [])
+                  }
+                  isMoney={categoryTab === 'byAmount'}
+                  unit={categoryTab === 'byAmount' ? 'đ' : 'Món'}
+                />
+              </Suspense>
             </Card>
 
             {/* 4. Mặt hàng bán chạy */}
@@ -1053,20 +767,22 @@ export function OwnerDashboardPage({ settings }: { settings: StoreSettings | und
                 />
               }
             >
-              <SvgDonutChart
-                slices={(topProductTab === 'byAmount'
-                  ? (data?.topProducts.byAmount ?? [])
-                  : (data?.topProducts.byQuantity ?? [])
-                ).map((p) => ({
-                  key: p.productId,
-                  label: p.productName,
-                  value: p.value,
-                  percentage: p.percentage,
-                  color: p.color,
-                }))}
-                isMoney={topProductTab === 'byAmount'}
-                unit={topProductTab === 'byAmount' ? 'đ' : 'phần'}
-              />
+              <Suspense fallback={<ChartFallback />}>
+                <ModernDonutChart
+                  slices={(topProductTab === 'byAmount'
+                    ? (data?.topProducts.byAmount ?? [])
+                    : (data?.topProducts.byQuantity ?? [])
+                  ).map((p) => ({
+                    key: p.productId,
+                    label: p.productName,
+                    value: p.value,
+                    percentage: p.percentage,
+                    color: p.color,
+                  }))}
+                  isMoney={topProductTab === 'byAmount'}
+                  unit={topProductTab === 'byAmount' ? 'đ' : 'phần'}
+                />
+              </Suspense>
             </Card>
           </div>
 

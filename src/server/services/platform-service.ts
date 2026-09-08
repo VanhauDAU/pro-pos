@@ -135,8 +135,8 @@ export class PlatformService {
     return { storeId: input.storeId, capability: input.capability, enabled: result.enabled === 1 };
   }
 
-  async getStoreDetails(storeId: string) {
-    const details = await this.repository.getStoreDetails(storeId);
+  async getStoreDetails(storeId: string, days = 14) {
+    const details = await this.repository.getStoreDetails(storeId, days);
     if (!details) {
       throw new AppError('STORE_NOT_FOUND', 'Không tìm thấy cửa hàng.', 404);
     }

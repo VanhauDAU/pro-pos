@@ -81,7 +81,12 @@ export class StaffRepository {
           u.id, u.username, u.email, u.display_name AS displayName,
           CASE WHEN u.status = 'ACTIVE' AND sm.status = 'ACTIVE' THEN 'ACTIVE' ELSE 'DISABLED' END AS status,
           r.id AS roleId, r.name AS roleName,
-          group_concat(rp.permission_key) AS permissionKeys
+          group_concat(rp.permission_key) AS permissionKeys,
+          (
+            SELECT MAX(s.last_seen_at)
+            FROM auth_sessions s
+            WHERE s.user_id = u.id AND s.store_id = sm.store_id AND s.status = 'ACTIVE'
+          ) AS lastSeenAt
         FROM store_memberships sm
         JOIN users u ON u.id = sm.user_id
         JOIN roles r ON r.id = sm.role_id AND r.store_id = sm.store_id
@@ -91,7 +96,17 @@ export class StaffRepository {
         ORDER BY u.display_name COLLATE NOCASE`,
       )
       .bind(storeId)
-      .all();
+      .all<{
+        id: string;
+        username: string;
+        email: string | null;
+        displayName: string;
+        status: 'ACTIVE' | 'DISABLED';
+        roleId: string;
+        roleName: string;
+        permissionKeys: string | null;
+        lastSeenAt: number | null;
+      }>();
   }
 
   getEmployee(storeId: string, userId: string) {
@@ -100,7 +115,12 @@ export class StaffRepository {
         `SELECT
           u.id, u.username, u.email, u.display_name AS displayName, u.status AS userStatus,
           sm.status AS membershipStatus, r.id AS roleId, r.name AS roleName,
-          r.code AS roleCode
+          r.code AS roleCode,
+          (
+            SELECT MAX(s.last_seen_at)
+            FROM auth_sessions s
+            WHERE s.user_id = u.id AND s.store_id = sm.store_id AND s.status = 'ACTIVE'
+          ) AS lastSeenAt
          FROM store_memberships sm
          JOIN users u ON u.id = sm.user_id
          JOIN roles r ON r.id = sm.role_id AND r.store_id = sm.store_id
@@ -118,6 +138,7 @@ export class StaffRepository {
         roleId: string;
         roleName: string;
         roleCode: string;
+        lastSeenAt: number | null;
       }>();
   }
 

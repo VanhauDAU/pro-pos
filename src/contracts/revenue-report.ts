@@ -96,6 +96,10 @@ export interface RevenueReportTimelineRowDto {
   label: string;
   completedInvoiceCount: number;
   cancelledOrderCount: number;
+  /** Gross product revenue before discounts. Optional for legacy persisted snapshots. */
+  goodsRevenue?: number;
+  /** Gross table-time revenue before discounts. Optional for legacy persisted snapshots. */
+  timeRevenue?: number;
   grossRevenue: number;
   cancelledAmount: number;
   discountAmount: number;

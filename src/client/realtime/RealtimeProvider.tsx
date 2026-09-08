@@ -9,6 +9,8 @@ import {
 } from './client';
 import type { RealtimeEventV1 } from '@contracts/realtime';
 
+import type { AuthContextResponse } from '@contracts/auth';
+
 interface RealtimeStaffContext {
   storeId: string;
   capabilities?: { posRealtime?: boolean };
@@ -27,7 +29,10 @@ const RealtimeContext = createContext<RealtimeContextValue>({
 type RealtimeCoordinatorMessage =
   | { type: 'STATUS'; status: RealtimeConnectionStatus }
   | { type: 'SERVER_TIME'; offsetMs: number }
-  | { type: 'EVENTS'; events: RealtimeEventV1[] };
+  | { type: 'EVENTS'; events: RealtimeEventV1[] }
+  | { type: 'PUSH_PROMPT_REQUESTED' }
+  | { type: 'STAFF_PRESENCE'; userId: string; isOnline: boolean; lastSeenAt: number }
+  | { type: 'STAFF_PRESENCE_BATCH'; onlineUserIds: string[] };
 
 export function RealtimeProvider({ children }: { children: React.ReactNode }) {
   const queryClient = useQueryClient();
@@ -38,10 +43,16 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
     queryFn: () => apiRequest<RealtimeStaffContext>('/api/v1/pos/context'),
     staleTime: Infinity,
     refetchOnMount: false,
+    retry: false,
   });
-  const enabled =
-    context.data?.capabilities?.posRealtime !== false && Boolean(context.data?.storeId);
-  const storeId = context.data?.storeId;
+  const authContext = useQuery({
+    queryKey: ['auth-context'],
+    queryFn: () => apiRequest<AuthContextResponse>('/api/v1/auth/context'),
+    staleTime: Infinity,
+    refetchOnMount: false,
+  });
+  const storeId = context.data?.storeId ?? authContext.data?.actor?.storeId;
+  const enabled = context.data?.capabilities?.posRealtime !== false && Boolean(storeId);
 
   useEffect(() => {
     if (!enabled || !storeId) {
@@ -86,6 +97,15 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
       (events) => {
         if (leader) post({ type: 'EVENTS', events });
       },
+      () => {
+        if (leader) post({ type: 'PUSH_PROMPT_REQUESTED' });
+      },
+      (userId, isOnline, lastSeenAt) => {
+        if (leader) post({ type: 'STAFF_PRESENCE', userId, isOnline, lastSeenAt });
+      },
+      (onlineUserIds) => {
+        if (leader) post({ type: 'STAFF_PRESENCE_BATCH', onlineUserIds });
+      },
     );
 
     const receive = (message: RealtimeCoordinatorMessage) => {
@@ -93,6 +113,15 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
       if (message.type === 'STATUS') setStatus(message.status);
       if (message.type === 'SERVER_TIME') setServerTimeOffsetMs(message.offsetMs);
       if (message.type === 'EVENTS') client.receiveBroadcastEvents(message.events);
+      if (message.type === 'STAFF_PRESENCE') {
+        client.applyStaffPresence(message.userId, message.isOnline, message.lastSeenAt);
+      }
+      if (message.type === 'STAFF_PRESENCE_BATCH') {
+        client.applyOnlineUsers(message.onlineUserIds);
+      }
+      if (message.type === 'PUSH_PROMPT_REQUESTED') {
+        window.dispatchEvent(new CustomEvent('propos:request-push-prompt'));
+      }
     };
 
     const onChannelMessage = (event: MessageEvent<RealtimeCoordinatorMessage>) => {

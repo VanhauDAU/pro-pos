@@ -43,6 +43,8 @@ import { lazy, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router';
 
+import { RealtimeProvider } from '@client/realtime/RealtimeProvider';
+
 import type { AuthContextResponse } from '@contracts/auth';
 
 import logo from '@client/assets/logo-white.svg';
@@ -73,6 +75,8 @@ import {
 } from './OwnerCustomerPages';
 import { OwnerPromotionFormPage, OwnerPromotionListPage } from './OwnerPromotionPages';
 import { OwnerQrOrderSettingsPage } from './OwnerQrOrderSettingsPage';
+import { OwnerNotificationSettingsPage } from './OwnerNotificationSettingsPage';
+import { PushNotificationControl } from '@client/features/pwa/PushNotificationControl';
 
 const OwnerPrintSettingsPage = lazy(async () => {
   const module = await import('./OwnerPrintSettingsPage');
@@ -312,6 +316,12 @@ const settingsGroups = [
         description: 'Mẫu hóa đơn, khổ giấy, logo, QR ngân hàng và nội dung chân trang.',
         icon: <PrinterOutlined />,
       },
+      {
+        key: '/owner/settings/notifications',
+        title: 'Thiết lập thông báo',
+        description: 'Cấu hình thông báo theo nhân viên, phiên đăng nhập và thanh toán thành công.',
+        icon: <BellOutlined />,
+      },
     ],
   },
   {
@@ -471,6 +481,17 @@ const moduleContent: Record<
     description: 'Khung cấu hình mẫu in hóa đơn thanh toán và hóa đơn tạm tính.',
     bullets: ['Khổ giấy 58 / 80 mm', 'Logo, QR và chân trang', 'Tùy chọn nội dung & preview in'],
   },
+  '/owner/settings/notifications': {
+    title: 'Thiết lập thông báo',
+    eyebrow: 'THIẾT LẬP CHỨC NĂNG',
+    description:
+      'Cấu hình nhận thông báo PWA theo tài khoản nhân viên, điều kiện phiên đăng nhập và thanh toán thành công.',
+    bullets: [
+      'Cấu hình thông báo theo nhân viên',
+      'Chỉ thông báo khi còn phiên đăng nhập',
+      'Tùy chọn thông báo PWA (Thanh toán thành công, gọi món, ...)',
+    ],
+  },
   '/owner/settings/audit': {
     title: 'Nhật ký hoạt động',
     eyebrow: 'THIẾT LẬP',
@@ -602,238 +623,242 @@ export function OwnerPortalPage() {
 
   return (
     <ConfigProvider theme={{ token: { colorPrimary: BRAND } }}>
-      {contextHolder}
-      <Layout className="owner-shell">
-        {isDesktop ? (
-          sidebar
-        ) : (
-          <Drawer
-            className="owner-mobile-drawer"
-            placement="left"
-            closable={false}
-            onClose={() => setMobileOpen(false)}
-            open={mobileOpen}
-            size={280}
-            styles={{ body: { padding: 0 } }}
-          >
-            {sidebar}
-          </Drawer>
-        )}
-        <Layout>
-          <header className="owner-header">
-            <div className="owner-header__left">
-              {!isDesktop ? (
-                <Button
-                  type="text"
-                  aria-label="Mở menu"
-                  icon={<MenuUnfoldOutlined />}
-                  onClick={() => setMobileOpen(true)}
+      <RealtimeProvider>
+        {contextHolder}
+        <Layout className="owner-shell">
+          {isDesktop ? (
+            sidebar
+          ) : (
+            <Drawer
+              className="owner-mobile-drawer"
+              placement="left"
+              closable={false}
+              onClose={() => setMobileOpen(false)}
+              open={mobileOpen}
+              size={280}
+              styles={{ body: { padding: 0 } }}
+            >
+              {sidebar}
+            </Drawer>
+          )}
+          <Layout>
+            <header className="owner-header">
+              <div className="owner-header__left">
+                {!isDesktop ? (
+                  <Button
+                    type="text"
+                    aria-label="Mở menu"
+                    icon={<MenuUnfoldOutlined />}
+                    onClick={() => setMobileOpen(true)}
+                  />
+                ) : null}
+                <Typography.Text className="owner-header__store">
+                  {settings.data?.name ?? 'Cửa hàng của bạn'}
+                </Typography.Text>
+              </div>
+              <div className="owner-header__actions">
+                <Dropdown
+                  trigger={['click']}
+                  placement="bottomRight"
+                  menu={{
+                    items: [
+                      {
+                        key: 'help-title',
+                        label: (
+                          <div
+                            style={{
+                              padding: '2px 4px',
+                              fontSize: 11.5,
+                              fontWeight: 700,
+                              color: '#64748b',
+                            }}
+                          >
+                            LIÊN HỆ HỖ TRỢ KỸ THUẬT
+                          </div>
+                        ),
+                        disabled: true,
+                      },
+                      {
+                        type: 'divider',
+                      },
+                      {
+                        key: 'call',
+                        icon: <PhoneOutlined style={{ color: '#10b981', fontSize: 16 }} />,
+                        label: (
+                          <a
+                            href="tel:0777464347"
+                            style={{
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 2,
+                              padding: '4px 0',
+                            }}
+                          >
+                            <span style={{ fontSize: 12, color: '#64748b', fontWeight: 500 }}>
+                              Gọi điện thoại trực tiếp:
+                            </span>
+                            <strong style={{ color: '#10b981', fontSize: 14 }}>0777 464 347</strong>
+                          </a>
+                        ),
+                      },
+                      {
+                        key: 'zalo',
+                        icon: <MessageOutlined style={{ color: '#0975F7', fontSize: 16 }} />,
+                        label: (
+                          <a
+                            href="https://zalo.me/0816548150"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 2,
+                              padding: '4px 0',
+                            }}
+                          >
+                            <span style={{ fontSize: 12, color: '#64748b', fontWeight: 500 }}>
+                              Nhắn tin tư vấn Zalo:
+                            </span>
+                            <strong style={{ color: '#0975F7', fontSize: 14 }}>0816 548 150</strong>
+                          </a>
+                        ),
+                      },
+                    ],
+                  }}
+                >
+                  <Button
+                    type="text"
+                    icon={<QuestionCircleOutlined />}
+                    className="owner-header__utility"
+                  >
+                    Trợ giúp
+                  </Button>
+                </Dropdown>
+                <PushNotificationControl csrfToken={context.data?.csrfToken} />
+                <Dropdown
+                  trigger={['click']}
+                  menu={{
+                    items: [
+                      {
+                        key: 'account-settings',
+                        icon: <UserOutlined />,
+                        label: 'Thiết lập tài khoản',
+                        onClick: () => navigate('/owner/settings/account'),
+                      },
+                      {
+                        type: 'divider',
+                      },
+                      {
+                        key: 'logout',
+                        icon: <LogoutOutlined />,
+                        label: 'Đăng xuất',
+                        onClick: logout,
+                      },
+                    ],
+                  }}
+                >
+                  <Button type="text" className="owner-account-button">
+                    <Avatar size={34} style={{ background: '#ff5b61' }}>
+                      {context.data.actor.displayName.slice(0, 1).toUpperCase()}
+                    </Avatar>
+                    <span className="owner-account-button__copy">
+                      <strong>{context.data.actor.displayName}</strong>
+                      <small>Chủ cửa hàng</small>
+                    </span>
+                  </Button>
+                </Dropdown>
+              </div>
+            </header>
+            <main className="owner-content">
+              {settings.isError && !settings.isLoading ? (
+                <Alert
+                  className="owner-content__alert"
+                  type="warning"
+                  showIcon
+                  title="Chưa tải được thông tin cửa hàng"
+                  description="Shell vẫn hoạt động; hãy thử tải lại sau."
                 />
               ) : null}
-              <Typography.Text className="owner-header__store">
-                {settings.data?.name ?? 'Cửa hàng của bạn'}
-              </Typography.Text>
-            </div>
-            <div className="owner-header__actions">
-              <Dropdown
-                trigger={['click']}
-                placement="bottomRight"
-                menu={{
-                  items: [
-                    {
-                      key: 'help-title',
-                      label: (
-                        <div
-                          style={{
-                            padding: '2px 4px',
-                            fontSize: 11.5,
-                            fontWeight: 700,
-                            color: '#64748b',
-                          }}
-                        >
-                          LIÊN HỆ HỖ TRỢ KỸ THUẬT
-                        </div>
-                      ),
-                      disabled: true,
-                    },
-                    {
-                      type: 'divider',
-                    },
-                    {
-                      key: 'call',
-                      icon: <PhoneOutlined style={{ color: '#10b981', fontSize: 16 }} />,
-                      label: (
-                        <a
-                          href="tel:0777464347"
-                          style={{
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: 2,
-                            padding: '4px 0',
-                          }}
-                        >
-                          <span style={{ fontSize: 12, color: '#64748b', fontWeight: 500 }}>
-                            Gọi điện thoại trực tiếp:
-                          </span>
-                          <strong style={{ color: '#10b981', fontSize: 14 }}>0777 464 347</strong>
-                        </a>
-                      ),
-                    },
-                    {
-                      key: 'zalo',
-                      icon: <MessageOutlined style={{ color: '#0975F7', fontSize: 16 }} />,
-                      label: (
-                        <a
-                          href="https://zalo.me/0816548150"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          style={{
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: 2,
-                            padding: '4px 0',
-                          }}
-                        >
-                          <span style={{ fontSize: 12, color: '#64748b', fontWeight: 500 }}>
-                            Nhắn tin tư vấn Zalo:
-                          </span>
-                          <strong style={{ color: '#0975F7', fontSize: 14 }}>0816 548 150</strong>
-                        </a>
-                      ),
-                    },
-                  ],
-                }}
-              >
-                <Button
-                  type="text"
-                  icon={<QuestionCircleOutlined />}
-                  className="owner-header__utility"
-                >
-                  Trợ giúp
-                </Button>
-              </Dropdown>
-              <Button type="text" icon={<BellOutlined />} aria-label="Thông báo" />
-              <Dropdown
-                trigger={['click']}
-                menu={{
-                  items: [
-                    {
-                      key: 'account-settings',
-                      icon: <UserOutlined />,
-                      label: 'Thiết lập tài khoản',
-                      onClick: () => navigate('/owner/settings/account'),
-                    },
-                    {
-                      type: 'divider',
-                    },
-                    {
-                      key: 'logout',
-                      icon: <LogoutOutlined />,
-                      label: 'Đăng xuất',
-                      onClick: logout,
-                    },
-                  ],
-                }}
-              >
-                <Button type="text" className="owner-account-button">
-                  <Avatar size={34} style={{ background: '#ff5b61' }}>
-                    {context.data.actor.displayName.slice(0, 1).toUpperCase()}
-                  </Avatar>
-                  <span className="owner-account-button__copy">
-                    <strong>{context.data.actor.displayName}</strong>
-                    <small>Chủ cửa hàng</small>
-                  </span>
-                </Button>
-              </Dropdown>
-            </div>
-          </header>
-          <main className="owner-content">
-            {settings.isError && !settings.isLoading ? (
-              <Alert
-                className="owner-content__alert"
-                type="warning"
-                showIcon
-                title="Chưa tải được thông tin cửa hàng"
-                description="Shell vẫn hoạt động; hãy thử tải lại sau."
-              />
-            ) : null}
-            {selectedKey === '/owner' ? (
-              <OwnerDashboardPage settings={settings.data} />
-            ) : location.pathname === '/owner/settings/store' ? (
-              <OwnerStoreSettingsPage />
-            ) : location.pathname === '/owner/qr-order/settings' ? (
-              <OwnerQrOrderSettingsPage />
-            ) : location.pathname === '/owner/settings/account' ? (
-              <OwnerAccountSettingsPage />
-            ) : location.pathname === '/owner/settings/areas' ? (
-              <OwnerAreaSettingsPage />
-            ) : location.pathname === '/owner/settings/areas/new' ? (
-              <OwnerAreaCreatePage />
-            ) : location.pathname === '/owner/settings/printing' ? (
-              <OwnerPrintSettingsPage />
-            ) : location.pathname === '/owner/settings/printing/template' ? (
-              <OwnerPrintTemplateEditPage />
-            ) : location.pathname === '/owner/settings/units' ? (
-              <OwnerUnitSettingsPage />
-            ) : location.pathname.startsWith('/owner/settings/units/') ? (
-              <OwnerUnitDetailPage unitId={location.pathname.split('/').at(-1)!} />
-            ) : location.pathname === '/owner/catalog/products' ? (
-              <OwnerProductListPage />
-            ) : location.pathname === '/owner/catalog/products/new' ? (
-              <OwnerProductFormPage />
-            ) : location.pathname.startsWith('/owner/catalog/products/') ? (
-              <OwnerProductFormPage productId={location.pathname.split('/').at(-1)!} />
-            ) : location.pathname === '/owner/catalog/categories' ? (
-              <OwnerCategoryListPage />
-            ) : location.pathname.startsWith('/owner/catalog/categories/') ? (
-              <OwnerCategoryDetailPage categoryId={location.pathname.split('/').at(-1)!} />
-            ) : location.pathname === '/owner/invoices' ? (
-              <OwnerInvoicesPage />
-            ) : location.pathname === '/owner/reports/revenue' ? (
-              <OwnerRevenueReportPage />
-            ) : location.pathname === '/owner/reports/products' ? (
-              <OwnerProductReportPage />
-            ) : location.pathname === '/owner/promotions' ? (
-              <OwnerPromotionListPage />
-            ) : location.pathname === '/owner/promotions/new' ? (
-              <OwnerPromotionFormPage />
-            ) : location.pathname.startsWith('/owner/promotions/') ? (
-              <OwnerPromotionFormPage promotionId={location.pathname.split('/')[3]!} />
-            ) : location.pathname === '/owner/customers' ? (
-              <OwnerCustomerListPage />
-            ) : location.pathname === '/owner/customers/new' ? (
-              <OwnerCustomerFormPage />
-            ) : location.pathname.endsWith('/edit') &&
-              location.pathname.startsWith('/owner/customers/') ? (
-              <OwnerCustomerFormPage customerId={location.pathname.split('/')[3]!} />
-            ) : location.pathname.startsWith('/owner/customers/') ? (
-              <OwnerCustomerDetailPage customerId={location.pathname.split('/')[3]!} />
-            ) : location.pathname === '/owner/customer-groups' ? (
-              <OwnerCustomerGroupListPage />
-            ) : location.pathname === '/owner/customer-groups/new' ? (
-              <OwnerCustomerGroupFormPage />
-            ) : location.pathname.startsWith('/owner/customer-groups/') ? (
-              <OwnerCustomerGroupFormPage groupId={location.pathname.split('/')[3]!} />
-            ) : location.pathname === '/owner/staff' ? (
-              <OwnerStaffListPage />
-            ) : location.pathname === '/owner/staff/new' ? (
-              <OwnerEmployeeFormPage />
-            ) : location.pathname === '/owner/staff/roles' ? (
-              <OwnerRolesPage />
-            ) : location.pathname === '/owner/staff/roles/new' ? (
-              <OwnerRoleFormPage />
-            ) : location.pathname.startsWith('/owner/staff/roles/') ? (
-              <OwnerRoleFormPage />
-            ) : location.pathname.startsWith('/owner/staff/') ? (
-              <OwnerEmployeeFormPage />
-            ) : selectedKey === '/owner/settings' && location.pathname === '/owner/settings' ? (
-              <SettingsHub onNavigate={(path) => navigate(path)} />
-            ) : (
-              <ModulePlaceholder path={location.pathname} />
-            )}
-          </main>
+              {selectedKey === '/owner' ? (
+                <OwnerDashboardPage settings={settings.data} />
+              ) : location.pathname === '/owner/settings/store' ? (
+                <OwnerStoreSettingsPage />
+              ) : location.pathname === '/owner/qr-order/settings' ? (
+                <OwnerQrOrderSettingsPage />
+              ) : location.pathname === '/owner/settings/account' ? (
+                <OwnerAccountSettingsPage />
+              ) : location.pathname === '/owner/settings/areas' ? (
+                <OwnerAreaSettingsPage />
+              ) : location.pathname === '/owner/settings/areas/new' ? (
+                <OwnerAreaCreatePage />
+              ) : location.pathname === '/owner/settings/printing' ? (
+                <OwnerPrintSettingsPage />
+              ) : location.pathname === '/owner/settings/printing/template' ? (
+                <OwnerPrintTemplateEditPage />
+              ) : location.pathname === '/owner/settings/notifications' ? (
+                <OwnerNotificationSettingsPage />
+              ) : location.pathname === '/owner/settings/units' ? (
+                <OwnerUnitSettingsPage />
+              ) : location.pathname.startsWith('/owner/settings/units/') ? (
+                <OwnerUnitDetailPage unitId={location.pathname.split('/').at(-1)!} />
+              ) : location.pathname === '/owner/catalog/products' ? (
+                <OwnerProductListPage />
+              ) : location.pathname === '/owner/catalog/products/new' ? (
+                <OwnerProductFormPage />
+              ) : location.pathname.startsWith('/owner/catalog/products/') ? (
+                <OwnerProductFormPage productId={location.pathname.split('/').at(-1)!} />
+              ) : location.pathname === '/owner/catalog/categories' ? (
+                <OwnerCategoryListPage />
+              ) : location.pathname.startsWith('/owner/catalog/categories/') ? (
+                <OwnerCategoryDetailPage categoryId={location.pathname.split('/').at(-1)!} />
+              ) : location.pathname === '/owner/invoices' ? (
+                <OwnerInvoicesPage />
+              ) : location.pathname === '/owner/reports/revenue' ? (
+                <OwnerRevenueReportPage />
+              ) : location.pathname === '/owner/reports/products' ? (
+                <OwnerProductReportPage />
+              ) : location.pathname === '/owner/promotions' ? (
+                <OwnerPromotionListPage />
+              ) : location.pathname === '/owner/promotions/new' ? (
+                <OwnerPromotionFormPage />
+              ) : location.pathname.startsWith('/owner/promotions/') ? (
+                <OwnerPromotionFormPage promotionId={location.pathname.split('/')[3]!} />
+              ) : location.pathname === '/owner/customers' ? (
+                <OwnerCustomerListPage />
+              ) : location.pathname === '/owner/customers/new' ? (
+                <OwnerCustomerFormPage />
+              ) : location.pathname.endsWith('/edit') &&
+                location.pathname.startsWith('/owner/customers/') ? (
+                <OwnerCustomerFormPage customerId={location.pathname.split('/')[3]!} />
+              ) : location.pathname.startsWith('/owner/customers/') ? (
+                <OwnerCustomerDetailPage customerId={location.pathname.split('/')[3]!} />
+              ) : location.pathname === '/owner/customer-groups' ? (
+                <OwnerCustomerGroupListPage />
+              ) : location.pathname === '/owner/customer-groups/new' ? (
+                <OwnerCustomerGroupFormPage />
+              ) : location.pathname.startsWith('/owner/customer-groups/') ? (
+                <OwnerCustomerGroupFormPage groupId={location.pathname.split('/')[3]!} />
+              ) : location.pathname === '/owner/staff' ? (
+                <OwnerStaffListPage />
+              ) : location.pathname === '/owner/staff/new' ? (
+                <OwnerEmployeeFormPage />
+              ) : location.pathname === '/owner/staff/roles' ? (
+                <OwnerRolesPage />
+              ) : location.pathname === '/owner/staff/roles/new' ? (
+                <OwnerRoleFormPage />
+              ) : location.pathname.startsWith('/owner/staff/roles/') ? (
+                <OwnerRoleFormPage />
+              ) : location.pathname.startsWith('/owner/staff/') ? (
+                <OwnerEmployeeFormPage />
+              ) : selectedKey === '/owner/settings' && location.pathname === '/owner/settings' ? (
+                <SettingsHub onNavigate={(path) => navigate(path)} />
+              ) : (
+                <ModulePlaceholder path={location.pathname} />
+              )}
+            </main>
+          </Layout>
         </Layout>
-      </Layout>
+      </RealtimeProvider>
     </ConfigProvider>
   );
 }

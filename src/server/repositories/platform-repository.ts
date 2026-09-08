@@ -288,7 +288,7 @@ export class PlatformRepository {
       .run();
   }
 
-  async getStoreDetails(storeId: string) {
+  async getStoreDetails(storeId: string, days = 14) {
     const store = await this.db
       .prepare(
         `SELECT
@@ -332,7 +332,12 @@ export class PlatformRepository {
 
     if (!store) return null;
 
-    const [members, devices, sessions, stats, analytics] = await Promise.all([
+    const now = Date.now();
+    const todayStart = new Date(
+      new Date(now).toLocaleDateString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' }),
+    ).getTime();
+
+    const [members, devices, sessions, statsData, analytics] = await Promise.all([
       this.db
         .prepare(
           `SELECT
@@ -368,7 +373,16 @@ export class PlatformRepository {
              d.id, d.name, d.status, d.activated_by AS activatedBy,
              u.display_name AS activatedByName, d.activated_at AS activatedAt,
              d.revoked_at AS revokedAt, d.last_seen_at AS lastSeenAt,
-             d.created_at AS createdAt
+             d.created_at AS createdAt,
+             EXISTS (
+               SELECT 1 FROM push_subscriptions ps
+               WHERE ps.store_id = d.store_id AND ps.device_id = d.id
+             ) AS pushNotificationEnabled,
+             (
+               SELECT ps.last_seen_at FROM push_subscriptions ps
+               WHERE ps.store_id = d.store_id AND ps.device_id = d.id
+               ORDER BY ps.last_seen_at DESC LIMIT 1
+             ) AS pushLastSeenAt
            FROM devices d
            LEFT JOIN users u ON u.id = d.activated_by
            WHERE d.store_id = ?
@@ -385,6 +399,8 @@ export class PlatformRepository {
           revokedAt: number | null;
           lastSeenAt: number | null;
           createdAt: number;
+          pushNotificationEnabled: number;
+          pushLastSeenAt: number | null;
         }>(),
 
       this.db
@@ -440,31 +456,192 @@ export class PlatformRepository {
           .bind(storeId)
           .first<{ total: number; occupied: number | null }>(),
         this.db
-          .prepare('SELECT COUNT(*) AS count FROM products WHERE store_id = ?')
+          .prepare(
+            `SELECT COUNT(*) AS total,
+                    SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) AS active
+             FROM products WHERE store_id = ?`,
+          )
+          .bind(storeId)
+          .first<{ total: number; active: number | null }>(),
+        this.db
+          .prepare(
+            `SELECT COUNT(*) AS total,
+                    SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END) AS open,
+                    SUM(CASE WHEN status = 'PAID' THEN 1 ELSE 0 END) AS paid,
+                    SUM(CASE WHEN status = 'CANCELLED' THEN 1 ELSE 0 END) AS cancelled,
+                    SUM(CASE WHEN opened_at >= ? THEN 1 ELSE 0 END) AS todayOrders,
+                    MAX(created_at) AS lastOrderAt
+             FROM orders WHERE store_id = ?`,
+          )
+          .bind(todayStart, storeId)
+          .first<{
+            total: number;
+            open: number | null;
+            paid: number | null;
+            cancelled: number | null;
+            todayOrders: number | null;
+            lastOrderAt: number | null;
+          }>(),
+        this.db
+          .prepare(
+            `SELECT COUNT(*) AS total,
+                    COALESCE(SUM(total), 0) AS revenue,
+                    SUM(CASE WHEN issued_at >= ? THEN 1 ELSE 0 END) AS todayInvoices,
+                    COALESCE(SUM(CASE WHEN issued_at >= ? THEN total ELSE 0 END), 0) AS todayRevenue,
+                    COALESCE(SUM(discount_total), 0) AS totalDiscount,
+                    MAX(issued_at) AS lastInvoiceAt
+             FROM invoices WHERE store_id = ? AND status = 'COMPLETED'`,
+          )
+          .bind(todayStart, todayStart, storeId)
+          .first<{
+            total: number;
+            revenue: number;
+            todayInvoices: number | null;
+            todayRevenue: number;
+            totalDiscount: number;
+            lastInvoiceAt: number | null;
+          }>(),
+        this.db
+          .prepare(
+            `SELECT COUNT(*) AS total,
+                    SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END) AS open,
+                    SUM(CASE WHEN status = 'PAID' THEN 1 ELSE 0 END) AS paid,
+                    SUM(CASE WHEN status = 'CANCELLED' THEN 1 ELSE 0 END) AS cancelled,
+                    SUM(CASE WHEN opened_at >= ? THEN 1 ELSE 0 END) AS todayTakeaways,
+                    MAX(created_at) AS lastTakeawayAt
+             FROM takeaway_orders WHERE store_id = ?`,
+          )
+          .bind(todayStart, storeId)
+          .first<{
+            total: number;
+            open: number | null;
+            paid: number | null;
+            cancelled: number | null;
+            todayTakeaways: number | null;
+            lastTakeawayAt: number | null;
+          }>(),
+        this.db
+          .prepare('SELECT COUNT(*) AS count FROM categories WHERE store_id = ?')
           .bind(storeId)
           .first<{ count: number }>(),
         this.db
           .prepare(
             `SELECT COUNT(*) AS total,
-                    SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END) AS open,
-                    SUM(CASE WHEN status = 'PAID' THEN 1 ELSE 0 END) AS paid
-             FROM orders WHERE store_id = ?`,
+                    COALESCE(SUM(debt_balance_vnd), 0) AS totalDebt
+             FROM customers WHERE store_id = ? AND status = 'ACTIVE'`,
           )
           .bind(storeId)
-          .first<{ total: number; open: number | null; paid: number | null }>(),
-        this.db
-          .prepare(
-            `SELECT COUNT(*) AS total,
-                    SUM(total) AS revenue
-             FROM invoices WHERE store_id = ? AND status = 'COMPLETED'`,
-          )
-          .bind(storeId)
-          .first<{ total: number; revenue: number | null }>(),
+          .first<{ total: number; totalDebt: number }>(),
       ]),
-      this.getStoreAnalytics(storeId, 14),
+      this.getStoreAnalytics(storeId, days),
     ]);
 
-    const [areasCount, tablesCount, productsCount, ordersCount, invoicesCount] = stats;
+    const [
+      areasCount,
+      tablesCount,
+      productsCount,
+      ordersCount,
+      invoicesCount,
+      takeawayOrdersCount,
+      categoriesCount,
+      customersCount,
+    ] = statsData;
+
+    const mappedSessions = (sessions.results ?? []).map((s) => {
+      const isLive = s.status === 'ACTIVE' && now < s.expiresAt;
+      const isOnline = isLive && now - s.lastSeenAt <= 5 * 60 * 1000;
+      let presenceStatus: 'ONLINE' | 'OFFLINE' | 'REVOKED' | 'EXPIRED' = 'OFFLINE';
+      if (s.status === 'REVOKED') presenceStatus = 'REVOKED';
+      else if (s.status === 'EXPIRED' || now >= s.expiresAt) presenceStatus = 'EXPIRED';
+      else if (isOnline) presenceStatus = 'ONLINE';
+      else presenceStatus = 'OFFLINE';
+
+      return {
+        id: s.id,
+        userId: s.userId,
+        userName: s.userName,
+        userUsername: s.userUsername,
+        userRoleCode: s.userRoleCode,
+        userRoleName: s.userRoleName,
+        deviceId: s.deviceId,
+        deviceName: s.deviceName,
+        deviceStatus: s.deviceStatus,
+        sessionKind: s.sessionKind,
+        status: s.status,
+        createdAt: s.createdAt,
+        lastSeenAt: s.lastSeenAt,
+        expiresAt: s.expiresAt,
+        idleExpiresAt: s.idleExpiresAt,
+        revokedAt: s.revokedAt,
+        isOnline,
+        presenceStatus,
+      };
+    });
+
+    const mappedDevices = (devices.results ?? []).map((d) => {
+      const devSessions = mappedSessions.filter((s) => s.deviceId === d.id);
+      const activeSession = devSessions.find((s) => s.status === 'ACTIVE' && now < s.expiresAt);
+      const maxSessionSeenAt =
+        devSessions.length > 0 ? Math.max(...devSessions.map((s) => s.lastSeenAt)) : 0;
+      const latestSeenAt = Math.max(d.lastSeenAt ?? 0, maxSessionSeenAt);
+      const isOnline =
+        d.status === 'ACTIVE' && latestSeenAt > 0 && now - latestSeenAt <= 5 * 60 * 1000;
+
+      return {
+        id: d.id,
+        name: d.name,
+        status: d.status,
+        activatedBy: d.activatedBy,
+        activatedByName: d.activatedByName ?? 'Không rõ',
+        activatedAt: d.activatedAt,
+        revokedAt: d.revokedAt,
+        lastSeenAt: latestSeenAt > 0 ? latestSeenAt : d.lastSeenAt,
+        createdAt: d.createdAt,
+        isOnline,
+        currentSession: activeSession
+          ? {
+              id: activeSession.id,
+              userId: activeSession.userId,
+              userName: activeSession.userName,
+              userUsername: activeSession.userUsername,
+              userRoleName: activeSession.userRoleName ?? null,
+              createdAt: activeSession.createdAt,
+              lastSeenAt: activeSession.lastSeenAt,
+              isOnline: activeSession.isOnline ?? false,
+            }
+          : null,
+        sessionCount: devSessions.length,
+        pushNotificationEnabled: Boolean(d.pushNotificationEnabled),
+        pushLastSeenAt: d.pushLastSeenAt ?? null,
+      };
+    });
+
+    const dineInOrders = ordersCount?.total ?? 0;
+    const takeawayOrders = takeawayOrdersCount?.total ?? 0;
+    const totalOrders = dineInOrders + takeawayOrders;
+    const openOrders = (ordersCount?.open ?? 0) + (takeawayOrdersCount?.open ?? 0);
+    const paidOrders = (ordersCount?.paid ?? 0) + (takeawayOrdersCount?.paid ?? 0);
+    const cancelledOrders = (ordersCount?.cancelled ?? 0) + (takeawayOrdersCount?.cancelled ?? 0);
+    const cancelRate =
+      totalOrders > 0 ? Math.round((cancelledOrders / totalOrders) * 1000) / 10 : 0;
+    const todayOrders =
+      (ordersCount?.todayOrders ?? 0) + (takeawayOrdersCount?.todayTakeaways ?? 0);
+    const todayInvoices = invoicesCount?.todayInvoices ?? 0;
+    const onlineDevicesCount = mappedDevices.filter(
+      (d) => d.status === 'ACTIVE' && d.isOnline,
+    ).length;
+    const offlineDevicesCount = mappedDevices.filter(
+      (d) => d.status === 'ACTIVE' && !d.isOnline,
+    ).length;
+    const maxSessionActivity =
+      mappedSessions.length > 0 ? Math.max(...mappedSessions.map((s) => s.lastSeenAt)) : 0;
+    const lastActivityAt =
+      Math.max(
+        ordersCount?.lastOrderAt ?? 0,
+        takeawayOrdersCount?.lastTakeawayAt ?? 0,
+        invoicesCount?.lastInvoiceAt ?? 0,
+        maxSessionActivity,
+      ) || null;
 
     return {
       store: {
@@ -506,47 +683,57 @@ export class PlatformRepository {
         isSystemRole: m.isSystemRole === 1,
         createdAt: m.createdAt,
       })),
-      devices: (devices.results ?? []).map((d) => ({
-        id: d.id,
-        name: d.name,
-        status: d.status,
-        activatedBy: d.activatedBy,
-        activatedByName: d.activatedByName ?? 'Không rõ',
-        activatedAt: d.activatedAt,
-        revokedAt: d.revokedAt,
-        lastSeenAt: d.lastSeenAt,
-        createdAt: d.createdAt,
-      })),
-      sessions: (sessions.results ?? []).map((s) => ({
-        id: s.id,
-        userId: s.userId,
-        userName: s.userName,
-        userUsername: s.userUsername,
-        userRoleCode: s.userRoleCode,
-        userRoleName: s.userRoleName,
-        deviceId: s.deviceId,
-        deviceName: s.deviceName,
-        deviceStatus: s.deviceStatus,
-        sessionKind: s.sessionKind,
-        status: s.status,
-        createdAt: s.createdAt,
-        lastSeenAt: s.lastSeenAt,
-        expiresAt: s.expiresAt,
-        idleExpiresAt: s.idleExpiresAt,
-        revokedAt: s.revokedAt,
-      })),
+      devices: mappedDevices,
+      sessions: mappedSessions,
       stats: {
         totalAreas: areasCount?.count ?? 0,
         totalTables: tablesCount?.total ?? 0,
         openTables: tablesCount?.occupied ?? 0,
-        totalProducts: productsCount?.count ?? 0,
-        totalOrders: ordersCount?.total ?? 0,
-        openOrders: ordersCount?.open ?? 0,
-        paidOrders: ordersCount?.paid ?? 0,
+        totalProducts: productsCount?.total ?? 0,
+        totalOrders,
+        openOrders,
+        paidOrders,
         totalInvoices: invoicesCount?.total ?? 0,
         totalRevenue: invoicesCount?.revenue ?? 0,
+        todayOrders,
+        todayInvoices,
+        todayAvgOrderValue:
+          todayInvoices > 0 ? Math.round((invoicesCount?.todayRevenue ?? 0) / todayInvoices) : 0,
+        dineInOrders,
+        takeawayOrders,
+        cancelledOrders,
+        cancelRate,
+        totalDiscountAmount: invoicesCount?.totalDiscount ?? 0,
+        totalCustomers: customersCount?.total ?? 0,
+        totalDebtBalance: customersCount?.totalDebt ?? 0,
+        totalCategories: categoriesCount?.count ?? 0,
+        activeProductsCount: productsCount?.active ?? 0,
+        totalDevices: mappedDevices.length,
+        onlineDevicesCount,
+        offlineDevicesCount,
+        lastActivityAt,
       },
-      analytics,
+      analytics: {
+        ...analytics,
+        summary: {
+          ...analytics.summary,
+          todayOrders,
+          todayInvoices,
+          todayAvgOrderValue:
+            todayInvoices > 0 ? Math.round((invoicesCount?.todayRevenue ?? 0) / todayInvoices) : 0,
+          dineInOrders,
+          takeawayOrders,
+          cancelledOrders,
+          cancelRate,
+          totalDiscountAmount: invoicesCount?.totalDiscount ?? 0,
+          totalCustomers: customersCount?.total ?? 0,
+          totalDebtBalance: customersCount?.totalDebt ?? 0,
+          totalCategories: categoriesCount?.count ?? 0,
+          onlineDevices: onlineDevicesCount,
+          offlineDevices: offlineDevicesCount,
+          lastActivityAt,
+        },
+      },
     };
   }
 

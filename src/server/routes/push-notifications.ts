@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { Hono } from 'hono';
 
 import { pushSubscriptionSchema } from '@contracts/qr-order';
@@ -32,6 +33,30 @@ pushNotificationRoutes.post('/subscriptions', async (c) => {
     now: Date.now(),
   });
   return success(c, { subscribed: true }, 201);
+});
+
+const unsubscribeSchema = z
+  .object({
+    endpoint: z.string().optional(),
+  })
+  .optional();
+
+pushNotificationRoutes.delete('/subscriptions', async (c) => {
+  const actor = c.get('actor');
+  const deviceId = c.get('device')?.id ?? null;
+  const body = c.req.header('content-type')?.includes('application/json')
+    ? await parseJson(c.req.raw, unsubscribeSchema)
+    : undefined;
+  const endpoint = body?.endpoint;
+  const repo = new PushSubscriptionRepository(c.env.DB);
+  if (endpoint) {
+    await repo.removeByEndpoint(endpoint);
+  } else if (deviceId && actor.storeId) {
+    await repo.removeByDevice(actor.storeId, deviceId);
+  } else if (actor.storeId) {
+    await repo.removeByUser(actor.storeId, actor.id);
+  }
+  return success(c, { unsubscribed: true });
 });
 
 export { pushNotificationRoutes };

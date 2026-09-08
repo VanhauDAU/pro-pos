@@ -1,7 +1,15 @@
 import 'antd/dist/reset.css';
 import '@client/styles/areas.css';
+import dishIcon from '@client/assets/icon_monan_rmbackground.webp';
 
-import { PauseCircleOutlined, ShoppingOutlined } from '@ant-design/icons';
+import {
+  DownOutlined,
+  PauseCircleOutlined,
+  ShoppingOutlined,
+  SyncOutlined,
+  UpOutlined,
+} from '@ant-design/icons';
+import { motion } from 'framer-motion';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, ConfigProvider, Empty, Spin } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -10,7 +18,7 @@ import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-route
 import type { AppBootstrapResponse } from '@contracts/app-bootstrap';
 import type { PosOverviewSnapshot, PosOverviewTable } from '@contracts/pos';
 
-import { apiRequest } from '@client/lib/api';
+import { ApiError, apiRequest } from '@client/lib/api';
 import {
   recordPosStartupReady,
   setPosPerformanceCsrfToken,
@@ -34,11 +42,118 @@ import {
 
 const BRAND = '#0975f7';
 const ORDER_HOVER_PREFETCH_DELAY_MS = 80;
+const MONEY_ANIMATION_DURATION_MS = 280;
+const PULL_REFRESH_THRESHOLD_PX = 56;
+const PULL_REFRESH_MAX_PX = 96;
+const PULL_REFRESH_LOADING_PX = 52;
 type PosTable = PosOverviewTable;
 interface AreaOrderQuote extends RefreshableOrderQuote {}
+type PullRefreshPhase = 'idle' | 'pulling' | 'ready' | 'refreshing';
+
+const MONEY_FORMATTER = new Intl.NumberFormat('vi-VN');
 
 function formatMoney(value: number) {
-  return new Intl.NumberFormat('vi-VN').format(Math.round(value));
+  return MONEY_FORMATTER.format(Math.round(value));
+}
+
+function prefersReducedMotion() {
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+}
+
+function getTableInteractionTransition() {
+  return prefersReducedMotion()
+    ? { duration: 0 }
+    : { duration: 0.14, ease: [0.2, 0, 0, 1] as const };
+}
+
+function getTableInteractionProps() {
+  return prefersReducedMotion() ? {} : { whileHover: { y: -1 }, whileTap: { scale: 0.99 } };
+}
+
+function AnimatedMoney({ value }: { value: number }) {
+  const targetRef = useRef(value);
+  const displayedValueRef = useRef(value);
+  const [displayedValue, setDisplayedValue] = useState(value);
+  const [revision, setRevision] = useState(0);
+
+  useEffect(() => {
+    if (targetRef.current === value) return;
+    targetRef.current = value;
+    setRevision((current) => current + 1);
+
+    if (prefersReducedMotion()) {
+      displayedValueRef.current = value;
+      setDisplayedValue(value);
+      return;
+    }
+
+    const from = displayedValueRef.current;
+    const difference = value - from;
+    const startedAt = performance.now();
+    let animationFrame = 0;
+
+    const update = (now: number) => {
+      const progress = Math.min(1, (now - startedAt) / MONEY_ANIMATION_DURATION_MS);
+      const easedProgress = 1 - Math.pow(1 - progress, 3);
+      const nextValue = Math.round(from + difference * easedProgress);
+      displayedValueRef.current = nextValue;
+      setDisplayedValue(nextValue);
+      if (progress < 1) animationFrame = window.requestAnimationFrame(update);
+    };
+
+    animationFrame = window.requestAnimationFrame(update);
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [value]);
+
+  return (
+    <div
+      className="staff-table-card__total"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      aria-label={`${formatMoney(value)} đồng`}
+    >
+      <span
+        key={revision}
+        className={revision > 0 ? 'staff-table-card__total-value is-changing' : undefined}
+        aria-hidden="true"
+      >
+        {formatMoney(displayedValue)}
+      </span>
+    </div>
+  );
+}
+
+function AnimatedInlineText({ value }: { value: string | number }) {
+  const previousValueRef = useRef(value);
+  const [revision, setRevision] = useState(0);
+
+  useEffect(() => {
+    if (previousValueRef.current === value) return;
+    previousValueRef.current = value;
+    setRevision((current) => current + 1);
+  }, [value]);
+
+  return (
+    <span key={revision} className={revision > 0 ? 'staff-table-card__changing-text' : undefined}>
+      {value}
+    </span>
+  );
+}
+
+function CardUpdateFlash({ signature }: { signature: string }) {
+  const previousSignatureRef = useRef(signature);
+  const [revision, setRevision] = useState(0);
+
+  useEffect(() => {
+    if (previousSignatureRef.current === signature) return;
+    previousSignatureRef.current = signature;
+    setRevision((current) => current + 1);
+  }, [signature]);
+
+  return revision > 0 ? (
+    <span key={revision} className="staff-table-card__update-flash" aria-hidden="true" />
+  ) : null;
 }
 
 function errorText(error: unknown) {
@@ -81,6 +196,169 @@ function AreasPage() {
     refetchOnMount: false,
     refetchOnWindowFocus: 'always',
   });
+
+  const [pullPhase, setPullPhase] = useState<PullRefreshPhase>('idle');
+  const pullDistanceRef = useRef(0);
+  const pullPhaseRef = useRef<PullRefreshPhase>('idle');
+  const pullRefreshingRef = useRef(false);
+  const lastRefreshTimeRef = useRef(0);
+  const areasPageRef = useRef<HTMLDivElement>(null);
+  const pullIndicatorRef = useRef<HTMLDivElement>(null);
+  const overviewRefetchRef = useRef(overview.refetch);
+
+  useEffect(() => {
+    overviewRefetchRef.current = overview.refetch;
+  }, [overview.refetch]);
+
+  const updatePullDistance = useCallback((distance: number) => {
+    pullDistanceRef.current = distance;
+    if (pullIndicatorRef.current) {
+      pullIndicatorRef.current.style.height = `${distance}px`;
+    }
+  }, []);
+
+  const updatePullPhase = useCallback((phase: PullRefreshPhase) => {
+    if (pullPhaseRef.current === phase) return;
+    pullPhaseRef.current = phase;
+    setPullPhase(phase);
+  }, []);
+
+  const performPullRefresh = useCallback(async () => {
+    const nowTime = Date.now();
+    if (pullRefreshingRef.current || nowTime - lastRefreshTimeRef.current < 1200) {
+      updatePullDistance(0);
+      updatePullPhase('idle');
+      return;
+    }
+    pullRefreshingRef.current = true;
+    lastRefreshTimeRef.current = nowTime;
+    updatePullDistance(PULL_REFRESH_LOADING_PX);
+    updatePullPhase('refreshing');
+
+    try {
+      // Tối ưu request: Chỉ gọi duy nhất overview.refetch(), không gọi lại danh mục hay các query khác
+      await overviewRefetchRef.current();
+    } catch {
+      // Ignore network errors
+    } finally {
+      pullRefreshingRef.current = false;
+      updatePullDistance(0);
+      updatePullPhase('idle');
+    }
+  }, [updatePullDistance, updatePullPhase]);
+
+  useEffect(() => {
+    const pageEl = areasPageRef.current;
+    if (!pageEl) return;
+
+    let startY: number | null = null;
+    let startX: number | null = null;
+    let isPulling = false;
+    let directionLocked = false;
+    const previousOverscrollBehavior = document.documentElement.style.overscrollBehaviorY;
+    document.documentElement.style.overscrollBehaviorY = 'none';
+
+    const resetGesture = () => {
+      startY = null;
+      startX = null;
+      isPulling = false;
+      directionLocked = false;
+    };
+
+    const isAtTop = () =>
+      window.scrollY <= 0 &&
+      document.documentElement.scrollTop <= 0 &&
+      document.body.scrollTop <= 0;
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 1 || pullRefreshingRef.current || !isAtTop()) {
+        resetGesture();
+        return;
+      }
+      const touch = e.touches[0];
+      if (!touch) return;
+      startY = touch.clientY;
+      startX = touch.clientX;
+      isPulling = false;
+      directionLocked = false;
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (
+        pullRefreshingRef.current ||
+        startY === null ||
+        startX === null ||
+        e.touches.length !== 1
+      ) {
+        return;
+      }
+      const touch = e.touches[0];
+      if (!touch) return;
+      const deltaY = touch.clientY - startY;
+      const deltaX = touch.clientX - startX;
+
+      if (!directionLocked && Math.max(Math.abs(deltaX), Math.abs(deltaY)) >= 8) {
+        directionLocked = true;
+        if (Math.abs(deltaX) >= Math.abs(deltaY) || deltaY <= 0) {
+          resetGesture();
+          return;
+        }
+      }
+
+      if (!directionLocked) return;
+
+      if (!isAtTop() || deltaY <= 0) {
+        if (isPulling) {
+          updatePullDistance(0);
+          updatePullPhase('idle');
+        }
+        resetGesture();
+        return;
+      }
+
+      isPulling = true;
+      if (e.cancelable) e.preventDefault();
+      const resistedDistance = Math.min(PULL_REFRESH_MAX_PX, Math.max(0, deltaY - 4) * 0.5);
+      updatePullDistance(resistedDistance);
+      updatePullPhase(resistedDistance >= PULL_REFRESH_THRESHOLD_PX ? 'ready' : 'pulling');
+    };
+
+    const onTouchEnd = () => {
+      const shouldRefresh = isPulling && pullDistanceRef.current >= PULL_REFRESH_THRESHOLD_PX;
+      resetGesture();
+      if (shouldRefresh) {
+        try {
+          navigator.vibrate?.(10);
+        } catch {}
+        void performPullRefresh();
+      } else if (!pullRefreshingRef.current) {
+        updatePullDistance(0);
+        updatePullPhase('idle');
+      }
+    };
+
+    const onTouchCancel = () => {
+      resetGesture();
+      if (!pullRefreshingRef.current) {
+        updatePullDistance(0);
+        updatePullPhase('idle');
+      }
+    };
+
+    pageEl.addEventListener('touchstart', onTouchStart, { passive: true });
+    pageEl.addEventListener('touchmove', onTouchMove, { passive: false });
+    pageEl.addEventListener('touchend', onTouchEnd, { passive: true });
+    pageEl.addEventListener('touchcancel', onTouchCancel, { passive: true });
+
+    return () => {
+      pageEl.removeEventListener('touchstart', onTouchStart);
+      pageEl.removeEventListener('touchmove', onTouchMove);
+      pageEl.removeEventListener('touchend', onTouchEnd);
+      pageEl.removeEventListener('touchcancel', onTouchCancel);
+      document.documentElement.style.overscrollBehaviorY = previousOverscrollBehavior;
+    };
+  }, [performPullRefresh, updatePullDistance, updatePullPhase]);
+
   const tables = {
     data: overview.data?.tables,
     isLoading: overview.isLoading,
@@ -114,21 +392,6 @@ function AreasPage() {
     const id = window.setTimeout(warmCatalog, 1_000);
     return () => window.clearTimeout(id);
   }, [queryClient]);
-
-  const recordCardZoomOrigin = useCallback((element: HTMLElement) => {
-    try {
-      const rect = element.getBoundingClientRect();
-      const root = document.documentElement;
-      const originX = rect.left + rect.width / 2;
-      const originY = rect.top + rect.height / 2;
-      const scale = Math.max(0.25, Math.min(0.65, rect.width / Math.max(window.innerWidth, 1)));
-      root.style.setProperty('--pos-zoom-origin-x', `${Math.round(originX)}px`);
-      root.style.setProperty('--pos-zoom-origin-y', `${Math.round(originY)}px`);
-      root.style.setProperty('--pos-zoom-scale', scale.toFixed(3));
-    } catch {
-      // Ignore in non-browser environment
-    }
-  }, []);
 
   const prefetchOrder = useCallback(
     (activeOrderId: string) => {
@@ -248,7 +511,33 @@ function AreasPage() {
     : (currentArea?.tables.filter((t) => t.status === 'DISABLED').length ?? 0);
 
   return (
-    <div className="staff-areas-page">
+    <div className="staff-areas-page" ref={areasPageRef}>
+      <div
+        ref={pullIndicatorRef}
+        className={`staff-areas-pull-refresh${pullPhase !== 'idle' ? ' is-visible' : ''}`}
+        role="status"
+        aria-live="polite"
+        aria-hidden={pullPhase === 'idle'}
+      >
+        <div className="staff-areas-pull-refresh__content">
+          {pullPhase === 'refreshing' ? (
+            <>
+              <SyncOutlined spin className="staff-areas-pull-refresh__icon" />
+              <span>Đang cập nhật trạng thái bàn...</span>
+            </>
+          ) : pullPhase === 'ready' ? (
+            <>
+              <UpOutlined className="staff-areas-pull-refresh__icon" />
+              <span>Thả ra để làm mới</span>
+            </>
+          ) : (
+            <>
+              <DownOutlined className="staff-areas-pull-refresh__icon" />
+              <span>Kéo xuống để làm mới</span>
+            </>
+          )}
+        </div>
+      </div>
       {tables.isLoading ? <Spin fullscreen description="Đang tải khu vực" /> : null}
       {tables.isError ? <Alert type="error" showIcon title="Chưa tải được khu vực và bàn" /> : null}
       {overview.isRefetchError && overview.data ? (
@@ -355,13 +644,18 @@ function AreasPage() {
           <div className="staff-table-grid">
             {/* Card Tạo đơn mang về mới (luôn hiển thị, giống mẫu ảnh) */}
             {status !== 'OCCUPIED' ? (
-              <button
+              <motion.button
+                transition={getTableInteractionTransition()}
                 type="button"
                 className="staff-table-card staff-table-card--takeaway-create"
-                onPointerDown={(e) => recordCardZoomOrigin(e.currentTarget)}
-                onClick={(e) => {
-                  recordCardZoomOrigin(e.currentTarget);
-                  navigate('/pos/orders/new?type=TAKEAWAY');
+                {...getTableInteractionProps()}
+                onClick={() => {
+                  navigate('/pos/orders/new?type=TAKEAWAY', {
+                    state: {
+                      transitionTableId: 'takeaway-create',
+                      transitionTableName: 'Mang về',
+                    },
+                  });
                 }}
               >
                 <div className="staff-takeaway-create-header">
@@ -450,47 +744,71 @@ function AreasPage() {
                   </svg>
                   <strong className="staff-takeaway-create-title">Mang về</strong>
                 </div>
-              </button>
+              </motion.button>
             ) : null}
 
             {/* Các đơn mang về đang hoạt động ("Mang về 01", "Mang về 02", ...) */}
             {status !== 'AVAILABLE'
               ? activeTakeaways.map((takeawayOrder, index) => {
                   const label = `Mang về ${String(index + 1).padStart(2, '0')}`;
+                  const takeawayTransitionId = `takeaway-${takeawayOrder.id}`;
+
                   return (
-                    <button
+                    <motion.button
+                      transition={getTableInteractionTransition()}
                       type="button"
                       key={takeawayOrder.id}
                       className="staff-table-card staff-table-card--occupied"
                       onPointerEnter={() => prefetchOrderOnHoverIntent(takeawayOrder.id)}
                       onPointerLeave={cancelHoverPrefetch}
-                      onPointerDown={(e) => {
+                      onPointerDown={() => {
                         startPosInteraction('order-shell');
                         startPosInteraction('order-verified');
                         cancelHoverPrefetch();
-                        recordCardZoomOrigin(e.currentTarget);
                         prefetchOrder(takeawayOrder.id);
                       }}
                       onFocus={() => prefetchOrder(takeawayOrder.id)}
-                      onClick={(e) => {
-                        recordCardZoomOrigin(e.currentTarget);
-                        navigate(`/pos/orders/${takeawayOrder.id}`);
+                      {...getTableInteractionProps()}
+                      onClick={() => {
+                        navigate(`/pos/orders/${takeawayOrder.id}`, {
+                          state: {
+                            transitionTableId: takeawayTransitionId,
+                            transitionTableName: label,
+                            transitionTableStatus: 'TAKEAWAY',
+                            transitionTotalVnd: takeawayOrder.totalVnd ?? 0,
+                          },
+                        });
                       }}
                     >
+                      <CardUpdateFlash
+                        signature={`${takeawayOrder.totalVnd ?? 0}|${takeawayOrder.itemCount ?? 0}`}
+                      />
                       <div className="staff-table-card__header">
                         <strong className="staff-table-card__name">{label}</strong>
+                        <span className="staff-table-card__occupied-badge">Mang về</span>
                       </div>
                       <div className="staff-table-card__body">
                         <div className="staff-table-card__meta">
                           <span>{formatTableShortDuration(takeawayOrder.openedAt, now)}</span>
                           <span className="staff-table-card__dot">•</span>
-                          <span>{takeawayOrder.itemCount ?? 0} món</span>
+                          <span className="staff-table-card__dish-badge">
+                            <img
+                              src={dishIcon}
+                              alt=""
+                              className="staff-table-card__dish-icon"
+                              width={14}
+                              height={14}
+                              loading="lazy"
+                              decoding="async"
+                            />
+                            <AnimatedInlineText value={`${takeawayOrder.itemCount ?? 0} món`} />
+                          </span>
                         </div>
-                        <div className="staff-table-card__total">
-                          {formatMoney(takeawayOrder.totalVnd ?? 0)}
+                        <div>
+                          <AnimatedMoney value={takeawayOrder.totalVnd ?? 0} />
                         </div>
                       </div>
-                    </button>
+                    </motion.button>
                   );
                 })
               : null}
@@ -503,8 +821,11 @@ function AreasPage() {
               const isOccupied = table.status === 'OCCUPIED';
               const isPaused = table.timeSessionStatus === 'PAUSED';
 
+              const tableTransitionId = table.id;
+
               return (
-                <button
+                <motion.button
+                  transition={getTableInteractionTransition()}
                   type="button"
                   key={table.id}
                   disabled={table.status === 'DISABLED'}
@@ -519,10 +840,9 @@ function AreasPage() {
                     if (table.activeOrderId) prefetchOrderOnHoverIntent(table.activeOrderId);
                   }}
                   onPointerLeave={cancelHoverPrefetch}
-                  onPointerDown={(e) => {
+                  onPointerDown={() => {
                     startPosInteraction('order-shell');
                     startPosInteraction('order-verified');
-                    recordCardZoomOrigin(e.currentTarget);
                     if (table.activeOrderId) {
                       cancelHoverPrefetch();
                       prefetchOrder(table.activeOrderId);
@@ -531,37 +851,61 @@ function AreasPage() {
                   onFocus={() => {
                     if (table.activeOrderId) prefetchOrder(table.activeOrderId);
                   }}
-                  onClick={(e) => {
-                    recordCardZoomOrigin(e.currentTarget);
-                    if (table.activeOrderId) navigate(`/pos/orders/${table.activeOrderId}`);
-                    else navigate(`/pos/orders/new?tableId=${table.id}`);
+                  {...getTableInteractionProps()}
+                  onClick={() => {
+                    const navState = {
+                      transitionTableId: tableTransitionId,
+                      transitionTableName: table.name,
+                      transitionTableStatus: table.status,
+                      transitionIsPaused: isPaused,
+                      transitionTotalVnd: table.totalVnd ?? 0,
+                      transitionAreaName: table.areaName,
+                      transitionOccupiedSince: table.occupiedSince,
+                      transitionItemCount: table.itemCount ?? 0,
+                      transitionGuestCount: table.guestCount ?? 0,
+                    };
+                    if (table.activeOrderId) {
+                      navigate(`/pos/orders/${table.activeOrderId}`, { state: navState });
+                    } else {
+                      navigate(`/pos/orders/new?tableId=${table.id}`, { state: navState });
+                    }
                   }}
                 >
+                  <CardUpdateFlash
+                    signature={`${table.status}|${table.timeSessionStatus ?? ''}|${table.totalVnd ?? 0}|${table.itemCount ?? 0}|${table.activeOrderId ?? ''}`}
+                  />
                   <div className="staff-table-card__header">
                     <strong className="staff-table-card__name">{table.name}</strong>
-                    {isOccupied && isPaused && (
+                    {isOccupied && isPaused ? (
                       <span className="staff-table-card__paused-badge">
                         <PauseCircleOutlined /> Tạm dừng
                       </span>
-                    )}
+                    ) : null}
                   </div>
                   {isOccupied ? (
                     <div className="staff-table-card__body">
                       <div className="staff-table-card__meta">
                         <span>{formatTableShortDuration(table.occupiedSince, now)}</span>
                         <span className="staff-table-card__dot">•</span>
-                        <span>
-                          {table.guestCount && table.guestCount > 0
-                            ? `${table.guestCount} khách`
-                            : `${table.itemCount ?? 0} món`}
+                        <span className="staff-table-card__dish-badge">
+                          <img
+                            src={dishIcon}
+                            alt=""
+                            className="staff-table-card__dish-icon"
+                            width={14}
+                            height={14}
+                            loading="lazy"
+                            decoding="async"
+                          />
+                          <AnimatedInlineText value={`${table.itemCount ?? 0} món`} />
                         </span>
                       </div>
-                      <div className="staff-table-card__total">
-                        {formatMoney(table.totalVnd ?? 0)}
+                      <div>
+                        <AnimatedMoney value={table.totalVnd ?? 0} />
                       </div>
                     </div>
                   ) : null}
-                </button>
+                </motion.button>
               );
             })}
           </div>
@@ -573,17 +917,23 @@ function AreasPage() {
             <div className="staff-table-legend-item">
               <span className="staff-table-legend-dot staff-table-legend-dot--available" />
               <span className="staff-table-legend-label">Bàn trống</span>
-              <span className="staff-table-legend-count">{availableCount}</span>
+              <span className="staff-table-legend-count">
+                <AnimatedInlineText value={availableCount} />
+              </span>
             </div>
             <div className="staff-table-legend-item">
               <span className="staff-table-legend-dot staff-table-legend-dot--occupied" />
               <span className="staff-table-legend-label">Đang sử dụng</span>
-              <span className="staff-table-legend-count">{occupiedCount}</span>
+              <span className="staff-table-legend-count">
+                <AnimatedInlineText value={occupiedCount} />
+              </span>
             </div>
             <div className="staff-table-legend-item">
               <span className="staff-table-legend-dot staff-table-legend-dot--disabled" />
               <span className="staff-table-legend-label">Tạm ngưng</span>
-              <span className="staff-table-legend-count">{disabledCount}</span>
+              <span className="staff-table-legend-count">
+                <AnimatedInlineText value={disabledCount} />
+              </span>
             </div>
           </div>
         ) : (
@@ -591,7 +941,9 @@ function AreasPage() {
             <div className="staff-table-legend-item">
               <span className="staff-table-legend-dot staff-table-legend-dot--occupied" />
               <span className="staff-table-legend-label">Đang phục vụ mang về</span>
-              <span className="staff-table-legend-count">{activeTakeaways.length}</span>
+              <span className="staff-table-legend-count">
+                <AnimatedInlineText value={activeTakeaways.length} />
+              </span>
             </div>
           </div>
         )}
@@ -660,19 +1012,27 @@ export function StaffPosAreasPage({
   retryBootstrap?: () => void;
 }) {
   if (bootstrapLoading || !bootstrap) {
-    return bootstrapError ? (
-      <div className="pos-app-splash" role="alert">
-        <div className="pos-app-splash__content">
-          <strong>Chưa thể tải dữ liệu POS</strong>
-          <div className="pos-app-splash__message">{errorText(bootstrapError)}</div>
-          <Button type="primary" onClick={retryBootstrap}>
-            Thử lại
-          </Button>
+    if (bootstrapError) {
+      if (
+        (bootstrapError instanceof ApiError && bootstrapError.status === 401) ||
+        bootstrapError.message.includes('Phiên đăng nhập không hợp lệ') ||
+        bootstrapError.message.includes('Vui lòng đăng nhập')
+      ) {
+        return <Navigate to="/?tab=employee&authError=SESSION_EXPIRED" replace />;
+      }
+      return (
+        <div className="pos-app-splash" role="alert">
+          <div className="pos-app-splash__content">
+            <strong>Chưa thể tải dữ liệu POS</strong>
+            <div className="pos-app-splash__message">{errorText(bootstrapError)}</div>
+            <Button type="primary" onClick={retryBootstrap}>
+              Thử lại
+            </Button>
+          </div>
         </div>
-      </div>
-    ) : (
-      <PosAppSplash message="Đang nạp dữ liệu POS..." />
-    );
+      );
+    }
+    return <PosAppSplash message="Đang nạp dữ liệu POS..." />;
   }
   if (bootstrap.auth.actor?.kind !== 'EMPLOYEE' || !bootstrap.pos) {
     return <Navigate to="/?tab=employee&authError=SESSION_EXPIRED" replace />;

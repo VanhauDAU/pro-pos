@@ -4,6 +4,120 @@ import { fileURLToPath, URL } from 'node:url';
 import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
+function devServiceWorkerPlugin(): import('vite').Plugin {
+  return {
+    name: 'dev-sw-server',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (req.url === '/sw.js') {
+          res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+          res.setHeader('Service-Worker-Allowed', '/');
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          res.end(
+            `
+self.skipWaiting();
+self.addEventListener('activate', (event) => {
+  event.waitUntil(self.clients.claim());
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
+});
+
+self.addEventListener('push', (event) => {
+  let payload = {};
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch {
+    payload = { body: event.data ? event.data.text() : 'Bạn có thông báo mới.' };
+  }
+  event.waitUntil(
+    (async () => {
+      const tag = payload.tag || 'propos-notification';
+
+      try {
+        if (typeof BroadcastChannel !== 'undefined') {
+          const bc = new BroadcastChannel('propos-notifications');
+          bc.postMessage({ type: 'PUSH_NOTIFICATION_RECEIVED', payload });
+          bc.close();
+        }
+      } catch {}
+
+      try {
+        const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+        for (const client of clients) {
+          client.postMessage({ type: 'PUSH_NOTIFICATION_RECEIVED', payload });
+        }
+      } catch {}
+
+      const isPaid = payload.kind === 'ORDER_PAID';
+      const defaultTitle = isPaid ? 'Xem hóa đơn' : 'Mở POS';
+      const defaultUrl = isPaid ? '/pos' : '/pos/qr-order';
+
+      const soundMap = {
+        ORDER_PAID: '/sounds/sound_thanhtoanthanhcong.mp3',
+        PAYMENT_SUCCESS: '/sounds/sound_thanhtoanthanhcong.mp3',
+        QR_ORDER: '/sounds/sound_goimonmoi.mp3',
+        NEW_QR_ORDER: '/sounds/sound_goimonmoi.mp3',
+        CALL_STAFF: '/sounds/sound_yeuccaumoban.mp3',
+        CHECKOUT_REQUEST: '/sounds/sound_yeucauthanhtoan.mp3',
+        TABLE_OPEN_REQUEST: '/sounds/sound_yeuccaumoban.mp3',
+      };
+      const soundFile =
+        (payload.soundType && soundMap[payload.soundType]) ||
+        (payload.kind && soundMap[payload.kind]) ||
+        undefined;
+
+      const options = {
+        body: payload.body || 'Bạn có thông báo mới.',
+        icon: payload.icon || '/pwa-192x192.png',
+        badge: '/pwa-192x192.png',
+        tag,
+        renotify: true,
+        requireInteraction: payload.requireInteraction !== false,
+        silent: false,
+        ...(soundFile ? { sound: soundFile } : {}),
+        timestamp: payload.timestamp || Date.now(),
+        actions: [{ action: 'open', title: payload.actionTitle || defaultTitle }],
+        data: {
+          url: payload.url || defaultUrl,
+          tag,
+          kind: payload.kind || 'NOTIFICATION',
+          requestId: payload.requestId || null,
+          orderId: payload.orderId || null,
+          soundType: payload.soundType || null,
+        },
+        vibrate: [200, 100, 200, 100, 400],
+      };
+      await self.registration.showNotification(payload.title || 'Pro POS', options);
+    })()
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      const urlToOpen = new URL(event.notification.data?.url || '/pos', self.location.origin).href;
+      const focused = clientList.find((client) => client.focused) || clientList.find((client) => client.url.startsWith(self.location.origin));
+      if (focused) {
+        return focused.focus().then(() => focused.navigate(urlToOpen));
+      }
+      return self.clients.openWindow(urlToOpen);
+    })
+  );
+});
+            `.trim(),
+          );
+          return;
+        }
+        next();
+      });
+    },
+  };
+}
+
 export default defineConfig({
   define: {
     PROPOS_APP_VERSION: JSON.stringify(process.env['npm_package_version'] ?? 'unknown'),
@@ -66,6 +180,7 @@ export default defineConfig({
   plugins: [
     react(),
     cloudflare(),
+    devServiceWorkerPlugin(),
     VitePWA({
       strategies: 'injectManifest',
       srcDir: 'src/client',
@@ -108,6 +223,10 @@ export default defineConfig({
           'assets/rolldown-runtime-*.js',
           'assets/nav-*.webp',
         ],
+      },
+      devOptions: {
+        enabled: true,
+        type: 'module',
       },
     }),
   ],

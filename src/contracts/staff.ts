@@ -218,3 +218,16 @@ export const createRoleSchema = z.object({
 export const updateRoleSchema = createRoleSchema;
 
 export type RolePermissionCatalog = typeof rolePermissionCatalog;
+
+export interface EmployeeDto {
+  id: string;
+  username: string;
+  email: string | null;
+  displayName: string;
+  status: 'ACTIVE' | 'DISABLED';
+  roleId: string;
+  roleName: string;
+  permissionKeys?: string[];
+  isOnline?: boolean;
+  lastSeenAt?: number | null;
+}

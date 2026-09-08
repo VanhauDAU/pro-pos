@@ -21,3 +21,5 @@ worker-configuration.access.d.ts
 !.env.example
 release/
 apps/print-agent/release/
+/*.sql
+/*.db

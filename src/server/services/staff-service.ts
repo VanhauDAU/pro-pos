@@ -112,26 +112,61 @@ export class StaffService {
   }
 
   async listEmployees(storeId: string) {
+    let onlineUserIds: string[] = [];
+    try {
+      if (this.env.STORE_REALTIME) {
+        onlineUserIds =
+          await this.env.STORE_REALTIME.getByName(storeId).listConnectedUserIds(storeId);
+      }
+    } catch {
+      // Graceful fallback if DO binding is absent or in tests
+    }
+
+    const now = Date.now();
     const result = await this.repository.listEmployees(storeId);
-    return result.results.map((row) =>
-      Object.assign(row, {
+    return result.results.map((row) => {
+      const lastSeen =
+        row.lastSeenAt !== null && row.lastSeenAt !== undefined ? Number(row.lastSeenAt) : null;
+      const isConnected = onlineUserIds.includes(row.id);
+      const isRecent = lastSeen !== null && now - lastSeen < 2 * 60 * 1000;
+      const isOnline = row.status === 'ACTIVE' && (isConnected || isRecent);
+      return {
+        ...row,
         permissionKeys:
           typeof row.permissionKeys === 'string' && row.permissionKeys.length > 0
             ? row.permissionKeys.split(',')
             : [],
-      }),
-    );
+        isOnline,
+        lastSeenAt: lastSeen,
+      };
+    });
   }
 
   async getEmployee(storeId: string, userId: string) {
     const employee = await this.repository.getEmployee(storeId, userId);
     if (!employee) throw new AppError('EMPLOYEE_NOT_FOUND', 'Không tìm thấy nhân viên.', 404);
+    let isConnected = false;
+    try {
+      if (this.env.STORE_REALTIME) {
+        const online =
+          await this.env.STORE_REALTIME.getByName(storeId).listConnectedUserIds(storeId);
+        isConnected = online.includes(userId);
+      }
+    } catch {
+      // Graceful fallback
+    }
+    const now = Date.now();
+    const lastSeen = employee.lastSeenAt ? Number(employee.lastSeenAt) : null;
+    const isRecent = lastSeen !== null && now - lastSeen < 2 * 60 * 1000;
+    const status =
+      employee.userStatus === 'ACTIVE' && employee.membershipStatus === 'ACTIVE'
+        ? 'ACTIVE'
+        : 'DISABLED';
     return {
       ...employee,
-      status:
-        employee.userStatus === 'ACTIVE' && employee.membershipStatus === 'ACTIVE'
-          ? 'ACTIVE'
-          : 'DISABLED',
+      status,
+      isOnline: status === 'ACTIVE' && (isConnected || isRecent),
+      lastSeenAt: lastSeen,
     };
   }
 

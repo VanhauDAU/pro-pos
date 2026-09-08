@@ -9,10 +9,17 @@ export interface StorePushNotification {
     | 'CALL_STAFF'
     | 'CHECKOUT_REQUEST'
     | 'TABLE_OPEN_REQUEST'
+    | 'ORDER_PAID'
     | 'PRINT_COMPLETED'
     | 'PRINT_FAILED'
     | 'PRINT_UNCERTAIN';
-  soundType?: 'NEW_QR_ORDER' | 'CHECKOUT_REQUEST' | 'TABLE_OPEN_REQUEST' | 'NOTIFICATION_CHIME';
+  soundType?:
+    | 'NEW_QR_ORDER'
+    | 'CALL_STAFF'
+    | 'CHECKOUT_REQUEST'
+    | 'TABLE_OPEN_REQUEST'
+    | 'NOTIFICATION_CHIME'
+    | 'PAYMENT_SUCCESS';
   title: string;
   body: string;
   url: string;
@@ -23,6 +30,9 @@ export interface StorePushNotification {
   actionTitle?: string;
   badgeCount?: number;
   requireInteraction?: boolean;
+  onlyActiveSessions?: boolean;
+  excludeDeviceId?: string | null;
+  targetUserId?: string | null;
 }
 
 export class PushNotificationService {
@@ -40,12 +50,29 @@ export class PushNotificationService {
 
   async sendStoreNotification(input: StorePushNotification) {
     if (!this.isConfigured()) return { sent: 0, disabled: true };
-    webpush.setVapidDetails(
-      this.env.VAPID_SUBJECT,
-      this.env.VAPID_PUBLIC_KEY,
-      this.env.VAPID_PRIVATE_KEY,
+    try {
+      webpush.setVapidDetails(
+        this.env.VAPID_SUBJECT,
+        this.env.VAPID_PUBLIC_KEY,
+        this.env.VAPID_PRIVATE_KEY,
+      );
+    } catch (err) {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          message: 'failed to initialize VAPID details for push notification',
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+      return { sent: 0, failed: 0, disabled: true };
+    }
+    const subscriptions = await this.repository.listEligibleSubscriptions(
+      input.storeId,
+      input.kind,
+      Date.now(),
+      input.excludeDeviceId,
+      input.targetUserId,
     );
-    const subscriptions = await this.repository.listStore(input.storeId);
     const payload = JSON.stringify(input);
     let sent = 0;
     let failed = 0;

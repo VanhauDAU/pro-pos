@@ -85,6 +85,13 @@ export class PosRealtimeClient {
     private readonly onStatus: (status: RealtimeConnectionStatus) => void,
     private readonly onServerTime: (offsetMs: number) => void,
     private readonly onEvents?: (events: RealtimeEventV1[]) => void,
+    private readonly onPushPromptRequested?: () => void,
+    private readonly onStaffPresence?: (
+      userId: string,
+      isOnline: boolean,
+      lastSeenAt: number,
+    ) => void,
+    private readonly onStaffPresenceBatch?: (onlineUserIds: string[]) => void,
   ) {
     const stored = sessionStorage.getItem(this.cursorKey);
     const parsed = stored === null ? null : Number(stored);
@@ -187,6 +194,10 @@ export class PosRealtimeClient {
         }
         this.serverTimeOffset = frame.serverNowMs - Date.now();
         this.onServerTime(this.serverTimeOffset);
+        if (frame.onlineUserIds) {
+          this.applyOnlineUsers(frame.onlineUserIds);
+          this.onStaffPresenceBatch?.(frame.onlineUserIds);
+        }
         const reconnectIn = Math.max(1_000, frame.reauthAtMs - Date.now() - 5_000);
         this.reauthTimer = window.setTimeout(() => {
           if (!this.isCurrentConnection(socket, generation) || this.intentionalClose) return;
@@ -205,6 +216,14 @@ export class PosRealtimeClient {
         return;
       }
       if (frame.type === 'events') this.enqueueEvents(frame.events, socket);
+      if (frame.type === 'staff_presence') {
+        this.applyStaffPresence(frame.userId, frame.isOnline, frame.lastSeenAt);
+        this.onStaffPresence?.(frame.userId, frame.isOnline, frame.lastSeenAt);
+      }
+      if (frame.type === 'device_push_prompt') {
+        window.dispatchEvent(new CustomEvent('propos:request-push-prompt', { detail: frame }));
+        this.onPushPromptRequested?.();
+      }
     });
 
     socket.addEventListener('close', (event) => {
@@ -249,6 +268,42 @@ export class PosRealtimeClient {
 
   receiveBroadcastEvents(events: RealtimeEventV1[]) {
     this.eventQueue = this.eventQueue.then(() => this.receiveEvents(events)).catch(() => undefined);
+  }
+
+  applyStaffPresence(userId: string, isOnline: boolean, lastSeenAt: number) {
+    const resolvedLastSeenAt = lastSeenAt || Date.now();
+    this.queryClient.setQueriesData<
+      Array<{ id: string; isOnline?: boolean; lastSeenAt?: number | null }>
+    >({ queryKey: ['staff-employees-list'] }, (old) => {
+      if (!old) return old;
+      return old.map((emp) =>
+        emp.id === userId ? { ...emp, isOnline, lastSeenAt: resolvedLastSeenAt } : emp,
+      );
+    });
+    window.dispatchEvent(
+      new CustomEvent('propos:staff-presence', {
+        detail: { userId, isOnline, lastSeenAt: resolvedLastSeenAt },
+      }),
+    );
+  }
+
+  applyOnlineUsers(onlineUserIds: string[]) {
+    const onlineSet = new Set(onlineUserIds);
+    this.queryClient.setQueriesData<
+      Array<{ id: string; isOnline?: boolean; lastSeenAt?: number | null }>
+    >({ queryKey: ['staff-employees-list'] }, (old) => {
+      if (!old) return old;
+      return old.map((emp) => ({
+        ...emp,
+        isOnline: onlineSet.has(emp.id),
+        lastSeenAt: onlineSet.has(emp.id) ? Date.now() : (emp.lastSeenAt ?? null),
+      }));
+    });
+    window.dispatchEvent(
+      new CustomEvent('propos:staff-presence-batch', {
+        detail: { onlineUserIds },
+      }),
+    );
   }
 
   private scheduleReconnect() {
@@ -386,6 +441,9 @@ export class PosRealtimeClient {
     }
     if (event.topics.includes(`pos.order:${event.aggregate.id}`)) {
       this.pendingOrderIds.add(event.aggregate.id);
+    }
+    if (isLive && event.type === 'pos.order.closed' && event.data.reason === 'CHECKOUT_COMPLETED') {
+      playPosSound('PAYMENT_SUCCESS', { dedupeKey: `payment:${event.aggregate.id}` });
     }
     if (isLive && event.type === 'pos.print_job.updated') {
       const docName = formatPrintDocumentName(event.data.documentType, event.data.printerRole);

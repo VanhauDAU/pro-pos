@@ -119,6 +119,15 @@ export type RealtimeServerFrame =
       reauthAtMs: number;
       schemaVersion: typeof REALTIME_SCHEMA_VERSION;
       sync?: RealtimeSyncResponse;
+      onlineUserIds?: string[];
     }
   | { type: 'events'; events: RealtimeEventV1[] }
-  | { type: 'error'; code: string; message: string };
+  | { type: 'error'; code: string; message: string }
+  | { type: 'device_push_prompt'; deviceId: string; storeId: string; requestedAt: number }
+  | {
+      type: 'staff_presence';
+      storeId: string;
+      userId: string;
+      isOnline: boolean;
+      lastSeenAt: number;
+    };

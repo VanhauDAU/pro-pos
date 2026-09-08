@@ -25,24 +25,19 @@ import {
   Skeleton,
   Space,
   Tag,
+  Tooltip,
   Typography,
   message,
 } from 'antd';
+import dayjs from 'dayjs';
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 
 import type { AuthContextResponse } from '@contracts/auth';
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
+import { formatStaffLastSeen, type Employee } from './staff-presence';
 
-export interface Employee {
-  id: string;
-  username: string;
-  email: string | null;
-  displayName: string;
-  status: 'ACTIVE' | 'DISABLED';
-  roleId: string;
-  roleName: string;
-}
+export { formatStaffLastSeen, type Employee };
 
 export interface EmployeeDetail extends Employee {
   userStatus: 'ACTIVE' | 'DISABLED';
@@ -245,7 +240,8 @@ export function OwnerStaffListPage({
             />
             <span>Tên nhân viên</span>
             <span>Vai trò</span>
-            <span>Trạng thái</span>
+            <span>Hoạt động</span>
+            <span>Tài khoản</span>
           </div>
           {employees.isLoading ? (
             <div className="owner-staff-list-loading">
@@ -267,15 +263,87 @@ export function OwnerStaffListPage({
                     checked={selectedIds.includes(employee.id)}
                     onChange={(event) => toggleOne(employee.id, event.target.checked)}
                   />
-                  <button
-                    className="owner-staff-table__name"
-                    type="button"
-                    onClick={() => navigate(`${baseRoute}/${employee.id}`)}
-                  >
-                    <span>{String(index + 1).padStart(2, '0')}.</span> {employee.displayName}
-                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                    <div style={{ position: 'relative', flexShrink: 0 }}>
+                      <Avatar
+                        size={32}
+                        style={{
+                          background: employee.isOnline ? '#eff6ff' : '#f1f5f9',
+                          color: employee.isOnline ? '#0975f7' : '#64748b',
+                          fontWeight: 700,
+                          fontSize: 13,
+                        }}
+                        icon={<UserOutlined />}
+                      />
+                      {employee.isOnline ? (
+                        <span className="owner-staff-online-dot" title="Đang hoạt động" />
+                      ) : null}
+                    </div>
+                    <button
+                      className="owner-staff-table__name"
+                      type="button"
+                      onClick={() => navigate(`${baseRoute}/${employee.id}`)}
+                    >
+                      <span>{String(index + 1).padStart(2, '0')}.</span> {employee.displayName}
+                      <span style={{ fontSize: 11.5, color: '#64748b', marginLeft: 6 }}>
+                        @{employee.username}
+                      </span>
+                    </button>
+                  </div>
                   <span>{employee.roleName}</span>
-                  <Tag color={employee.status === 'ACTIVE' ? 'success' : 'default'}>
+                  <div>
+                    {employee.isOnline ? (
+                      <Tag
+                        color="success"
+                        style={{
+                          borderRadius: 12,
+                          padding: '1px 10px',
+                          fontWeight: 600,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          fontSize: 12,
+                        }}
+                      >
+                        <span className="owner-staff-online-pulse" />
+                        Đang hoạt động
+                      </Tag>
+                    ) : (
+                      <Tooltip
+                        title={
+                          employee.lastSeenAt
+                            ? `Hoạt động gần nhất: ${dayjs(employee.lastSeenAt).format('DD/MM/YYYY HH:mm')}`
+                            : 'Chưa có phiên hoạt động gần đây'
+                        }
+                      >
+                        <span
+                          style={{
+                            fontSize: 12,
+                            color: '#64748b',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 6,
+                            cursor: 'help',
+                          }}
+                        >
+                          <span
+                            style={{
+                              width: 6,
+                              height: 6,
+                              borderRadius: '50%',
+                              backgroundColor: '#94a3b8',
+                              display: 'inline-block',
+                            }}
+                          />
+                          {formatStaffLastSeen(employee.lastSeenAt, false)}
+                        </span>
+                      </Tooltip>
+                    )}
+                  </div>
+                  <Tag
+                    color={employee.status === 'ACTIVE' ? 'blue' : 'default'}
+                    style={{ borderRadius: 6, width: 'fit-content' }}
+                  >
                     {employee.status === 'ACTIVE' ? 'Đang kích hoạt' : 'Ngừng kích hoạt'}
                   </Tag>
                 </div>
@@ -313,27 +381,59 @@ export function OwnerStaffListPage({
                 >
                   <div className="customer-mobile-card__header">
                     <div className="customer-mobile-card__user">
-                      <Avatar
-                        size={40}
-                        style={{
-                          background: '#0975f7',
-                          color: '#fff',
-                          fontWeight: 700,
-                          flexShrink: 0,
-                        }}
-                        icon={<UserOutlined />}
-                      />
+                      <div style={{ position: 'relative', flexShrink: 0 }}>
+                        <Avatar
+                          size={40}
+                          style={{
+                            background: '#0975f7',
+                            color: '#fff',
+                            fontWeight: 700,
+                          }}
+                          icon={<UserOutlined />}
+                        />
+                        {employee.isOnline ? <span className="owner-staff-online-dot" /> : null}
+                      </div>
                       <div style={{ minWidth: 0 }}>
                         <div className="customer-mobile-card__name">{employee.displayName}</div>
                         <div className="customer-mobile-card__phone">@{employee.username}</div>
                       </div>
                     </div>
-                    <Tag
-                      color={employee.status === 'ACTIVE' ? 'success' : 'default'}
-                      style={{ margin: 0 }}
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'flex-end',
+                        gap: 4,
+                      }}
                     >
-                      {employee.status === 'ACTIVE' ? 'Kích hoạt' : 'Tạm khóa'}
-                    </Tag>
+                      {employee.isOnline ? (
+                        <Tag
+                          color="success"
+                          style={{
+                            margin: 0,
+                            fontWeight: 600,
+                            borderRadius: 10,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 5,
+                            fontSize: 11.5,
+                          }}
+                        >
+                          <span className="owner-staff-online-pulse" />
+                          Đang hoạt động
+                        </Tag>
+                      ) : (
+                        <span style={{ fontSize: 11.5, color: '#64748b' }}>
+                          {formatStaffLastSeen(employee.lastSeenAt, false)}
+                        </span>
+                      )}
+                      <Tag
+                        color={employee.status === 'ACTIVE' ? 'blue' : 'default'}
+                        style={{ margin: 0, fontSize: 11, borderRadius: 4 }}
+                      >
+                        {employee.status === 'ACTIVE' ? 'Kích hoạt' : 'Tạm khóa'}
+                      </Tag>
+                    </div>
                   </div>
                   <div
                     style={{

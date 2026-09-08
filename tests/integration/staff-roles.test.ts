@@ -226,4 +226,19 @@ describe('Owner staff and role management', () => {
     const result = await staff.resetPin(storeId, employee.userId, '9999');
     expect(result).toEqual({ userId: employee.userId, pinReset: true });
   });
+
+  it('includes realtime online status and lastSeenAt in employee listing', async () => {
+    const employees = await staff.listEmployees(storeId);
+    expect(employees.length).toBeGreaterThan(0);
+    for (const emp of employees) {
+      expect(emp).toHaveProperty('isOnline');
+      expect(typeof emp.isOnline).toBe('boolean');
+      expect(emp).toHaveProperty('lastSeenAt');
+    }
+    const sample = employees[0]!;
+    const detail = await staff.getEmployee(storeId, sample.id);
+    expect(detail).toHaveProperty('isOnline');
+    expect(typeof detail.isOnline).toBe('boolean');
+    expect(detail).toHaveProperty('lastSeenAt');
+  });
 });

@@ -54,7 +54,9 @@ platformRoutes.get('/stores', async (c) => {
 });
 
 platformRoutes.get('/stores/:storeId', async (c) => {
-  const result = await new PlatformService(c.env).getStoreDetails(c.req.param('storeId'));
+  const daysParam = c.req.query('days');
+  const days = daysParam ? Math.max(1, Math.min(90, Number(daysParam) || 14)) : 14;
+  const result = await new PlatformService(c.env).getStoreDetails(c.req.param('storeId'), days);
   return success(c, result);
 });
 
@@ -124,6 +126,14 @@ platformRoutes.delete('/stores/:storeId/devices/:deviceId', async (c) => {
   const room = c.env.STORE_REALTIME.getByName(storeId);
   c.executionCtx.waitUntil(room.disconnectDevice(storeId, deviceId).catch(() => 0));
   return success(c, result);
+});
+
+platformRoutes.post('/stores/:storeId/devices/:deviceId/request-push-prompt', async (c) => {
+  const storeId = c.req.param('storeId');
+  const deviceId = c.req.param('deviceId');
+  const room = c.env.STORE_REALTIME.getByName(storeId);
+  const deliveredConnections = await room.requestDevicePushPrompt(storeId, deviceId);
+  return success(c, { requested: true, deliveredConnections });
 });
 
 platformRoutes.post('/maintenance/cleanup', async (c) => {

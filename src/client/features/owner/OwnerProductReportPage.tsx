@@ -407,7 +407,7 @@ export function OwnerProductReportPage({
   userPermissions?: readonly string[] | undefined;
 } = {}) {
   const [reportType, setReportType] = useState<SupportedReportType>('CATEGORY');
-  const [timeRange, setTimeRange] = useState<ProductReportTimeRange>('this_week');
+  const [timeRange, setTimeRange] = useState<ProductReportTimeRange>('today');
   const [customDates, setCustomDates] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null);
   const [compareWith, setCompareWith] = useState<ProductReportCompareWith>('previous_period');
   const [chartMetric, setChartMetric] = useState<'amount' | 'quantity'>('amount');
@@ -461,14 +461,25 @@ export function OwnerProductReportPage({
     compareWith,
     customDates,
   ]);
-  const [appliedQueryParams, setAppliedQueryParams] = useState<string | null>(null);
+  const [appliedQueryParams, setAppliedQueryParams] = useState<string | null>(() =>
+    new URLSearchParams({
+      reportType: 'CATEGORY',
+      timeRange: 'today',
+      hourMode: 'all',
+      fromHour: '0',
+      fromMinute: '0',
+      toHour: '0',
+      toMinute: '0',
+      compareWith: 'previous_period',
+    }).toString(),
+  );
 
   const canLoad = timeRange !== 'custom' || customDates !== null;
   const reportQuery = useQuery({
     queryKey: ['owner-product-report', appliedQueryParams],
     queryFn: () =>
       apiRequest<ProductReportResponseDto>(`${apiPrefix}/reports/products?${appliedQueryParams!}`),
-    enabled: appliedQueryParams !== null,
+    enabled: Boolean(appliedQueryParams),
   });
   const data = reportQuery.data;
   const appliedReportType = (data?.reportType ?? reportType) as SupportedReportType;
@@ -795,7 +806,13 @@ export function OwnerProductReportPage({
           icon={<ReloadOutlined />}
           loading={reportQuery.isFetching}
           disabled={!canLoad}
-          onClick={() => setAppliedQueryParams(queryParams)}
+          onClick={() => {
+            if (appliedQueryParams === queryParams) {
+              void reportQuery.refetch();
+            } else {
+              setAppliedQueryParams(queryParams);
+            }
+          }}
         >
           Xem báo cáo
         </Button>

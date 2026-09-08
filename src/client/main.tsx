@@ -1,12 +1,12 @@
 import './styles/startup.css';
 
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router';
 
 import { App } from './App';
-import { ApiError } from './lib/api';
+import { ApiError, forceStaffLogout } from './lib/api';
 import { initPosPerformanceMonitoring } from './lib/pos-performance';
 
 const PRELOAD_RECOVERY_KEY = 'propos-preload-recovery-at';
@@ -19,7 +19,24 @@ window.addEventListener('vite:preloadError', (event) => {
   window.location.reload();
 });
 
+const handleGlobalAuthError = (error: unknown) => {
+  if (
+    error instanceof ApiError &&
+    error.status === 401 &&
+    typeof window !== 'undefined' &&
+    window.location.pathname.startsWith('/pos')
+  ) {
+    forceStaffLogout('SESSION_EXPIRED');
+  }
+};
+
 const queryClient = new QueryClient({
+  queryCache: new QueryCache({
+    onError: handleGlobalAuthError,
+  }),
+  mutationCache: new MutationCache({
+    onError: handleGlobalAuthError,
+  }),
   defaultOptions: {
     queries: {
       retry: (failureCount, error) => {

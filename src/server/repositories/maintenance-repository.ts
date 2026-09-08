@@ -55,6 +55,7 @@ export const OPERATIONAL_AUDIT_ACTIONS = [
   'ORDER_RESUMED_FROM_CHECKOUT',
   'CHECKOUT_COMPLETED',
   'ORDER_CANCELLED',
+  'ORDER_BATCH_SAVED',
 ] as const;
 
 const OPERATIONAL_AUDIT_ACTION_SQL = OPERATIONAL_AUDIT_ACTIONS.map((action) => `'${action}'`).join(
@@ -262,20 +263,35 @@ export class MaintenanceRepository {
     );
 
     // Call batches remain available for active orders, even when an order lasts beyond retention.
+    // Batches are eligible when older than retention AND either:
+    // (A) The parent order is in a terminal state (PAID or CANCELLED)
+    // (B) The parent order no longer exists (orphaned batch)
     const closedCallBatches = `
       SELECT batch.id FROM order_call_batches batch
       WHERE batch.created_at < ?
         AND (
-          (batch.order_type = 'DINE_IN' AND EXISTS (
-            SELECT 1 FROM orders order_row
-            WHERE order_row.id = batch.order_id AND order_row.store_id = batch.store_id
-              AND order_row.status IN ('PAID', 'CANCELLED')
+          (batch.order_type = 'DINE_IN' AND (
+            EXISTS (
+              SELECT 1 FROM orders order_row
+              WHERE order_row.id = batch.order_id AND order_row.store_id = batch.store_id
+                AND order_row.status IN ('PAID', 'CANCELLED')
+            )
+            OR NOT EXISTS (
+              SELECT 1 FROM orders order_row
+              WHERE order_row.id = batch.order_id AND order_row.store_id = batch.store_id
+            )
           ))
           OR
-          (batch.order_type = 'TAKEAWAY' AND EXISTS (
-            SELECT 1 FROM takeaway_orders order_row
-            WHERE order_row.id = batch.order_id AND order_row.store_id = batch.store_id
-              AND order_row.status IN ('PAID', 'CANCELLED')
+          (batch.order_type = 'TAKEAWAY' AND (
+            EXISTS (
+              SELECT 1 FROM takeaway_orders order_row
+              WHERE order_row.id = batch.order_id AND order_row.store_id = batch.store_id
+                AND order_row.status IN ('PAID', 'CANCELLED')
+            )
+            OR NOT EXISTS (
+              SELECT 1 FROM takeaway_orders order_row
+              WHERE order_row.id = batch.order_id AND order_row.store_id = batch.store_id
+            )
           ))
         )
       ORDER BY batch.created_at ASC

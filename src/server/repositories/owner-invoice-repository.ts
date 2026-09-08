@@ -501,6 +501,18 @@ export class OwnerInvoiceRepository {
       this.db
         .prepare('DELETE FROM order_items WHERE store_id = ? AND order_id = ?')
         .bind(storeId, orderId),
+      this.db
+        .prepare(
+          `DELETE FROM order_call_batch_entries
+           WHERE store_id = ? AND (
+             order_id = ?
+             OR batch_id IN (SELECT id FROM order_call_batches WHERE store_id = ? AND order_id = ?)
+           )`,
+        )
+        .bind(storeId, orderId, storeId, orderId),
+      this.db
+        .prepare('DELETE FROM order_call_batches WHERE store_id = ? AND order_id = ?')
+        .bind(storeId, orderId),
       this.db.prepare('DELETE FROM orders WHERE store_id = ? AND id = ?').bind(storeId, orderId),
       this.db
         .prepare(
@@ -579,6 +591,18 @@ export class OwnerInvoiceRepository {
         .bind(storeId, orderId),
       this.db
         .prepare('DELETE FROM takeaway_order_items WHERE store_id = ? AND order_id = ?')
+        .bind(storeId, orderId),
+      this.db
+        .prepare(
+          `DELETE FROM order_call_batch_entries
+           WHERE store_id = ? AND (
+             order_id = ?
+             OR batch_id IN (SELECT id FROM order_call_batches WHERE store_id = ? AND order_id = ?)
+           )`,
+        )
+        .bind(storeId, orderId, storeId, orderId),
+      this.db
+        .prepare('DELETE FROM order_call_batches WHERE store_id = ? AND order_id = ?')
         .bind(storeId, orderId),
       this.db
         .prepare('DELETE FROM takeaway_orders WHERE store_id = ? AND id = ?')

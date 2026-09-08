@@ -1250,6 +1250,7 @@ export function SuperAdminPage() {
     try {
       const res = await jsonRequest<{
         totalDeleted: number;
+        durationMs: number;
         policy: Record<string, number>;
         tables: Record<string, number>;
       }>(
@@ -1260,10 +1261,43 @@ export function SuperAdminPage() {
           headers: csrfHeaders(),
         },
       );
-      message.success(
-        `Đã dọn dẹp ${res.totalDeleted.toLocaleString('vi-VN')} bản ghi theo chính sách lưu trữ.`,
-        5,
-      );
+      const activeDeletions = Object.entries(res.tables || {}).filter(([, count]) => count > 0);
+      Modal.success({
+        title: 'Dọn dẹp dữ liệu vận hành hoàn tất',
+        width: 480,
+        content: (
+          <div style={{ marginTop: 12 }}>
+            <p style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>
+              Tổng cộng đã dọn: {res.totalDeleted.toLocaleString('vi-VN')} bản ghi ({res.durationMs}{' '}
+              ms)
+            </p>
+            {activeDeletions.length > 0 ? (
+              <div
+                style={{
+                  maxHeight: 240,
+                  overflowY: 'auto',
+                  background: '#f8fafc',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: 6,
+                  padding: '8px 12px',
+                }}
+              >
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: '#334155' }}>
+                  {activeDeletions.map(([tbl, count]) => (
+                    <li key={tbl} style={{ padding: '2px 0' }}>
+                      <strong>{tbl}</strong>: {count.toLocaleString('vi-VN')} bản ghi
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <p style={{ color: '#64748b', margin: 0 }}>
+                Hệ thống sạch sẽ, không có bản ghi nào hết hạn cần dọn.
+              </p>
+            )}
+          </div>
+        ),
+      });
       void queryClient.invalidateQueries({ queryKey: ['platform-analytics'] });
     } catch (err) {
       message.error(readableError(err));
@@ -1362,8 +1396,8 @@ export function SuperAdminPage() {
             </Button>
             <div className="platform-actions-subrow">
               <Popconfirm
-                title="Dọn dẹp dữ liệu vận hành quá hạn 7 ngày?"
-                description="Xóa nhật ký, lệnh tạm, thông báo, phiên hết hạn và yêu cầu QR đã xử lý; không xóa hóa đơn, thanh toán hoặc lịch sử bán hàng."
+                title="Dọn dẹp dữ liệu vận hành?"
+                description="Dọn dữ liệu vận hành đã hết hạn theo chính sách lưu trữ và dữ liệu mồ côi an toàn. Không xóa hóa đơn, thanh toán, đơn hàng còn tồn tại, danh mục hoặc cấu hình."
                 okText="Dọn dẹp ngay"
                 cancelText="Hủy"
                 okButtonProps={{ danger: true, loading: cleaningDb }}
@@ -1374,7 +1408,7 @@ export function SuperAdminPage() {
                   loading={cleaningDb}
                   className="platform-cleanup-btn"
                 >
-                  Dọn dẹp DB
+                  Dọn dữ liệu vận hành
                 </Button>
               </Popconfirm>
               <Button

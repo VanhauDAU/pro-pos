@@ -22,3 +22,4 @@ worker-configuration.access.d.ts
 release/
 apps/print-agent/release/
 /*.sql
+/*.db

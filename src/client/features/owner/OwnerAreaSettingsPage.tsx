@@ -411,16 +411,16 @@ export function OwnerAreaSettingsPage() {
     const activeOptions = (timeProducts.data ?? [])
       .filter((product) => product.productType === 'TIME' && product.status === 'ACTIVE')
       .map((product) => ({ value: product.id, label: product.name }));
-    if (table?.timeProductId && !activeOptions.some((option) => option.value === table.timeProductId)) {
+    if (
+      table?.timeProductId &&
+      !activeOptions.some((option) => option.value === table.timeProductId)
+    ) {
       activeOptions.unshift({
         value: table.timeProductId,
         label: table.timeProductName ?? 'Bảng giá hiện tại',
       });
     }
-    return [
-      { value: '', label: 'Không tính tiền giờ' },
-      ...activeOptions,
-    ];
+    return [{ value: '', label: 'Không tính tiền giờ' }, ...activeOptions];
   };
 
   return (
@@ -737,7 +737,9 @@ export function OwnerAreaSettingsPage() {
                         loading={timeProducts.isLoading || pricingTableId === table.id}
                         disabled={table.status === 'OCCUPIED' || pricingTableId === table.id}
                         options={pricingOptions(table)}
-                        onChange={(value: string | null) => void saveTablePricing(table, value ? value : null)}
+                        onChange={(value: string | null) =>
+                          void saveTablePricing(table, value ? value : null)
+                        }
                         notFoundContent="Chưa có bảng giá tính giờ"
                       />
                     </div>

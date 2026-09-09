@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { lazy, Suspense, useEffect } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useSearchParams } from 'react-router';
 
 import { Toaster } from 'sonner';
@@ -33,15 +33,33 @@ const PlatformAccessPage = lazy(async () => {
   return { default: module.PlatformAccessPage };
 });
 
-const StaffPosPortalPage = lazy(async () => {
-  const module = await import('@client/features/pos/StaffPosPortalPage');
-  return { default: module.StaffPosPortalPage };
-});
+type StaffPosPortalModule = typeof import('@client/features/pos/StaffPosPortalPage');
+type StaffPosAreasModule = typeof import('@client/features/pos/StaffPosAreasPage');
 
-const StaffPosAreasPage = lazy(async () => {
-  const module = await import('@client/features/pos/StaffPosAreasPage');
-  return { default: module.StaffPosAreasPage };
-});
+let staffPosPortalModule: StaffPosPortalModule | null = null;
+let staffPosAreasModule: StaffPosAreasModule | null = null;
+let staffPosPortalPagePromise: Promise<StaffPosPortalModule> | null = null;
+let staffPosAreasPagePromise: Promise<StaffPosAreasModule> | null = null;
+
+function loadStaffPosPortalPage() {
+  staffPosPortalPagePromise ??= import('@client/features/pos/StaffPosPortalPage').then((module) => {
+    staffPosPortalModule = module;
+    return module;
+  });
+  return staffPosPortalPagePromise;
+}
+
+function loadStaffPosAreasPage() {
+  staffPosAreasPagePromise ??= import('@client/features/pos/StaffPosAreasPage').then((module) => {
+    staffPosAreasModule = module;
+    return module;
+  });
+  return staffPosAreasPagePromise;
+}
+
+function preloadStaffPosSurface(surface: AppBootstrapSurface) {
+  return surface === 'areas' ? loadStaffPosAreasPage() : loadStaffPosPortalPage();
+}
 
 function posBootstrapSurface(pathname: string): AppBootstrapSurface {
   return pathname === '/pos' || pathname === '/pos/' || pathname === '/pos/areas'
@@ -56,48 +74,104 @@ function StaffPosRoute() {
   const hasWarmAreasBootstrap = Boolean(queryClient.getQueryData(['app-bootstrap', 'areas']));
   const querySurface = surface === 'shell' && hasWarmAreasBootstrap ? 'areas' : surface;
   const bootstrap = useQuery(appBootstrapQueryOptions(queryClient, querySurface));
+  const [, setSurfaceModuleVersion] = useState(0);
+  const [surfaceLoadError, setSurfaceLoadError] = useState<Error | null>(null);
+  const surfaceModulePromise = preloadStaffPosSurface(surface);
   const hasTableTransition = Boolean(
     (location.state as { transitionTableId?: string } | null)?.transitionTableId,
   );
+  const SurfacePage =
+    surface === 'areas'
+      ? staffPosAreasModule?.StaffPosAreasPage
+      : staffPosPortalModule?.StaffPosPortalPage;
 
-  if (bootstrap.isLoading || !bootstrap.data) {
-    if (bootstrap.error) {
-      if (
-        (bootstrap.error instanceof ApiError && bootstrap.error.status === 401) ||
-        bootstrap.error.message.includes('Phiên đăng nhập không hợp lệ') ||
-        bootstrap.error.message.includes('Vui lòng đăng nhập')
-      ) {
-        return <Navigate to="/?tab=employee&authError=SESSION_EXPIRED" replace />;
-      }
-      return (
-        <div className="pos-app-splash" role="alert">
-          <div className="pos-app-splash__content">
-            <strong>Chưa thể tải dữ liệu POS</strong>
-            <div className="pos-app-splash__message">
-              {bootstrap.error instanceof Error
-                ? bootstrap.error.message
-                : 'Không thể kết nối máy chủ.'}
-            </div>
-            <button
-              type="button"
-              onClick={() => void bootstrap.refetch()}
-              style={{
-                marginTop: 16,
-                padding: '8px 20px',
-                borderRadius: 8,
-                background: '#0975f7',
-                color: '#fff',
-                border: 'none',
-                cursor: 'pointer',
-                fontWeight: 600,
-              }}
-            >
-              Thử lại
-            </button>
-          </div>
-        </div>
-      );
+  useEffect(() => {
+    let cancelled = false;
+    setSurfaceLoadError(null);
+
+    void surfaceModulePromise
+      .then(() => {
+        if (!cancelled) setSurfaceModuleVersion((version) => version + 1);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setSurfaceLoadError(
+            error instanceof Error ? error : new Error('Không thể tải giao diện POS.'),
+          );
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [surfaceModulePromise]);
+
+  if (!bootstrap.data && bootstrap.error) {
+    if (
+      (bootstrap.error instanceof ApiError && bootstrap.error.status === 401) ||
+      bootstrap.error.message.includes('Phiên đăng nhập không hợp lệ') ||
+      bootstrap.error.message.includes('Vui lòng đăng nhập')
+    ) {
+      return <Navigate to="/?tab=employee&authError=SESSION_EXPIRED" replace />;
     }
+    return (
+      <div className="pos-app-splash" role="alert">
+        <div className="pos-app-splash__content">
+          <strong>Chưa thể tải dữ liệu POS</strong>
+          <div className="pos-app-splash__message">
+            {bootstrap.error instanceof Error
+              ? bootstrap.error.message
+              : 'Không thể kết nối máy chủ.'}
+          </div>
+          <button
+            type="button"
+            onClick={() => void bootstrap.refetch()}
+            style={{
+              marginTop: 16,
+              padding: '8px 20px',
+              borderRadius: 8,
+              background: '#0975f7',
+              color: '#fff',
+              border: 'none',
+              cursor: 'pointer',
+              fontWeight: 600,
+            }}
+          >
+            Thử lại
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (surfaceLoadError) {
+    return (
+      <div className="pos-app-splash" role="alert">
+        <div className="pos-app-splash__content">
+          <strong>Chưa thể tải giao diện POS</strong>
+          <div className="pos-app-splash__message">{surfaceLoadError.message}</div>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            style={{
+              marginTop: 16,
+              padding: '8px 20px',
+              borderRadius: 8,
+              background: '#0975f7',
+              color: '#fff',
+              border: 'none',
+              cursor: 'pointer',
+              fontWeight: 600,
+            }}
+          >
+            Tải lại ứng dụng
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (bootstrap.isLoading || !bootstrap.data || !SurfacePage) {
     return <PosAppSplash message="Đang nạp dữ liệu POS..." />;
   }
 
@@ -113,34 +187,20 @@ function StaffPosRoute() {
   };
 
   return (
-    <Suspense fallback={<PosAppSplash message="Đang nạp dữ liệu POS..." />}>
-      <AnimatePresence mode="popLayout" initial={false}>
-        {surface === 'areas' ? (
-          <motion.div
-            key="areas-screen"
-            className="staff-pos-surface-wrapper"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1, transition: { duration: 0.14 } }}
-            exit={{ opacity: 0, transition: { duration: 0.12 } }}
-          >
-            <StaffPosAreasPage {...startupProps} />
-          </motion.div>
-        ) : (
-          <motion.div
-            key="portal-screen"
-            className="staff-pos-surface-wrapper"
-            initial={{ opacity: hasTableTransition ? 1 : 0 }}
-            animate={{
-              opacity: 1,
-              transition: { duration: hasTableTransition ? 0 : 0.14 },
-            }}
-            exit={{ opacity: 0, transition: { duration: 0.12 } }}
-          >
-            <StaffPosPortalPage {...startupProps} />
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </Suspense>
+    <AnimatePresence mode="popLayout" initial={false}>
+      <motion.div
+        key={surface === 'areas' ? 'areas-screen' : 'portal-screen'}
+        className="staff-pos-surface-wrapper"
+        initial={{ opacity: surface === 'shell' && hasTableTransition ? 1 : 0 }}
+        animate={{
+          opacity: 1,
+          transition: { duration: surface === 'shell' && hasTableTransition ? 0 : 0.14 },
+        }}
+        exit={{ opacity: 0, transition: { duration: 0.12 } }}
+      >
+        <SurfacePage {...startupProps} />
+      </motion.div>
+    </AnimatePresence>
   );
 }
 

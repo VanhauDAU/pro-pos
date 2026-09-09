@@ -134,6 +134,7 @@ import { toast } from 'sonner';
 import type { CustomerSummary } from '@contracts/customer';
 import type { PosPromotionOption, PromotionPreviewResult } from '@contracts/promotion';
 import { PushNotificationControl } from '@client/features/pwa/PushNotificationControl';
+import { PosWeatherSettingItem } from '@client/features/weather/PosWeatherSettingItem';
 import {
   invoicePrintIdentity,
   PaymentSubmissionGuard,
@@ -2194,6 +2195,9 @@ function MorePage({ auth }: { auth: AuthContextResponse }) {
               <RightOutlined style={{ color: '#94a3b8', fontSize: 14 }} />
             </div>
           ) : null}
+
+          {/* Weather Display Setting */}
+          <PosWeatherSettingItem />
 
           {/* Push Notification Setup */}
           <div style={{ padding: '14px 18px' }}>

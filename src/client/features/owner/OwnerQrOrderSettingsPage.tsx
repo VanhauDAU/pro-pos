@@ -301,6 +301,7 @@ export function OwnerQrOrderSettingsPage() {
         body: JSON.stringify({ ...values, salesHours: expandOvernightSalesHours(salesHours) }),
       });
       await queryClient.invalidateQueries({ queryKey: ['owner-qr-order-settings'] });
+      await queryClient.invalidateQueries({ queryKey: ['weather'] });
       messageApi.success('Đã lưu cấu hình QR Order.');
     } catch (error) {
       messageApi.error(errorText(error, 'Không thể lưu cấu hình.'));
@@ -544,8 +545,22 @@ export function OwnerQrOrderSettingsPage() {
   const qrConfig = (
     <div>
       {/* 1. Location Verification */}
-      <Card className="owner-qr-card" title="Xác minh vị trí khách hàng">
-        <div className="owner-qr-switch-row">
+      <Card className="owner-qr-card" title="Vị trí cửa hàng & Xác minh QR">
+        <Form.Item noStyle shouldUpdate>
+          {() => (
+            <StoreLocationMapPicker
+              latitude={form.getFieldValue('latitude')}
+              longitude={form.getFieldValue('longitude')}
+              radiusMeters={form.getFieldValue('allowedRadiusMeters') ?? 300}
+              maxAccuracyMeters={form.getFieldValue('maxAccuracyMeters') ?? 100}
+              onChange={(coords) => form.setFieldsValue(coords)}
+              onRadiusChange={(value) => form.setFieldValue('allowedRadiusMeters', value)}
+              onMaxAccuracyChange={(value) => form.setFieldValue('maxAccuracyMeters', value)}
+            />
+          )}
+        </Form.Item>
+
+        <div className="owner-qr-switch-row" style={{ marginTop: 16 }}>
           <div className="owner-qr-switch-row__copy">
             <strong>Bắt buộc quét QR tại quán</strong>
             <span>
@@ -560,38 +575,27 @@ export function OwnerQrOrderSettingsPage() {
         <Form.Item noStyle shouldUpdate>
           {() =>
             form.getFieldValue('locationVerificationEnabled') ? (
-              <>
-                <StoreLocationMapPicker
-                  latitude={form.getFieldValue('latitude')}
-                  longitude={form.getFieldValue('longitude')}
-                  radiusMeters={form.getFieldValue('allowedRadiusMeters') ?? 300}
-                  maxAccuracyMeters={form.getFieldValue('maxAccuracyMeters') ?? 100}
-                  onChange={(coords) => form.setFieldsValue(coords)}
-                  onRadiusChange={(value) => form.setFieldValue('allowedRadiusMeters', value)}
-                  onMaxAccuracyChange={(value) => form.setFieldValue('maxAccuracyMeters', value)}
-                />
-                <div style={{ marginTop: 12, maxWidth: 280 }}>
-                  <Form.Item
-                    name="locationMemoryMinutes"
-                    label={
-                      <span
-                        style={{
-                          fontSize: 11,
-                          fontWeight: 600,
-                          color: '#475569',
-                          textTransform: 'uppercase',
-                        }}
-                      >
-                        Ghi nhớ vị trí trong
-                      </span>
-                    }
-                    rules={[{ required: true }]}
-                    style={{ marginBottom: 0 }}
-                  >
-                    <InputNumber min={5} max={480} addonAfter="phút" style={{ width: '100%' }} />
-                  </Form.Item>
-                </div>
-              </>
+              <div style={{ marginTop: 12, maxWidth: 280 }}>
+                <Form.Item
+                  name="locationMemoryMinutes"
+                  label={
+                    <span
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: '#475569',
+                        textTransform: 'uppercase',
+                      }}
+                    >
+                      Ghi nhớ vị trí trong
+                    </span>
+                  }
+                  rules={[{ required: true }]}
+                  style={{ marginBottom: 0 }}
+                >
+                  <InputNumber min={5} max={480} addonAfter="phút" style={{ width: '100%' }} />
+                </Form.Item>
+              </div>
             ) : null
           }
         </Form.Item>

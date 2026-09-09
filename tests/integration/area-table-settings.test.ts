@@ -105,6 +105,14 @@ describe('Owner area and table settings', () => {
     await env.DB.prepare("UPDATE service_tables SET status = 'AVAILABLE' WHERE id = ?")
       .bind(table.id)
       .run();
+
+    // Switch table pricing back to unpriced (null)
+    await catalog.updateTablePricing(storeId, table.id, null);
+    expect((await catalog.listAreaLayouts(storeId))[0]!.tables[0]).toMatchObject({
+      id: table.id,
+      timeProductId: null,
+      timeProductName: null,
+    });
   });
 
   it('renames and deletes an available table', async () => {

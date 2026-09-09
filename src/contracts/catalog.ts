@@ -174,7 +174,9 @@ export const updateServiceTableStatusSchema = z.object({
 });
 
 export const updateServiceTablePricingSchema = z.object({
-  timeProductId: z.uuid(),
+  timeProductId: z
+    .union([z.string().uuid(), z.literal(''), z.null(), z.undefined()])
+    .transform((val) => (val ? val : null)),
 });
 
 export const reorderServiceTablesSchema = z

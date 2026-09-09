@@ -128,7 +128,7 @@ export const StaffDateTimeInput: React.FC<StaffDateTimeInputProps> = ({
       >
         <ClockCircleOutlined className="staff-datetime-box__icon" />
         <div className="staff-datetime-box__content">
-          <span className="staff-datetime-box__tag">Giờ (24h)</span>
+          <span className="staff-datetime-box__tag">Giờ</span>
           <span
             className={`staff-datetime-box__value staff-datetime-box__value--time ${!displayTimeStr ? 'staff-datetime-box__value--placeholder' : ''}`}
           >

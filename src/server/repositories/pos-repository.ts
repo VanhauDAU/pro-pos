@@ -16,6 +16,14 @@ export interface TablePricingRow {
   first_period_price: number | null;
 }
 
+export interface TableBasicRow {
+  table_id: string;
+  table_name: string;
+  table_status: 'AVAILABLE' | 'OCCUPIED' | 'DISABLED';
+  table_version: number;
+  product_id: string;
+}
+
 export interface ProductPricingSnapshotRow {
   product_id: string;
   config_id: string;
@@ -531,8 +539,8 @@ export class PosRepository {
           st.area_id AS areaId,
           a.name AS areaName, a.sort_order AS areaSortOrder,
           st.sort_order AS sortOrder,
-          st.time_product_id AS timeProductId,
-          p.name AS timeProductName,
+          CASE WHEN p.is_system = 1 THEN NULL ELSE st.time_product_id END AS timeProductId,
+          CASE WHEN p.is_system = 1 THEN NULL ELSE p.name END AS timeProductName,
           tpc.base_price AS defaultPriceVnd,
           tpc.base_duration_seconds AS defaultDurationSeconds,
           o.id AS activeOrderId, o.opened_at AS occupiedSince, o.guest_count AS guestCount,
@@ -561,8 +569,8 @@ export class PosRepository {
           st.area_id AS areaId,
           a.name AS areaName, a.sort_order AS areaSortOrder,
           st.sort_order AS sortOrder,
-          st.time_product_id AS timeProductId,
-          p.name AS timeProductName,
+          CASE WHEN p.is_system = 1 THEN NULL ELSE st.time_product_id END AS timeProductId,
+          CASE WHEN p.is_system = 1 THEN NULL ELSE p.name END AS timeProductName,
           tpc.base_price AS defaultPriceVnd,
           tpc.base_duration_seconds AS defaultDurationSeconds,
           active_order.id AS activeOrderId,
@@ -640,6 +648,22 @@ export class PosRepository {
       )
       .bind(storeId, tableId)
       .first<TablePricingRow>();
+  }
+
+  findTableById(storeId: string, tableId: string) {
+    return this.db
+      .prepare(
+        `SELECT
+          st.id AS table_id, COALESCE(st.display_name, st.name) AS table_name,
+          st.status AS table_status,
+          st.version AS table_version,
+          st.time_product_id AS product_id
+        FROM service_tables st
+        WHERE st.store_id = ? AND st.id = ?
+        LIMIT 1`,
+      )
+      .bind(storeId, tableId)
+      .first<TableBasicRow>();
   }
 
   findProductPricing(storeId: string, productId: string) {

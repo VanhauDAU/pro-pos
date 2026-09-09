@@ -473,6 +473,13 @@ function mapDatabaseError(error: unknown): never {
   if (message.includes('TIME_RANGE_INVALID')) {
     throw new AppError('TIME_RANGE_INVALID', 'Khoảng thời gian tính giờ không hợp lệ.', 422);
   }
+  if (message.includes('TABLE_PRICING_MISSING')) {
+    throw new AppError(
+      'TABLE_PRICING_MISSING',
+      'Bàn/phòng hiện tại không được cấu hình tính tiền giờ.',
+      422,
+    );
+  }
   if (message.includes('UNIQUE constraint failed')) {
     throw new AppError('CONFLICT', 'Dữ liệu đã được xử lý trước đó.', 409);
   }
@@ -1264,7 +1271,7 @@ export class PosService {
           takeaway
             ? Promise.resolve(null)
             : measurePhase(input.timing, 'cmd_pricing', () =>
-                this.pricingSnapshot(input.storeId, input.values.tableId!),
+                this.findTablePricingSnapshot(input.storeId, input.values.tableId!),
               ),
         ]),
     );
@@ -1297,7 +1304,6 @@ export class PosService {
         }),
       );
     } else {
-      if (!pricing) throw new Error('Missing table pricing for dine-in order');
       statements.push(
         this.repository.buildOpenTableStatement({
           commandId: `${input.idempotencyKey}:open`,
@@ -1307,8 +1313,8 @@ export class PosService {
           orderId,
           timeSessionId: crypto.randomUUID(),
           businessDay,
-          pricingSnapshotJson: JSON.stringify(pricing.config),
-          pricingVersion: pricing.config.version,
+          pricingSnapshotJson: pricing ? JSON.stringify(pricing.config) : '{}',
+          pricingVersion: pricing ? pricing.config.version : 0,
           actorId: input.actorId,
           requestId: input.requestId,
           issuedAt: now,
@@ -2278,9 +2284,9 @@ export class PosService {
     };
   }
 
-  private async pricingSnapshot(storeId: string, tableId: string) {
+  private async findTablePricingSnapshot(storeId: string, tableId: string) {
     const row = await this.repository.findTablePricing(storeId, tableId);
-    if (!row) throw new AppError('TABLE_PRICING_MISSING', 'Bàn chưa có bảng giá.', 422);
+    if (!row) return null;
     const windows = await this.repository.listSpecialWindows(storeId, row.config_id);
     const config: PricingConfigSnapshot = {
       version: row.pricing_version,
@@ -2304,6 +2310,12 @@ export class PosService {
     return { row, config };
   }
 
+  private async pricingSnapshot(storeId: string, tableId: string) {
+    const snapshot = await this.findTablePricingSnapshot(storeId, tableId);
+    if (!snapshot) throw new AppError('TABLE_PRICING_MISSING', 'Bàn chưa có bảng giá.', 422);
+    return snapshot;
+  }
+
   async openTable(input: {
     storeId: string;
     actorId: string;
@@ -2317,10 +2329,14 @@ export class PosService {
   }) {
     const replay = await this.repository.findOpenCommand(input.storeId, input.idempotencyKey);
     if (replay) return replay;
-    const pricing = await this.pricingSnapshot(input.storeId, input.tableId);
-    if (pricing.row.table_status !== 'AVAILABLE') {
+    const table = await this.repository.findTableById(input.storeId, input.tableId);
+    if (!table) {
+      throw new AppError('TABLE_NOT_FOUND', 'Không tìm thấy bàn/phòng.', 404);
+    }
+    if (table.table_status !== 'AVAILABLE') {
       throw new AppError('TABLE_NOT_AVAILABLE', 'Bàn không còn trống.', 409);
     }
+    const pricing = await this.findTablePricingSnapshot(input.storeId, input.tableId);
     const orderId = crypto.randomUUID();
     const timeSessionId = crypto.randomUUID();
     const issuedAt = input.now ?? Date.now();
@@ -2334,8 +2350,8 @@ export class PosService {
         orderId,
         timeSessionId,
         businessDay,
-        pricingSnapshotJson: JSON.stringify(pricing.config),
-        pricingVersion: pricing.config.version,
+        pricingSnapshotJson: pricing ? JSON.stringify(pricing.config) : '{}',
+        pricingVersion: pricing ? pricing.config.version : 0,
         actorId: input.actorId,
         requestId: input.requestId,
         issuedAt,
@@ -3344,6 +3360,17 @@ export class PosService {
     const order = await this.repository.findOrder(input.storeId, input.orderId);
     if (!order) throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn tại chỗ.', 404);
     const session = await this.repository.findTimeSession(input.storeId, input.orderId);
+    const currentTablePricing =
+      (!session || input.endedAtMs === null) && order.order_type === 'DINE_IN' && order.table_id
+        ? await this.findTablePricingSnapshot(input.storeId, order.table_id)
+        : null;
+    if ((!session || input.endedAtMs === null) && !currentTablePricing) {
+      throw new AppError(
+        'TABLE_PRICING_MISSING',
+        'Bàn/phòng hiện tại không được cấu hình tính tiền giờ.',
+        422,
+      );
+    }
     if (
       input.startedAtMs > now ||
       (input.endedAtMs !== null && (input.endedAtMs <= input.startedAtMs || input.endedAtMs > now))
@@ -3362,7 +3389,7 @@ export class PosService {
           409,
         );
       }
-      const pricing = await this.pricingSnapshot(input.storeId, order.table_id);
+      const pricing = currentTablePricing!;
       const timeSessionId = crypto.randomUUID();
       try {
         await this.repository.createTimeSessionForOrder({
@@ -4161,16 +4188,14 @@ export class PosService {
     if (order.table_id === input.targetTableId) {
       throw new AppError('SAME_TABLE_TRANSFER', 'Bàn chuyển tới phải khác bàn hiện tại.', 422);
     }
-    const [session, targetPricing] = await Promise.all([
-      this.repository.findTimeSession(input.storeId, input.orderId),
-      this.pricingSnapshot(input.storeId, input.targetTableId),
-    ]);
-    if (!session) {
-      throw new AppError('ORDER_TIME_SESSION_MISSING', 'Đơn tại chỗ thiếu phiên tính giờ.', 409);
+    const targetTable = await this.repository.findTableById(input.storeId, input.targetTableId);
+    if (!targetTable) {
+      throw new AppError('TABLE_NOT_FOUND', 'Không tìm thấy bàn/phòng.', 404);
     }
-    if (targetPricing.row.table_status !== 'AVAILABLE') {
+    if (targetTable.table_status !== 'AVAILABLE') {
       throw new AppError('TABLE_NOT_AVAILABLE', 'Bàn chuyển tới không còn trống.', 409);
     }
+    const targetPricing = await this.findTablePricingSnapshot(input.storeId, input.targetTableId);
 
     try {
       await this.repository.executeTransfer({
@@ -4182,8 +4207,8 @@ export class PosService {
         expectedOrderVersion: input.expectedOrderVersion,
         expectedSourceVersion: input.expectedSourceTableVersion,
         expectedTargetVersion: input.expectedTargetTableVersion,
-        targetPricingSnapshotJson: JSON.stringify(targetPricing.config),
-        targetPricingVersion: targetPricing.config.version,
+        targetPricingSnapshotJson: targetPricing ? JSON.stringify(targetPricing.config) : '{}',
+        targetPricingVersion: targetPricing ? targetPricing.config.version : 0,
         actorId: input.actorId,
         requestId: input.requestId,
         now,

@@ -234,7 +234,17 @@ export function App() {
   return (
     <>
       <PwaUpdatePrompt />
-      <Toaster position="top-right" richColors closeButton duration={3500} />
+      <Toaster
+        position="top-right"
+        richColors
+        closeButton
+        duration={3500}
+        mobileOffset={{
+          top: 'calc(62px + env(safe-area-inset-top, 0px))',
+          left: '16px',
+          right: '16px',
+        }}
+      />
       <Suspense fallback={<PosAppSplash />}>
         <Routes>
           <Route path="/" element={<LoginPage />} />

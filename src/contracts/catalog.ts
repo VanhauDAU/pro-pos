@@ -271,10 +271,26 @@ export interface CatalogImportSummary {
   unitsToCreate: string[];
 }
 
+export interface CatalogImportPreviewItem {
+  sourceRow: number;
+  action: CatalogImportAction;
+  productId: string | null;
+  name: string;
+  productType: string | null;
+  categoryName: string | null;
+  unitName: string | null;
+  variantCount: number;
+  priceDisplay: string;
+  variantsSummary?: string | null;
+  errors: string[];
+  suggestions: string[];
+}
+
 export interface CatalogImportPreviewResult {
   normalizedPayloadHash: string;
   summary: CatalogImportSummary;
   issues: CatalogImportIssue[];
+  items?: CatalogImportPreviewItem[];
 }
 
 export interface CatalogImportCommitResult extends CatalogImportPreviewResult {

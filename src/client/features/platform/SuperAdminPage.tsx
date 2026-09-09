@@ -35,6 +35,8 @@ import {
   CheckCircleOutlined,
   MobileOutlined,
   BellOutlined,
+  DatabaseOutlined,
+  SendOutlined,
 } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -80,6 +82,8 @@ import type {
 
 import logo from '@client/assets/logo-black.svg';
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
+import { DatabaseMaintenancePanel } from './DatabaseMaintenancePanel';
+import { TelegramAdminPanel } from './TelegramAdminPanel';
 
 interface CreateStoreValues {
   name: string;
@@ -927,7 +931,17 @@ export function SuperAdminPage() {
   }, []);
 
   // Navigation & Filter state
-  const [activeTab, setActiveTab] = useState<'analytics' | 'stores'>('analytics');
+  const [activeTab, setActiveTab] = useState<'analytics' | 'stores' | 'database' | 'telegram'>(
+    () => {
+      if (typeof window !== 'undefined') {
+        const tabParam = new URLSearchParams(window.location.search).get('tab');
+        if (tabParam === 'database') return 'database';
+        if (tabParam === 'stores') return 'stores';
+        if (tabParam === 'telegram') return 'telegram';
+      }
+      return 'analytics';
+    },
+  );
   const [analyticsDays, setAnalyticsDays] = useState<number>(14);
   const [trendMetric, setTrendMetric] = useState<'revenue' | 'invoices'>('revenue');
 
@@ -1250,6 +1264,7 @@ export function SuperAdminPage() {
     try {
       const res = await jsonRequest<{
         totalDeleted: number;
+        durationMs: number;
         policy: Record<string, number>;
         tables: Record<string, number>;
       }>(
@@ -1260,10 +1275,43 @@ export function SuperAdminPage() {
           headers: csrfHeaders(),
         },
       );
-      message.success(
-        `Đã dọn dẹp ${res.totalDeleted.toLocaleString('vi-VN')} bản ghi theo chính sách lưu trữ.`,
-        5,
-      );
+      const activeDeletions = Object.entries(res.tables || {}).filter(([, count]) => count > 0);
+      Modal.success({
+        title: 'Dọn dẹp dữ liệu vận hành hoàn tất',
+        width: 480,
+        content: (
+          <div style={{ marginTop: 12 }}>
+            <p style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>
+              Tổng cộng đã dọn: {res.totalDeleted.toLocaleString('vi-VN')} bản ghi ({res.durationMs}{' '}
+              ms)
+            </p>
+            {activeDeletions.length > 0 ? (
+              <div
+                style={{
+                  maxHeight: 240,
+                  overflowY: 'auto',
+                  background: '#f8fafc',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: 6,
+                  padding: '8px 12px',
+                }}
+              >
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: '#334155' }}>
+                  {activeDeletions.map(([tbl, count]) => (
+                    <li key={tbl} style={{ padding: '2px 0' }}>
+                      <strong>{tbl}</strong>: {count.toLocaleString('vi-VN')} bản ghi
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <p style={{ color: '#64748b', margin: 0 }}>
+                Hệ thống sạch sẽ, không có bản ghi nào hết hạn cần dọn.
+              </p>
+            )}
+          </div>
+        ),
+      });
       void queryClient.invalidateQueries({ queryKey: ['platform-analytics'] });
     } catch (err) {
       message.error(readableError(err));
@@ -1362,8 +1410,8 @@ export function SuperAdminPage() {
             </Button>
             <div className="platform-actions-subrow">
               <Popconfirm
-                title="Dọn dẹp dữ liệu vận hành quá hạn 7 ngày?"
-                description="Xóa nhật ký, lệnh tạm, thông báo, phiên hết hạn và yêu cầu QR đã xử lý; không xóa hóa đơn, thanh toán hoặc lịch sử bán hàng."
+                title="Dọn dẹp dữ liệu vận hành?"
+                description="Dọn dữ liệu vận hành đã hết hạn theo chính sách lưu trữ và dữ liệu mồ côi an toàn. Không xóa hóa đơn, thanh toán, đơn hàng còn tồn tại, danh mục hoặc cấu hình."
                 okText="Dọn dẹp ngay"
                 cancelText="Hủy"
                 okButtonProps={{ danger: true, loading: cleaningDb }}
@@ -1374,7 +1422,7 @@ export function SuperAdminPage() {
                   loading={cleaningDb}
                   className="platform-cleanup-btn"
                 >
-                  Dọn dẹp DB
+                  Dọn dữ liệu vận hành
                 </Button>
               </Popconfirm>
               <Button
@@ -1410,7 +1458,9 @@ export function SuperAdminPage() {
             block
             size="large"
             value={activeTab}
-            onChange={(val) => setActiveTab(val as 'analytics' | 'stores')}
+            onChange={(val) =>
+              setActiveTab(val as 'analytics' | 'stores' | 'database' | 'telegram')
+            }
             options={[
               {
                 label: (
@@ -1418,9 +1468,7 @@ export function SuperAdminPage() {
                     <LineChartOutlined
                       style={{ color: activeTab === 'analytics' ? '#2563eb' : '#64748b' }}
                     />
-                    <span className="platform-tab-text-full">
-                      Báo cáo & Hiệu suất Toàn Hệ Thống
-                    </span>
+                    <span className="platform-tab-text-full">Báo cáo & Hiệu suất</span>
                     <span className="platform-tab-text-short">Báo cáo & Hiệu suất</span>
                   </span>
                 ),
@@ -1437,6 +1485,30 @@ export function SuperAdminPage() {
                   </span>
                 ),
                 value: 'stores',
+              },
+              {
+                label: (
+                  <span className="platform-tab-label">
+                    <DatabaseOutlined
+                      style={{ color: activeTab === 'database' ? '#8b5cf6' : '#64748b' }}
+                    />
+                    <span className="platform-tab-text-full">Cơ sở dữ liệu</span>
+                    <span className="platform-tab-text-short">Cơ sở dữ liệu</span>
+                  </span>
+                ),
+                value: 'database',
+              },
+              {
+                label: (
+                  <span className="platform-tab-label">
+                    <SendOutlined
+                      style={{ color: activeTab === 'telegram' ? '#0ea5e9' : '#64748b' }}
+                    />
+                    <span className="platform-tab-text-full">Telegram Bot</span>
+                    <span className="platform-tab-text-short">Telegram</span>
+                  </span>
+                ),
+                value: 'telegram',
               },
             ]}
             className="platform-segmented-tabs"
@@ -1659,7 +1731,7 @@ export function SuperAdminPage() {
               </Card>
             </div>
           ) : null
-        ) : (
+        ) : activeTab === 'stores' ? (
           /* TAB 2: STORES MANAGEMENT TABLE */
           <Card className="platform-table-card" styles={{ body: { padding: '20px 24px' } }}>
             <div className="platform-toolbar">
@@ -1985,6 +2057,18 @@ export function SuperAdminPage() {
               />
             )}
           </Card>
+        ) : activeTab === 'database' ? (
+          /* TAB 3: DATABASE OBSERVABILITY & MAINTENANCE */
+          <DatabaseMaintenancePanel
+            csrfToken={context.data?.csrfToken}
+            active={activeTab === 'database'}
+          />
+        ) : (
+          /* TAB 4: TELEGRAM ADMIN BOT INTEGRATION */
+          <TelegramAdminPanel
+            csrfToken={context.data?.csrfToken}
+            active={activeTab === 'telegram'}
+          />
         )}
       </main>
 

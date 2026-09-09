@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 import { MaintenanceService } from '@server/services/maintenance-service';
+import { OwnerInvoiceRepository } from '@server/repositories/owner-invoice-repository';
 import { RETENTION_COMMAND_TABLES } from '@server/repositories/maintenance-repository';
 
 describe('Database Retention Cleanup Maintenance', () => {
@@ -921,5 +922,631 @@ describe('Database Retention Cleanup Maintenance', () => {
     expect(plan.results.map((row) => row.detail).join('\n')).toMatch(
       /sqlite_autoindex_realtime_events_\d+/,
     );
+  });
+
+  it('verifies all retention invariants, orphan call batch cleanup and root-cause fix (TEST 1 - 18)', async () => {
+    const now = Date.now();
+    const tenDaysAgo = now - 10 * 24 * 60 * 60 * 1000;
+    const twentyDaysAgo = now - 20 * 24 * 60 * 60 * 1000;
+    const twoDaysAgo = now - 2 * 24 * 60 * 60 * 1000;
+
+    const storeId = `store-hardening-${Math.random().toString(36).slice(2, 8)}`;
+    const userId = `user-hardening-${Math.random().toString(36).slice(2, 8)}`;
+
+    await env.DB.prepare(
+      `INSERT INTO stores (id, name, status, created_at, updated_at) VALUES (?, 'Store Hardening', 'ACTIVE', ?, ?)`,
+    )
+      .bind(storeId, now, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO users (id, username, display_name, status, created_at, updated_at) VALUES (?, 'user_hardening', 'Hardening User', 'ACTIVE', ?, ?)`,
+    )
+      .bind(userId, now, now)
+      .run();
+
+    const areaId = `area-hard-${Math.random().toString(36).slice(2, 8)}`;
+    const prodId = `prod-hard-${Math.random().toString(36).slice(2, 8)}`;
+
+    await env.DB.prepare(
+      `INSERT INTO areas (id, store_id, name, status, created_at, updated_at) VALUES (?, ?, 'Area Hardening', 'ACTIVE', ?, ?)`,
+    )
+      .bind(areaId, storeId, now, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO products (id, store_id, name, product_type, status, created_at, updated_at) VALUES (?, ?, 'Prod Hardening', 'QUANTITY', 'ACTIVE', ?, ?)`,
+    )
+      .bind(prodId, storeId, now, now)
+      .run();
+
+    const timeProdId = `time-hard-${Math.random().toString(36).slice(2, 8)}`;
+
+    await env.DB.prepare(
+      `INSERT INTO products (id, store_id, name, product_type, status, created_at, updated_at) VALUES (?, ?, 'Time Hardening', 'TIME', 'ACTIVE', ?, ?)`,
+    )
+      .bind(timeProdId, storeId, now, now)
+      .run();
+
+    const tableId1 = `tbl-1-${Math.random().toString(36).slice(2, 8)}`;
+    const tableId2 = `tbl-2-${Math.random().toString(36).slice(2, 8)}`;
+    const tableId3 = `tbl-3-${Math.random().toString(36).slice(2, 8)}`;
+    const tableId4 = `tbl-4-${Math.random().toString(36).slice(2, 8)}`;
+    const tableId5 = `tbl-5-${Math.random().toString(36).slice(2, 8)}`;
+    const tableIdDel = `tbl-del-${Math.random().toString(36).slice(2, 8)}`;
+
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO service_tables (id, store_id, area_id, time_product_id, name, status, version, created_at, updated_at) VALUES (?, ?, ?, ?, 'Table 1', 'AVAILABLE', 1, ?, ?)`,
+      ).bind(tableId1, storeId, areaId, timeProdId, now, now),
+      env.DB.prepare(
+        `INSERT INTO service_tables (id, store_id, area_id, time_product_id, name, status, version, created_at, updated_at) VALUES (?, ?, ?, ?, 'Table 2', 'AVAILABLE', 1, ?, ?)`,
+      ).bind(tableId2, storeId, areaId, timeProdId, now, now),
+      env.DB.prepare(
+        `INSERT INTO service_tables (id, store_id, area_id, time_product_id, name, status, version, created_at, updated_at) VALUES (?, ?, ?, ?, 'Table 3', 'AVAILABLE', 1, ?, ?)`,
+      ).bind(tableId3, storeId, areaId, timeProdId, now, now),
+      env.DB.prepare(
+        `INSERT INTO service_tables (id, store_id, area_id, time_product_id, name, status, version, created_at, updated_at) VALUES (?, ?, ?, ?, 'Table 4', 'AVAILABLE', 1, ?, ?)`,
+      ).bind(tableId4, storeId, areaId, timeProdId, now, now),
+      env.DB.prepare(
+        `INSERT INTO service_tables (id, store_id, area_id, time_product_id, name, status, version, created_at, updated_at) VALUES (?, ?, ?, ?, 'Table 5', 'AVAILABLE', 1, ?, ?)`,
+      ).bind(tableId5, storeId, areaId, timeProdId, now, now),
+      env.DB.prepare(
+        `INSERT INTO service_tables (id, store_id, area_id, time_product_id, name, status, version, created_at, updated_at) VALUES (?, ?, ?, ?, 'Table Del', 'AVAILABLE', 1, ?, ?)`,
+      ).bind(tableIdDel, storeId, areaId, timeProdId, now, now),
+    ]);
+
+    // Order IDs for TEST 1 - TEST 5
+    const ordPaidId = `ord-paid-${crypto.randomUUID()}`;
+    const ordCancelledId = `ord-cancel-${crypto.randomUUID()}`;
+    const ordOpenId = `ord-open-${crypto.randomUUID()}`;
+    const ordPaymentPendingId = `ord-pp-${crypto.randomUUID()}`;
+    const ordFreshPaidId = `ord-fresh-paid-${crypto.randomUUID()}`;
+
+    // Insert orders
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO orders (id, store_id, table_id, status, version, opened_by, opened_at, created_at, updated_at)
+         VALUES (?, ?, ?, 'PAID', 1, ?, ?, ?, ?)`,
+      ).bind(ordPaidId, storeId, tableId1, userId, tenDaysAgo, tenDaysAgo, tenDaysAgo),
+      env.DB.prepare(
+        `INSERT INTO orders (id, store_id, table_id, status, version, opened_by, opened_at, created_at, updated_at)
+         VALUES (?, ?, ?, 'CANCELLED', 1, ?, ?, ?, ?)`,
+      ).bind(ordCancelledId, storeId, tableId2, userId, tenDaysAgo, tenDaysAgo, tenDaysAgo),
+      env.DB.prepare(
+        `INSERT INTO orders (id, store_id, table_id, status, version, opened_by, opened_at, created_at, updated_at)
+         VALUES (?, ?, ?, 'OPEN', 1, ?, ?, ?, ?)`,
+      ).bind(ordOpenId, storeId, tableId3, userId, tenDaysAgo, tenDaysAgo, tenDaysAgo),
+      env.DB.prepare(
+        `INSERT INTO orders (id, store_id, table_id, status, version, opened_by, opened_at, created_at, updated_at)
+         VALUES (?, ?, ?, 'PAYMENT_PENDING', 1, ?, ?, ?, ?)`,
+      ).bind(ordPaymentPendingId, storeId, tableId4, userId, tenDaysAgo, tenDaysAgo, tenDaysAgo),
+      env.DB.prepare(
+        `INSERT INTO orders (id, store_id, table_id, status, version, opened_by, opened_at, created_at, updated_at)
+         VALUES (?, ?, ?, 'PAID', 1, ?, ?, ?, ?)`,
+      ).bind(ordFreshPaidId, storeId, tableId5, userId, twoDaysAgo, twoDaysAgo, twoDaysAgo),
+    ]);
+
+    // Batch IDs
+    const batch1PaidOld = `batch-1-paid-old-${crypto.randomUUID()}`;
+    const batch2CancelledOld = `batch-2-cancel-old-${crypto.randomUUID()}`;
+    const batch3OpenOld = `batch-3-open-old-${crypto.randomUUID()}`;
+    const batch4PPOld = `batch-4-pp-old-${crypto.randomUUID()}`;
+    const batch5PaidFresh = `batch-5-paid-fresh-${crypto.randomUUID()}`;
+    const batch6OrphanDineIn = `batch-6-orphan-di-${crypto.randomUUID()}`;
+    const batch7OrphanTakeaway = `batch-7-orphan-ta-${crypto.randomUUID()}`;
+
+    const nonExistentOrderId1 = `ord-missing-1-${crypto.randomUUID()}`;
+    const nonExistentOrderId2 = `ord-missing-2-${crypto.randomUUID()}`;
+
+    // Insert call batches
+    await env.DB.batch([
+      // TEST 1: Old call batch + PAID parent
+      env.DB.prepare(
+        `INSERT INTO order_call_batches (id, store_id, order_id, order_type, sequence_no, actor_user_id, request_id, created_at)
+         VALUES (?, ?, ?, 'DINE_IN', 1, ?, ?, ?)`,
+      ).bind(batch1PaidOld, storeId, ordPaidId, userId, `req-${batch1PaidOld}`, tenDaysAgo),
+      // TEST 2: Old call batch + CANCELLED parent
+      env.DB.prepare(
+        `INSERT INTO order_call_batches (id, store_id, order_id, order_type, sequence_no, actor_user_id, request_id, created_at)
+         VALUES (?, ?, ?, 'DINE_IN', 1, ?, ?, ?)`,
+      ).bind(
+        batch2CancelledOld,
+        storeId,
+        ordCancelledId,
+        userId,
+        `req-${batch2CancelledOld}`,
+        tenDaysAgo,
+      ),
+      // TEST 3: Old call batch + OPEN parent
+      env.DB.prepare(
+        `INSERT INTO order_call_batches (id, store_id, order_id, order_type, sequence_no, actor_user_id, request_id, created_at)
+         VALUES (?, ?, ?, 'DINE_IN', 1, ?, ?, ?)`,
+      ).bind(batch3OpenOld, storeId, ordOpenId, userId, `req-${batch3OpenOld}`, tenDaysAgo),
+      // TEST 4: Old call batch + PAYMENT_PENDING parent
+      env.DB.prepare(
+        `INSERT INTO order_call_batches (id, store_id, order_id, order_type, sequence_no, actor_user_id, request_id, created_at)
+         VALUES (?, ?, ?, 'DINE_IN', 1, ?, ?, ?)`,
+      ).bind(batch4PPOld, storeId, ordPaymentPendingId, userId, `req-${batch4PPOld}`, tenDaysAgo),
+      // TEST 5: Fresh call batch + PAID parent
+      env.DB.prepare(
+        `INSERT INTO order_call_batches (id, store_id, order_id, order_type, sequence_no, actor_user_id, request_id, created_at)
+         VALUES (?, ?, ?, 'DINE_IN', 1, ?, ?, ?)`,
+      ).bind(
+        batch5PaidFresh,
+        storeId,
+        ordFreshPaidId,
+        userId,
+        `req-${batch5PaidFresh}`,
+        twoDaysAgo,
+      ),
+      // TEST 6: Old orphan DINE_IN call batch
+      env.DB.prepare(
+        `INSERT INTO order_call_batches (id, store_id, order_id, order_type, sequence_no, actor_user_id, request_id, created_at)
+         VALUES (?, ?, ?, 'DINE_IN', 1, ?, ?, ?)`,
+      ).bind(
+        batch6OrphanDineIn,
+        storeId,
+        nonExistentOrderId1,
+        userId,
+        `req-${batch6OrphanDineIn}`,
+        tenDaysAgo,
+      ),
+      // TEST 7: Old orphan TAKEAWAY call batch
+      env.DB.prepare(
+        `INSERT INTO order_call_batches (id, store_id, order_id, order_type, sequence_no, actor_user_id, request_id, created_at)
+         VALUES (?, ?, ?, 'TAKEAWAY', 1, ?, ?, ?)`,
+      ).bind(
+        batch7OrphanTakeaway,
+        storeId,
+        nonExistentOrderId2,
+        userId,
+        `req-${batch7OrphanTakeaway}`,
+        tenDaysAgo,
+      ),
+    ]);
+
+    // Insert entries for each batch
+    const entryIds = {
+      e1: crypto.randomUUID(),
+      e2: crypto.randomUUID(),
+      e3: crypto.randomUUID(),
+      e4: crypto.randomUUID(),
+      e5: crypto.randomUUID(),
+      e6: crypto.randomUUID(),
+      e7: crypto.randomUUID(),
+    };
+
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO order_call_batch_entries (id, store_id, batch_id, order_id, change_type, product_id, product_type, product_name_snapshot, unit_price_snapshot, before_quantity_milli, delta_quantity_milli, after_quantity_milli, created_at)
+         VALUES (?, ?, ?, ?, 'ADD', ?, 'QUANTITY', 'Prod', 10000, 0, 1000, 1000, ?)`,
+      ).bind(entryIds.e1, storeId, batch1PaidOld, ordPaidId, prodId, tenDaysAgo),
+      env.DB.prepare(
+        `INSERT INTO order_call_batch_entries (id, store_id, batch_id, order_id, change_type, product_id, product_type, product_name_snapshot, unit_price_snapshot, before_quantity_milli, delta_quantity_milli, after_quantity_milli, created_at)
+         VALUES (?, ?, ?, ?, 'ADD', ?, 'QUANTITY', 'Prod', 10000, 0, 1000, 1000, ?)`,
+      ).bind(entryIds.e2, storeId, batch2CancelledOld, ordCancelledId, prodId, tenDaysAgo),
+      env.DB.prepare(
+        `INSERT INTO order_call_batch_entries (id, store_id, batch_id, order_id, change_type, product_id, product_type, product_name_snapshot, unit_price_snapshot, before_quantity_milli, delta_quantity_milli, after_quantity_milli, created_at)
+         VALUES (?, ?, ?, ?, 'ADD', ?, 'QUANTITY', 'Prod', 10000, 0, 1000, 1000, ?)`,
+      ).bind(entryIds.e3, storeId, batch3OpenOld, ordOpenId, prodId, tenDaysAgo),
+      env.DB.prepare(
+        `INSERT INTO order_call_batch_entries (id, store_id, batch_id, order_id, change_type, product_id, product_type, product_name_snapshot, unit_price_snapshot, before_quantity_milli, delta_quantity_milli, after_quantity_milli, created_at)
+         VALUES (?, ?, ?, ?, 'ADD', ?, 'QUANTITY', 'Prod', 10000, 0, 1000, 1000, ?)`,
+      ).bind(entryIds.e4, storeId, batch4PPOld, ordPaymentPendingId, prodId, tenDaysAgo),
+      env.DB.prepare(
+        `INSERT INTO order_call_batch_entries (id, store_id, batch_id, order_id, change_type, product_id, product_type, product_name_snapshot, unit_price_snapshot, before_quantity_milli, delta_quantity_milli, after_quantity_milli, created_at)
+         VALUES (?, ?, ?, ?, 'ADD', ?, 'QUANTITY', 'Prod', 10000, 0, 1000, 1000, ?)`,
+      ).bind(entryIds.e5, storeId, batch5PaidFresh, ordFreshPaidId, prodId, twoDaysAgo),
+      env.DB.prepare(
+        `INSERT INTO order_call_batch_entries (id, store_id, batch_id, order_id, change_type, product_id, product_type, product_name_snapshot, unit_price_snapshot, before_quantity_milli, delta_quantity_milli, after_quantity_milli, created_at)
+         VALUES (?, ?, ?, ?, 'ADD', ?, 'QUANTITY', 'Prod', 10000, 0, 1000, 1000, ?)`,
+      ).bind(entryIds.e6, storeId, batch6OrphanDineIn, nonExistentOrderId1, prodId, tenDaysAgo),
+      env.DB.prepare(
+        `INSERT INTO order_call_batch_entries (id, store_id, batch_id, order_id, change_type, product_id, product_type, product_name_snapshot, unit_price_snapshot, before_quantity_milli, delta_quantity_milli, after_quantity_milli, created_at)
+         VALUES (?, ?, ?, ?, 'ADD', ?, 'QUANTITY', 'Prod', 10000, 0, 1000, 1000, ?)`,
+      ).bind(entryIds.e7, storeId, batch7OrphanTakeaway, nonExistentOrderId2, prodId, tenDaysAgo),
+    ]);
+
+    // TEST 9 & 10: ORDER_BATCH_SAVED and Security Audit Logs
+    const oldOrderBatchSavedAuditId = `audit-obs-old-${crypto.randomUUID()}`;
+    const freshOrderBatchSavedAuditId = `audit-obs-fresh-${crypto.randomUUID()}`;
+    const securityAuditId = `audit-sec-${crypto.randomUUID()}`;
+
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO audit_logs (id, store_id, actor_user_id, action, entity_type, entity_id, request_id, created_at)
+         VALUES (?, ?, ?, 'ORDER_BATCH_SAVED', 'ORDER', ?, 'req-obs-1', ?)`,
+      ).bind(oldOrderBatchSavedAuditId, storeId, userId, ordPaidId, tenDaysAgo),
+      env.DB.prepare(
+        `INSERT INTO audit_logs (id, store_id, actor_user_id, action, entity_type, entity_id, request_id, created_at)
+         VALUES (?, ?, ?, 'ORDER_BATCH_SAVED', 'ORDER', ?, 'req-obs-2', ?)`,
+      ).bind(freshOrderBatchSavedAuditId, storeId, userId, ordOpenId, twoDaysAgo),
+      env.DB.prepare(
+        `INSERT INTO audit_logs (id, store_id, actor_user_id, action, entity_type, entity_id, request_id, created_at)
+         VALUES (?, ?, ?, 'STORE_SETTINGS_UPDATED', 'STORE', ?, 'req-sec-1', ?)`,
+      ).bind(securityAuditId, storeId, userId, storeId, twentyDaysAgo),
+    ]);
+
+    // TEST 11 & 12: Realtime published vs unpublished
+    const rtPublishedOldId = `rt-pub-old-${crypto.randomUUID()}`;
+    const rtUnpublishedOldId = `rt-unpub-old-${crypto.randomUUID()}`;
+
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO realtime_events (event_id, store_id, sequence, schema_version, event_type, aggregate_type, aggregate_id, aggregate_version, request_id, topics_json, data_json, occurred_at, published_at)
+         VALUES (?, ?, 2001, 1, 'pos.order.created', 'ORDER', ?, 1, 'req-rt-1', '[]', '{}', ?, ?)`,
+      ).bind(rtPublishedOldId, storeId, ordPaidId, tenDaysAgo, tenDaysAgo),
+      env.DB.prepare(
+        `INSERT INTO realtime_events (event_id, store_id, sequence, schema_version, event_type, aggregate_type, aggregate_id, aggregate_version, request_id, topics_json, data_json, occurred_at, published_at)
+         VALUES (?, ?, 2002, 1, 'pos.order.created', 'ORDER', ?, 1, 'req-rt-2', '[]', '{}', ?, NULL)`,
+      ).bind(rtUnpublishedOldId, storeId, ordOpenId, twentyDaysAgo),
+    ]);
+
+    // TEST 13 & 14: Payment snapshots consumed vs active
+    const snapConsumedOldId = `snap-cons-old-${crypto.randomUUID()}`;
+    const snapActiveOldId = `snap-act-old-${crypto.randomUUID()}`;
+
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO payment_snapshots (id, store_id, order_id, order_type, order_version, command_id, quote_json, status, created_at, consumed_at)
+         VALUES (?, ?, ?, 'DINE_IN', 1, ?, '{}', 'CONSUMED', ?, ?)`,
+      ).bind(
+        snapConsumedOldId,
+        storeId,
+        ordPaidId,
+        snapConsumedOldId,
+        twentyDaysAgo,
+        twentyDaysAgo,
+      ),
+      env.DB.prepare(
+        `INSERT INTO payment_snapshots (id, store_id, order_id, order_type, order_version, command_id, quote_json, status, created_at)
+         VALUES (?, ?, ?, 'DINE_IN', 1, ?, '{}', 'ACTIVE', ?)`,
+      ).bind(snapActiveOldId, storeId, ordOpenId, snapActiveOldId, twentyDaysAgo),
+    ]);
+
+    // TEST 15 & 16: Print jobs terminal vs PRINTING / CLAIMED
+    const pjCompletedOldId = `pj-comp-old-${crypto.randomUUID()}`;
+    const pjPrintingOldId = `pj-prnt-old-${crypto.randomUUID()}`;
+    const pjClaimedOldId = `pj-clmd-old-${crypto.randomUUID()}`;
+
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO print_jobs (id, store_id, idempotency_key, document_type, document_id, printer_role, status, attempt_count, created_at, completed_at)
+         VALUES (?, ?, ?, 'order', ?, 'receipt', 'COMPLETED', 1, ?, ?)`,
+      ).bind(
+        pjCompletedOldId,
+        storeId,
+        `idemp-${pjCompletedOldId}`,
+        ordPaidId,
+        twentyDaysAgo,
+        twentyDaysAgo,
+      ),
+      env.DB.prepare(
+        `INSERT INTO print_jobs (id, store_id, idempotency_key, document_type, document_id, printer_role, status, attempt_count, created_at, printing_at)
+         VALUES (?, ?, ?, 'order', ?, 'receipt', 'PRINTING', 1, ?, ?)`,
+      ).bind(
+        pjPrintingOldId,
+        storeId,
+        `idemp-${pjPrintingOldId}`,
+        ordOpenId,
+        twentyDaysAgo,
+        twentyDaysAgo,
+      ),
+      env.DB.prepare(
+        `INSERT INTO print_jobs (id, store_id, idempotency_key, document_type, document_id, printer_role, status, attempt_count, created_at, claimed_at)
+         VALUES (?, ?, ?, 'order', ?, 'receipt', 'CLAIMED', 0, ?, ?)`,
+      ).bind(
+        pjClaimedOldId,
+        storeId,
+        `idemp-${pjClaimedOldId}`,
+        ordOpenId,
+        twentyDaysAgo,
+        twentyDaysAgo,
+      ),
+    ]);
+
+    // Permanent financial records (TEST 18)
+    const invId = `inv-perm-${crypto.randomUUID()}`;
+    const payId = `pay-perm-${crypto.randomUUID()}`;
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO invoices (id, store_id, order_id, display_code, subtotal, discount_total, total, status, issued_at, issued_by, snapshot_json)
+         VALUES (?, ?, ?, 'H-PERM', 100000, 0, 100000, 'COMPLETED', ?, ?, '{}')`,
+      ).bind(invId, storeId, ordPaidId, twentyDaysAgo, userId),
+      env.DB.prepare(
+        `INSERT INTO payments (id, store_id, order_id, method, status, amount, idempotency_key, created_by, created_at)
+         VALUES (?, ?, ?, 'CASH', 'SUCCEEDED', 100000, ?, ?, ?)`,
+      ).bind(payId, storeId, ordPaidId, `idemp-pay-${payId}`, userId, twentyDaysAgo),
+    ]);
+
+    // RUN 1 of Retention Cleanup (TEST 17 Part A)
+    const service = new MaintenanceService(env);
+    const result1 = await service.runRetentionCleanup();
+    expect(result1.totalDeleted).toBeGreaterThanOrEqual(1);
+
+    // Verify TEST 1: Old call batch + PAID parent => entries deleted, batch deleted
+    expect(
+      await env.DB.prepare('SELECT 1 FROM order_call_batches WHERE id = ?')
+        .bind(batch1PaidOld)
+        .first(),
+    ).toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 FROM order_call_batch_entries WHERE id = ?')
+        .bind(entryIds.e1)
+        .first(),
+    ).toBeNull();
+
+    // Verify TEST 2: Old call batch + CANCELLED parent => entries deleted, batch deleted
+    expect(
+      await env.DB.prepare('SELECT 1 FROM order_call_batches WHERE id = ?')
+        .bind(batch2CancelledOld)
+        .first(),
+    ).toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 FROM order_call_batch_entries WHERE id = ?')
+        .bind(entryIds.e2)
+        .first(),
+    ).toBeNull();
+
+    // Verify TEST 3: Old call batch + OPEN parent => PRESERVED
+    expect(
+      await env.DB.prepare('SELECT 1 FROM order_call_batches WHERE id = ?')
+        .bind(batch3OpenOld)
+        .first(),
+    ).not.toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 FROM order_call_batch_entries WHERE id = ?')
+        .bind(entryIds.e3)
+        .first(),
+    ).not.toBeNull();
+
+    // Verify TEST 4: Old call batch + PAYMENT_PENDING parent => PRESERVED
+    expect(
+      await env.DB.prepare('SELECT 1 FROM order_call_batches WHERE id = ?')
+        .bind(batch4PPOld)
+        .first(),
+    ).not.toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 FROM order_call_batch_entries WHERE id = ?')
+        .bind(entryIds.e4)
+        .first(),
+    ).not.toBeNull();
+
+    // Verify TEST 5: Fresh call batch + PAID parent => PRESERVED
+    expect(
+      await env.DB.prepare('SELECT 1 FROM order_call_batches WHERE id = ?')
+        .bind(batch5PaidFresh)
+        .first(),
+    ).not.toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 FROM order_call_batch_entries WHERE id = ?')
+        .bind(entryIds.e5)
+        .first(),
+    ).not.toBeNull();
+
+    // Verify TEST 6: Old orphan DINE_IN call batch => DELETED
+    expect(
+      await env.DB.prepare('SELECT 1 FROM order_call_batches WHERE id = ?')
+        .bind(batch6OrphanDineIn)
+        .first(),
+    ).toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 FROM order_call_batch_entries WHERE id = ?')
+        .bind(entryIds.e6)
+        .first(),
+    ).toBeNull();
+
+    // Verify TEST 7: Old orphan TAKEAWAY call batch => DELETED
+    expect(
+      await env.DB.prepare('SELECT 1 FROM order_call_batches WHERE id = ?')
+        .bind(batch7OrphanTakeaway)
+        .first(),
+    ).toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 FROM order_call_batch_entries WHERE id = ?')
+        .bind(entryIds.e7)
+        .first(),
+    ).toBeNull();
+
+    // Verify TEST 9 & 10: ORDER_BATCH_SAVED > 7 days deleted; fresh and security preserved
+    expect(
+      await env.DB.prepare('SELECT 1 FROM audit_logs WHERE id = ?')
+        .bind(oldOrderBatchSavedAuditId)
+        .first(),
+    ).toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 FROM audit_logs WHERE id = ?')
+        .bind(freshOrderBatchSavedAuditId)
+        .first(),
+    ).not.toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 FROM audit_logs WHERE id = ?').bind(securityAuditId).first(),
+    ).not.toBeNull();
+
+    // Verify TEST 11 & 12: Realtime published deleted; unpublished preserved
+    expect(
+      await env.DB.prepare('SELECT 1 FROM realtime_events WHERE event_id = ?')
+        .bind(rtPublishedOldId)
+        .first(),
+    ).toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 FROM realtime_events WHERE event_id = ?')
+        .bind(rtUnpublishedOldId)
+        .first(),
+    ).not.toBeNull();
+
+    // Verify TEST 13 & 14: Payment snapshot consumed deleted; active preserved
+    expect(
+      await env.DB.prepare('SELECT 1 FROM payment_snapshots WHERE id = ?')
+        .bind(snapConsumedOldId)
+        .first(),
+    ).toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 FROM payment_snapshots WHERE id = ?')
+        .bind(snapActiveOldId)
+        .first(),
+    ).not.toBeNull();
+
+    // Verify TEST 15 & 16: Terminal print job deleted; PRINTING and CLAIMED preserved
+    expect(
+      await env.DB.prepare('SELECT 1 FROM print_jobs WHERE id = ?').bind(pjCompletedOldId).first(),
+    ).toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 FROM print_jobs WHERE id = ?').bind(pjPrintingOldId).first(),
+    ).not.toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 FROM print_jobs WHERE id = ?').bind(pjClaimedOldId).first(),
+    ).not.toBeNull();
+
+    // Verify TEST 18: Permanent financial records preserved
+    expect(
+      await env.DB.prepare('SELECT 1 FROM orders WHERE id = ?').bind(ordPaidId).first(),
+    ).not.toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 FROM invoices WHERE id = ?').bind(invId).first(),
+    ).not.toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 FROM payments WHERE id = ?').bind(payId).first(),
+    ).not.toBeNull();
+
+    // RUN 2 of Retention Cleanup (TEST 17 Part B: Idempotency)
+    const result2 = await service.runRetentionCleanup();
+    expect(result2.totalDeleted).toBe(0);
+    // After second run, active items and permanent records must still exist
+    expect(
+      await env.DB.prepare('SELECT 1 FROM order_call_batches WHERE id = ?')
+        .bind(batch3OpenOld)
+        .first(),
+    ).not.toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 FROM order_call_batches WHERE id = ?')
+        .bind(batch4PPOld)
+        .first(),
+    ).not.toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 FROM order_call_batches WHERE id = ?')
+        .bind(batch5PaidFresh)
+        .first(),
+    ).not.toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 FROM orders WHERE id = ?').bind(ordPaidId).first(),
+    ).not.toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 FROM invoices WHERE id = ?').bind(invId).first(),
+    ).not.toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 FROM payments WHERE id = ?').bind(payId).first(),
+    ).not.toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 FROM print_jobs WHERE id = ?').bind(pjPrintingOldId).first(),
+    ).not.toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 FROM realtime_events WHERE event_id = ?')
+        .bind(rtUnpublishedOldId)
+        .first(),
+    ).not.toBeNull();
+
+    // TEST 8: Hard-delete invoice/order root-cause fix verification
+    const ordToDelete = `ord-del-${crypto.randomUUID()}`;
+    const batchToDelete = `batch-del-${crypto.randomUUID()}`;
+    const entryToDelete = `entry-del-${crypto.randomUUID()}`;
+
+    await env.DB.prepare(
+      `INSERT INTO orders (id, store_id, table_id, display_code, status, version, opened_by, opened_at, created_at, updated_at)
+       VALUES (?, ?, ?, 'ODEL', 'PAID', 1, ?, ?, ?, ?)`,
+    )
+      .bind(ordToDelete, storeId, tableIdDel, userId, now, now, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO order_call_batches (id, store_id, order_id, order_type, sequence_no, actor_user_id, request_id, created_at)
+       VALUES (?, ?, ?, 'DINE_IN', 1, ?, ?, ?)`,
+    )
+      .bind(batchToDelete, storeId, ordToDelete, userId, `req-${batchToDelete}`, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO order_call_batch_entries (id, store_id, batch_id, order_id, change_type, product_id, product_type, product_name_snapshot, unit_price_snapshot, before_quantity_milli, delta_quantity_milli, after_quantity_milli, created_at)
+       VALUES (?, ?, ?, ?, 'ADD', ?, 'QUANTITY', 'Prod', 10000, 0, 1000, 1000, ?)`,
+    )
+      .bind(entryToDelete, storeId, batchToDelete, ordToDelete, prodId, now)
+      .run();
+
+    // Hard-delete the order using OwnerInvoiceRepository
+    const ownerInvoiceRepo = new OwnerInvoiceRepository(env.DB);
+    const deleteResult = await ownerInvoiceRepo.deleteInvoice(
+      storeId,
+      ordToDelete,
+      userId,
+      'req-del-test',
+    );
+    expect(deleteResult.deleted).toBe(true);
+
+    // Verify order is gone
+    expect(
+      await env.DB.prepare('SELECT 1 FROM orders WHERE id = ?').bind(ordToDelete).first(),
+    ).toBeNull();
+    // Verify NO orphan call batches or entries remain!
+    expect(
+      await env.DB.prepare('SELECT 1 FROM order_call_batches WHERE id = ?')
+        .bind(batchToDelete)
+        .first(),
+    ).toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 FROM order_call_batch_entries WHERE id = ?')
+        .bind(entryToDelete)
+        .first(),
+    ).toBeNull();
+
+    // Also verify takeaway hard-delete
+    const taOrdToDelete = `ta-del-${crypto.randomUUID()}`;
+    const taBatchToDelete = `ta-batch-del-${crypto.randomUUID()}`;
+    const taEntryToDelete = `ta-entry-del-${crypto.randomUUID()}`;
+
+    await env.DB.prepare(
+      `INSERT INTO takeaway_orders (id, store_id, display_code, status, version, opened_by, opened_at, created_at, updated_at)
+       VALUES (?, ?, 'TA-DEL', 'PAID', 1, ?, ?, ?, ?)`,
+    )
+      .bind(taOrdToDelete, storeId, userId, now, now, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO order_call_batches (id, store_id, order_id, order_type, sequence_no, actor_user_id, request_id, created_at)
+       VALUES (?, ?, ?, 'TAKEAWAY', 1, ?, ?, ?)`,
+    )
+      .bind(taBatchToDelete, storeId, taOrdToDelete, userId, `req-${taBatchToDelete}`, now)
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO order_call_batch_entries (id, store_id, batch_id, order_id, change_type, product_id, product_type, product_name_snapshot, unit_price_snapshot, before_quantity_milli, delta_quantity_milli, after_quantity_milli, created_at)
+       VALUES (?, ?, ?, ?, 'ADD', ?, 'QUANTITY', 'Prod', 10000, 0, 1000, 1000, ?)`,
+    )
+      .bind(taEntryToDelete, storeId, taBatchToDelete, taOrdToDelete, prodId, now)
+      .run();
+
+    const taDeleteResult = await ownerInvoiceRepo.deleteInvoice(
+      storeId,
+      taOrdToDelete,
+      userId,
+      'req-del-ta-test',
+    );
+    expect(taDeleteResult.deleted).toBe(true);
+
+    expect(
+      await env.DB.prepare('SELECT 1 FROM takeaway_orders WHERE id = ?')
+        .bind(taOrdToDelete)
+        .first(),
+    ).toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 FROM order_call_batches WHERE id = ?')
+        .bind(taBatchToDelete)
+        .first(),
+    ).toBeNull();
+    expect(
+      await env.DB.prepare('SELECT 1 FROM order_call_batch_entries WHERE id = ?')
+        .bind(taEntryToDelete)
+        .first(),
+    ).toBeNull();
   });
 });

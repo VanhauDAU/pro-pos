@@ -6,7 +6,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/print-agent/*"],
+    "run_worker_first": ["/api/*", "/print-agent/*"]
   },
   "preview_urls": true,
   "secrets": {
@@ -18,35 +18,37 @@
       "VAPID_PUBLIC_KEY",
       "VAPID_PRIVATE_KEY",
       "VAPID_SUBJECT",
-    ],
+      "TELEGRAM_BOT_TOKEN",
+      "TELEGRAM_WEBHOOK_SECRET"
+    ]
   },
   "observability": {
     "enabled": true,
     "logs": {
       "enabled": true,
-      "head_sampling_rate": 1,
+      "head_sampling_rate": 1
     },
     "traces": {
       "enabled": true,
-      "head_sampling_rate": 0.1,
-    },
+      "head_sampling_rate": 0.1
+    }
   },
   "durable_objects": {
     "bindings": [
       {
         "name": "STORE_REALTIME",
-        "class_name": "StoreRealtimeRoom",
-      },
-    ],
+        "class_name": "StoreRealtimeRoom"
+      }
+    ]
   },
   "migrations": [
     {
       "tag": "realtime-v1",
-      "new_sqlite_classes": ["StoreRealtimeRoom"],
-    },
+      "new_sqlite_classes": ["StoreRealtimeRoom"]
+    }
   ],
   "triggers": {
-    "crons": ["17 18 * * *"],
+    "crons": ["17 18 * * *"]
   },
   "vars": {
     "ENVIRONMENT": "local",
@@ -56,25 +58,25 @@
     "STORE_TIMEZONE": "Asia/Ho_Chi_Minh",
     "COOKIE_MODE": "local",
     "ACCESS_BRIDGE_URL": "http://127.0.0.1:8788",
-    "ACCESS_TEAM_DOMAIN": "shy-mountain-5e8a.cloudflareaccess.com",
+    "ACCESS_TEAM_DOMAIN": "shy-mountain-5e8a.cloudflareaccess.com"
   },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "pro-pos-local-db",
       "database_id": "00000000-0000-0000-0000-000000000000",
-      "migrations_dir": "./migrations",
-    },
+      "migrations_dir": "./migrations"
+    }
   ],
   "r2_buckets": [
     {
       "binding": "MEDIA",
-      "bucket_name": "pro-pos-local-media",
+      "bucket_name": "pro-pos-local-media"
     },
     {
       "binding": "PRINT_AGENT_UPDATES",
-      "bucket_name": "pro-pos-local-updates",
-    },
+      "bucket_name": "pro-pos-local-updates"
+    }
   ],
   "env": {
     "staging": {
@@ -83,12 +85,12 @@
         "bindings": [
           {
             "name": "STORE_REALTIME",
-            "class_name": "StoreRealtimeRoom",
-          },
-        ],
+            "class_name": "StoreRealtimeRoom"
+          }
+        ]
       },
       "triggers": {
-        "crons": ["17 18 * * *"],
+        "crons": ["17 18 * * *"]
       },
       "secrets": {
         "required": [
@@ -99,7 +101,9 @@
           "VAPID_PUBLIC_KEY",
           "VAPID_PRIVATE_KEY",
           "VAPID_SUBJECT",
-        ],
+          "TELEGRAM_BOT_TOKEN",
+          "TELEGRAM_WEBHOOK_SECRET"
+        ]
       },
       "vars": {
         "ENVIRONMENT": "staging",
@@ -109,26 +113,26 @@
         "STORE_TIMEZONE": "Asia/Ho_Chi_Minh",
         "COOKIE_MODE": "secure",
         "ACCESS_BRIDGE_URL": "https://pro-pos-auth-staging.vanhau-laravel.workers.dev",
-        "ACCESS_TEAM_DOMAIN": "",
+        "ACCESS_TEAM_DOMAIN": ""
       },
       "d1_databases": [
         {
           "binding": "DB",
           "database_name": "pro-pos-staging-db",
           "database_id": "7ec0c566-2bf4-48b9-a9e6-fd5b75b6dc31",
-          "migrations_dir": "./migrations",
-        },
+          "migrations_dir": "./migrations"
+        }
       ],
       "r2_buckets": [
         {
           "binding": "MEDIA",
-          "bucket_name": "pro-pos-staging-media",
+          "bucket_name": "pro-pos-staging-media"
         },
         {
           "binding": "PRINT_AGENT_UPDATES",
-          "bucket_name": "pro-pos-staging-updates",
-        },
-      ],
+          "bucket_name": "pro-pos-staging-updates"
+        }
+      ]
     },
     "production": {
       "name": "pro-pos-production",
@@ -136,12 +140,12 @@
         "bindings": [
           {
             "name": "STORE_REALTIME",
-            "class_name": "StoreRealtimeRoom",
-          },
-        ],
+            "class_name": "StoreRealtimeRoom"
+          }
+        ]
       },
       "triggers": {
-        "crons": ["17 18 * * *"],
+        "crons": ["17 18 * * *"]
       },
       "secrets": {
         "required": [
@@ -152,7 +156,9 @@
           "VAPID_PUBLIC_KEY",
           "VAPID_PRIVATE_KEY",
           "VAPID_SUBJECT",
-        ],
+          "TELEGRAM_BOT_TOKEN",
+          "TELEGRAM_WEBHOOK_SECRET"
+        ]
       },
       "vars": {
         "ENVIRONMENT": "production",
@@ -162,26 +168,26 @@
         "STORE_TIMEZONE": "Asia/Ho_Chi_Minh",
         "COOKIE_MODE": "secure",
         "ACCESS_BRIDGE_URL": "https://pro-pos-auth-production.vanhau-laravel.workers.dev",
-        "ACCESS_TEAM_DOMAIN": "",
+        "ACCESS_TEAM_DOMAIN": ""
       },
       "d1_databases": [
         {
           "binding": "DB",
           "database_name": "pro-pos-production-db",
           "database_id": "651d7ec6-a2c8-4fa1-82d5-679b6e90c8ca",
-          "migrations_dir": "./migrations",
-        },
+          "migrations_dir": "./migrations"
+        }
       ],
       "r2_buckets": [
         {
           "binding": "MEDIA",
-          "bucket_name": "pro-pos-production-media",
+          "bucket_name": "pro-pos-production-media"
         },
         {
           "binding": "PRINT_AGENT_UPDATES",
-          "bucket_name": "propos-updates",
-        },
-      ],
-    },
-  },
+          "bucket_name": "propos-updates"
+        }
+      ]
+    }
+  }
 }

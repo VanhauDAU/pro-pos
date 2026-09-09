@@ -36,6 +36,7 @@ import {
   MobileOutlined,
   BellOutlined,
   DatabaseOutlined,
+  SendOutlined,
 } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -82,6 +83,7 @@ import type {
 import logo from '@client/assets/logo-black.svg';
 import { ApiError, apiRequest, jsonRequest } from '@client/lib/api';
 import { DatabaseMaintenancePanel } from './DatabaseMaintenancePanel';
+import { TelegramAdminPanel } from './TelegramAdminPanel';
 
 interface CreateStoreValues {
   name: string;
@@ -929,7 +931,17 @@ export function SuperAdminPage() {
   }, []);
 
   // Navigation & Filter state
-  const [activeTab, setActiveTab] = useState<'analytics' | 'stores' | 'database'>('analytics');
+  const [activeTab, setActiveTab] = useState<'analytics' | 'stores' | 'database' | 'telegram'>(
+    () => {
+      if (typeof window !== 'undefined') {
+        const tabParam = new URLSearchParams(window.location.search).get('tab');
+        if (tabParam === 'database') return 'database';
+        if (tabParam === 'stores') return 'stores';
+        if (tabParam === 'telegram') return 'telegram';
+      }
+      return 'analytics';
+    },
+  );
   const [analyticsDays, setAnalyticsDays] = useState<number>(14);
   const [trendMetric, setTrendMetric] = useState<'revenue' | 'invoices'>('revenue');
 
@@ -1446,7 +1458,9 @@ export function SuperAdminPage() {
             block
             size="large"
             value={activeTab}
-            onChange={(val) => setActiveTab(val as 'analytics' | 'stores' | 'database')}
+            onChange={(val) =>
+              setActiveTab(val as 'analytics' | 'stores' | 'database' | 'telegram')
+            }
             options={[
               {
                 label: (
@@ -1454,9 +1468,7 @@ export function SuperAdminPage() {
                     <LineChartOutlined
                       style={{ color: activeTab === 'analytics' ? '#2563eb' : '#64748b' }}
                     />
-                    <span className="platform-tab-text-full">
-                      Báo cáo & Hiệu suất Toàn Hệ Thống
-                    </span>
+                    <span className="platform-tab-text-full">Báo cáo & Hiệu suất</span>
                     <span className="platform-tab-text-short">Báo cáo & Hiệu suất</span>
                   </span>
                 ),
@@ -1485,6 +1497,18 @@ export function SuperAdminPage() {
                   </span>
                 ),
                 value: 'database',
+              },
+              {
+                label: (
+                  <span className="platform-tab-label">
+                    <SendOutlined
+                      style={{ color: activeTab === 'telegram' ? '#0ea5e9' : '#64748b' }}
+                    />
+                    <span className="platform-tab-text-full">Telegram Bot</span>
+                    <span className="platform-tab-text-short">Telegram</span>
+                  </span>
+                ),
+                value: 'telegram',
               },
             ]}
             className="platform-segmented-tabs"
@@ -2033,11 +2057,17 @@ export function SuperAdminPage() {
               />
             )}
           </Card>
-        ) : (
+        ) : activeTab === 'database' ? (
           /* TAB 3: DATABASE OBSERVABILITY & MAINTENANCE */
           <DatabaseMaintenancePanel
             csrfToken={context.data?.csrfToken}
             active={activeTab === 'database'}
+          />
+        ) : (
+          /* TAB 4: TELEGRAM ADMIN BOT INTEGRATION */
+          <TelegramAdminPanel
+            csrfToken={context.data?.csrfToken}
+            active={activeTab === 'telegram'}
           />
         )}
       </main>

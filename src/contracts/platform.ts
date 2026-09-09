@@ -281,3 +281,23 @@ export interface DatabaseStorageReport {
   totalEstimatedDataBytes: number;
   tables: DatabaseTableStorageRow[];
 }
+
+export interface TelegramAdminLinkStatusResponse {
+  linked: boolean;
+  botUsername: string;
+  link: {
+    id: string;
+    telegramUserId: string;
+    telegramUsername: string | null;
+    telegramFirstName: string | null;
+    telegramLastName: string | null;
+    linkedAt: number;
+  } | null;
+}
+
+export interface CreateTelegramLinkCodeResponse {
+  code: string;
+  expiresAt: number;
+  botUsername: string;
+  deepLink: string;
+}

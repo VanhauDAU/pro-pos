@@ -262,6 +262,8 @@ export function getTableStorageMetadata(
       'device_credentials',
       'devices',
       'store_employee_usernames',
+      'telegram_admin_links',
+      'telegram_link_codes',
     ].includes(tableName)
   ) {
     return {

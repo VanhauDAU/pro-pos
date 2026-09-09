@@ -14,6 +14,7 @@ import { parseJson } from '@server/lib/validation';
 import { requireActor } from '@server/middleware/authorization';
 import { PlatformService } from '@server/services/platform-service';
 import { MaintenanceService } from '@server/services/maintenance-service';
+import { TelegramLinkService } from '@server/services/telegram-link-service';
 import type { AppEnv } from '@server/types';
 
 const platformRoutes = new Hono<AppEnv>();
@@ -38,6 +39,8 @@ platformRoutes.use('/stores', requireActor('SUPER_ADMIN'));
 platformRoutes.use('/analytics', requireActor('SUPER_ADMIN'));
 platformRoutes.use('/maintenance/*', requireActor('SUPER_ADMIN'));
 platformRoutes.use('/maintenance', requireActor('SUPER_ADMIN'));
+platformRoutes.use('/telegram/*', requireActor('SUPER_ADMIN'));
+platformRoutes.use('/telegram', requireActor('SUPER_ADMIN'));
 
 platformRoutes.get('/analytics', async (c) => {
   const daysParam = c.req.query('days');
@@ -143,6 +146,24 @@ platformRoutes.get('/maintenance/storage', async (c) => {
 
 platformRoutes.post('/maintenance/cleanup', async (c) => {
   const result = await new MaintenanceService(c.env).runRetentionCleanup();
+  return success(c, result);
+});
+
+platformRoutes.get('/telegram/status', async (c) => {
+  const actor = c.get('actor');
+  const result = await new TelegramLinkService(c.env).getStatus(actor.id);
+  return success(c, result);
+});
+
+platformRoutes.post('/telegram/link-code', async (c) => {
+  const actor = c.get('actor');
+  const result = await new TelegramLinkService(c.env).createLinkCode(actor.id);
+  return success(c, result, 201);
+});
+
+platformRoutes.delete('/telegram/link', async (c) => {
+  const actor = c.get('actor');
+  const result = await new TelegramLinkService(c.env).unlink(actor.id);
   return success(c, result);
 });
 

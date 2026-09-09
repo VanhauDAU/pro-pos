@@ -77,6 +77,7 @@ import { OwnerPromotionFormPage, OwnerPromotionListPage } from './OwnerPromotion
 import { OwnerQrOrderSettingsPage } from './OwnerQrOrderSettingsPage';
 import { OwnerNotificationSettingsPage } from './OwnerNotificationSettingsPage';
 import { PushNotificationControl } from '@client/features/pwa/PushNotificationControl';
+import { OwnerWeatherChip } from '@client/features/weather/OwnerWeatherChip';
 
 const OwnerPrintSettingsPage = lazy(async () => {
   const module = await import('./OwnerPrintSettingsPage');
@@ -657,6 +658,7 @@ export function OwnerPortalPage() {
                 </Typography.Text>
               </div>
               <div className="owner-header__actions">
+                <OwnerWeatherChip />
                 <Dropdown
                   trigger={['click']}
                   placement="bottomRight"

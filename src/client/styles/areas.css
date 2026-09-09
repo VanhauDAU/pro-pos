@@ -3268,3 +3268,7 @@ body {
   color: #ffffff;
   box-shadow: 0 2px 6px rgba(9, 117, 247, 0.25);
 }
+
+/* ────────────────────────────────────────────────────────────────────────── */
+/* POS & Owner Weather Components */
+@import '../features/weather/weather.css';

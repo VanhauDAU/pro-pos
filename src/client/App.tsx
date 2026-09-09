@@ -33,32 +33,29 @@ const PlatformAccessPage = lazy(async () => {
   return { default: module.PlatformAccessPage };
 });
 
-let staffPosPortalPagePromise: Promise<
-  typeof import('@client/features/pos/StaffPosPortalPage')
-> | null = null;
-let staffPosAreasPagePromise: Promise<
-  typeof import('@client/features/pos/StaffPosAreasPage')
-> | null = null;
+type StaffPosPortalModule = typeof import('@client/features/pos/StaffPosPortalPage');
+type StaffPosAreasModule = typeof import('@client/features/pos/StaffPosAreasPage');
+
+let staffPosPortalModule: StaffPosPortalModule | null = null;
+let staffPosAreasModule: StaffPosAreasModule | null = null;
+let staffPosPortalPagePromise: Promise<StaffPosPortalModule> | null = null;
+let staffPosAreasPagePromise: Promise<StaffPosAreasModule> | null = null;
 
 function loadStaffPosPortalPage() {
-  staffPosPortalPagePromise ??= import('@client/features/pos/StaffPosPortalPage');
+  staffPosPortalPagePromise ??= import('@client/features/pos/StaffPosPortalPage').then((module) => {
+    staffPosPortalModule = module;
+    return module;
+  });
   return staffPosPortalPagePromise;
 }
 
 function loadStaffPosAreasPage() {
-  staffPosAreasPagePromise ??= import('@client/features/pos/StaffPosAreasPage');
+  staffPosAreasPagePromise ??= import('@client/features/pos/StaffPosAreasPage').then((module) => {
+    staffPosAreasModule = module;
+    return module;
+  });
   return staffPosAreasPagePromise;
 }
-
-const StaffPosPortalPage = lazy(async () => {
-  const module = await loadStaffPosPortalPage();
-  return { default: module.StaffPosPortalPage };
-});
-
-const StaffPosAreasPage = lazy(async () => {
-  const module = await loadStaffPosAreasPage();
-  return { default: module.StaffPosAreasPage };
-});
 
 function preloadStaffPosSurface(surface: AppBootstrapSurface) {
   return surface === 'areas' ? loadStaffPosAreasPage() : loadStaffPosPortalPage();
@@ -77,12 +74,16 @@ function StaffPosRoute() {
   const hasWarmAreasBootstrap = Boolean(queryClient.getQueryData(['app-bootstrap', 'areas']));
   const querySurface = surface === 'shell' && hasWarmAreasBootstrap ? 'areas' : surface;
   const bootstrap = useQuery(appBootstrapQueryOptions(queryClient, querySurface));
-  const [readySurface, setReadySurface] = useState<AppBootstrapSurface | null>(null);
+  const [, setSurfaceModuleVersion] = useState(0);
   const [surfaceLoadError, setSurfaceLoadError] = useState<Error | null>(null);
   const surfaceModulePromise = preloadStaffPosSurface(surface);
   const hasTableTransition = Boolean(
     (location.state as { transitionTableId?: string } | null)?.transitionTableId,
   );
+  const SurfacePage =
+    surface === 'areas'
+      ? staffPosAreasModule?.StaffPosAreasPage
+      : staffPosPortalModule?.StaffPosPortalPage;
 
   useEffect(() => {
     let cancelled = false;
@@ -90,7 +91,7 @@ function StaffPosRoute() {
 
     void surfaceModulePromise
       .then(() => {
-        if (!cancelled) setReadySurface(surface);
+        if (!cancelled) setSurfaceModuleVersion((version) => version + 1);
       })
       .catch((error: unknown) => {
         if (!cancelled) {
@@ -103,7 +104,7 @@ function StaffPosRoute() {
     return () => {
       cancelled = true;
     };
-  }, [surface, surfaceModulePromise]);
+  }, [surfaceModulePromise]);
 
   if (!bootstrap.data && bootstrap.error) {
     if (
@@ -170,7 +171,7 @@ function StaffPosRoute() {
     );
   }
 
-  if (bootstrap.isLoading || !bootstrap.data || readySurface !== surface) {
+  if (bootstrap.isLoading || !bootstrap.data || !SurfacePage) {
     return <PosAppSplash message="Đang nạp dữ liệu POS..." />;
   }
 
@@ -186,34 +187,20 @@ function StaffPosRoute() {
   };
 
   return (
-    <Suspense fallback={<PosAppSplash message="Đang nạp dữ liệu POS..." />}>
-      <AnimatePresence mode="popLayout" initial={false}>
-        {surface === 'areas' ? (
-          <motion.div
-            key="areas-screen"
-            className="staff-pos-surface-wrapper"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1, transition: { duration: 0.14 } }}
-            exit={{ opacity: 0, transition: { duration: 0.12 } }}
-          >
-            <StaffPosAreasPage {...startupProps} />
-          </motion.div>
-        ) : (
-          <motion.div
-            key="portal-screen"
-            className="staff-pos-surface-wrapper"
-            initial={{ opacity: hasTableTransition ? 1 : 0 }}
-            animate={{
-              opacity: 1,
-              transition: { duration: hasTableTransition ? 0 : 0.14 },
-            }}
-            exit={{ opacity: 0, transition: { duration: 0.12 } }}
-          >
-            <StaffPosPortalPage {...startupProps} />
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </Suspense>
+    <AnimatePresence mode="popLayout" initial={false}>
+      <motion.div
+        key={surface === 'areas' ? 'areas-screen' : 'portal-screen'}
+        className="staff-pos-surface-wrapper"
+        initial={{ opacity: surface === 'shell' && hasTableTransition ? 1 : 0 }}
+        animate={{
+          opacity: 1,
+          transition: { duration: surface === 'shell' && hasTableTransition ? 0 : 0.14 },
+        }}
+        exit={{ opacity: 0, transition: { duration: 0.12 } }}
+      >
+        <SurfacePage {...startupProps} />
+      </motion.div>
+    </AnimatePresence>
   );
 }
 

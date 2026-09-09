@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { lazy, Suspense, useEffect } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useSearchParams } from 'react-router';
 
 import { Toaster } from 'sonner';
@@ -33,15 +33,36 @@ const PlatformAccessPage = lazy(async () => {
   return { default: module.PlatformAccessPage };
 });
 
+let staffPosPortalPagePromise: Promise<
+  typeof import('@client/features/pos/StaffPosPortalPage')
+> | null = null;
+let staffPosAreasPagePromise: Promise<
+  typeof import('@client/features/pos/StaffPosAreasPage')
+> | null = null;
+
+function loadStaffPosPortalPage() {
+  staffPosPortalPagePromise ??= import('@client/features/pos/StaffPosPortalPage');
+  return staffPosPortalPagePromise;
+}
+
+function loadStaffPosAreasPage() {
+  staffPosAreasPagePromise ??= import('@client/features/pos/StaffPosAreasPage');
+  return staffPosAreasPagePromise;
+}
+
 const StaffPosPortalPage = lazy(async () => {
-  const module = await import('@client/features/pos/StaffPosPortalPage');
+  const module = await loadStaffPosPortalPage();
   return { default: module.StaffPosPortalPage };
 });
 
 const StaffPosAreasPage = lazy(async () => {
-  const module = await import('@client/features/pos/StaffPosAreasPage');
+  const module = await loadStaffPosAreasPage();
   return { default: module.StaffPosAreasPage };
 });
+
+function preloadStaffPosSurface(surface: AppBootstrapSurface) {
+  return surface === 'areas' ? loadStaffPosAreasPage() : loadStaffPosPortalPage();
+}
 
 function posBootstrapSurface(pathname: string): AppBootstrapSurface {
   return pathname === '/pos' || pathname === '/pos/' || pathname === '/pos/areas'
@@ -56,48 +77,100 @@ function StaffPosRoute() {
   const hasWarmAreasBootstrap = Boolean(queryClient.getQueryData(['app-bootstrap', 'areas']));
   const querySurface = surface === 'shell' && hasWarmAreasBootstrap ? 'areas' : surface;
   const bootstrap = useQuery(appBootstrapQueryOptions(queryClient, querySurface));
+  const [readySurface, setReadySurface] = useState<AppBootstrapSurface | null>(null);
+  const [surfaceLoadError, setSurfaceLoadError] = useState<Error | null>(null);
+  const surfaceModulePromise = preloadStaffPosSurface(surface);
   const hasTableTransition = Boolean(
     (location.state as { transitionTableId?: string } | null)?.transitionTableId,
   );
 
-  if (bootstrap.isLoading || !bootstrap.data) {
-    if (bootstrap.error) {
-      if (
-        (bootstrap.error instanceof ApiError && bootstrap.error.status === 401) ||
-        bootstrap.error.message.includes('Phiên đăng nhập không hợp lệ') ||
-        bootstrap.error.message.includes('Vui lòng đăng nhập')
-      ) {
-        return <Navigate to="/?tab=employee&authError=SESSION_EXPIRED" replace />;
-      }
-      return (
-        <div className="pos-app-splash" role="alert">
-          <div className="pos-app-splash__content">
-            <strong>Chưa thể tải dữ liệu POS</strong>
-            <div className="pos-app-splash__message">
-              {bootstrap.error instanceof Error
-                ? bootstrap.error.message
-                : 'Không thể kết nối máy chủ.'}
-            </div>
-            <button
-              type="button"
-              onClick={() => void bootstrap.refetch()}
-              style={{
-                marginTop: 16,
-                padding: '8px 20px',
-                borderRadius: 8,
-                background: '#0975f7',
-                color: '#fff',
-                border: 'none',
-                cursor: 'pointer',
-                fontWeight: 600,
-              }}
-            >
-              Thử lại
-            </button>
-          </div>
-        </div>
-      );
+  useEffect(() => {
+    let cancelled = false;
+    setSurfaceLoadError(null);
+
+    void surfaceModulePromise
+      .then(() => {
+        if (!cancelled) setReadySurface(surface);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setSurfaceLoadError(
+            error instanceof Error ? error : new Error('Không thể tải giao diện POS.'),
+          );
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [surface, surfaceModulePromise]);
+
+  if (!bootstrap.data && bootstrap.error) {
+    if (
+      (bootstrap.error instanceof ApiError && bootstrap.error.status === 401) ||
+      bootstrap.error.message.includes('Phiên đăng nhập không hợp lệ') ||
+      bootstrap.error.message.includes('Vui lòng đăng nhập')
+    ) {
+      return <Navigate to="/?tab=employee&authError=SESSION_EXPIRED" replace />;
     }
+    return (
+      <div className="pos-app-splash" role="alert">
+        <div className="pos-app-splash__content">
+          <strong>Chưa thể tải dữ liệu POS</strong>
+          <div className="pos-app-splash__message">
+            {bootstrap.error instanceof Error
+              ? bootstrap.error.message
+              : 'Không thể kết nối máy chủ.'}
+          </div>
+          <button
+            type="button"
+            onClick={() => void bootstrap.refetch()}
+            style={{
+              marginTop: 16,
+              padding: '8px 20px',
+              borderRadius: 8,
+              background: '#0975f7',
+              color: '#fff',
+              border: 'none',
+              cursor: 'pointer',
+              fontWeight: 600,
+            }}
+          >
+            Thử lại
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (surfaceLoadError) {
+    return (
+      <div className="pos-app-splash" role="alert">
+        <div className="pos-app-splash__content">
+          <strong>Chưa thể tải giao diện POS</strong>
+          <div className="pos-app-splash__message">{surfaceLoadError.message}</div>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            style={{
+              marginTop: 16,
+              padding: '8px 20px',
+              borderRadius: 8,
+              background: '#0975f7',
+              color: '#fff',
+              border: 'none',
+              cursor: 'pointer',
+              fontWeight: 600,
+            }}
+          >
+            Tải lại ứng dụng
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (bootstrap.isLoading || !bootstrap.data || readySurface !== surface) {
     return <PosAppSplash message="Đang nạp dữ liệu POS..." />;
   }
 

@@ -2621,16 +2621,14 @@ function StaffTableTransferModal({
   const totalCount = sortedTables.length;
 
   const currentPriceText = useMemo(() => {
+    if (!currentTable?.defaultPriceVnd) return 'Không tính tiền giờ';
     if (currentQuote?.time?.pricingConfig) {
       const cfg = currentQuote.time.pricingConfig;
-      const productName = currentTable?.timeProductName ? `${currentTable.timeProductName} · ` : '';
+      const productName = currentTable.timeProductName ? `${currentTable.timeProductName} · ` : '';
       return `${productName}${formatMoney(cfg.basePriceVnd)}/giờ`;
     }
-    if (currentTable?.defaultPriceVnd) {
-      const productName = currentTable.timeProductName ? `${currentTable.timeProductName} · ` : '';
-      return `${productName}${formatMoney(currentTable.defaultPriceVnd)}/giờ`;
-    }
-    return 'Chưa có cấu hình giá';
+    const productName = currentTable.timeProductName ? `${currentTable.timeProductName} · ` : '';
+    return `${productName}${formatMoney(currentTable.defaultPriceVnd)}/giờ`;
   }, [currentQuote, currentTable]);
 
   const handleExecuteTransfer = async () => {
@@ -2720,7 +2718,7 @@ function StaffTableTransferModal({
 
                     const priceText = table.defaultPriceVnd
                       ? `${table.timeProductName ? `${table.timeProductName} · ` : ''}${formatMoney(table.defaultPriceVnd)}/giờ`
-                      : 'Mặc định';
+                      : 'Không tính tiền giờ';
 
                     return (
                       <button
@@ -2815,7 +2813,7 @@ function StaffTableTransferModal({
                 <span className="staff-transfer-comparison__rate">
                   {confirmTargetTable.defaultPriceVnd
                     ? `${confirmTargetTable.timeProductName ? `${confirmTargetTable.timeProductName} · ` : ''}${formatMoney(confirmTargetTable.defaultPriceVnd)}/giờ`
-                    : 'Theo cấu hình bàn mới'}
+                    : 'Không tính tiền giờ'}
                 </span>
               </div>
             </div>
@@ -5003,6 +5001,13 @@ function OrderEditor({
     () => tables.data?.find((item) => item.id === preselectedTableId),
     [tables.data, preselectedTableId],
   );
+
+  const currentOrderTable = useMemo(() => {
+    const targetTableId = isNew ? preselectedTableId : quote.data?.order.tableId;
+    return tables.data?.find((item) => item.id === targetTableId) ?? selectedTable ?? null;
+  }, [tables.data, isNew, preselectedTableId, quote.data?.order.tableId, selectedTable]);
+
+  const hasConfiguredHourlyPrice = Boolean(currentOrderTable?.defaultPriceVnd);
 
   useEffect(() => {
     const hasRunningTime = quote.data?.time?.status === 'RUNNING';
@@ -7625,7 +7630,7 @@ function OrderEditor({
                       (quote.data?.time ||
                       (isNew &&
                         orderType === 'DINE_IN' &&
-                        selectedTable?.timeProductId &&
+                        selectedTable?.defaultPriceVnd &&
                         !timeRemoved) ||
                       timeRestoringDraft
                         ? 1
@@ -7656,15 +7661,13 @@ function OrderEditor({
 
                 {!orderedItemsCollapsed && (
                   <div className="staff-order-mobile-items-list">
-                    {/* Small restore button if default time was deleted */}
-                    {(!isNew &&
+                    {/* Small restore button if default time was deleted (only for priced tables) */}
+                    {hasConfiguredHourlyPrice &&
+                    ((!isNew &&
                       quote.data?.order.orderType === 'DINE_IN' &&
                       !quote.data?.time &&
                       !timeRestoringDraft) ||
-                    (isNew &&
-                      orderType === 'DINE_IN' &&
-                      selectedTable?.timeProductId &&
-                      timeRemoved) ? (
+                      (isNew && orderType === 'DINE_IN' && timeRemoved)) ? (
                       <div style={{ padding: '8px 16px 4px' }}>
                         <Button
                           size="small"
@@ -7752,7 +7755,7 @@ function OrderEditor({
                       </div>
                     ) : isNew &&
                       orderType === 'DINE_IN' &&
-                      selectedTable?.timeProductId &&
+                      selectedTable?.defaultPriceVnd &&
                       !timeRemoved ? (
                       <div
                         className="staff-order-mobile-item staff-order-mobile-item--time"
@@ -7968,7 +7971,7 @@ function OrderEditor({
                       !(
                         isNew &&
                         orderType === 'DINE_IN' &&
-                        selectedTable?.timeProductId &&
+                        selectedTable?.defaultPriceVnd &&
                         !timeRemoved
                       ) &&
                       !quote.data?.time &&
@@ -8406,7 +8409,7 @@ function OrderEditor({
                           (quote.data?.time ||
                           (isNew &&
                             orderType === 'DINE_IN' &&
-                            selectedTable?.timeProductId &&
+                            selectedTable?.defaultPriceVnd &&
                             !timeRemoved) ||
                           timeRestoringDraft
                             ? 1
@@ -8438,15 +8441,13 @@ function OrderEditor({
                     </div>
                     {!orderedItemsCollapsed ? (
                       <>
-                        {/* Small restore button if default time was deleted */}
-                        {(!isNew &&
+                        {/* Small restore button if default time was deleted (only for priced tables) */}
+                        {hasConfiguredHourlyPrice &&
+                        ((!isNew &&
                           quote.data?.order.orderType === 'DINE_IN' &&
                           !quote.data?.time &&
                           !timeRestoringDraft) ||
-                        (isNew &&
-                          orderType === 'DINE_IN' &&
-                          selectedTable?.timeProductId &&
-                          timeRemoved) ? (
+                          (isNew && orderType === 'DINE_IN' && timeRemoved)) ? (
                           <div style={{ margin: '0 0 14px' }}>
                             <Button
                               size="small"
@@ -8589,7 +8590,7 @@ function OrderEditor({
                           )
                         ) : isNew &&
                           orderType === 'DINE_IN' &&
-                          selectedTable?.timeProductId &&
+                          selectedTable?.defaultPriceVnd &&
                           !timeRemoved ? (
                           <button
                             type="button"
@@ -8652,7 +8653,7 @@ function OrderEditor({
                           !(
                             isNew &&
                             orderType === 'DINE_IN' &&
-                            selectedTable?.timeProductId &&
+                            selectedTable?.defaultPriceVnd &&
                             !timeRemoved
                           ) &&
                           !timeRestoringDraft ? (
@@ -9232,88 +9233,94 @@ function OrderEditor({
             </span>
           </div>
         }
-        width={540}
+        width={640}
         centered
         destroyOnHidden
         className="staff-time-detail-dialog"
         onCancel={() => setTimeDetailOpen(false)}
         footer={
-          quote.data?.time
-            ? [
-                ...(canPauseTime
-                  ? [
-                      quote.data.time.status === 'PAUSED' ? (
-                        <Button
-                          key="resume"
-                          type="primary"
-                          style={{ background: '#16a34a', borderColor: '#16a34a' }}
-                          icon={<PlayCircleOutlined />}
-                          loading={saving}
-                          onClick={handleResumeTimeRealtime}
-                          className="staff-time-footer-btn"
-                        >
-                          Mở lại bàn (Tiếp tục giờ)
-                        </Button>
-                      ) : quote.data.time.status === 'ENDED' || quote.data.time.endedAtMs ? (
-                        <Button
-                          key="continue"
-                          type="primary"
-                          style={{ background: '#16a34a', borderColor: '#16a34a' }}
-                          icon={<PlayCircleOutlined />}
-                          loading={saving}
-                          onClick={handleContinueRunningTime}
-                          className="staff-time-footer-btn"
-                        >
-                          Tiếp tục tính giờ (Bỏ dừng)
-                        </Button>
-                      ) : (
-                        <Button
-                          key="pause"
-                          danger
-                          icon={<PauseCircleOutlined />}
-                          loading={saving}
-                          onClick={handlePauseTimeRealtime}
-                          className="staff-time-footer-btn"
-                        >
-                          Tạm dừng tính giờ
-                        </Button>
-                      ),
-                    ]
-                  : []),
-                ...(canAdjustTime
-                  ? [
-                      <Button
-                        key="delete-time"
-                        danger
-                        icon={<DeleteOutlined />}
-                        onClick={() => {
-                          setDeleteTimeReason('');
-                          setDeleteTimeModalOpen(true);
-                        }}
-                        className="staff-time-footer-btn"
-                      >
-                        Xóa tiền giờ
-                      </Button>,
-                      <Button
-                        key="save"
-                        type="primary"
-                        loading={saving}
-                        onClick={saveTimeRange}
-                        className="staff-time-footer-btn staff-time-footer-btn--primary"
-                      >
-                        Lưu thay đổi
-                      </Button>,
-                    ]
-                  : []),
-              ]
-            : [
+          quote.data?.time ? (
+            <div className="staff-time-modal-footer">
+              <div className="staff-time-modal-footer__left">
+                {canPauseTime && hasConfiguredHourlyPrice ? (
+                  quote.data.time.status === 'PAUSED' ? (
+                    <Button
+                      key="resume"
+                      type="primary"
+                      style={{ background: '#16a34a', borderColor: '#16a34a' }}
+                      icon={<PlayCircleOutlined />}
+                      loading={saving}
+                      onClick={handleResumeTimeRealtime}
+                      className="staff-time-footer-btn"
+                    >
+                      Mở lại bàn (Tiếp tục giờ)
+                    </Button>
+                  ) : quote.data.time.status === 'ENDED' || quote.data.time.endedAtMs ? (
+                    <Button
+                      key="continue"
+                      type="primary"
+                      style={{ background: '#16a34a', borderColor: '#16a34a' }}
+                      icon={<PlayCircleOutlined />}
+                      loading={saving}
+                      onClick={handleContinueRunningTime}
+                      className="staff-time-footer-btn"
+                    >
+                      Tiếp tục tính giờ (Bỏ dừng)
+                    </Button>
+                  ) : (
+                    <Button
+                      key="pause"
+                      danger
+                      icon={<PauseCircleOutlined />}
+                      loading={saving}
+                      onClick={handlePauseTimeRealtime}
+                      className="staff-time-footer-btn"
+                    >
+                      Tạm dừng tính giờ
+                    </Button>
+                  )
+                ) : null}
+              </div>
+              <div className="staff-time-modal-footer__right">
+                {canAdjustTime ? (
+                  <>
+                    <Button
+                      key="delete-time"
+                      danger
+                      icon={<DeleteOutlined />}
+                      onClick={() => {
+                        setDeleteTimeReason('');
+                        setDeleteTimeModalOpen(true);
+                      }}
+                      className="staff-time-footer-btn staff-time-footer-btn--danger"
+                    >
+                      Xóa tiền giờ
+                    </Button>
+                    <Button
+                      key="save"
+                      type="primary"
+                      loading={saving}
+                      onClick={saveTimeRange}
+                      className="staff-time-footer-btn staff-time-footer-btn--primary"
+                    >
+                      Lưu thay đổi
+                    </Button>
+                  </>
+                ) : null}
+              </div>
+            </div>
+          ) : (
+            <div className="staff-time-modal-footer">
+              <div className="staff-time-modal-footer__left">
                 <Button
                   key="cancel"
                   onClick={() => setTimeDetailOpen(false)}
                   className="staff-time-footer-btn"
                 >
                   Đóng
-                </Button>,
+                </Button>
+              </div>
+              <div className="staff-time-modal-footer__right">
                 <Button
                   key="discard-restore"
                   danger
@@ -9322,10 +9329,10 @@ function OrderEditor({
                     setTimeRestoringDraft(false);
                     setTimeDetailOpen(false);
                   }}
-                  className="staff-time-footer-btn"
+                  className="staff-time-footer-btn staff-time-footer-btn--danger"
                 >
                   Hủy khôi phục
-                </Button>,
+                </Button>
                 <Button
                   key="save"
                   type="primary"
@@ -9334,8 +9341,10 @@ function OrderEditor({
                   className="staff-time-footer-btn staff-time-footer-btn--primary"
                 >
                   Lưu thay đổi
-                </Button>,
-              ]
+                </Button>
+              </div>
+            </div>
+          )
         }
       >
         {quote.data?.time ? (
@@ -9430,7 +9439,7 @@ function OrderEditor({
                     onChange={(val) => setTimeRangeDraft((prev) => ({ ...prev, endedAt: val }))}
                     disabled={!canAdjustTime}
                     allowClear
-                    placeholderDate="Để trống (Hiện tại)"
+                    placeholderDate="Hiện tại"
                     placeholderTime="--:--"
                   />
                   {timeRangeDraft.startedAt &&
@@ -9601,7 +9610,7 @@ function OrderEditor({
                     value={timeRangeDraft.endedAt}
                     onChange={(val) => setTimeRangeDraft((prev) => ({ ...prev, endedAt: val }))}
                     allowClear
-                    placeholderDate="Để trống (Hiện tại)"
+                    placeholderDate="Hiện tại"
                     placeholderTime="--:--"
                   />
                   {timeRangeDraft.startedAt &&

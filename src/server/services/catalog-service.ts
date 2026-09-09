@@ -350,7 +350,7 @@ export class CatalogService {
   async updateTablePricing(
     storeId: string,
     tableId: string,
-    timeProductId: string,
+    timeProductId: string | null | undefined,
     auditContext?: AuditContext,
   ) {
     const table = await this.repository.findServiceTablePricing(storeId, tableId);
@@ -364,15 +364,30 @@ export class CatalogService {
         409,
       );
     }
-    const product = await this.repository.findTimeProduct(storeId, timeProductId);
-    if (!product || product.status !== 'ACTIVE') {
-      throw new AppError('TIME_PRODUCT_NOT_FOUND', 'Không tìm thấy mặt hàng tính giờ.', 404);
-    }
-    if (!(await this.repository.getPricingConfig(storeId, timeProductId))) {
-      throw new AppError('TABLE_PRICING_MISSING', 'Mặt hàng tính giờ chưa có bảng giá.', 422);
-    }
     const now = Date.now();
-    await this.repository.updateServiceTablePricing(storeId, tableId, timeProductId, now);
+    let effectiveProductId: string;
+
+    if (!timeProductId) {
+      effectiveProductId = `area-layout-product:${storeId}`;
+      await this.env.DB.prepare(
+        `INSERT OR IGNORE INTO products (
+          id, store_id, name, product_type, status, is_system, created_at, updated_at
+        ) VALUES (?, ?, 'Cấu hình bàn/phòng', 'TIME', 'ACTIVE', 1, ?, ?)`,
+      )
+        .bind(effectiveProductId, storeId, now, now)
+        .run();
+    } else {
+      const product = await this.repository.findTimeProduct(storeId, timeProductId);
+      if (!product || product.status !== 'ACTIVE') {
+        throw new AppError('TIME_PRODUCT_NOT_FOUND', 'Không tìm thấy mặt hàng tính giờ.', 404);
+      }
+      if (!(await this.repository.getPricingConfig(storeId, timeProductId))) {
+        throw new AppError('TABLE_PRICING_MISSING', 'Mặt hàng tính giờ chưa có bảng giá.', 422);
+      }
+      effectiveProductId = timeProductId;
+    }
+
+    await this.repository.updateServiceTablePricing(storeId, tableId, effectiveProductId, now);
     if (auditContext) {
       await new AuditRepository(this.env.DB).record({
         storeId,
@@ -381,11 +396,11 @@ export class CatalogService {
         entityType: 'SERVICE_TABLE',
         entityId: tableId,
         before: { timeProductId: table.timeProductId },
-        after: { timeProductId },
+        after: { timeProductId: timeProductId ?? null },
         now,
       });
     }
-    return { id: tableId, timeProductId, updated: true };
+    return { id: tableId, timeProductId: timeProductId ?? null, updated: true };
   }
 
   async deleteTable(storeId: string, tableId: string, auditContext?: AuditContext) {

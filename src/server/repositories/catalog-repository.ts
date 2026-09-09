@@ -323,8 +323,8 @@ export class CatalogRepository {
           st.id AS tableId, COALESCE(st.display_name, st.name) AS tableName,
           st.status AS tableStatus,
           st.sort_order AS tableSortOrder,
-          st.time_product_id AS timeProductId,
-          tp.name AS timeProductName
+          CASE WHEN tp.is_system = 1 THEN NULL ELSE st.time_product_id END AS timeProductId,
+          CASE WHEN tp.is_system = 1 THEN NULL ELSE tp.name END AS timeProductName
         FROM areas a
         LEFT JOIN service_tables st
           ON st.area_id = a.id AND st.store_id = a.store_id

@@ -381,18 +381,24 @@ export function OwnerAreaSettingsPage() {
   };
 
   const saveTablePricing = async (table: AreaTable, timeProductId: string | null) => {
-    if (table.status === 'OCCUPIED' || timeProductId === table.timeProductId) return;
+    const normalizedProductId = timeProductId || null;
+    const currentProductId = table.timeProductId || null;
+    if (table.status === 'OCCUPIED' || normalizedProductId === currentProductId) return;
     setPricingTableId(table.id);
     try {
       await jsonRequest(
         `/api/v1/owner/catalog/tables/${table.id}/pricing`,
-        { timeProductId: timeProductId || null },
+        { timeProductId: normalizedProductId },
         {
           method: 'PATCH',
           headers: { 'X-CSRF-Token': authContext.data?.csrfToken ?? '' },
         },
       );
-      await queryClient.invalidateQueries({ queryKey: AREA_LAYOUTS_QUERY });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: AREA_LAYOUTS_QUERY }),
+        queryClient.invalidateQueries({ queryKey: ['pos-tables'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-overview'] }),
+      ]);
       messageApi.success('Đã cập nhật bảng giá cho bàn/phòng.');
     } catch (error) {
       messageApi.error(errorMessage(error, 'Không thể cập nhật bảng giá.'));
@@ -402,16 +408,19 @@ export function OwnerAreaSettingsPage() {
   };
 
   const pricingOptions = (table?: AreaTable) => {
-    const options = (timeProducts.data ?? [])
+    const activeOptions = (timeProducts.data ?? [])
       .filter((product) => product.productType === 'TIME' && product.status === 'ACTIVE')
       .map((product) => ({ value: product.id, label: product.name }));
-    if (table?.timeProductId && !options.some((option) => option.value === table.timeProductId)) {
-      options.unshift({
+    if (table?.timeProductId && !activeOptions.some((option) => option.value === table.timeProductId)) {
+      activeOptions.unshift({
         value: table.timeProductId,
         label: table.timeProductName ?? 'Bảng giá hiện tại',
       });
     }
-    return options;
+    return [
+      { value: '', label: 'Không tính tiền giờ' },
+      ...activeOptions,
+    ];
   };
 
   return (
@@ -648,11 +657,11 @@ export function OwnerAreaSettingsPage() {
                   onPressEnter={() => void createTableInArea()}
                 />
                 <Select
-                  placeholder="Chọn bảng giá (tùy chọn)"
+                  placeholder="Không tính tiền giờ"
                   allowClear
                   style={{ width: 220 }}
-                  value={newTableTimeProductId}
-                  onChange={(value) => setNewTableTimeProductId(value ?? null)}
+                  value={newTableTimeProductId ?? ''}
+                  onChange={(value) => setNewTableTimeProductId(value ? value : null)}
                   options={pricingOptions()}
                   notFoundContent="Chưa có bảng giá tính giờ"
                 />
@@ -723,12 +732,12 @@ export function OwnerAreaSettingsPage() {
                       <Select
                         className="owner-area-table-pricing-select"
                         allowClear
-                        placeholder="Chọn bảng giá giờ"
-                        value={table.timeProductId ?? null}
+                        placeholder="Không tính tiền giờ"
+                        value={table.timeProductId ?? ''}
                         loading={timeProducts.isLoading || pricingTableId === table.id}
                         disabled={table.status === 'OCCUPIED' || pricingTableId === table.id}
                         options={pricingOptions(table)}
-                        onChange={(value: string | null) => void saveTablePricing(table, value)}
+                        onChange={(value: string | null) => void saveTablePricing(table, value ? value : null)}
                         notFoundContent="Chưa có bảng giá tính giờ"
                       />
                     </div>

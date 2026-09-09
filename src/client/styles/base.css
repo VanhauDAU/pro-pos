@@ -2708,7 +2708,7 @@ body,
 
 .staff-datetime-split {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1.18fr 1fr;
   gap: 8px;
   width: 100%;
 }
@@ -2717,9 +2717,9 @@ body,
   position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
-  height: 44px;
-  padding: 0 10px;
+  gap: 6px;
+  height: 46px;
+  padding: 0 8px;
   background: #ffffff;
   border: 1.5px solid #cbd5e1;
   border-radius: 9px;
@@ -2752,7 +2752,7 @@ body,
 }
 
 .staff-datetime-box__icon {
-  font-size: 15px;
+  font-size: 14px;
   color: #64748b;
   flex-shrink: 0;
 }
@@ -2766,27 +2766,31 @@ body,
 }
 
 .staff-datetime-box__tag {
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 700;
   color: #64748b;
   text-transform: uppercase;
   letter-spacing: 0.3px;
-  line-height: 1;
+  line-height: 1.1;
   margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .staff-datetime-box__value {
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 600;
   color: #0f172a;
   line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
 }
 
 .staff-datetime-box__value--time {
-  font-size: 15px;
+  font-size: 14.5px;
   font-weight: 700;
   letter-spacing: 0.2px;
 }
@@ -2821,13 +2825,13 @@ body,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   border: none;
   background: #e2e8f0;
   color: #64748b;
-  font-size: 13px;
+  font-size: 11px;
   cursor: pointer;
   z-index: 2;
   transition: all 0.15s ease;
@@ -2841,11 +2845,37 @@ body,
   color: #0f172a;
 }
 
+.staff-time-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.staff-time-modal-footer__left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.staff-time-modal-footer__right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .staff-time-footer-btn {
   border-radius: 8px;
   font-weight: 600;
   height: 40px;
   padding: 0 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 
 .staff-time-footer-btn--primary {
@@ -2921,25 +2951,27 @@ body,
   }
 
   .staff-datetime-split {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1.18fr 1fr;
     gap: 8px;
   }
 
   .staff-datetime-box {
-    height: 48px;
-    padding: 0 10px;
+    height: 46px;
+    padding: 0 8px;
+    gap: 6px;
   }
 
   .staff-datetime-box__tag {
-    font-size: 10px;
+    font-size: 9.5px;
+    white-space: nowrap;
   }
 
   .staff-datetime-box__value {
-    font-size: 13.5px;
+    font-size: 13px;
   }
 
   .staff-datetime-box__value--time {
-    font-size: 16px;
+    font-size: 15px;
   }
 
   .staff-time-field__input {
@@ -2953,13 +2985,29 @@ body,
   }
 
   .staff-time-detail-dialog .ant-modal-footer {
-    display: flex;
-    flex-direction: column-reverse;
-    gap: 8px;
+    display: block;
     padding-top: 10px !important;
     margin-top: 10px !important;
   }
 
+  .staff-time-modal-footer {
+    display: flex;
+    flex-direction: column-reverse;
+    width: 100%;
+    gap: 8px;
+  }
+
+  .staff-time-modal-footer__left,
+  .staff-time-modal-footer__right {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-left: 0;
+  }
+
+  .staff-time-modal-footer__left .staff-time-footer-btn,
+  .staff-time-modal-footer__right .staff-time-footer-btn,
   .staff-time-detail-dialog .ant-modal-footer .ant-btn {
     width: 100%;
     height: 42px;

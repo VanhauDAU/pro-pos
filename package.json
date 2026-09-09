@@ -40,6 +40,7 @@
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:staging": "wrangler d1 migrations apply DB --remote --env staging",
     "db:migrate:production": "wrangler d1 migrations apply DB --remote --env production",
+    "bot:dev": "node scripts/dev-telegram-polling.mjs",
     "check:startup": "wrangler check startup",
     "push:generate-vapid": "web-push generate-vapid-keys",
     "secrets:generate:staging": "node scripts/generate-secrets.mjs staging",

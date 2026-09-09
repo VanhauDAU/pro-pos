@@ -53,6 +53,7 @@ import areaIcon from '@client/assets/navigation/nav-khu-vuc.webp';
 import qrIcon from '@client/assets/navigation/nav-qr-order.webp';
 import moreIcon from '@client/assets/navigation/nav-them.webp';
 import { apiRequest } from '@client/lib/api';
+import { WeatherChip } from '@client/features/weather/WeatherChip';
 import { playPosSound, warmPosSounds } from '@client/lib/sound';
 import { usePosPollingInterval, useRealtime } from '@client/realtime/RealtimeProvider';
 
@@ -534,6 +535,7 @@ export function StaffHeader({
           </span>
         </div>
       </Tooltip>
+      <WeatherChip />
       {showQrBell ? (
         <button
           type="button"

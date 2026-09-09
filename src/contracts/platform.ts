@@ -257,3 +257,47 @@ export interface PlatformAnalytics {
     totalRevenue: number;
   }>;
 }
+
+export type DatabaseTableCategory =
+  'OPERATIONAL' | 'FINANCIAL' | 'SECURITY' | 'CONFIGURATION' | 'OTHER';
+
+export interface DatabaseTableStorageRow {
+  tableName: string;
+  rowCount: number;
+  estimatedDataBytes: number;
+  averageRowBytes: number;
+  estimatedSharePercent: number;
+  indexCount: number;
+  category: DatabaseTableCategory;
+  retentionDays: number | null;
+  retentionLabel: string;
+  automaticallyCleaned: boolean;
+}
+
+export interface DatabaseStorageReport {
+  capturedAt: number;
+  databaseSizeBytes: number | null;
+  tableCount: number;
+  totalEstimatedDataBytes: number;
+  tables: DatabaseTableStorageRow[];
+}
+
+export interface TelegramAdminLinkStatusResponse {
+  linked: boolean;
+  botUsername: string;
+  link: {
+    id: string;
+    telegramUserId: string;
+    telegramUsername: string | null;
+    telegramFirstName: string | null;
+    telegramLastName: string | null;
+    linkedAt: number;
+  } | null;
+}
+
+export interface CreateTelegramLinkCodeResponse {
+  code: string;
+  expiresAt: number;
+  botUsername: string;
+  deepLink: string;
+}

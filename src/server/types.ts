@@ -32,3 +32,9 @@ export interface AppEnv {
   Bindings: CloudflareBindings;
   Variables: AppVariables;
 }
+
+declare global {
+  interface CloudflareBindings {
+    TELEGRAM_BOT_USERNAME?: string;
+  }
+}

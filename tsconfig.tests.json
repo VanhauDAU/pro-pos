@@ -32,6 +32,7 @@
     "src/contracts",
     "src/domain",
     "src/printing",
+    "src/client/features/weather",
     "src/client/features/guest/guest-assistant.ts",
     "src/client/features/auth/employee-login-cache.ts",
     "src/client/features/auth/owner-login-cache.ts",
@@ -58,6 +59,7 @@
     "src/client/lib/pos-performance.ts",
     "src/client/lib/request-activity.ts",
     "src/client/lib/zip.ts",
+    "src/client/lib/format-bytes.ts",
     "src/client/env.d.ts",
     "worker-configuration.d.ts"
   ]

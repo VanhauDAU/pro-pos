@@ -485,6 +485,36 @@ export function OwnerStoreSettingsPage() {
                 </Form.Item>
               </Col>
             </Row>
+
+            <div
+              style={{
+                marginTop: 8,
+                padding: '10px 14px',
+                background: '#f0f9ff',
+                borderRadius: 8,
+                border: '1px solid #bae6fd',
+                fontSize: 13,
+                color: '#0369a1',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: 8,
+              }}
+            >
+              <span>
+                📍 <strong>Tọa độ bản đồ (dùng cho Thời tiết & Xác minh QR):</strong> Cần ghim vị
+                trí trên bản đồ để cập nhật thời tiết.
+              </span>
+              <Button
+                size="small"
+                type="link"
+                onClick={() => navigate('/owner/qr-order/settings')}
+                style={{ padding: 0, fontWeight: 600, color: '#0284c7' }}
+              >
+                Chọn vị trí trên bản đồ →
+              </Button>
+            </div>
           </Card>
 
           <aside className="owner-store-settings-intro">

@@ -28256,3 +28256,292 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+/* ==========================================================================
+   Catalog Excel Import Modal Styles & Responsiveness
+   ========================================================================== */
+
+.catalog-import-modal {
+  max-width: calc(100vw - 24px);
+}
+
+.catalog-import-modal .ant-modal-content {
+  padding: 24px 28px !important;
+  border-radius: 16px !important;
+}
+
+.catalog-import-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.catalog-import-kpi-card {
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.catalog-import-kpi-card--success {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+  color: #15803d;
+}
+
+.catalog-import-kpi-card--error {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.catalog-import-kpi-card--warning {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: #b45309;
+}
+
+.catalog-import-kpi-card--info {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+
+.catalog-import-kpi-card--muted {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  color: #64748b;
+}
+
+.catalog-import-kpi-card__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.catalog-import-kpi-card__icon {
+  font-size: 14px;
+}
+
+.catalog-import-kpi-card__val {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.catalog-import-kpi-card__val small {
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+.catalog-import-kpi-card__sub {
+  font-size: 11.5px;
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.catalog-import-row-badge {
+  font-weight: 600;
+  color: #475569;
+  font-size: 12px;
+}
+
+.catalog-import-item-name-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.catalog-import-item-name {
+  font-size: 13.5px;
+  color: #0f172a;
+}
+
+.catalog-import-item-id {
+  font-size: 11px;
+  color: #94a3b8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.catalog-import-type-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.catalog-import-meta-pill {
+  font-size: 11.5px;
+  color: #334155;
+  background: #f1f5f9;
+  padding: 1px 6px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.catalog-import-price-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.catalog-import-main-price {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.catalog-import-variants-summary {
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.3;
+}
+
+.catalog-import-error-msg {
+  color: #dc2626;
+  font-weight: 600;
+  font-size: 12.5px;
+}
+
+.catalog-import-suggestion-text {
+  color: #475569;
+  font-size: 12px;
+}
+
+.catalog-import-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.catalog-import-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.catalog-import-actions__left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.catalog-import-actions__right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+@media (max-width: 640px) {
+  .catalog-import-modal {
+    max-width: calc(100vw - 12px);
+    margin: 8px auto !important;
+  }
+
+  .catalog-import-modal .ant-modal-content {
+    padding: 16px 14px 14px !important;
+    border-radius: 12px !important;
+  }
+
+  .catalog-import-summary {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .catalog-import-kpi-card {
+    padding: 10px;
+  }
+
+  .catalog-import-kpi-card__val {
+    font-size: 17px;
+  }
+
+  .catalog-import-actions {
+    flex-direction: column-reverse;
+    width: 100%;
+  }
+
+  .catalog-import-actions__left,
+  .catalog-import-actions__right {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    margin-left: 0;
+    gap: 8px;
+  }
+
+  .catalog-import-actions__left .ant-btn,
+  .catalog-import-actions__right .ant-btn {
+    width: 100%;
+    height: 40px;
+  }
+}
+
+/* ==========================================================================
+   MOBILE TOAST & NOTIFICATION OPTIMIZATIONS (Sonner & Ant Design)
+   Ensures toasts appear below the mobile header and never block the Back button
+   ========================================================================== */
+
+@media (max-width: 768px) {
+  /* Sonner Toaster container: starts below header, non-blocking click-through */
+  [data-sonner-toaster] {
+    top: calc(62px + env(safe-area-inset-top, 0px)) !important;
+    right: 16px !important;
+    left: 16px !important;
+    width: calc(100% - 32px) !important;
+    pointer-events: none !important;
+  }
+
+  [data-sonner-toaster] [data-sonner-toast] {
+    pointer-events: auto !important;
+    max-width: 100% !important;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12) !important;
+    border-radius: 12px !important;
+  }
+
+  [data-sonner-toast] [data-close-button] {
+    width: 24px !important;
+    height: 24px !important;
+    top: 0 !important;
+    right: 0 !important;
+  }
+
+  /* Ant Design Message container: starts below header, non-blocking click-through */
+  .ant-message {
+    top: calc(62px + env(safe-area-inset-top, 0px)) !important;
+    pointer-events: none !important;
+  }
+
+  .ant-message-notice {
+    padding: 4px 16px !important;
+    text-align: center !important;
+    pointer-events: none !important;
+  }
+
+  .ant-message-notice-content {
+    pointer-events: auto !important;
+    max-width: calc(100vw - 32px) !important;
+    font-size: 13.5px !important;
+    padding: 9px 16px !important;
+    border-radius: 12px !important;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12) !important;
+    box-sizing: border-box !important;
+    cursor: pointer;
+  }
+}

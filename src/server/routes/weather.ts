@@ -19,6 +19,10 @@ weatherRoutes.get('/', async (c) => {
   const service = new WeatherService(c.env);
   const data = await service.getStoreWeather(actor.storeId);
 
-  c.header('Cache-Control', 'private, max-age=300');
+  if (!data.configured) {
+    c.header('Cache-Control', 'no-store, no-cache, must-revalidate');
+  } else {
+    c.header('Cache-Control', 'private, max-age=300');
+  }
   return success(c, data);
 });

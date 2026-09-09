@@ -64,6 +64,13 @@ describe('Catalog Excel import preview and commit', () => {
       unitsToCreate: [],
     });
     expect(preview.summary.errorRows).toBe(0);
+    expect(preview.items).toHaveLength(1);
+    expect(preview.items?.[0]).toMatchObject({
+      name: 'Nước cam',
+      action: 'CREATE',
+      variantCount: 2,
+      priceDisplay: '30.000 đ - 40.000 đ',
+    });
 
     const payload = {
       ...input,

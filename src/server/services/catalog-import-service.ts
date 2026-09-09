@@ -4,6 +4,7 @@ import type {
   CatalogImportCommitResult,
   CatalogImportIssue,
   CatalogImportPreviewInput,
+  CatalogImportPreviewItem,
   CatalogImportPreviewResult,
   CatalogImportRow,
   CatalogImportSummary,
@@ -200,6 +201,7 @@ export class CatalogImportService {
       normalizedPayloadHash: plan.normalizedPayloadHash,
       summary: plan.summary,
       issues: plan.groups.flatMap((group) => group.issues),
+      items: this.mapPreviewItems(plan.groups),
     };
   }
 
@@ -422,6 +424,7 @@ export class CatalogImportService {
       normalizedPayloadHash: plan.normalizedPayloadHash,
       summary: { ...plan.summary, errorRows: plan.summary.errorRows + commitIssues.length },
       issues: [...plan.groups.flatMap((group) => group.issues), ...commitIssues],
+      items: this.mapPreviewItems(plan.groups),
       createdProducts,
       updatedProducts,
       skippedProducts,
@@ -894,5 +897,73 @@ export class CatalogImportService {
       categoriesToCreate,
       unitsToCreate,
     };
+  }
+
+  private mapPreviewItems(groups: ImportGroup[]): CatalogImportPreviewItem[] {
+    return groups.map((group) => {
+      let priceDisplay = '--';
+      let variantsSummary: string | null = null;
+
+      if (group.productType === 'TIME') {
+        if (group.pricing) {
+          const durationMins = Math.round(group.pricing.baseDurationSeconds / 60);
+          const durationStr = durationMins === 60 ? 'giờ' : `${durationMins} phút`;
+          priceDisplay = `${group.pricing.basePriceVnd.toLocaleString('vi-VN')} đ/${durationStr}`;
+        }
+      } else if (group.variants.length > 0) {
+        if (group.variants.length === 1) {
+          const v = group.variants[0]!;
+          priceDisplay = v.promptPrice
+            ? 'Nhập khi bán'
+            : v.salePriceVnd !== null
+              ? `${v.salePriceVnd.toLocaleString('vi-VN')} đ`
+              : '--';
+        } else {
+          const prices = group.variants
+            .map((v) => v.salePriceVnd)
+            .filter((p): p is number => p !== null);
+          if (prices.length > 0) {
+            const min = Math.min(...prices);
+            const max = Math.max(...prices);
+            priceDisplay =
+              min === max
+                ? `${min.toLocaleString('vi-VN')} đ`
+                : `${min.toLocaleString('vi-VN')} đ - ${max.toLocaleString('vi-VN')} đ`;
+          } else {
+            priceDisplay = group.variants.some((v) => v.promptPrice) ? 'Nhập khi bán' : '--';
+          }
+          variantsSummary = group.variants
+            .map((v) => {
+              const pStr = v.promptPrice
+                ? 'Nhập khi bán'
+                : v.salePriceVnd !== null
+                  ? `${v.salePriceVnd.toLocaleString('vi-VN')} đ`
+                  : '--';
+              return `${v.name}: ${pStr}`;
+            })
+            .join(' · ');
+        }
+      }
+
+      const errors = group.issues.filter((i) => i.action === 'ERROR').map((i) => i.message);
+      const suggestions = group.issues
+        .map((i) => i.suggestion)
+        .filter((s): s is string => Boolean(s));
+
+      return {
+        sourceRow: group.sourceRow,
+        action: group.action,
+        productId: group.productId,
+        name: group.name,
+        productType: group.productType,
+        categoryName: group.categoryName,
+        unitName: group.unitName,
+        variantCount: group.variants.length,
+        priceDisplay,
+        variantsSummary,
+        errors,
+        suggestions,
+      };
+    });
   }
 }

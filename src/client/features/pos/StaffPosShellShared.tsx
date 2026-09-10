@@ -36,6 +36,7 @@ import {
   useState,
 } from 'react';
 import { useNavigate } from 'react-router';
+import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 
 import type { AuthContextResponse } from '@contracts/auth';
@@ -635,38 +636,48 @@ export function StaffBottomNav({ active }: { active: (typeof navItems)[number]['
     (notifications.data?.counts.tableOpenRequests ?? 0);
   return (
     <nav className="staff-pos-bottom-nav" aria-label="Điều hướng POS nhân viên">
-      {visibleNavItems.map((item) => (
-        <button
-          key={item.key}
-          type="button"
-          data-nav-key={item.key}
-          className={active === item.key ? 'is-active' : ''}
-          aria-label={
-            item.key === 'qr' && pendingNotificationCount > 0
-              ? `${item.label}, ${pendingNotificationCount} yêu cầu chưa xử lý`
-              : item.label
-          }
-          onClick={() => navigate(item.path)}
-        >
-          <span className="staff-pos-nav-icon">
-            <img
-              src={item.icon}
-              alt=""
-              width={26}
-              height={26}
-              className="staff-pos-nav-img"
-              draggable={false}
-              aria-hidden="true"
-            />
-            {item.key === 'qr' && pendingNotificationCount > 0 ? (
-              <b className="staff-pos-nav-badge">
-                {pendingNotificationCount > 99 ? '99+' : pendingNotificationCount}
-              </b>
+      {visibleNavItems.map((item) => {
+        const isActive = active === item.key;
+        return (
+          <button
+            key={item.key}
+            type="button"
+            data-nav-key={item.key}
+            className={`staff-pos-nav-item ${isActive ? 'is-active' : ''}`}
+            aria-label={
+              item.key === 'qr' && pendingNotificationCount > 0
+                ? `${item.label}, ${pendingNotificationCount} yêu cầu chưa xử lý`
+                : item.label
+            }
+            onClick={() => navigate(item.path)}
+          >
+            {isActive ? (
+              <motion.div
+                layoutId="staff-pos-nav-pill"
+                className="staff-pos-nav-active-pill"
+                transition={{ type: 'spring', stiffness: 440, damping: 33 }}
+              />
             ) : null}
-          </span>
-          <span>{item.label}</span>
-        </button>
-      ))}
+            <span className="staff-pos-nav-icon">
+              <img
+                src={item.icon}
+                alt=""
+                width={26}
+                height={26}
+                className="staff-pos-nav-img"
+                draggable={false}
+                aria-hidden="true"
+              />
+              {item.key === 'qr' && pendingNotificationCount > 0 ? (
+                <b className="staff-pos-nav-badge">
+                  {pendingNotificationCount > 99 ? '99+' : pendingNotificationCount}
+                </b>
+              ) : null}
+            </span>
+            <span className="staff-pos-nav-label">{item.label}</span>
+          </button>
+        );
+      })}
     </nav>
   );
 }

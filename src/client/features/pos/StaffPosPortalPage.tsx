@@ -100,7 +100,7 @@ import {
   useState,
 } from 'react';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router';
-import { motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 
 import type { AuthContextResponse } from '@contracts/auth';
 import type { AppBootstrapResponse } from '@contracts/app-bootstrap';
@@ -1795,38 +1795,26 @@ function MorePage({ auth }: { auth: AuthContextResponse }) {
     <div className="staff-more-page">
       {holder}
       <section className="staff-profile-hero">
-        <div style={{ position: 'relative', display: 'inline-block' }}>
-          <Avatar size={76} icon={<UserOutlined />} />
+        <div className="staff-profile-hero__avatar-wrap">
+          <Avatar size={44} icon={<UserOutlined />} className="staff-profile-hero__avatar" />
           <span
-            className="owner-staff-online-dot"
-            style={{ width: 16, height: 16, border: '3px solid #fff', bottom: 2, right: 2 }}
+            className="owner-staff-online-dot staff-profile-hero__online-dot"
             title="Đang hoạt động"
           />
         </div>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <Typography.Title level={2} style={{ margin: 0 }}>
+        <div className="staff-profile-hero__info">
+          <div className="staff-profile-hero__header">
+            <span className="staff-profile-hero__name">
               {auth.actor!.displayName}
-            </Typography.Title>
-            <Tag
-              color="success"
-              style={{
-                borderRadius: 12,
-                padding: '1px 10px',
-                fontWeight: 600,
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 5,
-                fontSize: 12,
-              }}
-            >
+            </span>
+            <span className="staff-profile-hero__status">
               <span className="owner-staff-online-pulse" />
               Đang hoạt động
-            </Tag>
+            </span>
           </div>
-          <Typography.Text style={{ marginTop: 4, display: 'block' }}>
+          <span className="staff-profile-hero__role">
             {isOwner ? 'Chủ cửa hàng (Quản trị viên)' : 'Nhân viên cửa hàng'}
-          </Typography.Text>
+          </span>
         </div>
       </section>
 
@@ -4405,6 +4393,147 @@ const getDefaultCartWidth = () => {
   if (typeof window === 'undefined') return 560;
   return Math.max(420, Math.min(window.innerWidth - 380, Math.round(window.innerWidth * 0.4)));
 };
+
+interface CompactProductStepperProps {
+  product: CatalogProduct;
+  effectiveCount: number;
+  onAdd: (e: React.MouseEvent) => void;
+  onMinus: (e: React.MouseEvent) => void;
+}
+
+const CompactProductStepper = memo(function CompactProductStepper({
+  product,
+  effectiveCount,
+  onAdd,
+  onMinus,
+}: CompactProductStepperProps) {
+  const isSingleQuantity =
+    product.productType === 'QUANTITY' && product.variants.length === 1;
+
+  const [showBubble, setShowBubble] = useState(false);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevCountRef = useRef(effectiveCount);
+
+  const triggerBubble = useCallback(() => {
+    setShowBubble(true);
+    if (hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current);
+    }
+    hideTimerRef.current = setTimeout(() => {
+      setShowBubble(false);
+    }, 750);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (prevCountRef.current !== effectiveCount) {
+      if (effectiveCount > 0) {
+        triggerBubble();
+      } else {
+        setShowBubble(false);
+      }
+      prevCountRef.current = effectiveCount;
+    }
+  }, [effectiveCount, triggerBubble]);
+
+  if (!isSingleQuantity) {
+    return (
+      <button
+        type="button"
+        className="staff-product-compact-add-btn"
+        onClick={onAdd}
+        aria-label={`Thêm ${product.productName}`}
+      >
+        <PlusOutlined />
+      </button>
+    );
+  }
+
+  const isExpanded = effectiveCount > 0;
+
+  return (
+    <div className="staff-product-compact-stepper-container">
+      <AnimatePresence>
+        {showBubble && effectiveCount > 0 ? (
+          <motion.div
+            key="stepper-floating-bubble"
+            className="staff-stepper-floating-bubble"
+            initial={{ opacity: 0, y: 6, scale: 0.8, x: '-50%' }}
+            animate={{ opacity: 1, y: 0, scale: 1, x: '-50%' }}
+            exit={{ opacity: 0, y: 4, scale: 0.8, x: '-50%' }}
+            transition={{
+              type: 'spring',
+              stiffness: 550,
+              damping: 30,
+            }}
+          >
+            <motion.span
+              key={effectiveCount}
+              initial={{ scale: 0.72, opacity: 0.4 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ duration: 0.12, ease: 'easeOut' }}
+            >
+              {formatDecimal(effectiveCount)}
+            </motion.span>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      <div
+        className={`staff-product-compact-stepper-wrap ${isExpanded ? 'is-expanded' : ''}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <AnimatePresence initial={false}>
+          {isExpanded ? (
+            <motion.div
+              key="stepper-controls"
+              className="staff-product-compact-stepper__left"
+              initial={{ opacity: 0, width: 0, x: 14 }}
+              animate={{ opacity: 1, width: 'auto', x: 0 }}
+              exit={{ opacity: 0, width: 0, x: 14 }}
+              transition={{
+                duration: 0.24,
+                ease: [0.2, 0.8, 0.2, 1],
+              }}
+            >
+              <button
+                type="button"
+                className="staff-product-compact-stepper__btn minus"
+                onClick={onMinus}
+                aria-label="Giảm"
+              >
+                −
+              </button>
+              <motion.span
+                key={effectiveCount}
+                className="staff-product-compact-stepper__count"
+                initial={{ scale: 0.65, opacity: 0.3 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ duration: 0.14, ease: 'easeOut' }}
+              >
+                {formatDecimal(effectiveCount)}
+              </motion.span>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+
+        <button
+          type="button"
+          className={`staff-product-compact-stepper__btn plus ${!isExpanded ? 'is-initial-add' : ''}`}
+          onClick={onAdd}
+          aria-label={isExpanded ? 'Tăng' : `Thêm ${product.productName}`}
+        >
+          <PlusOutlined style={{ fontSize: isExpanded ? 11 : 13 }} />
+        </button>
+      </div>
+    </div>
+  );
+});
 
 function OrderEditor({
   auth,
@@ -7354,53 +7483,19 @@ function OrderEditor({
                         </div>
 
                         <div className="staff-product-compact-row__action">
-                          {effectiveCount > 0 &&
-                          product.productType === 'QUANTITY' &&
-                          product.variants.length === 1 ? (
-                            <div
-                              className="staff-product-compact-stepper"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <button
-                                type="button"
-                                className="staff-product-compact-stepper__btn minus"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const variant = product.variants[0];
-                                  if (variant) decrementVariant(product, variant);
-                                }}
-                                aria-label="Giảm"
-                              >
-                                −
-                              </button>
-                              <span className="staff-product-compact-stepper__count">
-                                {formatDecimal(effectiveCount)}
-                              </span>
-                              <button
-                                type="button"
-                                className="staff-product-compact-stepper__btn plus"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  chooseProduct(product, e);
-                                }}
-                                aria-label="Tăng"
-                              >
-                                +
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              className="staff-product-compact-add-btn"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                chooseProduct(product, e);
-                              }}
-                              aria-label={`Thêm ${product.productName}`}
-                            >
-                              <PlusOutlined />
-                            </button>
-                          )}
+                          <CompactProductStepper
+                            product={product}
+                            effectiveCount={effectiveCount}
+                            onAdd={(e) => {
+                              e.stopPropagation();
+                              chooseProduct(product, e);
+                            }}
+                            onMinus={(e) => {
+                              e.stopPropagation();
+                              const variant = product.variants[0];
+                              if (variant) decrementVariant(product, variant);
+                            }}
+                          />
                         </div>
                       </div>
                     );

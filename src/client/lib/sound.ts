@@ -412,6 +412,9 @@ export class SoundManager {
       }
     }
 
+    // Tăng âm lượng hơn 1 tí khi thanh toán thành công (hệ số 1.35x giúp âm thanh to, rõ ràng hơn)
+    const boostedVolume = volume * 1.35;
+
     // Try 1: Decoded AudioBuffer in Web Audio (instant playback)
     if (context && context.state === 'running') {
       try {
@@ -421,7 +424,7 @@ export class SoundManager {
           const source = context.createBufferSource();
           const gain = context.createGain();
           source.buffer = buffer;
-          gain.gain.setValueAtTime(volume, context.currentTime);
+          gain.gain.setValueAtTime(boostedVolume, context.currentTime);
           source.connect(gain);
           gain.connect(context.destination);
           source.start(0);
@@ -436,7 +439,7 @@ export class SoundManager {
 
     // Try 2: Instant Procedural Web Audio Synthesis (0ms network-free fallback)
     if (context && context.state === 'running') {
-      if (this.playSynthesizedPaymentFanfare(volume)) {
+      if (this.playSynthesizedPaymentFanfare(boostedVolume)) {
         this.lastPlayTime = Date.now();
         return true;
       }
@@ -723,8 +726,9 @@ export class SoundManager {
 
     try {
       const now = context.currentTime;
-      const volume = this.clampVolume(customVolume);
-      if (volume === 0) return false;
+      const baseVol = this.clampVolume(customVolume);
+      if (baseVol === 0) return false;
+      const volume = Math.max(0, customVolume ?? this.DEFAULT_VOLUME);
 
       // 1. Double Coin Clink (metallic inharmonic cluster: 3350Hz & 3820Hz)
       const playCoinClink = (startTime: number, baseFreq: number, clinkVol: number) => {

@@ -67,13 +67,11 @@ export interface PosCommandBaseQuote {
     discountAmountVnd?: number;
     netLineTotalVnd?: number;
   }>;
-  time?:
-    | {
-        status: string;
-        startedAtMs: number;
-        endedAtMs: number | null;
-      }
-    | null;
+  time?: {
+    status: string;
+    startedAtMs: number;
+    endedAtMs: number | null;
+  } | null;
   totalVnd?: number;
   promotions?: Array<{ id: string }>;
 }
@@ -145,4 +143,3 @@ export interface PosHydrationResult {
   catalog: unknown[] | null;
   orderQuotes: Array<{ orderId: string; value: unknown }>;
 }
-

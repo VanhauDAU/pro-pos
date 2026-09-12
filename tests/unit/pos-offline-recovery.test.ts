@@ -6,53 +6,58 @@ import { PosLocalRepository } from '@client/offline/repository';
 import { PosSyncEngine, type PosCommandSender } from '@client/offline/sync-engine';
 import type { PosQueuedCommand } from '@client/offline/types';
 
+function makeCommand(overrides: Partial<PosQueuedCommand>): PosQueuedCommand {
+  const now = Date.now();
+  return {
+    sequence: overrides.sequence ?? 1,
+    id: overrides.id ?? crypto.randomUUID(),
+    requestId: crypto.randomUUID(),
+    storeId: 'store-1',
+    deviceId: 'dev-1',
+    actorUserId: 'user-1',
+    type: 'SAVE_ORDER',
+    orderId: 'order-1',
+    localOrderId: null,
+    method: 'POST',
+    path: '/api/v1/pos/orders/order-1/save',
+    body: {},
+    baseOrderVersion: 1,
+    baseQuote: null,
+    issuedAt: now,
+    createdAt: now,
+    status: 'PENDING',
+    retryCount: 0,
+    lastAttemptAt: null,
+    nextAttemptAt: now,
+    lastErrorCode: null,
+    lastErrorMessage: null,
+    acknowledgedAt: null,
+    authoritativeOrderId: null,
+    response: null,
+    terminal: false,
+    ...overrides,
+  };
+}
+
 describe('PosOffline Recovery & Idempotency', () => {
   let repository: PosLocalRepository;
 
   beforeEach(async () => {
     await new Promise<void>((resolve) => {
       const req = indexedDB.deleteDatabase('propos-offline-v1');
-      req.onsuccess = () => resolve();
-      req.onerror = () => resolve();
+      req.addEventListener('success', () => resolve(), { once: true });
+      req.addEventListener('error', () => resolve(), { once: true });
     });
     repository = new PosLocalRepository();
   });
 
-  function makeCommand(overrides: Partial<PosQueuedCommand>): PosQueuedCommand {
-    const now = Date.now();
-    return {
-      sequence: overrides.sequence ?? 1,
-      id: overrides.id ?? crypto.randomUUID(),
-      requestId: crypto.randomUUID(),
-      storeId: 'store-1',
-      deviceId: 'dev-1',
-      actorUserId: 'user-1',
-      type: 'SAVE_ORDER',
-      orderId: 'order-1',
-      localOrderId: null,
-      method: 'POST',
-      path: '/api/v1/pos/orders/order-1/save',
-      body: {},
-      baseOrderVersion: 1,
-      baseQuote: null,
-      issuedAt: now,
-      createdAt: now,
-      status: 'PENDING',
-      retryCount: 0,
-      lastAttemptAt: null,
-      nextAttemptAt: now,
-      lastErrorCode: null,
-      lastErrorMessage: null,
-      acknowledgedAt: null,
-      authoritativeOrderId: null,
-      response: null,
-      terminal: false,
-      ...overrides,
-    };
-  }
-
   it('recovers commands stuck in SYNCING after crash/tab close to FAILED_RETRYABLE', async () => {
-    const cmd = makeCommand({ id: 'cmd-stuck', storeId: 'store-rec-1', orderId: 'order-stuck', status: 'SYNCING' });
+    const cmd = makeCommand({
+      id: 'cmd-stuck',
+      storeId: 'store-rec-1',
+      orderId: 'order-stuck',
+      status: 'SYNCING',
+    });
     await repository.enqueueCommand(cmd);
 
     await repository.recoverInterruptedCommands('store-rec-1');
@@ -102,7 +107,10 @@ describe('PosOffline Recovery & Idempotency', () => {
     expect(onAck).not.toHaveBeenCalled();
 
     // Reset nextAttemptAt to allow immediate second run
-    await repository.updateCommand('cmd-idempotent-1', (c) => ({ ...c, nextAttemptAt: Date.now() - 1000 }));
+    await repository.updateCommand('cmd-idempotent-1', (c) => ({
+      ...c,
+      nextAttemptAt: Date.now() - 1000,
+    }));
 
     // Second run succeeds with the same command ID
     await engine.syncNow();

@@ -179,7 +179,11 @@ export function resolvePosVersionConflict(
         reason: 'Ghi chú đơn đã được sửa trên thiết bị khác.',
       };
     }
-    return { action: 'REBASE', body: expectedVersionBody(command, latest), reason: 'Ghi chú chưa bị đổi.' };
+    return {
+      action: 'REBASE',
+      body: expectedVersionBody(command, latest),
+      reason: 'Ghi chú chưa bị đổi.',
+    };
   }
 
   if (
@@ -209,4 +213,3 @@ export function resolvePosVersionConflict(
     reason: 'Không có quy tắc rebase an toàn cho thao tác này.',
   };
 }
-

@@ -478,7 +478,8 @@ body,
   width: 100%;
   height: auto;
   min-height: calc(64px + env(safe-area-inset-bottom, 0px));
-  padding: 6px max(16px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  padding: 6px max(16px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom))
+    max(16px, env(safe-area-inset-left));
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
@@ -1467,7 +1468,8 @@ body,
     right: 0;
     width: 100%;
     max-width: 100%;
-    padding: 6px max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    padding: 6px max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom))
+      max(8px, env(safe-area-inset-left));
     gap: 6px;
     border-radius: 0;
   }

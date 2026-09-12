@@ -6,45 +6,45 @@ import { PosLocalRepository } from '@client/offline/repository';
 import { PosSyncEngine, type PosCommandSender } from '@client/offline/sync-engine';
 import type { PosQueuedCommand } from '@client/offline/types';
 
+function makeCommand(overrides: Partial<PosQueuedCommand>): PosQueuedCommand {
+  const now = Date.now();
+  return {
+    sequence: overrides.sequence ?? 1,
+    id: overrides.id ?? crypto.randomUUID(),
+    requestId: crypto.randomUUID(),
+    storeId: 'store-1',
+    deviceId: 'dev-1',
+    actorUserId: 'user-1',
+    type: 'SAVE_ORDER',
+    orderId: 'order-1',
+    localOrderId: null,
+    method: 'POST',
+    path: '/api/v1/pos/orders/order-1/save',
+    body: {},
+    baseOrderVersion: 1,
+    baseQuote: null,
+    issuedAt: now,
+    createdAt: now,
+    status: 'PENDING',
+    retryCount: 0,
+    lastAttemptAt: null,
+    nextAttemptAt: now,
+    lastErrorCode: null,
+    lastErrorMessage: null,
+    acknowledgedAt: null,
+    authoritativeOrderId: null,
+    response: null,
+    terminal: false,
+    ...overrides,
+  };
+}
+
 describe('PosSyncEngine Queue Sequencing & Retry Policy', () => {
   let repository: PosLocalRepository;
 
   beforeEach(() => {
     repository = new PosLocalRepository();
   });
-
-  function makeCommand(overrides: Partial<PosQueuedCommand>): PosQueuedCommand {
-    const now = Date.now();
-    return {
-      sequence: overrides.sequence ?? 1,
-      id: overrides.id ?? crypto.randomUUID(),
-      requestId: crypto.randomUUID(),
-      storeId: 'store-1',
-      deviceId: 'dev-1',
-      actorUserId: 'user-1',
-      type: 'SAVE_ORDER',
-      orderId: 'order-1',
-      localOrderId: null,
-      method: 'POST',
-      path: '/api/v1/pos/orders/order-1/save',
-      body: {},
-      baseOrderVersion: 1,
-      baseQuote: null,
-      issuedAt: now,
-      createdAt: now,
-      status: 'PENDING',
-      retryCount: 0,
-      lastAttemptAt: null,
-      nextAttemptAt: now,
-      lastErrorCode: null,
-      lastErrorMessage: null,
-      acknowledgedAt: null,
-      authoritativeOrderId: null,
-      response: null,
-      terminal: false,
-      ...overrides,
-    };
-  }
 
   it('executes queued commands for an order strictly sequentially in FIFO order', async () => {
     const executionOrder: string[] = [];

@@ -3,76 +3,76 @@ import { describe, expect, it } from 'vitest';
 import { resolvePosVersionConflict } from '@client/offline/conflict-resolver';
 import type { PosCommandBaseQuote, PosQueuedCommand } from '@client/offline/types';
 
-describe('Offline Conflict Resolution Matrix (7 Specification Cases)', () => {
-  function makeBaseQuote(overrides: Partial<PosCommandBaseQuote> = {}): PosCommandBaseQuote {
-    return {
-      order: {
-        id: 'order-1',
-        version: 1,
-        status: 'OPEN',
-        orderType: 'DINE_IN',
-        tableName: 'Bàn 1',
-        tableId: 'table-1',
+function makeBaseQuote(overrides: Partial<PosCommandBaseQuote> = {}): PosCommandBaseQuote {
+  return {
+    order: {
+      id: 'order-1',
+      version: 1,
+      status: 'OPEN',
+      orderType: 'DINE_IN',
+      tableName: 'Bàn 1',
+      tableId: 'table-1',
+      note: null,
+    },
+    items: [
+      {
+        id: 'item-1',
+        productId: 'prod-1',
+        variantId: 'var-1',
+        productName: 'Cà phê đen',
+        variantName: null,
+        unitPriceVnd: 25000,
+        quantityMilli: 1000,
+        grossLineTotalVnd: 25000,
+        discountAmountVnd: 0,
+        netLineTotalVnd: 25000,
         note: null,
+        discountType: null,
+        discountInputValue: null,
+        discountReason: null,
       },
-      items: [
-        {
-          id: 'item-1',
-          productId: 'prod-1',
-          variantId: 'var-1',
-          productName: 'Cà phê đen',
-          variantName: null,
-          unitPriceVnd: 25000,
-          quantityMilli: 1000,
-          grossLineTotalVnd: 25000,
-          discountAmountVnd: 0,
-          netLineTotalVnd: 25000,
-          note: null,
-          discountType: null,
-          discountInputValue: null,
-          discountReason: null,
-        },
-      ],
-      totalVnd: 25000,
-      time: null,
-      promotions: [],
-      ...overrides,
-    };
-  }
+    ],
+    totalVnd: 25000,
+    time: null,
+    promotions: [],
+    ...overrides,
+  };
+}
 
-  function makeCommand(overrides: Partial<PosQueuedCommand> = {}): PosQueuedCommand {
-    const now = Date.now();
-    return {
-      sequence: overrides.sequence ?? 1,
-      id: 'cmd-1',
-      requestId: 'req-1',
-      storeId: 'store-1',
-      deviceId: 'dev-1',
-      actorUserId: 'user-1',
-      type: 'SAVE_ORDER',
-      orderId: 'order-1',
-      localOrderId: null,
-      method: 'POST',
-      path: '/api/v1/pos/orders/order-1/save',
-      body: { expectedOrderVersion: 1 },
-      baseOrderVersion: 1,
-      baseQuote: makeBaseQuote(),
-      issuedAt: now,
-      createdAt: now,
-      status: 'PENDING',
-      retryCount: 0,
-      lastAttemptAt: null,
-      nextAttemptAt: now,
-      lastErrorCode: null,
-      lastErrorMessage: null,
-      acknowledgedAt: null,
-      authoritativeOrderId: null,
-      response: null,
-      terminal: false,
-      ...overrides,
-    };
-  }
+function makeCommand(overrides: Partial<PosQueuedCommand> = {}): PosQueuedCommand {
+  const now = Date.now();
+  return {
+    sequence: overrides.sequence ?? 1,
+    id: 'cmd-1',
+    requestId: 'req-1',
+    storeId: 'store-1',
+    deviceId: 'dev-1',
+    actorUserId: 'user-1',
+    type: 'SAVE_ORDER',
+    orderId: 'order-1',
+    localOrderId: null,
+    method: 'POST',
+    path: '/api/v1/pos/orders/order-1/save',
+    body: { expectedOrderVersion: 1 },
+    baseOrderVersion: 1,
+    baseQuote: makeBaseQuote(),
+    issuedAt: now,
+    createdAt: now,
+    status: 'PENDING',
+    retryCount: 0,
+    lastAttemptAt: null,
+    nextAttemptAt: now,
+    lastErrorCode: null,
+    lastErrorMessage: null,
+    acknowledgedAt: null,
+    authoritativeOrderId: null,
+    response: null,
+    terminal: false,
+    ...overrides,
+  };
+}
 
+describe('Offline Conflict Resolution Matrix (7 Specification Cases)', () => {
   it('Case 1: Independent item adds -> Auto-rebase without conflict', () => {
     const base = makeBaseQuote();
     const serverQuote = makeBaseQuote({
@@ -247,7 +247,13 @@ describe('Offline Conflict Resolution Matrix (7 Specification Cases)', () => {
 
   it('Case 7: Open table vs remote open table -> OPEN_TABLE_CONFLICT', () => {
     const serverQuote = makeBaseQuote({
-      order: { id: 'remote-order-99', version: 1, status: 'OPEN', orderType: 'DINE_IN', tableId: 'table-1' },
+      order: {
+        id: 'remote-order-99',
+        version: 1,
+        status: 'OPEN',
+        orderType: 'DINE_IN',
+        tableId: 'table-1',
+      },
     });
 
     const command = makeCommand({

@@ -575,7 +575,8 @@ export function LoginPage() {
     );
   }
   const hasAuthError = Boolean(searchParams.get('authError'));
-  if (!hasAuthError && context.data.actor?.kind === 'OWNER') return <Navigate to="/owner" replace />;
+  if (!hasAuthError && context.data.actor?.kind === 'OWNER')
+    return <Navigate to="/owner" replace />;
   if (!hasAuthError && context.data.actor?.kind === 'EMPLOYEE' && deviceIsActive) {
     return <Navigate to="/pos" replace />;
   }

@@ -1,13 +1,7 @@
 import type { AppBootstrapResponse } from '@contracts/app-bootstrap';
 import type { PosOverviewSnapshot } from '@contracts/pos';
 
-import {
-  deleteRecord,
-  getAllFromIndex,
-  getRecord,
-  putRecord,
-  withPosTransaction,
-} from './db';
+import { deleteRecord, getAllFromIndex, getRecord, putRecord, withPosTransaction } from './db';
 import type {
   PosConflictRecord,
   PosDraftRecord,
@@ -200,7 +194,10 @@ export class PosLocalRepository {
     );
   }
 
-  async listCommands(storeId: string, statuses?: PosQueuedCommand['status'][]): Promise<PosQueuedCommand[]> {
+  async listCommands(
+    storeId: string,
+    statuses?: PosQueuedCommand['status'][],
+  ): Promise<PosQueuedCommand[]> {
     return withPosTransaction(
       ['commands'],
       'readonly',
@@ -221,7 +218,9 @@ export class PosLocalRepository {
           : await requestAll<PosQueuedCommand>(store);
         return records
           .filter((command) => command.storeId === storeId)
-          .toSorted((left, right) => left.createdAt - right.createdAt || left.sequence - right.sequence);
+          .toSorted(
+            (left, right) => left.createdAt - right.createdAt || left.sequence - right.sequence,
+          );
       },
       this.indexedDb,
     );

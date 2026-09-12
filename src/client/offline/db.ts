@@ -12,9 +12,13 @@ export type PosObjectStoreName = 'meta' | 'snapshots' | 'drafts' | 'commands' | 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     request.addEventListener('success', () => resolve(request.result), { once: true });
-    request.addEventListener('error', () => reject(request.error ?? new Error('IndexedDB request failed')), {
-      once: true,
-    });
+    request.addEventListener(
+      'error',
+      () => reject(request.error ?? new Error('IndexedDB request failed')),
+      {
+        once: true,
+      },
+    );
   });
 }
 
@@ -60,7 +64,9 @@ function createSchema(database: IDBDatabase) {
 
 let databasePromise: Promise<IDBDatabase> | null = null;
 
-export function openPosDatabase(indexedDb: IDBFactory = globalThis.indexedDB): Promise<IDBDatabase> {
+export function openPosDatabase(
+  indexedDb: IDBFactory = globalThis.indexedDB,
+): Promise<IDBDatabase> {
   const isDefaultFactory = indexedDb === globalThis.indexedDB;
   if (isDefaultFactory && databasePromise) return databasePromise;
   const opening = new Promise<IDBDatabase>((resolve, reject) => {

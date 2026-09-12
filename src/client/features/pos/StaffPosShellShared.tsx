@@ -579,9 +579,7 @@ export function StaffHeader({
           style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0 }}
         >
           <span className="staff-pos-sync-dot" />
-          <span className="staff-pos-sync-label">
-            {syncLabel}
-          </span>
+          <span className="staff-pos-sync-label">{syncLabel}</span>
         </button>
       </Tooltip>
       <Modal

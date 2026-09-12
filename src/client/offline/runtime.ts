@@ -85,7 +85,8 @@ class PosOfflineRuntime {
     this.engine?.stop();
     this.storeId = storeId;
     const sender = new HttpPosCommandSender(
-      () => this.queryClient?.getQueryData<AuthContextResponse>(['auth-context'])?.csrfToken ?? null,
+      () =>
+        this.queryClient?.getQueryData<AuthContextResponse>(['auth-context'])?.csrfToken ?? null,
     );
     this.engine = new PosSyncEngine(this.repository, sender, storeId, {
       onStatus: (status) => this.setStatus({ ...this.status, ...status }),
@@ -179,9 +180,13 @@ class PosOfflineRuntime {
     if (!this.engine || document.visibilityState === 'hidden') return;
     const locks = navigator.locks;
     if (locks) {
-      await locks.request(`propos-pos-sync:${this.storeId}`, { ifAvailable: true }, async (lock) => {
-        if (lock) await this.engine?.syncNow();
-      });
+      await locks.request(
+        `propos-pos-sync:${this.storeId}`,
+        { ifAvailable: true },
+        async (lock) => {
+          if (lock) await this.engine?.syncNow();
+        },
+      );
       return;
     }
     await this.engine.syncNow();
@@ -248,15 +253,17 @@ class PosOfflineRuntime {
     if (Array.isArray(snapshotTables)) {
       const changed = new Map(
         snapshotTables
-          .filter((table): table is { id: string } => Boolean(table && typeof table.id === 'string'))
+          .filter((table): table is { id: string } =>
+            Boolean(table && typeof table.id === 'string'),
+          )
           .map((table) => [table.id, table]),
       );
       this.queryClient.setQueryData<PosOverviewSnapshot>(['pos-overview'], (current) =>
         current
           ? {
               ...current,
-              tables: current.tables.map((table) =>
-                (changed.get(table.id) as typeof table | undefined) ?? table,
+              tables: current.tables.map(
+                (table) => (changed.get(table.id) as typeof table | undefined) ?? table,
               ),
             }
           : current,

@@ -52,11 +52,7 @@ export function quoteIsVerifiedForInteraction(input: {
     return true;
   }
 
-  if (
-    !input.isSuccess ||
-    input.isFetching ||
-    input.isRefetchError
-  ) {
+  if (!input.isSuccess || input.isFetching || input.isRefetchError) {
     return false;
   }
 

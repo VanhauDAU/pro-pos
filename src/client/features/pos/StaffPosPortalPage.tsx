@@ -1814,9 +1814,7 @@ function MorePage({ auth }: { auth: AuthContextResponse }) {
         </div>
         <div className="staff-profile-hero__info">
           <div className="staff-profile-hero__header">
-            <span className="staff-profile-hero__name">
-              {auth.actor!.displayName}
-            </span>
+            <span className="staff-profile-hero__name">{auth.actor!.displayName}</span>
             <span className="staff-profile-hero__status">
               <span className="owner-staff-online-pulse" />
               Đang hoạt động
@@ -4417,8 +4415,7 @@ const CompactProductStepper = memo(function CompactProductStepper({
   onAdd,
   onMinus,
 }: CompactProductStepperProps) {
-  const isSingleQuantity =
-    product.productType === 'QUANTITY' && product.variants.length === 1;
+  const isSingleQuantity = product.productType === 'QUANTITY' && product.variants.length === 1;
 
   const [showBubble, setShowBubble] = useState(false);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -5121,10 +5118,7 @@ function OrderEditor({
           modifiedItemDetails,
           savedAt: Date.now(),
         };
-        localStorage.setItem(
-          `propos:order-draft:${orderId}`,
-          JSON.stringify(draftValue),
-        );
+        localStorage.setItem(`propos:order-draft:${orderId}`, JSON.stringify(draftValue));
         if (auth.actor?.storeId) {
           void posOfflineRuntime.repository.saveDraft(auth.actor.storeId, orderId, draftValue);
         }
@@ -5999,7 +5993,10 @@ function OrderEditor({
           ),
         });
         messageApi.success('Đã mở bàn trên thiết bị · Chờ đồng bộ.');
-        completeCreatedOrder(optimisticSnapshot as unknown as OrderMutationSnapshot, checkoutAfterSave);
+        completeCreatedOrder(
+          optimisticSnapshot as unknown as OrderMutationSnapshot,
+          checkoutAfterSave,
+        );
         return;
       }
 
@@ -6036,7 +6033,10 @@ function OrderEditor({
             ),
           });
           messageApi.info('Mất kết nối. Đã mở bàn trên thiết bị · Chờ đồng bộ.');
-          completeCreatedOrder(optimisticSnapshot as unknown as OrderMutationSnapshot, checkoutAfterSave);
+          completeCreatedOrder(
+            optimisticSnapshot as unknown as OrderMutationSnapshot,
+            checkoutAfterSave,
+          );
           return;
         }
         throw reqError;
@@ -6123,11 +6123,9 @@ function OrderEditor({
     }
 
     try {
-      return await jsonRequest<OrderMutationSnapshot>(
-        '/api/v1/pos/orders/open',
-        payload,
-        { headers: mutationHeaders(csrf) },
-      );
+      return await jsonRequest<OrderMutationSnapshot>('/api/v1/pos/orders/open', payload, {
+        headers: mutationHeaders(csrf),
+      });
     } catch (reqError) {
       if (!(reqError instanceof ApiError)) {
         const optimisticSnapshot = buildOptimisticOpenSnapshot({
@@ -6205,9 +6203,7 @@ function OrderEditor({
         expectedOrderVersion: quote.data.order.version,
         addedItems: draftItemsPayload(),
         updatedItems: updatedItemsPayload(),
-        ...(orderNote !== (quote.data.order.note ?? '')
-          ? { note: orderNote.trim() || null }
-          : {}),
+        ...(orderNote !== (quote.data.order.note ?? '') ? { note: orderNote.trim() || null } : {}),
         ...(manualPromotionIds === null ? {} : { promotionIds: manualPromotionIds }),
       };
 
@@ -6218,7 +6214,10 @@ function OrderEditor({
           draftLines,
           updatedItems: updatedItemsPayload(),
           note: orderNote.trim() || null,
-          tableSummaries: queryClient.getQueryData<PosTable[]>(['pos-tables'])?.filter((t) => t.id === quote.data!.order.tableId) ?? [],
+          tableSummaries:
+            queryClient
+              .getQueryData<PosTable[]>(['pos-tables'])
+              ?.filter((t) => t.id === quote.data!.order.tableId) ?? [],
         });
         await posOfflineRuntime.enqueue({
           type: 'SAVE_ORDER',
@@ -6273,7 +6272,10 @@ function OrderEditor({
             draftLines,
             updatedItems: updatedItemsPayload(),
             note: orderNote.trim() || null,
-            tableSummaries: queryClient.getQueryData<PosTable[]>(['pos-tables'])?.filter((t) => t.id === quote.data!.order.tableId) ?? [],
+            tableSummaries:
+              queryClient
+                .getQueryData<PosTable[]>(['pos-tables'])
+                ?.filter((t) => t.id === quote.data!.order.tableId) ?? [],
           });
           await posOfflineRuntime.enqueue({
             type: 'SAVE_ORDER',
@@ -6759,11 +6761,9 @@ function OrderEditor({
       return;
     }
     try {
-      await jsonRequest(
-        `/api/v1/pos/orders/${currentOrderId}/time/pause`,
-        body,
-        { headers: mutationHeaders(csrf) },
-      );
+      await jsonRequest(`/api/v1/pos/orders/${currentOrderId}/time/pause`, body, {
+        headers: mutationHeaders(csrf),
+      });
       messageApi.success('Đã tạm dừng tính giờ bàn.');
       setTimeDetailOpen(false);
       await refreshOrder();
@@ -6810,11 +6810,9 @@ function OrderEditor({
       return;
     }
     try {
-      await jsonRequest(
-        `/api/v1/pos/orders/${currentOrderId}/time/resume`,
-        body,
-        { headers: mutationHeaders(csrf) },
-      );
+      await jsonRequest(`/api/v1/pos/orders/${currentOrderId}/time/resume`, body, {
+        headers: mutationHeaders(csrf),
+      });
       messageApi.success('Đã mở lại bàn / tiếp tục tính giờ.');
       setTimeDetailOpen(false);
       await refreshOrder();
@@ -6861,11 +6859,10 @@ function OrderEditor({
       return;
     }
     try {
-      await jsonRequest(
-        `/api/v1/pos/orders/${currentOrderId}/time/range`,
-        body,
-        { method: 'PATCH', headers: mutationHeaders(csrf) },
-      );
+      await jsonRequest(`/api/v1/pos/orders/${currentOrderId}/time/range`, body, {
+        method: 'PATCH',
+        headers: mutationHeaders(csrf),
+      });
       messageApi.success('Đã tiếp tục tính giờ bàn.');
       setTimeDetailOpen(false);
       await refreshOrder();
@@ -6943,7 +6940,9 @@ function OrderEditor({
 
   const transferTo = async (table: PosTable) => {
     if (!navigator.onLine || offlineStatus.reachable === false) {
-      messageApi.warning('Thao tác chuyển bàn cần kết nối mạng để tránh tranh chấp bàn giữa các thiết bị.');
+      messageApi.warning(
+        'Thao tác chuyển bàn cần kết nối mạng để tránh tranh chấp bàn giữa các thiết bị.',
+      );
       return;
     }
     if (!quote.data?.order.tableId) return;
@@ -6992,7 +6991,18 @@ function OrderEditor({
         const tableId = quote.data.order.tableId;
         if (tableId) {
           queryClient.setQueryData<PosTable[]>(['pos-tables'], (cached) =>
-            cached?.map((t) => (t.id === tableId ? { ...t, status: 'AVAILABLE', activeOrderId: null, totalVnd: 0, itemCount: 0, occupiedSince: null } : t)),
+            cached?.map((t) =>
+              t.id === tableId
+                ? {
+                    ...t,
+                    status: 'AVAILABLE',
+                    activeOrderId: null,
+                    totalVnd: 0,
+                    itemCount: 0,
+                    occupiedSince: null,
+                  }
+                : t,
+            ),
           );
         }
         queryClient.setQueryData<PosOverviewOrder[]>(['pos-orders-list'], (cached) =>
@@ -7053,7 +7063,18 @@ function OrderEditor({
         const tableId = quote.data.order.tableId;
         if (tableId) {
           queryClient.setQueryData<PosTable[]>(['pos-tables'], (cached) =>
-            cached?.map((t) => (t.id === tableId ? { ...t, status: 'AVAILABLE', activeOrderId: null, totalVnd: 0, itemCount: 0, occupiedSince: null } : t)),
+            cached?.map((t) =>
+              t.id === tableId
+                ? {
+                    ...t,
+                    status: 'AVAILABLE',
+                    activeOrderId: null,
+                    totalVnd: 0,
+                    itemCount: 0,
+                    occupiedSince: null,
+                  }
+                : t,
+            ),
           );
         }
         queryClient.setQueryData<PosOverviewOrder[]>(['pos-orders-list'], (cached) =>
@@ -11482,7 +11503,11 @@ function PaymentPage({
       setPreparingCheckout(false);
       const nextQuote: OrderQuote = {
         ...currentQuote,
-        order: { ...currentQuote.order, status: 'PAYMENT_PENDING', version: currentQuote.order.version + 1 },
+        order: {
+          ...currentQuote.order,
+          status: 'PAYMENT_PENDING',
+          version: currentQuote.order.version + 1,
+        },
         time: {
           ...currentQuote.time,
           status: 'ENDED',
@@ -11663,7 +11688,10 @@ function PaymentPage({
     if (!quote.data || submitting) return;
     const isOfflineNow = !navigator.onLine || offlineStatus.reachable === false;
     if (isOfflineNow) {
-      if (currentMethodItem.backendMethod !== 'CASH' || (isMultiMethod && (bankApplied > 0 || debtAmount > 0))) {
+      if (
+        currentMethodItem.backendMethod !== 'CASH' ||
+        (isMultiMethod && (bankApplied > 0 || debtAmount > 0))
+      ) {
         messageApi.error('Khi mất kết nối mạng, POS chỉ hỗ trợ thanh toán TIỀN MẶT.');
         return;
       }
@@ -11706,8 +11734,7 @@ function PaymentPage({
     const executeOfflineCashPayment = async () => {
       const completedOrderId = quote.data!.order.id;
       const resolvedCode =
-        quote.data!.order.displayCode ||
-        `HD-${quote.data!.order.id.slice(0, 8).toUpperCase()}`;
+        quote.data!.order.displayCode || `HD-${quote.data!.order.id.slice(0, 8).toUpperCase()}`;
 
       await posOfflineRuntime.enqueue({
         type: 'CASH_CHECKOUT',
@@ -11733,7 +11760,18 @@ function PaymentPage({
       const tableId = quote.data!.order.tableId;
       if (tableId) {
         queryClient.setQueryData<PosTable[]>(['pos-tables'], (cached) =>
-          cached?.map((t) => (t.id === tableId ? { ...t, status: 'AVAILABLE', activeOrderId: null, totalVnd: 0, itemCount: 0, occupiedSince: null } : t)),
+          cached?.map((t) =>
+            t.id === tableId
+              ? {
+                  ...t,
+                  status: 'AVAILABLE',
+                  activeOrderId: null,
+                  totalVnd: 0,
+                  itemCount: 0,
+                  occupiedSince: null,
+                }
+              : t,
+          ),
         );
       }
       queryClient.setQueryData<PosOverviewOrder[]>(['pos-orders-list'], (cached) =>
@@ -11964,7 +12002,9 @@ function PaymentPage({
       } else if (!(error instanceof ApiError) && currentMethodItem.backendMethod === 'CASH') {
         try {
           await executeOfflineCashPayment();
-          messageApi.info('Mất kết nối. Đã ghi nhận thanh toán tiền mặt trên thiết bị · Chờ đồng bộ.');
+          messageApi.info(
+            'Mất kết nối. Đã ghi nhận thanh toán tiền mặt trên thiết bị · Chờ đồng bộ.',
+          );
           return;
         } catch (offlineErr) {
           messageApi.error(errorText(offlineErr));

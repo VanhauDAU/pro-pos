@@ -44,9 +44,7 @@ export function updateTableInOverview(
   if (!current || !tableId) return current;
   return {
     ...current,
-    tables: current.tables.map((table) =>
-      table.id === tableId ? { ...table, ...patch } : table,
-    ),
+    tables: current.tables.map((table) => (table.id === tableId ? { ...table, ...patch } : table)),
   };
 }
 

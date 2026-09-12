@@ -79,15 +79,16 @@ export class HttpPosCommandSender implements PosCommandSender {
       | { data: PosCommandBaseQuote }
       | { error: { code: string; message: string; requestId: string; details?: unknown } };
     if (!response.ok || 'error' in payload) {
-      const envelope = 'error' in payload
-        ? payload
-        : {
-            error: {
-              code: 'QUOTE_REFRESH_FAILED',
-              message: 'Không thể tải trạng thái đơn mới nhất.',
-              requestId: crypto.randomUUID(),
-            },
-          };
+      const envelope =
+        'error' in payload
+          ? payload
+          : {
+              error: {
+                code: 'QUOTE_REFRESH_FAILED',
+                message: 'Không thể tải trạng thái đơn mới nhất.',
+                requestId: crypto.randomUUID(),
+              },
+            };
       throw new ApiError(envelope, response.status);
     }
     return payload.data;

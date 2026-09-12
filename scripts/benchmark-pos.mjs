@@ -169,21 +169,6 @@ async function openTakeaway(page, item) {
   });
 }
 
-async function openTakeawayWithItems(page, items) {
-  return mutation(page, '/api/v1/pos/orders/open', {
-    orderType: 'TAKEAWAY',
-    items,
-  });
-}
-
-function makeDistinctItems(item, count, prefix = 'bench-item') {
-  return Array.from({ length: count }, (_, idx) => ({
-    ...item,
-    quantityMilli: 1000,
-    note: `${prefix}-${idx + 1}`,
-  }));
-}
-
 async function openTimedDineIn(page, item) {
   const tables = (await api(page, '/api/v1/pos/tables')).data;
   const table = tables.find(
@@ -262,13 +247,10 @@ try {
         MUTATION_MEASUREMENTS,
       ),
     );
-
-    // Realistic save scenarios:
-    // 1. save_noop
     endpoints.push(
       await collectSamples(
         page,
-        'POST /api/v1/pos/orders/:id/save [save_noop]',
+        'POST /api/v1/pos/orders/:id/save',
         async () => {
           const opened = await openTakeaway(page, item);
           const orderId = opened.data.order.id;
@@ -277,188 +259,6 @@ try {
             expectedOrderVersion: opened.data.quote.order.version,
             nextAction: 'STAY',
             addedItems: [],
-            updatedItems: [],
-          });
-          await cancel(page, orderId);
-          return result;
-        },
-        MUTATION_MEASUREMENTS,
-      ),
-    );
-
-    // 2. save_add_1_takeaway
-    endpoints.push(
-      await collectSamples(
-        page,
-        'POST /api/v1/pos/orders/:id/save [save_add_1_takeaway]',
-        async () => {
-          const opened = await openTakeaway(page, item);
-          const orderId = opened.data.order.id;
-          createdOrderIds.add(orderId);
-          const result = await mutation(page, `/api/v1/pos/orders/${orderId}/save`, {
-            expectedOrderVersion: opened.data.quote.order.version,
-            nextAction: 'STAY',
-            addedItems: [{ ...item, quantityMilli: 1000, note: 'add-1' }],
-            updatedItems: [],
-          });
-          await cancel(page, orderId);
-          return result;
-        },
-        MUTATION_MEASUREMENTS,
-      ),
-    );
-
-    // 3. save_add_1_dine_in
-    endpoints.push(
-      await collectSamples(
-        page,
-        'POST /api/v1/pos/orders/:id/save [save_add_1_dine_in]',
-        async () => {
-          const opened = await openTimedDineIn(page, item);
-          const orderId = opened.data.order.id;
-          createdOrderIds.add(orderId);
-          const result = await mutation(page, `/api/v1/pos/orders/${orderId}/save`, {
-            expectedOrderVersion: opened.data.quote.order.version,
-            nextAction: 'STAY',
-            addedItems: [{ ...item, quantityMilli: 1000, note: 'add-1-dine-in' }],
-            updatedItems: [],
-          });
-          await cancel(page, orderId);
-          return result;
-        },
-        MUTATION_MEASUREMENTS,
-      ),
-    );
-
-    // 4. save_add_5
-    endpoints.push(
-      await collectSamples(
-        page,
-        'POST /api/v1/pos/orders/:id/save [save_add_5]',
-        async () => {
-          const opened = await openTakeaway(page, item);
-          const orderId = opened.data.order.id;
-          createdOrderIds.add(orderId);
-          const result = await mutation(page, `/api/v1/pos/orders/${orderId}/save`, {
-            expectedOrderVersion: opened.data.quote.order.version,
-            nextAction: 'STAY',
-            addedItems: makeDistinctItems(item, 5, 'add-5'),
-            updatedItems: [],
-          });
-          await cancel(page, orderId);
-          return result;
-        },
-        MUTATION_MEASUREMENTS,
-      ),
-    );
-
-    // 5. save_merge_existing_item
-    endpoints.push(
-      await collectSamples(
-        page,
-        'POST /api/v1/pos/orders/:id/save [save_merge_existing_item]',
-        async () => {
-          const opened = await mutation(page, '/api/v1/pos/orders/open', {
-            orderType: 'TAKEAWAY',
-            items: [{ ...item, quantityMilli: 1000, note: null }],
-          });
-          const orderId = opened.data.order.id;
-          createdOrderIds.add(orderId);
-          const result = await mutation(page, `/api/v1/pos/orders/${orderId}/save`, {
-            expectedOrderVersion: opened.data.quote.order.version,
-            nextAction: 'STAY',
-            addedItems: [{ ...item, quantityMilli: 2000, note: null }],
-            updatedItems: [],
-          });
-          await cancel(page, orderId);
-          return result;
-        },
-        MUTATION_MEASUREMENTS,
-      ),
-    );
-
-    // 6. save_existing_30_add_1
-    endpoints.push(
-      await collectSamples(
-        page,
-        'POST /api/v1/pos/orders/:id/save [save_existing_30_add_1]',
-        async () => {
-          const opened = await openTakeawayWithItems(page, makeDistinctItems(item, 30, 'init-30'));
-          const orderId = opened.data.order.id;
-          createdOrderIds.add(orderId);
-          const result = await mutation(page, `/api/v1/pos/orders/${orderId}/save`, {
-            expectedOrderVersion: opened.data.quote.order.version,
-            nextAction: 'STAY',
-            addedItems: [{ ...item, quantityMilli: 1000, note: 'add-new-after-30' }],
-            updatedItems: [],
-          });
-          await cancel(page, orderId);
-          return result;
-        },
-        Math.min(5, MUTATION_MEASUREMENTS),
-      ),
-    );
-
-    // 7. save_existing_60_add_1
-    endpoints.push(
-      await collectSamples(
-        page,
-        'POST /api/v1/pos/orders/:id/save [save_existing_60_add_1]',
-        async () => {
-          const opened = await openTakeawayWithItems(page, makeDistinctItems(item, 60, 'init-60'));
-          const orderId = opened.data.order.id;
-          createdOrderIds.add(orderId);
-          const result = await mutation(page, `/api/v1/pos/orders/${orderId}/save`, {
-            expectedOrderVersion: opened.data.quote.order.version,
-            nextAction: 'STAY',
-            addedItems: [{ ...item, quantityMilli: 1000, note: 'add-new-after-60' }],
-            updatedItems: [],
-          });
-          await cancel(page, orderId);
-          return result;
-        },
-        Math.min(3, MUTATION_MEASUREMENTS),
-      ),
-    );
-
-    // 8. save_with_promotion
-    endpoints.push(
-      await collectSamples(
-        page,
-        'POST /api/v1/pos/orders/:id/save [save_with_promotion]',
-        async () => {
-          const opened = await openTakeaway(page, item);
-          const orderId = opened.data.order.id;
-          createdOrderIds.add(orderId);
-          const quote = (await api(page, `/api/v1/pos/orders/${orderId}/quote`)).data;
-          const promoIds = (quote.promotionOptions || []).map((p) => p.id);
-          const result = await mutation(page, `/api/v1/pos/orders/${orderId}/save`, {
-            expectedOrderVersion: quote.order.version,
-            nextAction: 'STAY',
-            addedItems: [{ ...item, quantityMilli: 1000, note: 'add-with-promo' }],
-            updatedItems: [],
-            promotionIds: promoIds,
-          });
-          await cancel(page, orderId);
-          return result;
-        },
-        MUTATION_MEASUREMENTS,
-      ),
-    );
-
-    // 9. save_without_promotion
-    endpoints.push(
-      await collectSamples(
-        page,
-        'POST /api/v1/pos/orders/:id/save [save_without_promotion]',
-        async () => {
-          const opened = await openTakeaway(page, item);
-          const orderId = opened.data.order.id;
-          createdOrderIds.add(orderId);
-          const result = await mutation(page, `/api/v1/pos/orders/${orderId}/save`, {
-            expectedOrderVersion: opened.data.quote.order.version,
-            nextAction: 'STAY',
-            addedItems: [{ ...item, quantityMilli: 1000, note: 'add-without-promo' }],
             updatedItems: [],
           });
           await cancel(page, orderId);

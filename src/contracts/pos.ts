@@ -39,7 +39,6 @@ const saveOrderGuestSchema = z.object({
 
 export const openOrderCommandSchema = z
   .object({
-    orderId: z.uuid().optional(),
     orderType: z.enum(['DINE_IN', 'TAKEAWAY']),
     tableId: z.uuid().optional(),
     expectedTableVersion: z.number().int().positive().optional(),

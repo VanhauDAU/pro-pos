@@ -471,102 +471,40 @@ body,
 
 .staff-pos-bottom-nav {
   position: fixed;
-  z-index: 100;
+  z-index: 30;
   right: 0;
   bottom: 0;
   left: 0;
-  width: 100%;
-  height: auto;
-  min-height: calc(64px + env(safe-area-inset-bottom, 0px));
-  padding: 6px max(16px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom))
-    max(16px, env(safe-area-inset-left));
+  height: 88px;
+  padding: 8px max(18px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom));
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  align-items: center;
-  background: rgba(255, 255, 255, 0.84);
-  backdrop-filter: blur(25px) saturate(190%);
-  -webkit-backdrop-filter: blur(25px) saturate(190%);
-  border-top: 1px solid rgba(226, 232, 240, 0.85);
-  box-shadow:
-    0 -4px 20px rgba(15, 23, 42, 0.05),
-    inset 0 1px 0 rgba(255, 255, 255, 0.8);
-  user-select: none;
-  -webkit-user-select: none;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.98);
+  border-top: 1px solid #e4e7eb;
+  box-shadow: 0 -4px 18px rgba(18, 33, 55, 0.06);
 }
 
-.staff-pos-bottom-nav button,
-.staff-pos-nav-item {
-  position: relative;
+.staff-pos-bottom-nav button {
   border: 0;
-  border-radius: 20px;
+  border-radius: 12px;
   background: transparent;
-  color: #64748b;
+  color: #596273;
   font: inherit;
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-weight: 700;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
-  padding: 6px 4px;
-  min-height: 52px;
+  gap: 5px;
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-  outline: none;
   transition:
     color 180ms ease,
-    transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-.staff-pos-bottom-nav button:active,
-.staff-pos-nav-item:active {
-  transform: scale(0.95);
-}
-
-@media (hover: hover) {
-  .staff-pos-bottom-nav button:hover:not(.is-active) {
-    color: #334155;
-    background: rgba(255, 255, 255, 0.45);
-  }
-}
-
-.staff-pos-nav-active-pill {
-  position: absolute;
-  inset: 0;
-  border-radius: 20px;
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.98) 0%, rgba(235, 245, 255, 0.92) 100%);
-  border: 1.2px solid rgba(0, 113, 227, 0.28);
-  box-shadow:
-    0 4px 14px rgba(0, 113, 227, 0.16),
-    0 1px 4px rgba(0, 113, 227, 0.08),
-    inset 0 1px 1.5px rgba(255, 255, 255, 1),
-    inset 0 -1px 1px rgba(186, 218, 255, 0.5);
-  z-index: 1;
-  pointer-events: none;
-}
-
-/* Fallback if motion pill is not present */
-.staff-pos-bottom-nav button.is-active:not(:has(.staff-pos-nav-active-pill)) {
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.98) 0%, rgba(235, 245, 255, 0.92) 100%);
-  border: 1.2px solid rgba(0, 113, 227, 0.28);
-  box-shadow:
-    0 4px 14px rgba(0, 113, 227, 0.16),
-    0 1px 4px rgba(0, 113, 227, 0.08),
-    inset 0 1px 1.5px rgba(255, 255, 255, 1);
-}
-
-.staff-pos-bottom-nav button.is-active,
-.staff-pos-nav-item.is-active {
-  color: #0071e3;
-  font-weight: 700;
+    background-color 180ms ease;
 }
 
 .staff-pos-nav-icon {
   position: relative;
-  z-index: 2;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -575,17 +513,15 @@ body,
 }
 
 .staff-pos-nav-img {
-  width: 25px;
-  height: 25px;
+  width: 26px;
+  height: 26px;
   display: block;
   object-fit: contain;
-  opacity: 0.62;
-  filter: saturate(85%);
-  image-rendering: -webkit-optimize-contrast;
+  opacity: 0.6;
+  transform: scale(1);
   transition:
-    opacity 200ms ease,
-    filter 200ms ease,
-    transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    opacity 180ms ease,
+    transform 180ms ease;
   user-select: none;
   -webkit-user-drag: none;
   pointer-events: none;
@@ -593,57 +529,42 @@ body,
 
 .staff-pos-bottom-nav button.is-active .staff-pos-nav-img {
   opacity: 1;
-  filter: saturate(110%) drop-shadow(0 2px 6px rgba(0, 113, 227, 0.24));
-  transform: scale(1.06);
+  transform: scale(1.04);
 }
 
 @media (hover: hover) {
   .staff-pos-bottom-nav button:hover:not(.is-active) .staff-pos-nav-img {
     opacity: 0.85;
-    filter: saturate(100%);
   }
 }
 
-.staff-pos-nav-label {
-  position: relative;
-  z-index: 2;
-  font-size: 11.5px;
-  line-height: 1.2;
-  letter-spacing: -0.015em;
-  transition: color 200ms ease;
+.staff-pos-bottom-nav button:active .staff-pos-nav-img {
+  transform: scale(0.96);
 }
 
 .staff-pos-nav-badge {
   position: absolute;
-  top: -7px;
-  right: -11px;
-  z-index: 3;
+  top: -9px;
+  right: -13px;
   display: grid;
   place-items: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 4.5px;
-  border: 1.5px solid #ffffff;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  border: 2px solid #fff;
   border-radius: 999px;
-  background: linear-gradient(135deg, #ff3b30 0%, #e02424 100%);
-  color: #ffffff;
-  box-shadow:
-    0 2px 7px rgba(255, 59, 48, 0.38),
-    inset 0 1px 0 rgba(255, 255, 255, 0.4);
-  font-size: 9.5px;
+  background: #e11d48;
+  color: #fff;
+  box-shadow: 0 2px 7px rgb(190 18 60 / 28%);
+  font-size: 10px;
   font-weight: 800;
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
 
-@supports not ((-webkit-backdrop-filter: blur(20px)) or (backdrop-filter: blur(20px))) {
-  .staff-pos-bottom-nav {
-    background: rgba(255, 255, 255, 0.96);
-    border: 1px solid #e2e8f0;
-  }
-  .staff-pos-nav-active-pill {
-    background: #eef6ff;
-  }
+.staff-pos-bottom-nav button.is-active {
+  color: #0877ee;
+  background: #eef6ff;
 }
 
 .staff-pos-bottom-nav button:focus-visible,
@@ -1458,27 +1379,16 @@ body,
 
   .staff-pos-main {
     min-height: calc(100dvh - 144px);
-    padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
     background: #f8fafc;
   }
 
   .staff-pos-bottom-nav {
-    bottom: 0;
-    left: 0;
-    right: 0;
-    width: 100%;
-    max-width: 100%;
-    padding: 6px max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom))
-      max(8px, env(safe-area-inset-left));
-    gap: 6px;
-    border-radius: 0;
+    height: 80px;
+    gap: 4px;
   }
 
-  .staff-pos-bottom-nav button,
-  .staff-pos-nav-item {
-    font-size: 11px;
-    padding: 6px 3px;
-    min-height: 52px;
+  .staff-pos-bottom-nav button {
+    font-size: 12px;
   }
 
   .staff-areas-page {
@@ -1904,7 +1814,6 @@ body {
   line-height: 1.5;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
-  line-clamp: 3;
 }
 
 .staff-notification-audit-body > small {
@@ -2369,7 +2278,7 @@ body {
 }
 
 .staff-product-compact-row.is-selected {
-  background-color: #f0f7ff;
+  background: #f0f7ff;
 }
 
 /* Bottom Bar: [ Xem đơn ] | tổng tiền | [ Lưu đơn ] */

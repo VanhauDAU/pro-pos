@@ -64,18 +64,14 @@ function logRequestMetric(input: {
 let staffLogoutRedirecting = false;
 
 export function forceStaffLogout(reason = 'SESSION_EXPIRED') {
-  if (typeof window === 'undefined') return;
-  const target = `/?tab=employee&authError=${encodeURIComponent(reason)}`;
-  if (window.location.pathname === '/' && window.location.search.includes('authError=')) {
-    return;
-  }
-  if (staffLogoutRedirecting) return;
+  if (typeof window === 'undefined' || staffLogoutRedirecting) return;
   staffLogoutRedirecting = true;
   try {
     window.sessionStorage.clear();
   } catch {
     // Ignore storage errors in restricted contexts
   }
+  const target = `/?tab=employee&authError=${encodeURIComponent(reason)}`;
   window.location.replace(target);
 }
 

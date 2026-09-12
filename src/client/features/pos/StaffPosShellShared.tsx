@@ -36,6 +36,7 @@ import {
   useState,
 } from 'react';
 import { useNavigate } from 'react-router';
+import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 
 import type { AuthContextResponse } from '@contracts/auth';
@@ -56,6 +57,9 @@ import { apiRequest } from '@client/lib/api';
 import { WeatherChip } from '@client/features/weather/WeatherChip';
 import { playPosSound, warmPosSounds } from '@client/lib/sound';
 import { usePosPollingInterval, useRealtime } from '@client/realtime/RealtimeProvider';
+import { usePosOfflineStatus } from '@client/offline/use-pos-offline-status';
+import { posOfflineRuntime } from '@client/offline/runtime';
+import type { PosConflictRecord } from '@client/offline/types';
 
 import { PosNotificationTracker } from './pos-notification-tracker';
 
@@ -228,6 +232,7 @@ function PosNotificationWatcher() {
 export function PosNotificationsProvider({ children }: { children: React.ReactNode }) {
   const pollingInterval = usePosPollingInterval(15_000);
   const { status: realtimeStatus } = useRealtime();
+  const offlineStatus = usePosOfflineStatus();
   const [qrConfirmModalOpen, setQrConfirmModalOpen] = useState(false);
   const [backgroundReady, setBackgroundReady] = useState(false);
   const context = useQuery({
@@ -243,7 +248,7 @@ export function PosNotificationsProvider({ children }: { children: React.ReactNo
     queryKey: ['pos-notification-summary'],
     queryFn: ({ signal }) =>
       apiRequest<PosNotificationSummary>('/api/v1/pos/qr-orders/summary', { signal }),
-    enabled: Boolean(canHandleQr && backgroundReady),
+    enabled: Boolean(canHandleQr && backgroundReady && offlineStatus.reachable !== false),
     staleTime: 30_000,
     refetchOnMount: false,
     refetchInterval: pollingInterval,
@@ -453,6 +458,7 @@ export function StaffHeader({
   onOpenNotifications: () => void;
 }) {
   const { status } = useRealtime();
+  const offlineStatus = usePosOfflineStatus();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [modal, holder] = Modal.useModal();
@@ -463,17 +469,58 @@ export function StaffHeader({
     (notificationsData?.counts.guestOrders ?? 0) +
     (notificationsData?.counts.tableOpenRequests ?? 0);
   const showQrBell = pendingQrCount > 0;
+  const syncLabel =
+    offlineStatus.conflictCount > 0
+      ? `⚠ ${offlineStatus.conflictCount} mục cần xử lý`
+      : offlineStatus.syncing
+        ? `Đang đồng bộ ${offlineStatus.pendingCount} thay đổi`
+        : offlineStatus.reachable === false
+          ? offlineStatus.pendingCount > 0
+            ? `Offline · ${offlineStatus.pendingCount} thay đổi`
+            : 'Offline'
+          : offlineStatus.pendingCount > 0
+            ? `${offlineStatus.pendingCount} thay đổi chờ đồng bộ`
+            : status === 'CONNECTED'
+              ? 'Đã đồng bộ'
+              : 'Đang kết nối';
+  const syncTone =
+    offlineStatus.conflictCount > 0
+      ? 'conflict'
+      : offlineStatus.reachable === false
+        ? 'offline'
+        : offlineStatus.syncing || offlineStatus.pendingCount > 0
+          ? 'syncing'
+          : status.toLowerCase();
 
   const pendingNotificationCount =
     (notificationsData?.counts.guestOrders ?? 0) +
     (notificationsData?.counts.serviceRequests ?? 0) +
     (notificationsData?.counts.tableOpenRequests ?? 0);
 
+  const [conflictModalOpen, setConflictModalOpen] = useState(false);
+  const [conflicts, setConflicts] = useState<PosConflictRecord[]>([]);
+
+  const handleOpenConflicts = async () => {
+    const list = await posOfflineRuntime.listOpenConflicts();
+    setConflicts(list);
+    setConflictModalOpen(true);
+  };
+
+  const handleResolveConflict = async (id: string) => {
+    await posOfflineRuntime.resolveConflict(id);
+    const updated = await posOfflineRuntime.listOpenConflicts();
+    setConflicts(updated);
+    if (updated.length === 0) setConflictModalOpen(false);
+  };
+
   const logout = () => {
+    const hasPending = offlineStatus.pendingCount > 0;
     modal.confirm({
       title: 'Đăng xuất tài khoản',
       icon: <LogoutOutlined style={{ color: '#ff4d4f' }} />,
-      content: 'Bạn có chắc chắn muốn đăng xuất khỏi hệ thống POS?',
+      content: hasPending
+        ? `Thiết bị còn ${offlineStatus.pendingCount} thay đổi chưa đồng bộ. Các giao dịch này sẽ được giữ lại an toàn và tự động đồng bộ khi đăng nhập lại. Bạn có chắc muốn đăng xuất?`
+        : 'Bạn có chắc chắn muốn đăng xuất khỏi hệ thống POS?',
       okText: 'Đăng xuất',
       okButtonProps: { danger: true, loading: loggingOut },
       cancelText: 'Hủy',
@@ -512,29 +559,72 @@ export function StaffHeader({
       </div>
       <Tooltip
         title={
-          status === 'CONNECTED'
-            ? 'Đồng bộ trực tiếp (Realtime)'
-            : status === 'DISABLED'
-              ? 'Cập nhật định kỳ'
-              : 'Đang kết nối lại...'
+          offlineStatus.conflictCount > 0
+            ? 'Bấm để xem và xử lý xung đột dữ liệu'
+            : status === 'CONNECTED'
+              ? 'Đồng bộ trực tiếp (Realtime)'
+              : status === 'DISABLED'
+                ? 'Cập nhật định kỳ'
+                : 'Đang kết nối lại...'
         }
       >
-        <div
-          className={`staff-pos-sync-badge staff-pos-sync-badge--${status.toLowerCase()}`}
+        <button
+          type="button"
+          className={`staff-pos-sync-badge staff-pos-sync-badge--${syncTone}`}
           aria-label="Trạng thái kết nối"
-          role="status"
-          aria-live="polite"
+          onClick={() => {
+            if (offlineStatus.conflictCount > 0) void handleOpenConflicts();
+            else void posOfflineRuntime.syncNow();
+          }}
+          style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0 }}
         >
           <span className="staff-pos-sync-dot" />
-          <span className="staff-pos-sync-label">
-            {status === 'CONNECTED'
-              ? 'Trực tiếp'
-              : status === 'DISABLED'
-                ? 'Định kỳ'
-                : 'Kết nối lại'}
-          </span>
-        </div>
+          <span className="staff-pos-sync-label">{syncLabel}</span>
+        </button>
       </Tooltip>
+      <Modal
+        open={conflictModalOpen}
+        onCancel={() => setConflictModalOpen(false)}
+        footer={null}
+        title="Xung đột dữ liệu cần xử lý"
+      >
+        {conflicts.length === 0 ? (
+          <p style={{ color: '#6b7280', margin: '16px 0' }}>Không còn xung đột nào cần xử lý.</p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: 16 }}>
+            {conflicts.map((conflict) => (
+              <div
+                key={conflict.id}
+                style={{
+                  border: '1px solid #fed7aa',
+                  background: '#fffbeb',
+                  padding: '12px 14px',
+                  borderRadius: '8px',
+                }}
+              >
+                <div style={{ fontWeight: 600, color: '#b45309', marginBottom: '4px' }}>
+                  {conflict.type === 'OPEN_TABLE_CONFLICT'
+                    ? 'Xung đột mở bàn'
+                    : conflict.type === 'TERMINAL_CONFLICT'
+                      ? 'Đơn đã đóng trên máy chủ'
+                      : 'Xung đột dữ liệu đơn hàng'}
+                </div>
+                <div style={{ fontSize: '13px', color: '#4b5563', marginBottom: '10px' }}>
+                  {conflict.reason}
+                </div>
+                <Button
+                  size="small"
+                  type="primary"
+                  danger
+                  onClick={() => void handleResolveConflict(conflict.id)}
+                >
+                  Xác nhận & Bỏ qua
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </Modal>
       <WeatherChip />
       {showQrBell ? (
         <button
@@ -619,6 +709,7 @@ const navItems = [
 export function StaffBottomNav({ active }: { active: (typeof navItems)[number]['key'] }) {
   const navigate = useNavigate();
   const notifications = usePosNotifications();
+  const offlineStatus = usePosOfflineStatus();
   const context = useQuery({
     queryKey: ['pos-context'],
     queryFn: () => apiRequest<StaffContext>('/api/v1/pos/context'),
@@ -635,38 +726,53 @@ export function StaffBottomNav({ active }: { active: (typeof navItems)[number]['
     (notifications.data?.counts.tableOpenRequests ?? 0);
   return (
     <nav className="staff-pos-bottom-nav" aria-label="Điều hướng POS nhân viên">
-      {visibleNavItems.map((item) => (
-        <button
-          key={item.key}
-          type="button"
-          data-nav-key={item.key}
-          className={active === item.key ? 'is-active' : ''}
-          aria-label={
-            item.key === 'qr' && pendingNotificationCount > 0
-              ? `${item.label}, ${pendingNotificationCount} yêu cầu chưa xử lý`
-              : item.label
-          }
-          onClick={() => navigate(item.path)}
-        >
-          <span className="staff-pos-nav-icon">
-            <img
-              src={item.icon}
-              alt=""
-              width={26}
-              height={26}
-              className="staff-pos-nav-img"
-              draggable={false}
-              aria-hidden="true"
-            />
-            {item.key === 'qr' && pendingNotificationCount > 0 ? (
-              <b className="staff-pos-nav-badge">
-                {pendingNotificationCount > 99 ? '99+' : pendingNotificationCount}
-              </b>
+      {visibleNavItems.map((item) => {
+        const isActive = active === item.key;
+        const offlineQr = item.key === 'qr' && offlineStatus.reachable === false;
+        return (
+          <button
+            key={item.key}
+            type="button"
+            disabled={offlineQr}
+            title={offlineQr ? 'QR Order cần kết nối Internet' : undefined}
+            data-nav-key={item.key}
+            className={`staff-pos-nav-item ${isActive ? 'is-active' : ''}`}
+            aria-label={
+              item.key === 'qr' && pendingNotificationCount > 0
+                ? `${item.label}, ${pendingNotificationCount} yêu cầu chưa xử lý`
+                : item.label
+            }
+            onClick={() => {
+              if (!offlineQr) navigate(item.path);
+            }}
+          >
+            {isActive ? (
+              <motion.div
+                layoutId="staff-pos-nav-pill"
+                className="staff-pos-nav-active-pill"
+                transition={{ type: 'spring', stiffness: 440, damping: 33 }}
+              />
             ) : null}
-          </span>
-          <span>{item.label}</span>
-        </button>
-      ))}
+            <span className="staff-pos-nav-icon">
+              <img
+                src={item.icon}
+                alt=""
+                width={26}
+                height={26}
+                className="staff-pos-nav-img"
+                draggable={false}
+                aria-hidden="true"
+              />
+              {item.key === 'qr' && pendingNotificationCount > 0 ? (
+                <b className="staff-pos-nav-badge">
+                  {pendingNotificationCount > 99 ? '99+' : pendingNotificationCount}
+                </b>
+              ) : null}
+            </span>
+            <span className="staff-pos-nav-label">{item.label}</span>
+          </button>
+        );
+      })}
     </nav>
   );
 }

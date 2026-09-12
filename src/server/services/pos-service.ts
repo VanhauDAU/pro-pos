@@ -848,7 +848,7 @@ export class PosService {
     storeId: string,
     commandId: string,
     payloadHash: string,
-  ): Promise<Awaited<ReturnType<PosService['orderMutationSnapshot']>> | null> {
+  ): Promise<OrderMutationSnapshot | null> {
     const replay = await this.repository.findSaveCommand(storeId, commandId);
     if (!replay) return null;
     if (replay.payloadHash !== payloadHash) {
@@ -859,9 +859,7 @@ export class PosService {
       );
     }
     if (replay.responseJson) {
-      return JSON.parse(replay.responseJson) as Awaited<
-        ReturnType<PosService['orderMutationSnapshot']>
-      >;
+      return parseStoredSaveReplay(replay.responseJson);
     }
     return this.orderMutationSnapshot(storeId, replay.orderId, commandId);
   }
@@ -1091,16 +1089,22 @@ export class PosService {
     return { statements, changed: true, versionDelta: 1 };
   }
 
-  private async orderMutationSnapshot(
+  async orderMutationSnapshot(
     storeId: string,
     orderId: string,
     clientMutationId: string,
     now = Date.now(),
     includeLatestCallBatch = false,
     timing?: TimingCallback,
+    projection: 'FULL' | 'EDITOR' = 'FULL',
   ) {
     const [quote, table, callBatchPage] = await Promise.all([
-      measurePhase(timing, 'snapshot_quote', () => this.quote(storeId, orderId, now)),
+      measurePhase(timing, 'snapshot_quote', () =>
+        this.quote(storeId, orderId, now, {
+          projection,
+          ...(timing ? { timing } : {}),
+        }),
+      ),
       measurePhase(timing, 'snapshot_tables', () =>
         this.repository.findTableByOrderId(storeId, orderId),
       ),
@@ -1253,7 +1257,7 @@ export class PosService {
     const replay = await this.replaySaveCommand(input.storeId, input.idempotencyKey, payloadHash);
     if (replay) return replay;
     const now = Date.now();
-    const orderId = crypto.randomUUID();
+    const orderId = input.values.orderId ?? crypto.randomUUID();
     const takeaway = input.values.orderType === 'TAKEAWAY';
     const [preparedItems, guest, businessDay, pricing] = await measurePhase(
       input.timing,
@@ -1505,6 +1509,73 @@ export class PosService {
     return snapshot;
   }
 
+  private async loadSaveCommandState(
+    storeId: string,
+    orderId: string,
+    needsTimeAmount: boolean,
+    now: number,
+    timing?: TimingCallback,
+  ) {
+    const order = await measurePhase(
+      timing,
+      'cmd_prepare',
+      async () =>
+        (await this.repository.findOrder(storeId, orderId)) ??
+        (await this.repository.findTakeawayOrder(storeId, orderId)),
+    );
+    if (!order) {
+      throw new AppError('ORDER_NOT_FOUND', 'Không tìm thấy đơn.', 404);
+    }
+
+    const [itemsResult, timeSession] = await measurePhase(timing, 'cmd_prepare', () =>
+      Promise.all([
+        order.order_type === 'TAKEAWAY'
+          ? this.repository.listTakeawayOrderItems(storeId, orderId)
+          : this.repository.listOrderItems(storeId, orderId),
+        needsTimeAmount && order.order_type === 'DINE_IN'
+          ? this.repository.findTimeSession(storeId, orderId)
+          : Promise.resolve(null),
+      ]),
+    );
+
+    let timeAmountVnd = 0;
+    if (timeSession) {
+      const [tableSegments, pauses] = await measurePhase(timing, 'cmd_prepare', () =>
+        Promise.all([
+          this.repository.listTableTimeSegments(storeId, timeSession.id),
+          this.repository.listPauses(storeId, timeSession.id),
+        ]),
+      );
+      const sessionPricing = calculateSessionPricing({
+        session: timeSession,
+        tableSegments: tableSegments.results,
+        pauses: pauses.results,
+        now,
+      });
+      timeAmountVnd = sessionPricing?.amountAfterRoundingVnd ?? 0;
+    }
+
+    return {
+      order: {
+        id: order.id,
+        orderType: order.order_type as 'DINE_IN' | 'TAKEAWAY',
+        status: order.status,
+        version: order.version,
+        note: order.note,
+        guestCount: order.guest_count ?? 1,
+        customerId: order.customer_id ?? null,
+        customerName: order.customer_name ?? null,
+        customerPhone: order.customer_phone ?? null,
+        tableId: order.table_id ?? null,
+        hasCallHistory: order.has_call_history === 1,
+      },
+      items: itemsResult.results,
+      time: {
+        amountAfterRoundingVnd: timeAmountVnd,
+      },
+    };
+  }
+
   async saveOrderCommand(input: {
     storeId: string;
     actorId: string;
@@ -1526,17 +1597,27 @@ export class PosService {
     }
     const now = Date.now();
     const current = await measurePhase(input.timing, 'cmd_prepare', () =>
-      this.quote(input.storeId, input.orderId, now),
+      this.loadSaveCommandState(
+        input.storeId,
+        input.orderId,
+        input.values.promotionIds !== undefined,
+        now,
+        input.timing,
+      ),
     );
     if (
       current.order.status !== 'OPEN' ||
       current.order.version !== input.values.expectedOrderVersion
     ) {
+      const conflictQuote = await this.quote(input.storeId, input.orderId, now, {
+        projection: 'EDITOR',
+        ...(input.timing ? { timing: input.timing } : {}),
+      });
       throw new AppError(
         'ORDER_VERSION_CONFLICT',
         'Đơn hàng đã thay đổi. Vui lòng đối chiếu lại trước khi lưu.',
         409,
-        { quote: current },
+        { quote: conflictQuote },
       );
     }
     const takeaway = current.order.orderType === 'TAKEAWAY';
@@ -1984,22 +2065,25 @@ export class PosService {
         });
       }
     }
-    const promotionResult = await measurePhase(input.timing, 'cmd_promotion', () =>
-      this.promotionStatements({
-        storeId: input.storeId,
-        orderId: input.orderId,
-        orderType: current.order.orderType,
-        promotionIds: input.values.promotionIds,
-        customerId: guest?.customerId ?? current.order.customerId,
-        items: finalItems,
-        subtotalVnd:
-          finalItems.reduce((sum, item) => sum + item.netLineTotalVnd, 0) +
-          (current.time?.amountAfterRoundingVnd ?? 0),
-        expectedVersion: version,
-        actorId: input.actorId,
-        now,
-      }),
-    );
+    const promotionResult =
+      input.values.promotionIds !== undefined
+        ? await measurePhase(input.timing, 'cmd_promotion', () =>
+            this.promotionStatements({
+              storeId: input.storeId,
+              orderId: input.orderId,
+              orderType: current.order.orderType,
+              promotionIds: input.values.promotionIds,
+              customerId: guest?.customerId ?? current.order.customerId,
+              items: finalItems,
+              subtotalVnd:
+                finalItems.reduce((sum, item) => sum + item.netLineTotalVnd, 0) +
+                (current.time?.amountAfterRoundingVnd ?? 0),
+              expectedVersion: version,
+              actorId: input.actorId,
+              now,
+            }),
+          )
+        : { statements: [], changed: false, versionDelta: 0 };
     const promotionChanged = promotionResult.changed;
     if (promotionResult.statements.length > 0) {
       statements.push(...promotionResult.statements);
@@ -2049,13 +2133,14 @@ export class PosService {
           now,
           false,
           input.timing,
+          'EDITOR',
         ),
       );
       await measurePhase(input.timing, 'cmd_complete', () =>
         this.repository.completeSaveCommand(
           input.storeId,
           input.idempotencyKey,
-          JSON.stringify(snapshot),
+          JSON.stringify(compactSaveSnapshot(snapshot)),
           Date.now(),
         ),
       );
@@ -2125,13 +2210,14 @@ export class PosService {
         now,
         true,
         input.timing,
+        'EDITOR',
       ),
     );
     await measurePhase(input.timing, 'cmd_complete', () =>
       this.repository.completeSaveCommand(
         input.storeId,
         input.idempotencyKey,
-        JSON.stringify(snapshot),
+        JSON.stringify(compactSaveSnapshot(snapshot)),
         Date.now(),
       ),
     );
@@ -3028,9 +3114,9 @@ export class PosService {
     orderId: string,
     now = Date.now(),
     context?: {
-      requestId?: string;
-      projection?: 'FULL' | 'EDITOR';
-      timing?: TimingCallback;
+      requestId?: string | undefined;
+      projection?: 'FULL' | 'EDITOR' | undefined;
+      timing?: TimingCallback | undefined;
     },
   ) {
     const quote = await readStableVersionedSnapshot({
@@ -4914,4 +5000,51 @@ export class PosService {
       },
     };
   }
+}
+
+export type OrderMutationSnapshot = Awaited<ReturnType<PosService['orderMutationSnapshot']>>;
+
+export interface StoredSaveReplayV1 {
+  v: 1;
+  clientMutationId: string;
+  quote: OrderMutationSnapshot['quote'];
+  tableSummaries: OrderMutationSnapshot['tableSummaries'];
+  orderVersion: number;
+  serverNowMs: number;
+  callBatch?: NonNullable<OrderMutationSnapshot['callBatch']>;
+}
+
+export function compactSaveSnapshot(snapshot: OrderMutationSnapshot): StoredSaveReplayV1 {
+  return {
+    v: 1,
+    clientMutationId: snapshot.clientMutationId,
+    quote: snapshot.quote,
+    tableSummaries: snapshot.tableSummaries,
+    orderVersion: snapshot.orderVersion,
+    serverNowMs: snapshot.serverNowMs,
+    ...(snapshot.callBatch ? { callBatch: snapshot.callBatch } : {}),
+  };
+}
+
+export function parseStoredSaveReplay(json: string): OrderMutationSnapshot {
+  const parsed = JSON.parse(json);
+  if (parsed && typeof parsed === 'object' && 'v' in parsed && parsed.v === 1) {
+    const stored = parsed as StoredSaveReplayV1;
+    return {
+      clientMutationId: stored.clientMutationId,
+      quote: stored.quote,
+      order: stored.quote.order,
+      items: stored.quote.items,
+      totals: {
+        subtotalVnd: stored.quote.subtotalVnd,
+        discountTotalVnd: stored.quote.discountTotalVnd,
+        totalVnd: stored.quote.totalVnd,
+      },
+      tableSummaries: stored.tableSummaries,
+      orderVersion: stored.orderVersion,
+      serverNowMs: stored.serverNowMs,
+      ...(stored.callBatch ? { callBatch: stored.callBatch } : {}),
+    };
+  }
+  return parsed as OrderMutationSnapshot;
 }

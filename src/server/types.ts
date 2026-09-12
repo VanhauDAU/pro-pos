@@ -13,7 +13,6 @@ export interface RequestPrincipal {
     storeName?: string;
   };
   sessionId: string;
-  sessionExpiresAt: number;
   storeStatus: 'ACTIVE' | 'LOCKED' | null;
   permissions: ReadonlySet<string>;
 }

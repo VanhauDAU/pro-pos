@@ -28,9 +28,7 @@ export function appBootstrapQueryOptions(queryClient: QueryClient, surface: AppB
       return bootstrap;
     },
     staleTime: 5_000,
-    // Hydrated IndexedDB data renders immediately; a mounted online client still
-    // revalidates the HTTP-only session and refreshes authoritative POS state.
-    refetchOnMount: true,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
 }

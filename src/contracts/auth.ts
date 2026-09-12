@@ -110,8 +110,6 @@ export interface AuthContextResponse {
   };
   allowedEntrypoints: Array<'OWNER' | 'EMPLOYEE' | 'PLATFORM'>;
   csrfToken: string | null;
-  /** Public expiry boundary for reusing an already verified POS identity offline. */
-  offlineAccessExpiresAt?: number | null;
 }
 
 export interface LoginResponse {

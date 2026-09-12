@@ -100,7 +100,7 @@ import {
   useState,
 } from 'react';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router';
-import { AnimatePresence, motion } from 'framer-motion';
+import { motion } from 'framer-motion';
 
 import type { AuthContextResponse } from '@contracts/auth';
 import type { AppBootstrapResponse } from '@contracts/app-bootstrap';
@@ -162,16 +162,6 @@ import {
 import { canonicalPaymentPath } from './payment-navigation';
 import { posErrorText } from './pos-error';
 import { orderQuoteQueryOptions, quoteIsVerifiedForInteraction } from './pos-order-query';
-import { usePosOfflineStatus } from '@client/offline/use-pos-offline-status';
-import { posOfflineRuntime } from '@client/offline/runtime';
-import {
-  buildOptimisticOpenSnapshot,
-  buildOptimisticSaveSnapshot,
-  buildOptimisticOverviewForOpenOrder,
-  buildOptimisticOverviewForSaveOrder,
-  removeOrderFromOverview,
-  updateTableInOverview,
-} from '@client/offline/optimistic';
 import {
   PosNotificationsProvider,
   StaffBottomNav,
@@ -1805,24 +1795,38 @@ function MorePage({ auth }: { auth: AuthContextResponse }) {
     <div className="staff-more-page">
       {holder}
       <section className="staff-profile-hero">
-        <div className="staff-profile-hero__avatar-wrap">
-          <Avatar size={44} icon={<UserOutlined />} className="staff-profile-hero__avatar" />
+        <div style={{ position: 'relative', display: 'inline-block' }}>
+          <Avatar size={76} icon={<UserOutlined />} />
           <span
-            className="owner-staff-online-dot staff-profile-hero__online-dot"
+            className="owner-staff-online-dot"
+            style={{ width: 16, height: 16, border: '3px solid #fff', bottom: 2, right: 2 }}
             title="Đang hoạt động"
           />
         </div>
-        <div className="staff-profile-hero__info">
-          <div className="staff-profile-hero__header">
-            <span className="staff-profile-hero__name">{auth.actor!.displayName}</span>
-            <span className="staff-profile-hero__status">
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <Typography.Title level={2} style={{ margin: 0 }}>
+              {auth.actor!.displayName}
+            </Typography.Title>
+            <Tag
+              color="success"
+              style={{
+                borderRadius: 12,
+                padding: '1px 10px',
+                fontWeight: 600,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                fontSize: 12,
+              }}
+            >
               <span className="owner-staff-online-pulse" />
               Đang hoạt động
-            </span>
+            </Tag>
           </div>
-          <span className="staff-profile-hero__role">
+          <Typography.Text style={{ marginTop: 4, display: 'block' }}>
             {isOwner ? 'Chủ cửa hàng (Quản trị viên)' : 'Nhân viên cửa hàng'}
-          </span>
+          </Typography.Text>
         </div>
       </section>
 
@@ -4402,146 +4406,6 @@ const getDefaultCartWidth = () => {
   return Math.max(420, Math.min(window.innerWidth - 380, Math.round(window.innerWidth * 0.4)));
 };
 
-interface CompactProductStepperProps {
-  product: CatalogProduct;
-  effectiveCount: number;
-  onAdd: (e: React.MouseEvent) => void;
-  onMinus: (e: React.MouseEvent) => void;
-}
-
-const CompactProductStepper = memo(function CompactProductStepper({
-  product,
-  effectiveCount,
-  onAdd,
-  onMinus,
-}: CompactProductStepperProps) {
-  const isSingleQuantity = product.productType === 'QUANTITY' && product.variants.length === 1;
-
-  const [showBubble, setShowBubble] = useState(false);
-  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const prevCountRef = useRef(effectiveCount);
-
-  const triggerBubble = useCallback(() => {
-    setShowBubble(true);
-    if (hideTimerRef.current) {
-      clearTimeout(hideTimerRef.current);
-    }
-    hideTimerRef.current = setTimeout(() => {
-      setShowBubble(false);
-    }, 750);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (prevCountRef.current !== effectiveCount) {
-      if (effectiveCount > 0) {
-        triggerBubble();
-      } else {
-        setShowBubble(false);
-      }
-      prevCountRef.current = effectiveCount;
-    }
-  }, [effectiveCount, triggerBubble]);
-
-  if (!isSingleQuantity) {
-    return (
-      <button
-        type="button"
-        className="staff-product-compact-add-btn"
-        onClick={onAdd}
-        aria-label={`Thêm ${product.productName}`}
-      >
-        <PlusOutlined />
-      </button>
-    );
-  }
-
-  const isExpanded = effectiveCount > 0;
-
-  return (
-    <div className="staff-product-compact-stepper-container">
-      <AnimatePresence>
-        {showBubble && effectiveCount > 0 ? (
-          <motion.div
-            key="stepper-floating-bubble"
-            className="staff-stepper-floating-bubble"
-            initial={{ opacity: 0, y: 6, scale: 0.8, x: '-50%' }}
-            animate={{ opacity: 1, y: 0, scale: 1, x: '-50%' }}
-            exit={{ opacity: 0, y: 4, scale: 0.8, x: '-50%' }}
-            transition={{
-              type: 'spring',
-              stiffness: 550,
-              damping: 30,
-            }}
-          >
-            <motion.span
-              key={effectiveCount}
-              initial={{ scale: 0.72, opacity: 0.4 }}
-              animate={{ scale: 1, opacity: 1 }}
-              transition={{ duration: 0.12, ease: 'easeOut' }}
-            >
-              {formatDecimal(effectiveCount)}
-            </motion.span>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
-
-      <div
-        className={`staff-product-compact-stepper-wrap ${isExpanded ? 'is-expanded' : ''}`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <AnimatePresence initial={false}>
-          {isExpanded ? (
-            <motion.div
-              key="stepper-controls"
-              className="staff-product-compact-stepper__left"
-              initial={{ opacity: 0, width: 0, x: 14 }}
-              animate={{ opacity: 1, width: 'auto', x: 0 }}
-              exit={{ opacity: 0, width: 0, x: 14 }}
-              transition={{
-                duration: 0.24,
-                ease: [0.2, 0.8, 0.2, 1],
-              }}
-            >
-              <button
-                type="button"
-                className="staff-product-compact-stepper__btn minus"
-                onClick={onMinus}
-                aria-label="Giảm"
-              >
-                −
-              </button>
-              <motion.span
-                key={effectiveCount}
-                className="staff-product-compact-stepper__count"
-                initial={{ scale: 0.65, opacity: 0.3 }}
-                animate={{ scale: 1, opacity: 1 }}
-                transition={{ duration: 0.14, ease: 'easeOut' }}
-              >
-                {formatDecimal(effectiveCount)}
-              </motion.span>
-            </motion.div>
-          ) : null}
-        </AnimatePresence>
-
-        <button
-          type="button"
-          className={`staff-product-compact-stepper__btn plus ${!isExpanded ? 'is-initial-add' : ''}`}
-          onClick={onAdd}
-          aria-label={isExpanded ? 'Tăng' : `Thêm ${product.productName}`}
-        >
-          <PlusOutlined style={{ fontSize: isExpanded ? 11 : 13 }} />
-        </button>
-      </div>
-    </div>
-  );
-});
-
 function OrderEditor({
   auth,
   orderIdOverride,
@@ -4560,7 +4424,6 @@ function OrderEditor({
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const offlineStatus = usePosOfflineStatus();
   const { serverTimeOffsetMs, status: realtimeStatus } = useRealtime();
   const messageApi = toast;
   const holder = null;
@@ -4749,9 +4612,6 @@ function OrderEditor({
     if (!isNew && orderId) {
       try {
         localStorage.removeItem(`propos:order-draft:${orderId}`);
-        if (auth.actor?.storeId) {
-          void posOfflineRuntime.repository.deleteDraft(auth.actor.storeId, orderId);
-        }
       } catch {
         // Local recovery is best-effort only.
       }
@@ -5104,24 +4964,20 @@ function OrderEditor({
       try {
         if (!hasItemDraft) {
           localStorage.removeItem(`propos:order-draft:${orderId}`);
-          if (auth.actor?.storeId) {
-            void posOfflineRuntime.repository.deleteDraft(auth.actor.storeId, orderId);
-          }
           draftBaseVersionRef.current = null;
           return;
         }
         draftBaseVersionRef.current ??= quote.data.order.version;
-        const draftValue = {
-          baseVersion: draftBaseVersionRef.current,
-          draftLines,
-          modifiedItemQuantities,
-          modifiedItemDetails,
-          savedAt: Date.now(),
-        };
-        localStorage.setItem(`propos:order-draft:${orderId}`, JSON.stringify(draftValue));
-        if (auth.actor?.storeId) {
-          void posOfflineRuntime.repository.saveDraft(auth.actor.storeId, orderId, draftValue);
-        }
+        localStorage.setItem(
+          `propos:order-draft:${orderId}`,
+          JSON.stringify({
+            baseVersion: draftBaseVersionRef.current,
+            draftLines,
+            modifiedItemQuantities,
+            modifiedItemDetails,
+            savedAt: Date.now(),
+          }),
+        );
       } catch {
         // Local recovery is best-effort only.
       }
@@ -5950,97 +5806,25 @@ function OrderEditor({
         await saveWithTableV1(table, checkoutAfterSave);
         return;
       }
-      const clientOrderId = crypto.randomUUID();
-      const payload = {
-        orderId: clientOrderId,
-        orderType: 'DINE_IN' as const,
-        tableId: table.id,
-        expectedTableVersion: table.version,
-        items: draftItemsPayload(),
-        note: orderNote.trim() || null,
-        guest: {
-          guestCount: Math.max(1, guestCount),
-          customerName: customerName.trim() || null,
-          customerPhone: customerPhone.trim() || null,
-          customerId,
-        },
-        ...(manualPromotionIds === null ? {} : { promotionIds: manualPromotionIds }),
-      };
-
-      const isOfflineNow = !navigator.onLine || offlineStatus.reachable === false;
-      if (isOfflineNow) {
-        const optimisticSnapshot = buildOptimisticOpenSnapshot({
-          clientOrderId,
+      const snapshot = await jsonRequest<OrderMutationSnapshot>(
+        '/api/v1/pos/orders/open',
+        {
           orderType: 'DINE_IN',
-          table,
-          draftLines,
-          orderNote,
-          guestCount,
-          customerName,
-          customerPhone,
-          customerId,
-          openedByName: auth.actor?.displayName ?? null,
-        });
-        await posOfflineRuntime.enqueue({
-          type: 'OPEN_ORDER',
-          orderId: clientOrderId,
-          path: '/api/v1/pos/orders/open',
-          body: payload,
-          optimisticQuote: optimisticSnapshot.quote,
-          optimisticOverview: buildOptimisticOverviewForOpenOrder(
-            queryClient.getQueryData<PosOverviewSnapshot>(['pos-overview']),
-            optimisticSnapshot,
-          ),
-        });
-        messageApi.success('Đã mở bàn trên thiết bị · Chờ đồng bộ.');
-        completeCreatedOrder(
-          optimisticSnapshot as unknown as OrderMutationSnapshot,
-          checkoutAfterSave,
-        );
-        return;
-      }
-
-      try {
-        const snapshot = await jsonRequest<OrderMutationSnapshot>(
-          '/api/v1/pos/orders/open',
-          payload,
-          { headers: mutationHeaders(csrf) },
-        );
-        completeCreatedOrder(snapshot, checkoutAfterSave);
-      } catch (reqError) {
-        if (!(reqError instanceof ApiError)) {
-          const optimisticSnapshot = buildOptimisticOpenSnapshot({
-            clientOrderId,
-            orderType: 'DINE_IN',
-            table,
-            draftLines,
-            orderNote,
-            guestCount,
-            customerName,
-            customerPhone,
+          tableId: table.id,
+          expectedTableVersion: table.version,
+          items: draftItemsPayload(),
+          note: orderNote.trim() || null,
+          guest: {
+            guestCount: Math.max(1, guestCount),
+            customerName: customerName.trim() || null,
+            customerPhone: customerPhone.trim() || null,
             customerId,
-            openedByName: auth.actor?.displayName ?? null,
-          });
-          await posOfflineRuntime.enqueue({
-            type: 'OPEN_ORDER',
-            orderId: clientOrderId,
-            path: '/api/v1/pos/orders/open',
-            body: payload,
-            optimisticQuote: optimisticSnapshot.quote,
-            optimisticOverview: buildOptimisticOverviewForOpenOrder(
-              queryClient.getQueryData<PosOverviewSnapshot>(['pos-overview']),
-              optimisticSnapshot,
-            ),
-          });
-          messageApi.info('Mất kết nối. Đã mở bàn trên thiết bị · Chờ đồng bộ.');
-          completeCreatedOrder(
-            optimisticSnapshot as unknown as OrderMutationSnapshot,
-            checkoutAfterSave,
-          );
-          return;
-        }
-        throw reqError;
-      }
+          },
+          ...(manualPromotionIds === null ? {} : { promotionIds: manualPromotionIds }),
+        },
+        { headers: mutationHeaders(csrf) },
+      );
+      completeCreatedOrder(snapshot, checkoutAfterSave);
     } catch (error) {
       messageApi.error(errorText(error));
     } finally {
@@ -6078,84 +5862,22 @@ function OrderEditor({
   };
 
   const createTakeawayOrderFromDraft = async () => {
-    const clientOrderId = crypto.randomUUID();
-    const payload = {
-      orderId: clientOrderId,
-      orderType: 'TAKEAWAY' as const,
-      items: draftItemsPayload(),
-      note: orderNote.trim() || null,
-      guest: {
-        guestCount: Math.max(1, guestCount),
-        customerName: customerName.trim() || null,
-        customerPhone: customerPhone.trim() || null,
-        customerId,
-      },
-      ...(manualPromotionIds === null ? {} : { promotionIds: manualPromotionIds }),
-    };
-
-    const isOfflineNow = !navigator.onLine || offlineStatus.reachable === false;
-    if (isOfflineNow) {
-      const optimisticSnapshot = buildOptimisticOpenSnapshot({
-        clientOrderId,
+    return jsonRequest<OrderMutationSnapshot>(
+      '/api/v1/pos/orders/open',
+      {
         orderType: 'TAKEAWAY',
-        table: null,
-        draftLines,
-        orderNote,
-        guestCount,
-        customerName,
-        customerPhone,
-        customerId,
-        openedByName: auth.actor?.displayName ?? null,
-      });
-      await posOfflineRuntime.enqueue({
-        type: 'OPEN_ORDER',
-        orderId: clientOrderId,
-        path: '/api/v1/pos/orders/open',
-        body: payload,
-        optimisticQuote: optimisticSnapshot.quote,
-        optimisticOverview: buildOptimisticOverviewForOpenOrder(
-          queryClient.getQueryData<PosOverviewSnapshot>(['pos-overview']),
-          optimisticSnapshot,
-        ),
-      });
-      messageApi.success('Đã tạo đơn mang về trên thiết bị · Chờ đồng bộ.');
-      return optimisticSnapshot as unknown as OrderMutationSnapshot;
-    }
-
-    try {
-      return await jsonRequest<OrderMutationSnapshot>('/api/v1/pos/orders/open', payload, {
-        headers: mutationHeaders(csrf),
-      });
-    } catch (reqError) {
-      if (!(reqError instanceof ApiError)) {
-        const optimisticSnapshot = buildOptimisticOpenSnapshot({
-          clientOrderId,
-          orderType: 'TAKEAWAY',
-          table: null,
-          draftLines,
-          orderNote,
-          guestCount,
-          customerName,
-          customerPhone,
+        items: draftItemsPayload(),
+        note: orderNote.trim() || null,
+        guest: {
+          guestCount: Math.max(1, guestCount),
+          customerName: customerName.trim() || null,
+          customerPhone: customerPhone.trim() || null,
           customerId,
-          openedByName: auth.actor?.displayName ?? null,
-        });
-        await posOfflineRuntime.enqueue({
-          type: 'OPEN_ORDER',
-          orderId: clientOrderId,
-          path: '/api/v1/pos/orders/open',
-          body: payload,
-          optimisticQuote: optimisticSnapshot.quote,
-          optimisticOverview: buildOptimisticOverviewForOpenOrder(
-            queryClient.getQueryData<PosOverviewSnapshot>(['pos-overview']),
-            optimisticSnapshot,
-          ),
-        });
-        messageApi.info('Mất kết nối. Đã tạo đơn mang về trên thiết bị · Chờ đồng bộ.');
-        return optimisticSnapshot as unknown as OrderMutationSnapshot;
-      }
-      throw reqError;
-    }
+        },
+        ...(manualPromotionIds === null ? {} : { promotionIds: manualPromotionIds }),
+      },
+      { headers: mutationHeaders(csrf) },
+    );
   };
 
   const saveAdditionalItems = async (openPaymentAfterSave = false, confirmedConflicts = false) => {
@@ -6199,110 +5921,32 @@ function OrderEditor({
         }
         return;
       }
-      const payload = {
-        expectedOrderVersion: quote.data.order.version,
-        addedItems: draftItemsPayload(),
-        updatedItems: updatedItemsPayload(),
-        ...(orderNote !== (quote.data.order.note ?? '') ? { note: orderNote.trim() || null } : {}),
-        ...(manualPromotionIds === null ? {} : { promotionIds: manualPromotionIds }),
-      };
-
-      const isOfflineNow = !navigator.onLine || offlineStatus.reachable === false;
-      if (isOfflineNow) {
-        const optimisticSnapshot = buildOptimisticSaveSnapshot({
-          currentQuote: quote.data,
-          draftLines,
+      const snapshot = await jsonRequest<OrderMutationSnapshot>(
+        `/api/v1/pos/orders/${quote.data.order.id}/save`,
+        {
+          expectedOrderVersion: quote.data.order.version,
+          addedItems: draftItemsPayload(),
           updatedItems: updatedItemsPayload(),
-          note: orderNote.trim() || null,
-          tableSummaries:
-            queryClient
-              .getQueryData<PosTable[]>(['pos-tables'])
-              ?.filter((t) => t.id === quote.data!.order.tableId) ?? [],
-        });
-        await posOfflineRuntime.enqueue({
-          type: 'SAVE_ORDER',
-          orderId: quote.data.order.id,
-          path: `/api/v1/pos/orders/${quote.data.order.id}/save`,
-          body: payload,
-          baseQuote: quote.data,
-          optimisticQuote: optimisticSnapshot.quote,
-          optimisticOverview: buildOptimisticOverviewForSaveOrder(
-            queryClient.getQueryData<PosOverviewSnapshot>(['pos-overview']),
-            quote.data.order.id,
-            optimisticSnapshot.quote,
-          ),
-        });
-        applyOrderMutationSnapshot(optimisticSnapshot as unknown as OrderMutationSnapshot);
-        clearOrderDraft();
-        setManualPromotionIds(null);
-        playOrderSaveSound();
-        messageApi.success('Đã lưu trên thiết bị · Chờ đồng bộ.');
-        if (openPaymentAfterSave) {
-          navigateToPayment(optimisticSnapshot.order.id);
-        } else {
-          setMobileView('CART');
-        }
-        return;
-      }
-
-      try {
-        const snapshot = await jsonRequest<OrderMutationSnapshot>(
-          `/api/v1/pos/orders/${quote.data.order.id}/save`,
-          payload,
-          { headers: mutationHeaders(csrf) },
-        );
-        applyOrderMutationSnapshot(snapshot);
-        clearOrderDraft();
-        setManualPromotionIds(null);
-        playOrderSaveSound();
-        messageApi.success(
-          snapshot.callBatch
-            ? `Đã lưu Đợt ${snapshot.callBatch.sequenceNo}.`
-            : 'Lưu đơn hàng thành công.',
-        );
-        if (openPaymentAfterSave) {
-          navigateToPayment(snapshot.order.id);
-        } else {
-          setMobileView('CART');
-        }
-      } catch (reqError) {
-        if (!(reqError instanceof ApiError)) {
-          const optimisticSnapshot = buildOptimisticSaveSnapshot({
-            currentQuote: quote.data,
-            draftLines,
-            updatedItems: updatedItemsPayload(),
-            note: orderNote.trim() || null,
-            tableSummaries:
-              queryClient
-                .getQueryData<PosTable[]>(['pos-tables'])
-                ?.filter((t) => t.id === quote.data!.order.tableId) ?? [],
-          });
-          await posOfflineRuntime.enqueue({
-            type: 'SAVE_ORDER',
-            orderId: quote.data.order.id,
-            path: `/api/v1/pos/orders/${quote.data.order.id}/save`,
-            body: payload,
-            baseQuote: quote.data,
-            optimisticQuote: optimisticSnapshot.quote,
-            optimisticOverview: buildOptimisticOverviewForSaveOrder(
-              queryClient.getQueryData<PosOverviewSnapshot>(['pos-overview']),
-              quote.data.order.id,
-              optimisticSnapshot.quote,
-            ),
-          });
-          applyOrderMutationSnapshot(optimisticSnapshot as unknown as OrderMutationSnapshot);
-          clearOrderDraft();
-          setManualPromotionIds(null);
-          playOrderSaveSound();
-          messageApi.info('Mất kết nối. Đã lưu trên thiết bị · Chờ đồng bộ.');
-          if (openPaymentAfterSave) {
-            navigateToPayment(optimisticSnapshot.order.id);
-          } else {
-            setMobileView('CART');
-          }
-          return;
-        }
-        throw reqError;
+          ...(orderNote !== (quote.data.order.note ?? '')
+            ? { note: orderNote.trim() || null }
+            : {}),
+          ...(manualPromotionIds === null ? {} : { promotionIds: manualPromotionIds }),
+        },
+        { headers: mutationHeaders(csrf) },
+      );
+      applyOrderMutationSnapshot(snapshot);
+      clearOrderDraft();
+      setManualPromotionIds(null);
+      playOrderSaveSound();
+      messageApi.success(
+        snapshot.callBatch
+          ? `Đã lưu Đợt ${snapshot.callBatch.sequenceNo}.`
+          : 'Lưu đơn hàng thành công.',
+      );
+      if (openPaymentAfterSave) {
+        navigateToPayment(snapshot.order.id);
+      } else {
+        setMobileView('CART');
       }
     } catch (error) {
       if (error instanceof ApiError && error.code === 'ORDER_VERSION_CONFLICT') {
@@ -6664,63 +6308,15 @@ function OrderEditor({
       setOrderNoteOpen(false);
       return;
     }
-    const isOfflineNow = !navigator.onLine || offlineStatus.reachable === false;
-    const body = { expectedOrderVersion: quote.data.order.version, note: orderNote.trim() || null };
-    if (isOfflineNow) {
-      const nextQuote: OrderQuote = {
-        ...quote.data,
-        order: {
-          ...quote.data.order,
-          note: orderNote.trim() || null,
-          version: quote.data.order.version + 1,
-        },
-      };
-      await posOfflineRuntime.enqueue({
-        type: 'UPDATE_NOTE',
-        method: 'PATCH',
-        orderId: quote.data.order.id,
-        path: `/api/v1/pos/orders/${quote.data.order.id}/note`,
-        body,
-        baseQuote: quote.data,
-        optimisticQuote: nextQuote,
-      });
-      queryClient.setQueryData(['pos-order-quote', quote.data.order.id], nextQuote);
-      setOrderNoteOpen(false);
-      messageApi.success('Đã lưu ghi chú trên thiết bị · Chờ đồng bộ.');
-      return;
-    }
     try {
       const snapshot = await jsonRequest<OrderMutationSnapshot>(
         `/api/v1/pos/orders/${quote.data.order.id}/note`,
-        body,
+        { expectedOrderVersion: quote.data.order.version, note: orderNote.trim() || null },
         { method: 'PATCH', headers: mutationHeaders(csrf) },
       );
       applyOrderMutationSnapshot(snapshot);
       setOrderNoteOpen(false);
     } catch (error) {
-      if (!(error instanceof ApiError)) {
-        const nextQuote: OrderQuote = {
-          ...quote.data,
-          order: {
-            ...quote.data.order,
-            note: orderNote.trim() || null,
-            version: quote.data.order.version + 1,
-          },
-        };
-        await posOfflineRuntime.enqueue({
-          type: 'UPDATE_NOTE',
-          method: 'PATCH',
-          orderId: quote.data.order.id,
-          path: `/api/v1/pos/orders/${quote.data.order.id}/note`,
-          body,
-          baseQuote: quote.data,
-          optimisticQuote: nextQuote,
-        });
-        queryClient.setQueryData(['pos-order-quote', quote.data.order.id], nextQuote);
-        setOrderNoteOpen(false);
-        messageApi.info('Mất kết nối. Đã lưu ghi chú trên thiết bị · Chờ đồng bộ.');
-        return;
-      }
       messageApi.error(errorText(error));
     }
   };
@@ -6729,41 +6325,12 @@ function OrderEditor({
     if (!quote.data?.order.id || !quote.data?.time) return;
     const currentOrderId = quote.data.order.id;
     setSaving(true);
-    const isOfflineNow = !navigator.onLine || offlineStatus.reachable === false;
-    const body = { expectedOrderVersion: quote.data.order.version };
-    if (isOfflineNow) {
-      const nextQuote: OrderQuote = {
-        ...quote.data,
-        order: { ...quote.data.order, version: quote.data.order.version + 1 },
-        time: {
-          ...quote.data.time,
-          status: 'PAUSED',
-          pausedAtMs: Date.now(),
-        },
-      };
-      await posOfflineRuntime.enqueue({
-        type: 'PAUSE_TIME',
-        orderId: currentOrderId,
-        path: `/api/v1/pos/orders/${currentOrderId}/time/pause`,
-        body,
-        baseQuote: quote.data,
-        optimisticQuote: nextQuote,
-        optimisticOverview: updateTableInOverview(
-          queryClient.getQueryData<PosOverviewSnapshot>(['pos-overview']),
-          quote.data.order.tableId,
-          { timeSessionStatus: 'PAUSED' },
-        ),
-      });
-      queryClient.setQueryData(['pos-order-quote', currentOrderId], nextQuote);
-      messageApi.success('Đã tạm dừng tính giờ bàn trên thiết bị · Chờ đồng bộ.');
-      setTimeDetailOpen(false);
-      setSaving(false);
-      return;
-    }
     try {
-      await jsonRequest(`/api/v1/pos/orders/${currentOrderId}/time/pause`, body, {
-        headers: mutationHeaders(csrf),
-      });
+      await jsonRequest(
+        `/api/v1/pos/orders/${currentOrderId}/time/pause`,
+        { expectedOrderVersion: quote.data.order.version },
+        { headers: mutationHeaders(csrf) },
+      );
       messageApi.success('Đã tạm dừng tính giờ bàn.');
       setTimeDetailOpen(false);
       await refreshOrder();
@@ -6778,41 +6345,12 @@ function OrderEditor({
     if (!quote.data?.order.id || !quote.data?.time) return;
     const currentOrderId = quote.data.order.id;
     setSaving(true);
-    const isOfflineNow = !navigator.onLine || offlineStatus.reachable === false;
-    const body = { expectedOrderVersion: quote.data.order.version };
-    if (isOfflineNow) {
-      const nextQuote: OrderQuote = {
-        ...quote.data,
-        order: { ...quote.data.order, version: quote.data.order.version + 1 },
-        time: {
-          ...quote.data.time,
-          status: 'RUNNING',
-          pausedAtMs: null,
-        },
-      };
-      await posOfflineRuntime.enqueue({
-        type: 'RESUME_TIME',
-        orderId: currentOrderId,
-        path: `/api/v1/pos/orders/${currentOrderId}/time/resume`,
-        body,
-        baseQuote: quote.data,
-        optimisticQuote: nextQuote,
-        optimisticOverview: updateTableInOverview(
-          queryClient.getQueryData<PosOverviewSnapshot>(['pos-overview']),
-          quote.data.order.tableId,
-          { timeSessionStatus: 'RUNNING' },
-        ),
-      });
-      queryClient.setQueryData(['pos-order-quote', currentOrderId], nextQuote);
-      messageApi.success('Đã mở lại bàn / tiếp tục tính giờ trên thiết bị · Chờ đồng bộ.');
-      setTimeDetailOpen(false);
-      setSaving(false);
-      return;
-    }
     try {
-      await jsonRequest(`/api/v1/pos/orders/${currentOrderId}/time/resume`, body, {
-        headers: mutationHeaders(csrf),
-      });
+      await jsonRequest(
+        `/api/v1/pos/orders/${currentOrderId}/time/resume`,
+        { expectedOrderVersion: quote.data.order.version },
+        { headers: mutationHeaders(csrf) },
+      );
       messageApi.success('Đã mở lại bàn / tiếp tục tính giờ.');
       setTimeDetailOpen(false);
       await refreshOrder();
@@ -6827,42 +6365,16 @@ function OrderEditor({
     if (!quote.data?.order.id || !quote.data?.time) return;
     const currentOrderId = quote.data.order.id;
     setSaving(true);
-    const isOfflineNow = !navigator.onLine || offlineStatus.reachable === false;
-    const body = {
-      expectedOrderVersion: quote.data.order.version,
-      startedAtMs: quote.data.time.startedAtMs,
-      endedAtMs: null,
-    };
-    if (isOfflineNow) {
-      const nextQuote: OrderQuote = {
-        ...quote.data,
-        order: { ...quote.data.order, version: quote.data.order.version + 1 },
-        time: {
-          ...quote.data.time,
-          endedAtMs: null,
-          status: 'RUNNING',
-        },
-      };
-      await posOfflineRuntime.enqueue({
-        type: 'UPDATE_TIME_RANGE',
-        method: 'PATCH',
-        orderId: currentOrderId,
-        path: `/api/v1/pos/orders/${currentOrderId}/time/range`,
-        body,
-        baseQuote: quote.data,
-        optimisticQuote: nextQuote,
-      });
-      queryClient.setQueryData(['pos-order-quote', currentOrderId], nextQuote);
-      messageApi.success('Đã tiếp tục tính giờ bàn trên thiết bị · Chờ đồng bộ.');
-      setTimeDetailOpen(false);
-      setSaving(false);
-      return;
-    }
     try {
-      await jsonRequest(`/api/v1/pos/orders/${currentOrderId}/time/range`, body, {
-        method: 'PATCH',
-        headers: mutationHeaders(csrf),
-      });
+      await jsonRequest(
+        `/api/v1/pos/orders/${currentOrderId}/time/range`,
+        {
+          expectedOrderVersion: quote.data.order.version,
+          startedAtMs: quote.data.time.startedAtMs,
+          endedAtMs: null,
+        },
+        { method: 'PATCH', headers: mutationHeaders(csrf) },
+      );
       messageApi.success('Đã tiếp tục tính giờ bàn.');
       setTimeDetailOpen(false);
       await refreshOrder();
@@ -6939,12 +6451,6 @@ function OrderEditor({
   };
 
   const transferTo = async (table: PosTable) => {
-    if (!navigator.onLine || offlineStatus.reachable === false) {
-      messageApi.warning(
-        'Thao tác chuyển bàn cần kết nối mạng để tránh tranh chấp bàn giữa các thiết bị.',
-      );
-      return;
-    }
     if (!quote.data?.order.tableId) return;
     const source = tables.data?.find((item) => item.id === quote.data!.order.tableId);
     if (!source) return;
@@ -6970,66 +6476,11 @@ function OrderEditor({
 
   const cancelOrder = async () => {
     if (cancellingOrder || !quote.data || !cancelReason.trim()) return;
-    const isOfflineNow = !navigator.onLine || offlineStatus.reachable === false;
-    const body = { expectedOrderVersion: quote.data.order.version, reason: cancelReason.trim() };
-    if (isOfflineNow) {
-      try {
-        setCancellingOrder(true);
-        await posOfflineRuntime.enqueue({
-          type: 'CANCEL_ORDER',
-          terminal: true,
-          orderId: quote.data.order.id,
-          path: `/api/v1/pos/orders/${quote.data.order.id}/cancel`,
-          body,
-          baseQuote: quote.data,
-          optimisticOverview: removeOrderFromOverview(
-            queryClient.getQueryData<PosOverviewSnapshot>(['pos-overview']),
-            quote.data.order.id,
-            quote.data.order.tableId,
-          ),
-        });
-        const tableId = quote.data.order.tableId;
-        if (tableId) {
-          queryClient.setQueryData<PosTable[]>(['pos-tables'], (cached) =>
-            cached?.map((t) =>
-              t.id === tableId
-                ? {
-                    ...t,
-                    status: 'AVAILABLE',
-                    activeOrderId: null,
-                    totalVnd: 0,
-                    itemCount: 0,
-                    occupiedSince: null,
-                  }
-                : t,
-            ),
-          );
-        }
-        queryClient.setQueryData<PosOverviewOrder[]>(['pos-orders-list'], (cached) =>
-          cached?.filter((order) => order.id !== quote.data!.order.id),
-        );
-        setCancelOpen(false);
-        setCancelReason('');
-        playCancelOrderSound();
-        messageApi.success('Đã hủy đơn hàng trên thiết bị · Chờ đồng bộ.');
-        if (orderType === 'TAKEAWAY' || quote.data.order.orderType === 'TAKEAWAY') {
-          navigate('/pos/areas?tab=takeaway', {
-            replace: true,
-            state: { selectedArea: '__TAKEAWAY__' },
-          });
-        } else {
-          navigate('/pos/areas', { replace: true });
-        }
-      } finally {
-        setCancellingOrder(false);
-      }
-      return;
-    }
     try {
       setCancellingOrder(true);
       const snapshot = await jsonRequest<OrderClosureSnapshot>(
         `/api/v1/pos/orders/${quote.data.order.id}/cancel`,
-        body,
+        { expectedOrderVersion: quote.data.order.version, reason: cancelReason.trim() },
         { headers: mutationHeaders(csrf) },
       );
       setCancelOpen(false);
@@ -7046,54 +6497,6 @@ function OrderEditor({
         navigate('/pos/areas', { replace: true });
       }
     } catch (error) {
-      if (!(error instanceof ApiError)) {
-        await posOfflineRuntime.enqueue({
-          type: 'CANCEL_ORDER',
-          terminal: true,
-          orderId: quote.data.order.id,
-          path: `/api/v1/pos/orders/${quote.data.order.id}/cancel`,
-          body,
-          baseQuote: quote.data,
-          optimisticOverview: removeOrderFromOverview(
-            queryClient.getQueryData<PosOverviewSnapshot>(['pos-overview']),
-            quote.data.order.id,
-            quote.data.order.tableId,
-          ),
-        });
-        const tableId = quote.data.order.tableId;
-        if (tableId) {
-          queryClient.setQueryData<PosTable[]>(['pos-tables'], (cached) =>
-            cached?.map((t) =>
-              t.id === tableId
-                ? {
-                    ...t,
-                    status: 'AVAILABLE',
-                    activeOrderId: null,
-                    totalVnd: 0,
-                    itemCount: 0,
-                    occupiedSince: null,
-                  }
-                : t,
-            ),
-          );
-        }
-        queryClient.setQueryData<PosOverviewOrder[]>(['pos-orders-list'], (cached) =>
-          cached?.filter((order) => order.id !== quote.data!.order.id),
-        );
-        setCancelOpen(false);
-        setCancelReason('');
-        playCancelOrderSound();
-        messageApi.info('Mất kết nối. Đã hủy đơn hàng trên thiết bị · Chờ đồng bộ.');
-        if (orderType === 'TAKEAWAY' || quote.data.order.orderType === 'TAKEAWAY') {
-          navigate('/pos/areas?tab=takeaway', {
-            replace: true,
-            state: { selectedArea: '__TAKEAWAY__' },
-          });
-        } else {
-          navigate('/pos/areas', { replace: true });
-        }
-        return;
-      }
       messageApi.error(errorText(error));
     } finally {
       setCancellingOrder(false);
@@ -7951,19 +7354,53 @@ function OrderEditor({
                         </div>
 
                         <div className="staff-product-compact-row__action">
-                          <CompactProductStepper
-                            product={product}
-                            effectiveCount={effectiveCount}
-                            onAdd={(e) => {
-                              e.stopPropagation();
-                              chooseProduct(product, e);
-                            }}
-                            onMinus={(e) => {
-                              e.stopPropagation();
-                              const variant = product.variants[0];
-                              if (variant) decrementVariant(product, variant);
-                            }}
-                          />
+                          {effectiveCount > 0 &&
+                          product.productType === 'QUANTITY' &&
+                          product.variants.length === 1 ? (
+                            <div
+                              className="staff-product-compact-stepper"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <button
+                                type="button"
+                                className="staff-product-compact-stepper__btn minus"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const variant = product.variants[0];
+                                  if (variant) decrementVariant(product, variant);
+                                }}
+                                aria-label="Giảm"
+                              >
+                                −
+                              </button>
+                              <span className="staff-product-compact-stepper__count">
+                                {formatDecimal(effectiveCount)}
+                              </span>
+                              <button
+                                type="button"
+                                className="staff-product-compact-stepper__btn plus"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  chooseProduct(product, e);
+                                }}
+                                aria-label="Tăng"
+                              >
+                                +
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              className="staff-product-compact-add-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                chooseProduct(product, e);
+                              }}
+                              aria-label={`Thêm ${product.productName}`}
+                            >
+                              <PlusOutlined />
+                            </button>
+                          )}
                         </div>
                       </div>
                     );
@@ -11187,7 +10624,6 @@ function PaymentPage({
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const offlineStatus = usePosOfflineStatus();
   const { status: realtimeStatus } = useRealtime();
   const messageApi = toast;
   const holder = null;
@@ -11498,26 +10934,6 @@ function PaymentPage({
       // Vẫn cần chuyển order sang PAYMENT_PENDING - gọi stop-time an toàn vì trigger đã bảo vệ ended_at
     }
 
-    if (!navigator.onLine || offlineStatus.reachable === false) {
-      checkoutPreparationStartedRef.current = true;
-      setPreparingCheckout(false);
-      const nextQuote: OrderQuote = {
-        ...currentQuote,
-        order: {
-          ...currentQuote.order,
-          status: 'PAYMENT_PENDING',
-          version: currentQuote.order.version + 1,
-        },
-        time: {
-          ...currentQuote.time,
-          status: 'ENDED',
-          endedAtMs: currentQuote.time.endedAtMs ?? Date.now(),
-        },
-      };
-      queryClient.setQueryData(['pos-order-quote', orderId], nextQuote);
-      return;
-    }
-
     checkoutPreparationStartedRef.current = true;
     setPreparingCheckout(true);
     setPrepareCheckoutError(null);
@@ -11686,17 +11102,7 @@ function PaymentPage({
 
   const handleConfirmPayment = async (andPrint = false) => {
     if (!quote.data || submitting) return;
-    const isOfflineNow = !navigator.onLine || offlineStatus.reachable === false;
-    if (isOfflineNow) {
-      if (
-        currentMethodItem.backendMethod !== 'CASH' ||
-        (isMultiMethod && (bankApplied > 0 || debtAmount > 0))
-      ) {
-        messageApi.error('Khi mất kết nối mạng, POS chỉ hỗ trợ thanh toán TIỀN MẶT.');
-        return;
-      }
-    }
-    if (quote.data.time && quote.data.order.status !== 'PAYMENT_PENDING' && !isOfflineNow) {
+    if (quote.data.time && quote.data.order.status !== 'PAYMENT_PENDING') {
       messageApi.error('Chưa thể chốt số tiền. Vui lòng đợi hệ thống dừng giờ của bàn.');
       return;
     }
@@ -11730,112 +11136,6 @@ function PaymentPage({
     if (!paymentSubmissionGuardRef.current.tryStart()) return;
     setSubmitting(true);
     let paymentCompleted = false;
-
-    const executeOfflineCashPayment = async () => {
-      const completedOrderId = quote.data!.order.id;
-      const resolvedCode =
-        quote.data!.order.displayCode || `HD-${quote.data!.order.id.slice(0, 8).toUpperCase()}`;
-
-      await posOfflineRuntime.enqueue({
-        type: 'CASH_CHECKOUT',
-        terminal: true,
-        orderId: completedOrderId,
-        path: `/api/v1/pos/orders/${completedOrderId}/checkout`,
-        body: {
-          expectedOrderVersion: quote.data!.order.version,
-          expectedTotalVnd: quote.data!.totalVnd,
-          method: 'CASH',
-          cashReceivedVnd: cashReceived ?? totalVnd,
-          debtAmountVnd: 0,
-        },
-        baseQuote: quote.data,
-        optimisticOverview: removeOrderFromOverview(
-          queryClient.getQueryData<PosOverviewSnapshot>(['pos-overview']),
-          completedOrderId,
-          quote.data!.order.tableId,
-        ),
-      });
-
-      paymentCompleted = true;
-      const tableId = quote.data!.order.tableId;
-      if (tableId) {
-        queryClient.setQueryData<PosTable[]>(['pos-tables'], (cached) =>
-          cached?.map((t) =>
-            t.id === tableId
-              ? {
-                  ...t,
-                  status: 'AVAILABLE',
-                  activeOrderId: null,
-                  totalVnd: 0,
-                  itemCount: 0,
-                  occupiedSince: null,
-                }
-              : t,
-          ),
-        );
-      }
-      queryClient.setQueryData<PosOverviewOrder[]>(['pos-orders-list'], (cached) =>
-        cached?.filter((order) => order.id !== completedOrderId),
-      );
-
-      const printData = buildCurrentPaymentPrintData()!;
-      printData.orderCode = resolvedCode;
-      printData.invoiceCode = resolvedCode;
-      const receiptOptions: PosReceiptPrintOptions = {
-        data: printData,
-        printSettings: printSettings.data,
-        storeInfo: {
-          storeName: staffContext.data?.storeName ?? null,
-          phone: staffContext.data?.storePhone ?? null,
-          address: staffContext.data?.storeAddress ?? null,
-          bankName: selectedBankAccount?.bankBin ?? staffContext.data?.bankName ?? null,
-          bankAccountNumber:
-            selectedBankAccount?.accountNumber ?? staffContext.data?.bankAccountNumber ?? null,
-          bankAccountName:
-            selectedBankAccount?.accountName ?? staffContext.data?.bankAccountName ?? null,
-        },
-      };
-      playPaymentSuccessSound({ dedupeKey: `payment:${resolvedCode}`, volume: 1.0 });
-      const successData = {
-        orderId: completedOrderId,
-        invoiceId: `local-inv-${completedOrderId}`,
-        orderType: quote.data!.order.orderType,
-        invoiceCode: resolvedCode,
-        tableName:
-          quote.data!.order.tableName ||
-          (quote.data!.order.orderType === 'TAKEAWAY' ? 'Mang về' : 'Đơn hàng'),
-        totalVnd: quote.data!.totalVnd,
-        method: 'CASH' as const,
-        printStatus: andPrint ? 'PRINTING' : 'SKIPPED',
-        printError: null,
-        receiptOptions,
-        shownAt: Date.now(),
-      } satisfies NonNullable<typeof paymentSuccessData>;
-      if (!isDesktopOrTablet) setPaymentSuccessData(successData);
-      if (andPrint) {
-        void printReceipt(receiptOptions, { type: 'invoice', id: completedOrderId });
-      }
-      messageApi.success('Đã ghi nhận thanh toán tiền mặt trên thiết bị · Chờ đồng bộ.');
-      if (isDesktopOrTablet) {
-        completePaidOrder({
-          id: completedOrderId,
-          orderType: quote.data!.order.orderType,
-        });
-      }
-    };
-
-    if (isOfflineNow && currentMethodItem.backendMethod === 'CASH') {
-      try {
-        await executeOfflineCashPayment();
-      } catch (error) {
-        messageApi.error(errorText(error));
-      } finally {
-        paymentSubmissionGuardRef.current.finish(paymentCompleted);
-        setSubmitting(false);
-      }
-      return;
-    }
-
     try {
       const result = await jsonRequest<{
         invoiceId: string;
@@ -11999,16 +11299,6 @@ function PaymentPage({
             ? errorText(error)
             : `Không thể tải lại đơn hàng. ${errorText(refreshed.error)}`,
         );
-      } else if (!(error instanceof ApiError) && currentMethodItem.backendMethod === 'CASH') {
-        try {
-          await executeOfflineCashPayment();
-          messageApi.info(
-            'Mất kết nối. Đã ghi nhận thanh toán tiền mặt trên thiết bị · Chờ đồng bộ.',
-          );
-          return;
-        } catch (offlineErr) {
-          messageApi.error(errorText(offlineErr));
-        }
       } else {
         messageApi.error(errorText(error));
       }
@@ -12832,7 +12122,6 @@ function StaffPosPortalReady({ bootstrap }: { bootstrap: AppBootstrapResponse })
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
-  const offlineStatus = usePosOfflineStatus();
   const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
   const [desktopPayment, setDesktopPayment] = useState(() =>
     typeof window === 'undefined' ? false : window.innerWidth >= 1200,
@@ -13304,16 +12593,7 @@ function StaffPosPortalReady({ bootstrap }: { bootstrap: AppBootstrapResponse })
               ) : isEditor ? (
                 <OrderEditor auth={auth.data} />
               ) : active === 'qr' ? (
-                offlineStatus.reachable === false ? (
-                  <div style={{ padding: 24 }}>
-                    <Alert
-                      type="info"
-                      showIcon
-                      title="QR Order cần kết nối Internet"
-                      description="Các nghiệp vụ POS khác vẫn sử dụng được từ dữ liệu đã lưu trên thiết bị."
-                    />
-                  </div>
-                ) : canHandleQr ? (
+                canHandleQr ? (
                   <QrOrderPage />
                 ) : (
                   <div style={{ padding: 24 }}>

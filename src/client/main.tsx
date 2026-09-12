@@ -8,7 +8,6 @@ import { BrowserRouter } from 'react-router';
 import { App } from './App';
 import { ApiError, forceStaffLogout } from './lib/api';
 import { initPosPerformanceMonitoring } from './lib/pos-performance';
-import { hydratePosQueries } from './offline/query-persistence';
 
 const PRELOAD_RECOVERY_KEY = 'propos-preload-recovery-at';
 
@@ -57,8 +56,6 @@ const root = document.getElementById('root');
 if (!root) {
   throw new Error('Missing #root element');
 }
-
-await hydratePosQueries(queryClient);
 
 createRoot(root).render(
   <StrictMode>

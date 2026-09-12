@@ -351,12 +351,8 @@ export function LoginPage() {
     if (authErrorParam) {
       const msg = accessErrorMessage(authErrorParam, searchParams.get('tab'));
       if (msg) toast.error(msg);
-      queryClient.setQueryData(['auth-context'], (prev: unknown) =>
-        prev && typeof prev === 'object' ? { ...prev, actor: null, csrfToken: null } : prev,
-      );
-      resetAppBootstrap(queryClient);
     }
-  }, [searchParams, queryClient]);
+  }, [searchParams]);
 
   useEffect(() => {
     // If device is not active and no explicit tab param in URL, default to owner tab
@@ -574,10 +570,8 @@ export function LoginPage() {
       </AuthLayout>
     );
   }
-  const hasAuthError = Boolean(searchParams.get('authError'));
-  if (!hasAuthError && context.data.actor?.kind === 'OWNER')
-    return <Navigate to="/owner" replace />;
-  if (!hasAuthError && context.data.actor?.kind === 'EMPLOYEE' && deviceIsActive) {
+  if (context.data.actor?.kind === 'OWNER') return <Navigate to="/owner" replace />;
+  if (context.data.actor?.kind === 'EMPLOYEE' && deviceIsActive) {
     return <Navigate to="/pos" replace />;
   }
 

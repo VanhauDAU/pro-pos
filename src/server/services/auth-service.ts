@@ -563,7 +563,6 @@ export class AuthService {
       },
       device,
       sessionId: row.session_id,
-      sessionExpiresAt: Math.min(row.expires_at, row.idle_expires_at),
       storeStatus: row.store_status,
       permissions: new Set(permissionKeys),
     };
@@ -612,7 +611,6 @@ export class AuthService {
         device,
         allowedEntrypoints,
         csrfToken,
-        offlineAccessExpiresAt: resolved.principal?.sessionExpiresAt ?? null,
         sessionId,
       },
       principal: resolved.principal,

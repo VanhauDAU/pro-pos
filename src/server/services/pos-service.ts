@@ -1257,7 +1257,7 @@ export class PosService {
     const replay = await this.replaySaveCommand(input.storeId, input.idempotencyKey, payloadHash);
     if (replay) return replay;
     const now = Date.now();
-    const orderId = crypto.randomUUID();
+    const orderId = input.values.orderId ?? crypto.randomUUID();
     const takeaway = input.values.orderType === 'TAKEAWAY';
     const [preparedItems, guest, businessDay, pricing] = await measurePhase(
       input.timing,

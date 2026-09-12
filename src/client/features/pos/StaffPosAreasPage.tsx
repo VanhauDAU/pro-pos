@@ -39,6 +39,7 @@ import {
   StaffHeader,
   StaffNotificationCenter,
 } from './StaffPosShellShared';
+import { usePosOfflineStatus } from '@client/offline/use-pos-offline-status';
 
 const BRAND = '#0975f7';
 const ORDER_HOVER_PREFETCH_DELAY_MS = 80;
@@ -183,6 +184,11 @@ function AreasPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { status: realtimeStatus, serverTimeOffsetMs } = useRealtime();
+  const offlineStatus = usePosOfflineStatus();
+  const pendingOrderSet = useMemo(
+    () => new Set(offlineStatus.pendingOrderIds),
+    [offlineStatus.pendingOrderIds],
+  );
   const [now, setNow] = useState(() => Date.now() + serverTimeOffsetMs);
   const overview = useQuery<PosOverviewSnapshot>({
     queryKey: ['pos-overview'],
@@ -540,7 +546,7 @@ function AreasPage() {
       </div>
       {tables.isLoading ? <Spin fullscreen description="Đang tải khu vực" /> : null}
       {tables.isError ? <Alert type="error" showIcon title="Chưa tải được khu vực và bàn" /> : null}
-      {overview.isRefetchError && overview.data ? (
+      {overview.isRefetchError && overview.data && offlineStatus.reachable !== false ? (
         <Alert
           type="warning"
           showIcon
@@ -785,6 +791,22 @@ function AreasPage() {
                       />
                       <div className="staff-table-card__header">
                         <strong className="staff-table-card__name">{label}</strong>
+                        {takeawayOrder.id && pendingOrderSet.has(takeawayOrder.id) ? (
+                          <span
+                            className="staff-takeaway-card__pending-badge"
+                            style={{
+                              fontSize: '11px',
+                              color: '#d97706',
+                              background: 'rgba(217, 119, 6, 0.12)',
+                              padding: '2px 6px',
+                              borderRadius: '4px',
+                              fontWeight: 600,
+                              marginRight: '6px',
+                            }}
+                          >
+                            ○ Chờ đồng bộ
+                          </span>
+                        ) : null}
                         <span className="staff-table-card__occupied-badge">Mang về</span>
                       </div>
                       <div className="staff-table-card__body">
@@ -876,6 +898,22 @@ function AreasPage() {
                   />
                   <div className="staff-table-card__header">
                     <strong className="staff-table-card__name">{table.name}</strong>
+                    {table.activeOrderId && pendingOrderSet.has(table.activeOrderId) ? (
+                      <span
+                        className="staff-table-card__pending-badge"
+                        style={{
+                          fontSize: '11px',
+                          color: '#d97706',
+                          background: 'rgba(217, 119, 6, 0.12)',
+                          padding: '2px 6px',
+                          borderRadius: '4px',
+                          fontWeight: 600,
+                          marginLeft: 'auto',
+                        }}
+                      >
+                        ○ Chờ đồng bộ
+                      </span>
+                    ) : null}
                     {isOccupied && isPaused ? (
                       <span className="staff-table-card__paused-badge">
                         <PauseCircleOutlined /> Tạm dừng

@@ -34,10 +34,25 @@ export function quoteIsVerifiedForInteraction(input: {
   isStale: boolean;
   dataUpdatedAt: number;
   realtimeStatus: RealtimeConnectionStatus;
+  offlineReachable?: boolean | null;
   now?: number;
 }) {
+  if (input.quote?.order.id !== input.orderId) {
+    return false;
+  }
+
+  // When offline or disconnected from server, the local snapshot is the source of truth
+  // and must be immediately interactive to prevent white screens / error blocks.
   if (
-    input.quote?.order.id !== input.orderId ||
+    input.offlineReachable === false ||
+    (!input.isFetching &&
+      input.quote &&
+      (input.isRefetchError || (typeof navigator !== 'undefined' && navigator.onLine === false)))
+  ) {
+    return true;
+  }
+
+  if (
     !input.isSuccess ||
     input.isFetching ||
     input.isRefetchError
